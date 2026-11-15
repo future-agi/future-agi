@@ -364,6 +364,72 @@ func TestCatalogue_EntriesCountOverrideOnlyModels(t *testing.T) {
 	check("fetched alone", bundled+len(fetched))
 }
 
+// A reader that holds a snapshot sees it unchanged when the catalogue is
+// overlaid or its overrides are swapped: both build a new ModelDB.
+func TestCatalogue_RetainedSnapshotIsImmutable(t *testing.T) {
+	var ptr atomic.Pointer[ModelDB]
+	c := NewCatalogue(&ptr, nil)
+	held := ptr.Load()
+	before, ok := held.GetPricing("gpt-4o")
+	if !ok {
+		t.Fatal("precondition: bundled gpt-4o missing")
+	}
+	wantInput, wantCount := before.InputPerToken, held.Count()
+
+	fetchedPrice, overridePrice := wantInput*3, wantInput*5
+	// The override first: it is applied to the model the snapshot holds.
+	c.SetOverrides(map[string]ModelOverride{"gpt-4o": {Pricing: &PricingOverride{InputPerToken: &overridePrice}},
+		"override-only": {Provider: "custom", Mode: "chat"}})
+	c.Overlay(map[string]*ModelInfo{"gpt-4o": {ID: "gpt-4o", Provider: "openai", Mode: "chat",
+		Pricing: PricingInfo{InputPerToken: fetchedPrice, OutputPerToken: fetchedPrice}}}, "http://catalogue.test")
+
+	if got, _ := held.GetPricing("gpt-4o"); got.InputPerToken != wantInput {
+		t.Errorf("held snapshot's gpt-4o input = %v, want the %v it had when taken", got.InputPerToken, wantInput)
+	}
+	if held.Count() != wantCount {
+		t.Errorf("held snapshot holds %d models, want the %d it had when taken", held.Count(), wantCount)
+	}
+	if got, _ := ptr.Load().GetPricing("gpt-4o"); got.InputPerToken != overridePrice {
+		t.Errorf("live gpt-4o input = %v, want the override's %v", got.InputPerToken, overridePrice)
+	}
+}
+
+// catalogueOfSize is a valid catalogue of exactly size bytes, padded with
+// trailing whitespace.
+func catalogueOfSize(size int) string {
+	body := catalogueJSON(60, 1e-6)
+	return body + strings.Repeat(" ", size-len(body))
+}
+
+// The body limit is 64 MiB: a body of exactly that size is accepted, one byte
+// more is rejected and leaves the catalogue as it was.
+func TestSync_BodyLimit(t *testing.T) {
+	t.Run("at the limit", func(t *testing.T) {
+		f := newFakeCatalogue(t, catalogueOfSize(maxCatalogueBytes))
+		s, _, c := newTestSyncer(f.URL, 100)
+
+		s.syncOnce(context.Background(), 30*time.Second)
+
+		if info := c.Info(); info.Source != SourceFetched || info.LastError != "" {
+			t.Errorf("a body of exactly %d bytes was not accepted: %+v", maxCatalogueBytes, info)
+		}
+	})
+	t.Run("above the limit", func(t *testing.T) {
+		f := newFakeCatalogue(t, catalogueOfSize(maxCatalogueBytes+1))
+		s, ptr, c := newTestSyncer(f.URL, 100)
+
+		s.syncOnce(context.Background(), 30*time.Second)
+
+		info := c.Info()
+		if info.Source != SourceBundled || !strings.Contains(info.LastError, "larger than") {
+			t.Errorf("a body of %d bytes was not rejected as too large: %+v", maxCatalogueBytes+1, info)
+		}
+		if _, ok := ptr.Load().Get("fetched-0"); ok {
+			t.Error("the oversize catalogue was loaded")
+		}
+	})
+}
+
 func TestNewSyncer_Interval(t *testing.T) {
 	var ptr atomic.Pointer[ModelDB]
 	c := NewCatalogue(&ptr, nil)
