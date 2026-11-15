@@ -24,6 +24,24 @@ vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 const cases = [
   [
+    "injection-detector",
+    "Prompt Injection",
+    { categories: [42], sensitivity: "HIGH" },
+    { categories: ["instruction_override"], sensitivity: "HIGH" },
+  ],
+  [
+    "prompt-injection",
+    "Prompt Injection",
+    { categories: [42], sensitivity: "HIGH" },
+    { categories: ["instruction_override"], sensitivity: "HIGH" },
+  ],
+  [
+    "content-moderation",
+    "Content Moderation",
+    { categories: ["toxicity"], category_threshold: 50.5 },
+    { categories: ["toxicity"], category_threshold: 3 },
+  ],
+  [
     "pii-detection",
     "PII Detection",
     { entities: [42] },
@@ -235,6 +253,71 @@ describe("selected policy builtin config R3", () => {
       click("Save policy");
       expect(update.mock.calls[0][0].checks[0].config).toEqual({
         entities: ["email"],
+      });
+    },
+  );
+
+  it("uses the effective outer threshold and keeps a large reachable count", () => {
+    renderPolicy([
+      check(
+        "content-moderation",
+        { categories: ["toxicity"], category_threshold: 1000 },
+        { threshold: 0.01 },
+      ),
+    ]);
+    click("Save policy");
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an unreachable moderation draft verbatim until corrected or disabled", () => {
+    renderPolicy([
+      check(
+        "content-moderation",
+        { categories: ["toxicity"], category_threshold: 50 },
+        { threshold: 0.3 },
+      ),
+    ]);
+    click("Save policy");
+    expect(update).not.toHaveBeenCalled();
+    configure("Content Moderation");
+    const input = jsonInput("Content Moderation");
+    const raw =
+      '{  "categories": ["toxicity"], "category_threshold": 50, "extra": true }';
+    fireEvent.change(input, { target: { value: raw } });
+    click("Save");
+    expect(input).toHaveValue(raw);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Enabled", exact: true }),
+    );
+    click("Save");
+    click("Save policy");
+    expect(update.mock.calls[0][0].checks[0]).toMatchObject({
+      enabled: false,
+      config: JSON.parse(raw),
+    });
+  });
+
+  it.each(["pii-detector", "pii-detection"])(
+    "refuses a %s collision but preserves every row on deactivation",
+    (name) => {
+      const checks = [
+        check(name, { entities: ["email"] }),
+        check("pii-detection", { entities: ["ssn"] }, { enabled: false }),
+      ];
+      renderPolicy(checks);
+      click("Save policy");
+      expect(update).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(/Duplicate canonical check identities/),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Active", exact: true }),
+      );
+      click("Save policy");
+      expect(update.mock.calls[0][0]).toMatchObject({
+        is_active: false,
+        checks,
       });
     },
   );

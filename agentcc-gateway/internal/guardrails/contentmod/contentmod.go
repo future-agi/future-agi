@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -75,7 +76,11 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 
 	// Build category checkers.
 	allCategories := defaultCategories()
-	for name, phrases := range allCategories {
+	// Keep numeric accumulation deterministic and aligned with selected-config
+	// validation in the control plane. Map iteration can otherwise move a strict
+	// score > threshold boundary by one ULP. The scoring rules are unchanged.
+	for _, name := range []string{"toxicity", "hate_speech", "violence", "sexual", "self_harm"} {
+		phrases := allCategories[name]
 		if enabledSet != nil && !enabledSet[name] {
 			continue
 		}
@@ -90,33 +95,103 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 		})
 	}
 
+	if g.configErr == nil {
+		var totalWeight float64
+		for _, cat := range g.categories {
+			totalWeight += cat.weight
+		}
+		if math.IsInf(totalWeight, 0) || math.IsNaN(totalWeight) {
+			g.configErr = fmt.Errorf("content-moderation effective weights must have a finite sum")
+		}
+	}
 	return g
 }
 
-// ValidateConfig reports constructor-time selector errors for selected policies,
+// ValidateConfig reports constructor-time configuration errors for selected policies,
 // without changing legacy Check behavior or retaining mutable caller config.
 func (g *ContentModerationGuardrail) ValidateConfig() error { return g.configErr }
 
 func validateConfig(cfg map[string]interface{}) error {
-	value, present := cfg["categories"]
-	if !present {
-		return nil
-	}
-	list, ok := value.([]interface{})
-	if !ok {
-		return fmt.Errorf("content-moderation categories must be an array of supported category names")
-	}
 	catalog := defaultCategories()
-	for _, item := range list {
-		name, ok := item.(string)
+	if value, present := cfg["categories"]; present {
+		list, ok := value.([]interface{})
 		if !ok {
-			return fmt.Errorf("content-moderation categories must contain only supported category names")
+			return fmt.Errorf("content-moderation categories must be an array of supported category names")
 		}
-		if _, supported := catalog[name]; !supported {
-			return fmt.Errorf("content-moderation categories contains an unsupported category name")
+		for _, item := range list {
+			name, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("content-moderation categories must contain only supported category names")
+			}
+			if _, supported := catalog[name]; !supported {
+				return fmt.Errorf("content-moderation categories contains an unsupported category name")
+			}
 		}
 	}
-	// An empty list intentionally keeps all default categories enabled.
+	if value, present := cfg["category_threshold"]; present {
+		valid := false
+		switch n := value.(type) {
+		case int:
+			valid = n > 0
+		case float64:
+			// The exclusive upper bound avoids float64(MaxInt) rounding up to
+			// 2^63. Check before conversion; the legacy constructor still has its
+			// historical fallback, but selected callers must not use truncation.
+			valid = !math.IsNaN(n) && !math.IsInf(n, 0) && n > 0 &&
+				math.Trunc(n) == n && n < math.Ldexp(1, strconv.IntSize-1)
+		}
+		if !valid {
+			return fmt.Errorf("content-moderation category_threshold must be a positive integral count representable as an int")
+		}
+	}
+	if value, present := cfg["weights"]; present {
+		weights, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("content-moderation weights must be an object")
+		}
+		for name, value := range weights {
+			if _, known := catalog[name]; !known {
+				continue // Unknown weight keys are ignored by the constructor.
+			}
+			weight, ok := value.(float64)
+			if !ok || math.IsNaN(weight) || math.IsInf(weight, 0) {
+				return fmt.Errorf("content-moderation known category weights must be finite numbers")
+			}
+			// Preserve actual constructor semantics: positive numbers override
+			// the weight; finite zero/negative numbers leave the default 1.
+		}
+	}
+	// An empty category list intentionally keeps all default categories enabled.
+	return nil
+}
+
+// ValidateSelectedThreshold checks reachability against the selected caller's
+// actual outer confidence threshold. Zero is used as-is, not replaced by a
+// default. It is deliberately not part of legacy org/static Check execution.
+func (g *ContentModerationGuardrail) ValidateSelectedThreshold(threshold float64) error {
+	if g.configErr != nil {
+		return g.configErr
+	}
+	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 1 {
+		return fmt.Errorf("content-moderation confidence threshold must be between zero and one")
+	}
+	// Each catalog phrase is counted at most once. Use the same order, weights,
+	// per-category cap and dominance boost as Check, without inspecting text.
+	var weightedSum, totalWeight, maxScore float64
+	for _, cat := range g.categories {
+		score := math.Min(1, float64(len(cat.phrases))/float64(g.categoryThresh))
+		weightedSum += score * cat.weight
+		totalWeight += cat.weight
+		maxScore = math.Max(maxScore, score)
+	}
+	aggregate := weightedSum / totalWeight
+	if maxScore >= 0.9 && aggregate < maxScore {
+		aggregate = maxScore
+	}
+	// shouldTrigger uses strict greater-than; equality is unreachable too.
+	if math.IsNaN(aggregate) || math.IsInf(aggregate, 0) || aggregate <= threshold {
+		return fmt.Errorf("content-moderation configuration cannot exceed the selected confidence threshold")
+	}
 	return nil
 }
 

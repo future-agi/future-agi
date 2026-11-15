@@ -70,6 +70,7 @@ func (p *GuardrailPlugin) resolveKeyPolicies(orgID, keyID string, cfg *tenant.Gu
 			var g Guardrail
 			if check.ConfigurationError == "" {
 				g = p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
+				g = validateSelectedKeyPolicyCheck(name, g, check)
 			}
 			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
 				g = unavailableKeyPolicyCheck{name: name}
@@ -103,13 +104,31 @@ func (unavailableKeyPolicyCheck) Check(context.Context, *CheckInput) *CheckResul
 func validateKeyPolicyCheck(name string, g Guardrail) Guardrail {
 	switch name {
 	case "keyword-blocklist", "pii-detection", "content-moderation", "secret-detection",
-		"language-detection", "topic-restriction", "input-validation":
+		"language-detection", "topic-restriction", "input-validation", "prompt-injection":
 		if validator, ok := g.(interface{ ValidateConfig() error }); ok && validator.ValidateConfig() != nil {
 			if stage := g.Stage(); stage == StagePre || stage == StagePost {
 				return unavailableKeyPolicyCheck{name: name, stage: stage, stageKnown: true}
 			}
 			return unavailableKeyPolicyCheck{name: name}
 		}
+	}
+	return g
+}
+
+// validateSelectedKeyPolicyCheck adds envelope-dependent readiness without
+// changing the factory signature or broadening org/static/custom validation.
+// Both HTTP resolution and the direct realtime resolver must use this helper.
+func validateSelectedKeyPolicyCheck(name string, g Guardrail, check *tenant.GuardrailCheck) Guardrail {
+	g = validateKeyPolicyCheck(name, g)
+	if g == nil || check == nil || name != "content-moderation" {
+		return g
+	}
+	if validator, ok := g.(interface{ ValidateSelectedThreshold(float64) error }); ok &&
+		validator.ValidateSelectedThreshold(check.ConfidenceThreshold) != nil {
+		if stage := g.Stage(); stage == StagePre || stage == StagePost {
+			return unavailableKeyPolicyCheck{name: name, stage: stage, stageKnown: true}
+		}
+		return unavailableKeyPolicyCheck{name: name}
 	}
 	return g
 }

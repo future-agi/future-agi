@@ -20,7 +20,9 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useApiKeys } from "../keys/hooks/useApiKeys";
 import {
   GUARDRAIL_CHECKS,
+  canonicalCheckName,
   hasBuiltinConfigEditor,
+  hasDuplicateCheckIdentity,
   hasNoRestriction,
   isConfigObject,
   selectedConfigErrors,
@@ -107,17 +109,24 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
   };
   const setCheck = (name, patch) => {
     setForm((prev) => {
-      const checks = prev.checks.filter((check) => check.name !== name);
+      // A legacy duplicate must not be silently repaired by selecting the first
+      // config and dropping the rest. Deactivation preserves every original row.
+      const matches = prev.checks.filter(
+        (check) => canonicalCheckName(check.name) === name,
+      );
+      if (matches.length > 1) return prev;
+      const existing = matches[0];
+      const checks = prev.checks.filter(
+        (check) => canonicalCheckName(check.name) !== name,
+      );
       return {
         ...prev,
         checks: [
           ...checks,
           {
-            ...prev.checks.find((check) => check.name === name),
-            name,
-            ...(!prev.checks.some((check) => check.name === name)
-              ? { enabled: true, action: "block" }
-              : {}),
+            ...existing,
+            name: existing?.name ?? name,
+            ...(!existing ? { enabled: true, action: "block" } : {}),
             ...patch,
           },
         ],
@@ -145,14 +154,25 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
       return;
     }
     if (form.is_active) {
+      if (hasDuplicateCheckIdentity(form.checks)) {
+        setErrors({
+          checks:
+            "Duplicate canonical check identities cannot run. Remove duplicates using the policy API, or deactivate this policy to preserve its original checks.",
+        });
+        return;
+      }
       const invalidCheck = form.checks
         .filter((check) => check.enabled !== false)
         .map((check) => {
           const reason = Object.values(
-            selectedConfigErrors(check.name, check.config),
+            selectedConfigErrors(
+              check.name,
+              check.config,
+              check.threshold ?? check.confidence_threshold ?? 0.8,
+            ),
           ).join(" ");
           const label = GUARDRAIL_CHECKS.find(
-            (item) => item.name === check.name,
+            (item) => item.name === canonicalCheckName(check.name),
           )?.label;
           return reason ? `${label}: ${reason}` : null;
         })
@@ -326,7 +346,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
               <Stack spacing={1} sx={{ mt: 1 }}>
                 {GUARDRAIL_CHECKS.map((item) => {
                   const check = form.checks.find(
-                    (entry) => entry.name === item.name,
+                    (entry) => canonicalCheckName(entry.name) === item.name,
                   );
                   const enabled =
                     item.name === "keyword-blocklist" ||
@@ -439,7 +459,9 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
           onClose={() => setEditingCheck(null)}
           checkName={editingCheck.name}
           initialData={thresholdForEditor(
-            form.checks.find((check) => check.name === editingCheck.name),
+            form.checks.find(
+              (check) => canonicalCheckName(check.name) === editingCheck.name,
+            ),
           )}
           providerMeta={editingCheck}
           selectedPolicyEditor

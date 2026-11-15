@@ -5,10 +5,13 @@ names retain their own factory contract. Regex checking is deliberately bounded:
 Go regexp compilation at the gateway, not a foreign regex engine, is authoritative.
 """
 
+import math
+
 # Existing org-rule aliases also resolve to these builtins in config_push.
 BUILTIN_CONFIG_ALIASES = {
     "pii-detector": "pii-detection",
     "secrets-detector": "secret-detection",
+    "injection-detector": "prompt-injection",
 }
 
 # Pin these against the leaf catalogs in tests; do not copy the reference API IDs.
@@ -35,6 +38,19 @@ SELECTORS = {
                 "ein",
                 "mrn",
                 "bitcoin",
+            }
+        ),
+    ),
+    "prompt-injection": (
+        "categories",
+        frozenset(
+            {
+                "structured_role_injection",
+                "instruction_override",
+                "role_manipulation",
+                "system_prompt_extraction",
+                "delimiter_injection",
+                "encoding_bypass",
             }
         ),
     ),
@@ -183,8 +199,85 @@ def _length_error(config):
     return None
 
 
-def builtin_config_error(name, config):
-    """Return a value-free reason for the six builtin families, or None.
+# Number of distinct phrases counted once by contentmod.defaultCategories.
+MODERATION_COUNTS = {
+    "toxicity": 15,
+    "hate_speech": 15,
+    "violence": 15,
+    "sexual": 13,
+    "self_harm": 15,
+}
+
+
+def canonical_check_name(name):
+    return BUILTIN_CONFIG_ALIASES.get(name, name)
+
+
+def duplicate_check_identity(checks):
+    """Detect collisions before list-to-map projection, including disabled rows."""
+    seen = set()
+    for check in checks:
+        name = canonical_check_name(check["name"])
+        if name in seen:
+            return True
+        seen.add(name)
+    return False
+
+
+def _finite_number(value):
+    try:
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+        )
+    except OverflowError:
+        return False
+
+
+def _moderation_error(config, threshold):
+    count = config.get("category_threshold", 3)
+    if (
+        not _finite_number(count)
+        or not 0 < count < 2**63
+        or count != int(count)
+        or float(count) != count
+        or float(count) >= 2**63
+    ):
+        return "category_threshold must be a positive representable integer below 2^63"
+    weights = config.get("weights", {})
+    if not isinstance(weights, dict):
+        return "weights must be a JSON object"
+    # The constructor ignores unknown weight names and uses weight 1 for <= 0.
+    # Do not reinterpret zero as disabling a category or reject that legacy meaning.
+    for name in MODERATION_COUNTS:
+        if name in weights and not _finite_number(weights[name]):
+            return "known category weights must be finite numbers"
+    selected = set(config.get("categories") or MODERATION_COUNTS)
+    total_weight = weighted_sum = maximum = 0.0
+    for name, phrases in MODERATION_COUNTS.items():
+        if name not in selected:
+            continue
+        weight = float(weights.get(name, 1))
+        if weight <= 0:
+            weight = 1.0
+        score = min(1.0, phrases / count)
+        total_weight += weight
+        weighted_sum += score * weight
+        maximum = max(maximum, score)
+    if not math.isfinite(total_weight) or not math.isfinite(weighted_sum):
+        return "category weights must have a finite aggregate"
+    aggregate = weighted_sum / total_weight
+    if maximum >= 0.9 and aggregate < maximum:
+        aggregate = maximum
+    # shouldTrigger uses strictly score > outer confidence threshold.
+    if threshold is not None and not aggregate > threshold:
+        return "category_threshold and weights cannot exceed the confidence threshold"
+    return None
+
+
+def builtin_config_error(name, config, threshold=None):
+    """Return a value-free reason for supported builtin families, or None.
 
     Omitted config is supplied as {} by the caller; explicit nonobjects are not
     defaults. Empty selectors preserve constructor defaults. Empty language/topic
@@ -202,6 +295,16 @@ def builtin_config_error(name, config):
             or any(item not in catalog for item in config[field])
         ):
             return f"{field} must be an array of supported detector names"
+        if name == "content-moderation":
+            return _moderation_error(config, threshold)
+        if name == "prompt-injection" and "sensitivity" in config:
+            sensitivity = config["sensitivity"]
+            if not isinstance(sensitivity, str) or sensitivity.lower() not in (
+                "high",
+                "medium",
+                "low",
+            ):
+                return "sensitivity must be high, medium or low (case-insensitive)"
     elif name == "language-detection":
         if "allowed_scripts" in config and not _string_array(config["allowed_scripts"]):
             return "allowed_scripts must be an array of strings"
