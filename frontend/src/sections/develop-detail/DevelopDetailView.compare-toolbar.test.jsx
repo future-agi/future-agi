@@ -355,7 +355,12 @@ describe("DevelopDetailView comparison toolbar", () => {
     await waitFor(() => expect(button).toBeDisabled());
     expect(button).toHaveAttribute("aria-busy", "true");
     expect(within(button).getByRole("progressbar")).toBeInTheDocument();
-    await user.click(button);
+    expect(
+      mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL),
+    ).toHaveLength(1);
+    // The real MUI button rejects pointer interaction while disabled; do not
+    // bypass that user-facing guard by dispatching its handler/event directly.
+    await expect(user.click(button)).rejects.toThrow(/pointer-events: none/);
     expect(
       mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL),
     ).toHaveLength(1);
@@ -463,8 +468,11 @@ describe("DevelopDetailView comparison toolbar", () => {
     async (state) => {
       const user = userEvent.setup();
       renderView(state);
-      expect(downloadButton()).toBeDisabled();
-      await user.click(downloadButton());
+      const button = downloadButton();
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("aria-busy", "false");
+      expect(mocks.post).not.toHaveBeenCalled();
+      await expect(user.click(button)).rejects.toThrow(/pointer-events: none/);
       expect(mocks.post).not.toHaveBeenCalled();
     },
   );

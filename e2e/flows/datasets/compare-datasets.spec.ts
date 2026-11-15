@@ -978,13 +978,40 @@ test(
       expect(adoptedBlock.result.metadata.compare_id).toBe(newId);
       expect(adoptedBlock.result.table).toHaveLength(2);
       const orphanRowIds = loser.body.result.table.map((row) => row.row_id);
+      const revisitGeometry: unknown[] = [];
       for (const [offset, row] of adoptedBlock.result.table.entries()) {
         expect(orphanRowIds).not.toContain(row.row_id);
-        await scrollComparison(page, 30 + offset);
         const rendered = grid.locator(
           `.ag-center-cols-container .ag-row[row-index="${30 + offset}"]`,
         );
-        await expect(rendered).toHaveAttribute("row-id", row.row_id as string);
+        // R3's one-shot 3600px scroll clamped to 1513px: unloaded SSRM stubs
+        // were 36px, while loaded rows become 120px. As pages 1/2 loaded, row
+        // 30 moved out of the viewport/buffer before a browser page-3 load.
+        // Keep navigating natively as that geometry changes, not retrying a
+        // datasource or supplying rows. An exact ID list still rejects clones.
+        await expect
+          .poll(
+            async () => {
+              await scrollComparison(page, 30 + offset);
+              const geometry = await grid
+                .locator(".ag-body-viewport")
+                .evaluate((element) => ({
+                  top: element.scrollTop,
+                  height: element.scrollHeight,
+                  viewport: element.clientHeight,
+                }));
+              const rowIds = await rendered.evaluateAll((elements) =>
+                elements.map((element) => element.getAttribute("row-id")),
+              );
+              revisitGeometry.push({ index: 30 + offset, ...geometry, rowIds });
+              return rowIds;
+            },
+            { timeout: UI_READY },
+          )
+          .toEqual([row.row_id]);
+        await expect(rendered).toHaveAttribute("row-id", row.row_id as string, {
+          timeout: UI_READY,
+        });
         const input = cellValue(row, left.columns[0].id);
         const plantedLeft = left.rows.find((source) => source.input === input)!;
         const plantedRight = state.right.rows.find(
@@ -1004,6 +1031,24 @@ test(
           rendered.locator(`[col-id="${state.right.columns[1].id}"]`),
         ).toHaveText(plantedRight.output);
       }
+      // The API replay alone is not evidence that AG Grid loaded page three.
+      const browserBlockResponse = responses.find((response) => {
+        const sent = response.request().postDataJSON();
+        return sent.compare_id === newId && sent.current_page_index === 3;
+      });
+      expect(browserBlockResponse).toBeDefined();
+      expect(browserBlockResponse!.status()).toBe(200);
+      const browserBlock: ComparePage = await browserBlockResponse!.json();
+      expect(browserBlock).toEqual(adoptedBlock);
+      await info.attach("adopted-page-three-viewport", {
+        contentType: "application/json",
+        body: JSON.stringify({
+          revisitGeometry,
+          request: browserBlockResponse!.request().postDataJSON(),
+          browserBlock,
+          orphanRowIds,
+        }),
+      });
       // This is the LOSING block's row, not the winner's row twenty or only row
       // zero. Its click must resolve under the adopted ID after the late reply.
       const adoptedRow = adoptedBlock.result.table[0];
@@ -1285,28 +1330,153 @@ for (const initiallyEmpty of [false, true]) {
         // metadata synchronously, exercising a real nonempty -> empty rebuild.
         await actor.api.delete(deletePath(first.result.metadata.compare_id));
         requestsBeforeRollover = requests.length;
-        const emptyResponse = page.waitForResponse(
-          (response) =>
-            new URL(response.url()).pathname === comparePath(left.id) &&
-            response.request().postDataJSON().current_page_index >= 2,
-        );
-        await scrollComparison(page, 30);
-        const response = await emptyResponse;
-        expect(response.status()).toBe(200);
-        const empty: ComparePage = await response.json();
-        expect(empty.result.metadata).toEqual({
-          compare_id: expect.any(String),
-          total_rows: 0,
-          total_pages: 0,
-        });
-        expect(empty.result.metadata.compare_id).not.toBe(
-          first.result.metadata.compare_id,
-        );
-        terminalId = empty.result.metadata.compare_id;
-        await info.attach("real-zero-rollover", {
-          contentType: "application/json",
-          body: JSON.stringify(empty),
-        });
+        const rollover = await observeCompareGrid(page);
+        const retirements: Response[] = [];
+        const recordRetirement = (response: Response) => {
+          if (
+            response.request().method() === "DELETE" &&
+            new URL(response.url()).pathname.startsWith(
+              "/model-hub/datasets/delete-compare/",
+            )
+          )
+            retirements.push(response);
+        };
+        page.on("response", recordRetirement);
+        try {
+          expect(
+            (await rollover.evaluate((value) => value.snapshot())).compareId,
+          ).toBe(terminalId);
+          await scrollComparison(page, 30);
+          // AG Grid can load page one AND page two concurrently. R3 adopted
+          // page one's empty ID before page two replied; waiting only for >=2
+          // mistook that stale reply for the winner. Read the actual ref, then
+          // account for EVERY HTTP response and real datasource completion.
+          await expect
+            .poll(
+              async () => {
+                const snapshot = await rollover.evaluate((value) =>
+                  value.snapshot(),
+                );
+                const sent = requests.slice(requestsBeforeRollover);
+                const received = state.responses.filter((response) =>
+                  sent.includes(response.request()),
+                );
+                return (
+                  snapshot.compareId !== terminalId &&
+                  snapshot.displayedRows === 0 &&
+                  snapshot.successes.length === 1 &&
+                  sent.length > 0 &&
+                  received.length === sent.length &&
+                  snapshot.failures === sent.length
+                );
+              },
+              { timeout: UI_READY },
+            )
+            .toBe(true);
+          const settled = await rollover.evaluate((value) => value.snapshot());
+          expect(settled.compareId).toEqual(expect.any(String));
+          expect(settled.compareId).not.toBe(terminalId);
+          const oldId = terminalId;
+          terminalId = settled.compareId!;
+          const sent = requests.slice(requestsBeforeRollover);
+          expect(sent.length).toBeGreaterThan(0);
+          expect(sent.length).toBeLessThanOrEqual(2); // SSRM's two load slots.
+          const generations = [];
+          for (const request of sent) {
+            const body = request.postDataJSON();
+            expect(body).toEqual({
+              dataset_ids: [right.id],
+              base_column_name: "input",
+              page_size: PAGE_SIZE,
+              current_page_index: expect.any(Number),
+              compare_id: oldId,
+            });
+            expect([1, 2, 3]).toContain(body.current_page_index);
+            const response = state.responses.find(
+              (item) => item.request() === request,
+            )!;
+            expect(response.status()).toBe(200);
+            const empty: ComparePage = await response.json();
+            expect(empty.status).toBe(true);
+            expect(empty.result.table).toEqual([]);
+            expect(empty.result.metadata).toEqual({
+              compare_id: expect.any(String),
+              total_rows: 0,
+              total_pages: 0,
+            });
+            expect(empty.result.metadata.compare_id).not.toBe(oldId);
+            generations.push({ request: body, body: empty });
+          }
+          const ids = generations.map(
+            ({ body }) => body.result.metadata.compare_id,
+          );
+          expect(new Set(ids).size).toBe(sent.length);
+          const adopted = generations.filter(
+            ({ body }) => body.result.metadata.compare_id === terminalId,
+          );
+          expect(adopted).toHaveLength(1);
+          // One adoption/purge, one local zero success, and one fail for each
+          // retired old-store callback (winner included). No second adoption.
+          expect(settled).toEqual({
+            compareId: terminalId,
+            displayedRows: 0,
+            stores: [{ route: [], rowCount: 0, lastRowIndexKnown: true }],
+            datasourceUnchanged: true,
+            requests: [
+              ...sent.map((request) => ({
+                startRow: request.postDataJSON().current_page_index * PAGE_SIZE,
+                endRow:
+                  (request.postDataJSON().current_page_index + 1) * PAGE_SIZE,
+                compareId: oldId,
+              })),
+              { startRow: 0, endRow: PAGE_SIZE, compareId: terminalId },
+            ],
+            successes: [{ rows: 0, rowCount: 0, compareId: terminalId }],
+            refreshes: [{ purge: true, compareId: terminalId }],
+            failures: sent.length,
+          });
+          for (const id of ids.filter((id) => id !== terminalId)) {
+            await expect
+              .poll(
+                () =>
+                  retirements
+                    .filter(
+                      (response) =>
+                        new URL(response.url()).pathname === deletePath(id),
+                    )
+                    .map((response) => response.status()),
+                { timeout: UI_READY },
+              )
+              .toEqual([404]); // Empty IDs have no stored metadata to delete.
+          }
+          await info.attach("real-zero-rollover", {
+            contentType: "application/json",
+            body: JSON.stringify(adopted[0].body),
+          });
+          await info.attach("zero-rollover-generations", {
+            contentType: "application/json",
+            body: JSON.stringify({
+              oldId,
+              terminalId,
+              generations,
+              responseOrder: state.responses
+                .filter((response) => sent.includes(response.request()))
+                .map(
+                  (response) =>
+                    response.request().postDataJSON().current_page_index,
+                ),
+              settled,
+              retirements: retirements.map((response) => ({
+                path: new URL(response.url()).pathname,
+                status: response.status(),
+              })),
+            }),
+          });
+        } finally {
+          page.off("response", recordRetirement);
+          await rollover.evaluate((value) => value.restore());
+          await rollover.dispose();
+        }
       }
       await expect(drawer).toHaveCount(0);
       await expect(
@@ -1477,9 +1647,61 @@ test(
     const newId = rebuilt.result.metadata.compare_id;
     expect(newId).not.toBe(oldId);
     expect(rebuilt.result.metadata.total_rows).toBe(32);
-    await expect(
-      grid.locator(`.ag-center-cols-container .ag-row[row-index="0"]`),
-    ).toHaveAttribute("row-id", rebuilt.result.table[0].row_id as string);
+    const rowZero = grid.locator(
+      '.ag-center-cols-container .ag-row[row-index="0"]',
+    );
+    const transitionalRowZero = await rowZero.evaluateAll((elements) =>
+      elements.map((element) => ({
+        id: element.getAttribute("row-id"),
+        classes: element.className,
+      })),
+    );
+    const newRowId = rebuilt.result.table[0].row_id as string;
+    const oldRowIds = first.result.table.map((row) => row.row_id as string);
+    expect(oldRowIds).not.toContain(newRowId);
+    for (const row of transitionalRowZero) {
+      if (row.id && row.id !== newRowId) {
+        expect(oldRowIds).toContain(row.id);
+        expect(row.classes.split(" ")).toContain("ag-opacity-zero");
+      }
+    }
+    // AG Grid 35 keeps destroyed row controllers as fading "zombies" for
+    // ROW_ANIMATION_TIMEOUT (400ms). R3 failed strict lookup during that fade.
+    // Poll the UNFILTERED identity set: do not hide clones with first()/nth(),
+    // :not(.ag-opacity-zero), or a new-ID-only locator. Old rows must disappear.
+    await expect
+      .poll(
+        () =>
+          rowZero.evaluateAll((elements) =>
+            elements.map((element) => element.getAttribute("row-id")),
+          ),
+        { timeout: UI_READY },
+      )
+      .toEqual([newRowId]);
+    for (const id of oldRowIds) {
+      await expect(
+        grid.locator(`.ag-center-cols-container .ag-row[row-id="${id}"]`),
+      ).toHaveCount(0, { timeout: UI_READY });
+    }
+    await page.waitForTimeout(500); // Observe beyond AG Grid's 400ms fade removal.
+    const stableRowZero = await rowZero.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("row-id")),
+    );
+    expect(stableRowZero).toEqual([newRowId]);
+    await expect(rowZero).toHaveAttribute("row-id", newRowId, {
+      timeout: UI_READY,
+    });
+    for (const dataset of [left, right]) {
+      const row = rebuilt.result.table[0];
+      const source = dataset.rows.find(
+        (item) => item.input === cellValue(row, left.columns[0].id),
+      )!;
+      expect(cellValue(row, dataset.columns[1].id)).toBe(source.output);
+      await expect(
+        rowZero.locator(`[col-id="${dataset.columns[1].id}"]`),
+      ).toHaveText(source.output, { timeout: UI_READY });
+    }
+    expect(requests).toHaveLength(beforeDenied + 1); // Exactly one fresh build.
     expect(downloads).toHaveLength(2); // Generic failure + typed miss; never an automatic CSV retry.
     const csvResponse = page.waitForResponse(
       (response) => new URL(response.url()).pathname === downloadPath(left.id),
@@ -1496,12 +1718,17 @@ test(
     for (const row of left.rows) expect(text).toContain(row.output);
     for (const row of right.rows) expect(text).toContain(row.output);
     expect(downloads).toHaveLength(3);
+    expect(requests).toHaveLength(beforeDenied + 1);
     await info.attach("download-rebuilt-comparison", {
       contentType: "application/json",
       body: JSON.stringify({
         oldId,
         newId,
         rebuilt,
+        transitionalRowZero,
+        stableRowZero,
+        oldRowIds,
+        comparisonPostCount: requests.length,
         downloadCount: downloads.length,
       }),
     });
