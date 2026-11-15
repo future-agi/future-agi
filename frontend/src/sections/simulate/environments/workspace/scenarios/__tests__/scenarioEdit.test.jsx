@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { configure } from "@testing-library/react";
+import { configure, within } from "@testing-library/react";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 // Heavy ScenariosStep render — give async utils headroom so these assertions
@@ -191,9 +191,10 @@ describe("ScenarioEditor negative controls and must pass", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Add a negative control" }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "refunds_twice" } });
-    fireEvent.change(screen.getByLabelText("Why it is wrong"), { target: { value: "refunds the order twice" } });
-    fireEvent.change(screen.getByLabelText("Steps (JSON)"), {
+    const controls = within(screen.getByTestId("controls-editor"));
+    fireEvent.change(controls.getByLabelText("Name"), { target: { value: "refunds_twice" } });
+    fireEvent.change(controls.getByLabelText("Why it is wrong"), { target: { value: "refunds the order twice" } });
+    fireEvent.change(controls.getByLabelText("Steps (JSON)"), {
       target: { value: '[{"tool": "refund", "arguments": {"order_id": "O-10"}}]' },
     });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
