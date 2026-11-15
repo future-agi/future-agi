@@ -2797,7 +2797,7 @@
 
 **Goal:** A developer adds labels to heavily tagged traces individually and in bulk without losing existing manual or SDK labels or changing other entities
 
-**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:280`
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:283`
 
 **Tags:** —
 
@@ -2816,13 +2816,13 @@
 - B: each browser save sends the intended physical target, current revision and complete manual replacement, including each bulk target’s distinct labels
 - C: fresh trace/span lists, replayed browser queries and detail reads return exact source/manual/effective tags, rich colors and revisions
 - D: only intended PostgreSQL assignments change and each bulk target preserves its own manual tags
-- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged
+- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged through grid, drawer and bulk additions
 
 ### OBS-E2E-067 — oversized span tags survive grid, drawer and bulk additions
 
 **Goal:** A developer adds labels to heavily tagged child spans individually and in bulk without losing existing manual or SDK labels or changing other entities
 
-**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:280`
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:283`
 
 **Tags:** —
 
@@ -2834,6 +2834,7 @@
 4. open alpha’s child in the drawer and add another label
 5. reload to traverse row bounding again, select exactly alpha and beta, and use Actions > Add tags
 6. reload and reopen both targets to verify each retained its own original labels plus the intended additions
+7. hold a real child save acknowledgment, ingest a newer version of the same source, reload the grid, then release the old acknowledgment and save again without losing the newer SDK tag or target
 
 **Backend state verified:**
 
@@ -2841,13 +2842,14 @@
 - B: each browser save sends the intended physical target, current revision and complete manual replacement, including each bulk target’s distinct labels
 - C: fresh trace/span lists, replayed browser queries and detail reads return exact source/manual/effective tags, rich colors and revisions
 - D: only intended PostgreSQL assignments change and each bulk target preserves its own manual tags
-- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged
+- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged through grid, drawer and bulk additions
+- F: after deliberate source replay, a delayed older-source acknowledgment preserves the loaded SDK tag and subsequent write target; unrelated rows and the refreshed sources remain unchanged
 
 ### OBS-E2E-068 — rapid sibling-root edits share manual labels without sharing SDK tags
 
 **Goal:** A developer switches rapidly between roots of one trace while labeling them and always sees each root’s own SDK tags with shared manual labels
 
-**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:434`
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:540`
 
 **Tags:** —
 
