@@ -18,7 +18,9 @@ from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_definition import (
+    resolve_provider_configuration_for_version,
+)
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
@@ -342,6 +344,9 @@ async def create_call_execution_records(
         agent_version = test_execution.agent_version
         snapshot = agent_version.configuration_snapshot if agent_version else {}
 
+        configuration = await sync_to_async(resolve_provider_configuration_for_version)(
+            agent_version
+        )
         call_ids = []
         total_to_create = sum(len(s.get("row_ids", [])) or 1 for s in input.scenarios)
 
@@ -437,13 +442,9 @@ async def create_call_execution_records(
                                 else None
                             ),
                             "call_direction": call_direction,
-                            "user_assistant_id": snapshot.get("assistant_id"),
+                            "user_assistant_id": configuration.assistant_id,
                             "user_phone_number": call_execution_phone_number,
-                            "user_api_key": await sync_to_async(
-                                resolve_api_key_for_version
-                            )(agent_version)
-                            if agent_version
-                            else None,
+                            "user_api_key": configuration.api_key,
                         }
 
                         # Build call_metadata for CallExecution

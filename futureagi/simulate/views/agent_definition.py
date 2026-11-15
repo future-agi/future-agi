@@ -9,7 +9,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -41,9 +41,11 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_definition import (
     is_masked,
-    resolve_api_key_for_version,
+    provider_for_version,
+    resolve_provider_configuration_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
+    validate_provider_change,
 )
 from simulate.services.agent_overview import (
     annotate_agent_rows,
@@ -563,6 +565,25 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)
 
+    @transaction.atomic
+    def perform_update(self, serializer):
+        # Validate against the selected version before the serializer writes the
+        # mutable definition. sync_provider_credentials also guards its boundary.
+        agent = AgentDefinition.objects.select_for_update(of=("self",)).get(
+            pk=serializer.instance.pk
+        )
+        if "provider" in serializer.validated_data:
+            version = agent.active_version or agent.latest_version
+            validate_provider_change(
+                source_provider=(
+                    provider_for_version(version) if version else agent.provider
+                ),
+                provider=serializer.validated_data["provider"],
+                api_key=serializer.validated_data.get("api_key"),
+            )
+        serializer.instance = agent
+        serializer.save()
+
     def perform_destroy(self, instance):
         soft_delete_agent_definition_and_versions(instance)
 
@@ -738,6 +759,7 @@ class EditAgentDefinitionView(APIView):
             # they live on the related ProviderCredentials row and are
             # routed below via ``_sync_provider_credentials``.
             validated = request.validated_data
+            previous_provider = agent.provider
             incoming_api_key = validated.get("api_key")
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
@@ -770,11 +792,17 @@ class EditAgentDefinitionView(APIView):
             if "knowledge_base" in validated:
                 agent.knowledge_base_id = validated["knowledge_base"]
                 changed_fields.append("knowledge_base")
+            if (
+                "provider" in validated
+                and agent.provider != previous_provider
+                and (not incoming_api_key or preserve_existing_api_key)
+            ):
+                agent.api_key = ""
+                if "api_key" not in changed_fields:
+                    changed_fields.append("api_key")
             # Only what this request set: a full save of this copy could undo an
             # observability link another request wrote meanwhile.
             with transaction.atomic():
-                agent.save(update_fields=[*changed_fields, "updated_at"])
-
                 # Route livekit_* fields to ProviderCredentials so they
                 # actually persist (setattr on the model is a no-op for these
                 # since they aren't real columns).
@@ -786,24 +814,55 @@ class EditAgentDefinitionView(APIView):
                 ).first()
                 if version is None:
                     version = versions.first()
-                existing_api_key = (
-                    resolve_api_key_for_version(version, for_save=True)
-                    if preserve_existing_api_key and version is not None
+                source_provider = previous_provider
+                if version:
+                    source_provider = (version.configuration_snapshot or {}).get(
+                        "provider"
+                    ) or previous_provider
+                provider_changed = (
+                    "provider" in validated and agent.provider != source_provider
+                )
+                if "provider" in validated:
+                    validate_provider_change(
+                        source_provider=source_provider,
+                        provider=agent.provider,
+                        api_key=incoming_api_key,
+                    )
+                agent.save(update_fields=[*changed_fields, "updated_at"])
+                existing_configuration = (
+                    resolve_provider_configuration_for_version(version, for_save=True)
+                    if preserve_existing_api_key
+                    and version is not None
+                    and not provider_changed
                     else None
                 )
+                existing_api_key = (
+                    existing_configuration.api_key if existing_configuration else None
+                )
+                assistant_input = (
+                    {"assistant_id": validated["assistant_id"]}
+                    if "assistant_id" in validated
+                    else {}
+                )
+                if (
+                    not assistant_input
+                    and existing_api_key
+                    and agent.provider == "vapi"
+                    and provider_for_version(version) == "vapi"
+                ):
+                    assistant_input["assistant_id"] = (
+                        existing_configuration.assistant_id
+                    )
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
+                    previous_provider=previous_provider,
                     api_key=(
                         existing_api_key
                         if preserve_existing_api_key
                         else validated.get("api_key")
                     ),
-                    **(
-                        {"assistant_id": validated["assistant_id"]}
-                        if "assistant_id" in validated
-                        else {}
-                    ),
+                    **assistant_input,
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=validated.get("livekit_api_key"),
                     livekit_api_secret=validated.get("livekit_api_secret"),
@@ -852,6 +911,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError:
+            raise
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"

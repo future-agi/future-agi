@@ -239,57 +239,16 @@ class VapiRecordingService:
     def configuration_from_agent_definition(
         cls, agent_def: AgentDefinition
     ) -> VapiConfiguration:
-        """Select one source for the key and the assistant, never one of each.
-
-        A keyed version row supplies the pair; its own snapshot only fills in
-        a missing assistant. A missing row permits the legacy credential source.
-        Migration 0076 can link that legacy row to a different version, whose
-        snapshot must then be used rather than the selected version's snapshot.
-
-        Saving a masked or omitted key can create an empty credential row while
-        leaving the definition's key intact. Only an absent row or empty stored
-        key permits the definition's key AND assistant as a pair, never its key
-        with a credential/snapshot assistant. A wrong-provider row or a nonempty
-        key that cannot be decrypted must not fall back to another source.
-        """
-        from simulate.models.agent_definition import ProviderCredentials
-
-        version = agent_def.active_version or agent_def.latest_version
-        credentials = None
-        credential_version = version
-        if version is not None:
-            try:
-                credentials = version.credentials
-            except ProviderCredentials.DoesNotExist:
-                pass
-        if credentials is None:
-            try:
-                credentials = agent_def.credentials_legacy
-            except ProviderCredentials.DoesNotExist:
-                pass
-            else:
-                credential_version = credentials.agent_version
-        if (
-            credentials is not None
-            and credentials.provider_type != ProviderCredentials.ProviderType.VAPI
-        ):
-            return VapiConfiguration(None, None)
-        # Check storage, not the decrypted result: ciphertext is authoritative
-        # even if decrypting it fails or yields no usable key. An empty selected
-        # row must not resurrect a stale legacy row either.
-        if credentials is None or not credentials.api_key:
-            return VapiConfiguration(
-                agent_def.api_key or None, agent_def.assistant_id or None
-            )
-        fallback_assistant = (
-            (credential_version.configuration_snapshot or {}).get("assistant_id")
-            if credential_version is not None
-            else agent_def.assistant_id
+        """Use the same selected pair as simulation, detail and preflight reads."""
+        from simulate.services.agent_definition import (
+            resolve_vapi_configuration_for_version,
         )
-        return VapiConfiguration(
-            credentials.get_api_key() or None,
-            credentials.assistant_id or fallback_assistant or None,
+
+        configuration = resolve_vapi_configuration_for_version(
+            agent_def.active_version or agent_def.latest_version,
+            agent_definition=agent_def,
         )
+        return VapiConfiguration(configuration.api_key, configuration.assistant_id)
 
     @classmethod
     async def download_artifact_async(

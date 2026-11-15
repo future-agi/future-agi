@@ -95,6 +95,8 @@ export const createAgentDefinitionSchema = (options) => {
   const isSourceAgent = options?.agentKind === "source";
   return z
     .object({
+      // Form-only credential provenance; authorized again by the server.
+      sourceVersionId: z.string().optional(),
       // Basic Information
       agentType: z.string().min(1, "Agent type is required"),
       agentName: z.string().min(1, "Agent name is required"),
@@ -323,6 +325,9 @@ export const createAgentDefinitionSchema = (options) => {
                 provider: data.provider,
                 api_key: data.apiKey,
                 ...(agentDefinitionId && { agent_id: agentDefinitionId }),
+                ...(data.sourceVersionId && {
+                  source_version_id: data.sourceVersionId,
+                }),
               });
             } catch (error) {
               ctx.addIssue({
@@ -358,6 +363,9 @@ export const createAgentDefinitionSchema = (options) => {
                   api_key: data.apiKey,
                   assistant_id: data.assistantId,
                   ...(agentDefinitionId && { agent_id: agentDefinitionId }),
+                  ...(data.sourceVersionId && {
+                    source_version_id: data.sourceVersionId,
+                  }),
                 });
               } catch (error) {
                 ctx.addIssue({

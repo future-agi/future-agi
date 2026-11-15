@@ -34003,6 +34003,13 @@ export const SimulateAgentDefinitionsVersionsCreateCreateBody = zod.object({
       simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax,
     )
     .optional(),
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within this agent; omitted selects active/latest.",
+    ),
   commit_message: zod
     .string()
     .default(
@@ -70465,6 +70472,13 @@ export const TracerObservabilityProviderCreateBody = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within agent_id; omitted selects active/latest.",
+    ),
   provider: zod.enum(["vapi", "retell", "bland"]),
   api_key: zod.string().optional(),
   agent_id: zod.string().optional(),
@@ -70484,6 +70498,13 @@ export const TracerObservabilityProviderVerifyApiKeyResponse = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyAssistantIdBody = zod.object({
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within agent_id; omitted selects active/latest.",
+    ),
   provider: zod.enum(["vapi", "retell", "bland"]),
   assistant_id: zod.string().optional(),
   api_key: zod.string().optional(),

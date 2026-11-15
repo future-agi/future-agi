@@ -886,3 +886,121 @@ def test_a_code_agent_saved_with_a_room_config_keeps_it(
     newest = _newest_version(agent)
     assert newest.configuration_snapshot["livekit_config_json"] == {"room": "support"}
     assert _credentials_of(newest).get().config_json == {"room": "support"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("source_provider", "credential_owner", "incoming_key"),
+    [
+        ("vapi", "legacy", None),
+        ("vapi", "legacy", ""),
+        ("vapi", "legacy", "********"),
+        ("", "legacy", None),
+        ("", "version", None),
+        ("", "definition", None),
+        ("", None, "********"),
+    ],
+)
+def test_source_agent_provider_selection_does_not_reuse_stored_or_masked_keys(
+    organization,
+    workspace,
+    auth_client,
+    source_provider,
+    credential_owner,
+    incoming_key,
+):
+    from simulate.models.agent_definition import ProviderCredentials
+
+    agent = _stored_agent_without_a_prompt(
+        organization, workspace, "source-provider-transition"
+    )
+    agent.provider = source_provider
+    agent.api_key = "synthetic-stored-key" if credential_owner == "definition" else ""
+    agent.save(update_fields=["provider", "api_key"])
+    original = _newest_version(agent)
+    original.configuration_snapshot["provider"] = source_provider
+    original.save(update_fields=["configuration_snapshot"])
+    credentials = None
+    if credential_owner in ("version", "legacy"):
+        credentials = ProviderCredentials.objects.create(
+            agent_version=original if credential_owner == "version" else None,
+            agent_definition=agent if credential_owner == "legacy" else None,
+            provider_type="vapi",
+            api_key="synthetic-stored-key",
+        )
+        credential_state = (
+            credentials.api_key,
+            credentials.agent_version_id,
+            credentials.agent_definition_id,
+        )
+    assert observability_switch.agent_is_source(agent)
+    original_snapshot = original.configuration_snapshot.copy()
+    original_status = original.status
+    definition_key = agent.api_key
+    body = _livekit_page_body(
+        provider="bland" if source_provider else "vapi", livekit_max_concurrency=10
+    )
+    if incoming_key is not None:
+        body["api_key"] = incoming_key
+
+    saved = auth_client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/", body, format="json"
+    )
+
+    assert saved.status_code == 400, saved.content
+    assert "A new API key is required" in str(saved.data)
+    assert "synthetic-stored-key" not in str(saved.data)
+    agent.refresh_from_db()
+    original.refresh_from_db()
+    assert agent.provider == source_provider
+    assert agent.api_key == definition_key
+    assert agent.versions.count() == 1
+    assert original.configuration_snapshot == original_snapshot
+    assert original.status == original_status
+    if credentials is not None:
+        credentials.refresh_from_db()
+        assert (
+            credentials.api_key,
+            credentials.agent_version_id,
+            credentials.agent_definition_id,
+        ) == credential_state
+    else:
+        assert not _credentials_of(original).exists()
+
+
+@pytest.mark.django_db
+def test_a_blank_source_save_keeps_the_empty_vapi_marker_over_legacy_credentials(
+    organization, workspace, auth_client
+):
+    from simulate.models.agent_definition import ProviderCredentials
+    from simulate.services.agent_definition import resolve_api_key_for_version
+
+    agent = _stored_agent_without_a_prompt(
+        organization, workspace, "source-empty-vapi-marker"
+    )
+    agent.provider = "vapi"
+    agent.api_key = ""
+    agent.save(update_fields=["provider", "api_key"])
+    original = _newest_version(agent)
+    original.configuration_snapshot["provider"] = "vapi"
+    original.save(update_fields=["configuration_snapshot"])
+    ProviderCredentials.objects.create(agent_version=original, provider_type="vapi")
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent, provider_type="vapi", api_key="synthetic-legacy-key"
+    )
+
+    saved = auth_client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/",
+        _livekit_page_body(provider="vapi", api_key=""),
+        format="json",
+    )
+
+    assert saved.status_code == 201, saved.content
+    newest = _newest_version(agent)
+    assert newest.version_number == 2
+    assert _credentials_of(newest).get().api_key == ""
+    assert resolve_api_key_for_version(newest) is None
+    legacy.refresh_from_db()
+    assert legacy.agent_definition_id == agent.id
+    assert legacy.agent_version_id is None
+    assert legacy.get_api_key() == "synthetic-legacy-key"

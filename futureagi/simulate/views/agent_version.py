@@ -1,8 +1,9 @@
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,9 +32,13 @@ from simulate.serializers.response.run_test_evals import (
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
     is_masked,
+    provider_for_version,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
+    resolve_provider_configuration_for_version,
+    source_version_for_agent,
     sync_provider_credentials,
+    validate_provider_change,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
@@ -136,11 +141,15 @@ class CreateAgentVersionView(APIView):
         Create a new version of an agent definition.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
+            agents = AgentDefinition.objects.filter(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
+                deleted=False,
             )
+            workspace = getattr(request, "workspace", None)
+            if workspace is not None:
+                agents = agents.filter(workspace=workspace)
+            agent = agents.get(id=agent_id)
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
@@ -159,6 +168,110 @@ class CreateAgentVersionView(APIView):
             preserve_livekit_api_secret = (
                 incoming_livekit_api_secret is not None
                 and is_masked(incoming_livekit_api_secret)
+            )
+
+            # Select and authorize the source before mutating the definition.
+            # In particular, a legacy snapshot without provider must still see
+            # the pre-write definition, and Bland's VAPI row encoding is not Vapi.
+            source_version_id = validated.get("source_version_id")
+            source_version = source_version_for_agent(agent, source_version_id)
+            source_provider = (
+                provider_for_version(source_version)
+                if source_version
+                else agent.provider
+            )
+            requested_provider = validated.get("provider") or agent.provider or ""
+            provider_changed = requested_provider != source_provider
+            definition_provider_changed = requested_provider != agent.provider
+            # A source agent's first settings save selects a provider without
+            # crossing an existing credential authority. A blank provider alone
+            # is not enough: definition, version and legacy credentials close
+            # this exception, including rows whose secrets cannot be decrypted.
+            initial_source_configuration = (
+                provider_changed
+                and not source_provider
+                and not agent.provider
+                and not agent.api_key
+                and agent_is_source(agent)
+                and not ProviderCredentials.objects.filter(
+                    Q(agent_definition=agent) | Q(agent_version__agent_definition=agent)
+                ).exists()
+            )
+            if not (
+                initial_source_configuration and not (incoming_api_key or "").strip()
+            ):
+                validate_provider_change(
+                    source_provider=source_provider,
+                    provider=requested_provider,
+                    api_key=incoming_api_key,
+                )
+            carry_api_key = not provider_changed and (
+                preserve_existing_api_key
+                or (source_version_id is not None and not incoming_api_key)
+            )
+            existing_configuration = None
+            existing_api_key = None
+            existing_livekit_api_key = None
+            existing_livekit_api_secret = None
+            if source_version is not None and not provider_changed:
+                if carry_api_key:
+                    # A displayed mask is not authority: compare it with the
+                    # resolved, authorized source, even when preflight is bypassed.
+                    if preserve_existing_api_key:
+                        from agentcc.services.credential_manager import mask_key
+
+                        resolved_key = resolve_api_key_for_version(source_version)
+                        legacy_keep_marker = (
+                            source_version_id is None
+                            and incoming_api_key in ("********", "****")
+                        )
+                        if not resolved_key or (
+                            not legacy_keep_marker
+                            and mask_key(resolved_key) != incoming_api_key
+                        ):
+                            return _error_response(
+                                "API key does not match the selected source version",
+                                status.HTTP_400_BAD_REQUEST,
+                            )
+                    existing_configuration = resolve_provider_configuration_for_version(
+                        source_version, for_save=True
+                    )
+                    existing_api_key = existing_configuration.api_key
+                    if (
+                        requested_provider == "vapi"
+                        and not existing_api_key
+                        and not existing_configuration.uses_definition_fallback
+                    ):
+                        # None is also the for-save value of a valid raw-empty
+                        # fallback. Only that source may create another empty
+                        # marker: an unusable authoritative source must not be
+                        # reopened against the active definition's different key.
+                        raise ValidationError(
+                            {
+                                "api_key": (
+                                    "The selected source version has no usable API key. "
+                                    "Please provide a new API key."
+                                )
+                            }
+                        )
+                if preserve_livekit_api_key:
+                    existing_livekit_api_key = resolve_api_key_for_version(
+                        source_version
+                    )
+                if preserve_livekit_api_secret:
+                    existing_livekit_api_secret = resolve_api_secret_for_version(
+                        source_version
+                    )
+
+            # Keep the raw-empty Vapi source marker instead of adopting a legacy
+            # row. Also prevent adoption of the old provider's row on a switch.
+            preserve_empty_vapi_row = (
+                requested_provider == "vapi"
+                and not provider_changed
+                and source_version is not None
+                and ProviderCredentials.objects.filter(
+                    agent_version=source_version, provider_type="vapi", api_key=""
+                ).exists()
             )
 
             # Update agent definition fields directly from validated data
@@ -180,11 +293,28 @@ class CreateAgentVersionView(APIView):
             ]
             changed_fields = []
             for field in update_fields:
-                if field == "api_key" and preserve_existing_api_key:
+                if field == "api_key" and (preserve_existing_api_key or carry_api_key):
                     continue
                 if field in validated:
                     setattr(agent, field, validated[field])
                     changed_fields.append(field)
+            if (provider_changed or definition_provider_changed) and (
+                not incoming_api_key or preserve_existing_api_key
+            ):
+                agent.api_key = ""
+                if "api_key" not in changed_fields:
+                    changed_fields.append("api_key")
+            if provider_changed:
+                if "assistant_id" not in validated:
+                    agent.assistant_id = ""
+                    changed_fields.append("assistant_id")
+            elif (
+                source_version_id is not None
+                and existing_configuration is not None
+                and "assistant_id" not in validated
+            ):
+                agent.assistant_id = existing_configuration.assistant_id or ""
+                changed_fields.append("assistant_id")
 
             if "knowledge_base" in validated:
                 kb_id = validated["knowledge_base"]
@@ -217,68 +347,34 @@ class CreateAgentVersionView(APIView):
                     # request's stale copy of the observability link.
                     agent.save(update_fields=[*changed_fields, "updated_at"])
 
-                # Resolve masked secrets *before* creating the new version so we read
-                # them from the active version rather than the brand-new one. The UI
-                # resends the LiveKit key/secret masked (it never holds the real
-                # value), so without this a new version blanks them → the hosted
-                # runner authenticates with empty creds and room create returns 401.
-                existing_api_key = None
-                existing_livekit_api_key = None
-                existing_livekit_api_secret = None
-                active_version = agent.active_version or agent.latest_version
-                # An empty Vapi row deliberately selects the definition's pair,
-                # not the old credentials_legacy row. Carry that source marker
-                # into the new version before sync can adopt legacy credentials.
-                preserve_empty_vapi_row = (
-                    agent.provider == ProviderCredentials.ProviderType.VAPI
-                    and active_version is not None
-                    and ProviderCredentials.objects.filter(
-                        agent_version=active_version,
-                        provider_type=ProviderCredentials.ProviderType.VAPI,
-                        api_key="",
-                    ).exists()
-                )
-                if (
-                    preserve_existing_api_key
-                    or preserve_livekit_api_key
-                    or preserve_livekit_api_secret
-                ):
-                    if active_version:
-                        if preserve_existing_api_key:
-                            existing_api_key = resolve_api_key_for_version(
-                                active_version, for_save=True
-                            )
-                        if preserve_livekit_api_key:
-                            existing_livekit_api_key = resolve_api_key_for_version(
-                                active_version
-                            )
-                        if preserve_livekit_api_secret:
-                            existing_livekit_api_secret = (
-                                resolve_api_secret_for_version(active_version)
-                            )
-
                 version = agent.create_version(
                     description=agent.description,
                     commit_message=commit_message,
                     status=AgentVersion.StatusChoices.ACTIVE,
                 )
                 version.activate()
-                if preserve_empty_vapi_row:
-                    ProviderCredentials.objects.create(
-                        agent_version=version,
-                        provider_type=ProviderCredentials.ProviderType.VAPI,
-                    )
 
+                assistant_input = (
+                    {"assistant_id": validated["assistant_id"]}
+                    if "assistant_id" in validated
+                    else {}
+                )
+                if (
+                    not assistant_input
+                    and existing_api_key
+                    and (requested_provider == "vapi" or source_version_id is not None)
+                ):
+                    # Carry the selected key's identity, not the mutable
+                    # definition's assistant, into a masked-key version save.
+                    assistant_input["assistant_id"] = (
+                        existing_configuration.assistant_id
+                    )
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
                     api_key=existing_api_key
-                    if preserve_existing_api_key
+                    if carry_api_key or preserve_existing_api_key
                     else validated.get("api_key"),
-                    **(
-                        {"assistant_id": validated["assistant_id"]}
-                        if "assistant_id" in validated
-                        else {}
-                    ),
+                    **assistant_input,
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=(
                         existing_livekit_api_key
@@ -341,12 +437,32 @@ class CreateAgentVersionView(APIView):
                     and creds_input.livekit_max_concurrency
                     != settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
-                if not (
+                skip_blank_source_credentials = (
                     sent_fields
                     and not has_credential_value
                     and not has_setting_value
                     and agent_is_source(agent)
+                )
+                # Do not pre-create the row the blank-source guard would skip.
+                # Existing provider transitions and raw-empty Vapi markers must
+                # still prevent sync/read paths from adopting legacy credentials.
+                if preserve_empty_vapi_row or (
+                    provider_changed
+                    and not (
+                        initial_source_configuration and skip_blank_source_credentials
+                    )
                 ):
+                    if requested_provider in ("livekit", "livekit_bridge"):
+                        storage_provider = ProviderCredentials.ProviderType.LIVEKIT
+                    elif requested_provider == "retell":
+                        storage_provider = ProviderCredentials.ProviderType.RETELL
+                    else:
+                        storage_provider = ProviderCredentials.ProviderType.VAPI
+                    ProviderCredentials.objects.create(
+                        agent_version=version,
+                        provider_type=storage_provider,
+                    )
+                if not skip_blank_source_credentials:
                     sync_provider_credentials(version, creds_input)
 
                 if observability_enabled is None:
@@ -363,8 +479,10 @@ class CreateAgentVersionView(APIView):
                     workspace=agent.workspace,
                 )
 
-                # Sync may have replaced the pre-created row's empty key.
-                if preserve_empty_vapi_row:
+                # Sync updates a separately queried credential instance. Clear
+                # any pre-created empty row cached by the reverse relation before
+                # snapshotting or serializing the replacement credential.
+                if preserve_empty_vapi_row or provider_changed:
                     version.refresh_from_db()
                 # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
                 version.configuration_snapshot = version.create_snapshot(
@@ -382,8 +500,14 @@ class CreateAgentVersionView(APIView):
             return _error_response(
                 "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
+        except AgentVersion.DoesNotExist:
+            return _error_response(
+                "Source version not found for this agent", status.HTTP_400_BAD_REQUEST
+            )
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError:
+            raise
         except Exception as e:
             return _error_response(
                 f"Failed to create agent version: {str(e)}",

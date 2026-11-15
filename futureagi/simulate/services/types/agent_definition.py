@@ -28,6 +28,9 @@ class ProviderCredentialsInput(BaseModel):
     """
 
     provider: str
+    # Writer context, never a request field: used only when the selected legacy
+    # snapshot has no provider and the definition was already updated in place.
+    previous_provider: str | None = None
     api_key: str | None = Field(default=None, repr=False)
     assistant_id: str | None = None
     livekit_url: str | None = None

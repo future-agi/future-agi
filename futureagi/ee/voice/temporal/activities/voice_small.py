@@ -282,22 +282,24 @@ async def prepare_call(input: PrepareCallInput) -> PrepareCallOutput:
         # Extract client provider credentials from ProviderCredentials
         # via the agent_version (configuration_snapshot no longer stores
         # credential fields since the ProviderCredentials refactor).
-        from simulate.services.agent_definition import resolve_api_key_for_version
+        from simulate.services.agent_definition import (
+            provider_for_version,
+            resolve_provider_configuration_for_version,
+        )
 
         agent_version = call.agent_version
-        client_api_key = (
-            await sync_to_async(resolve_api_key_for_version)(agent_version)
-            if agent_version
-            else None
-        )
-        client_assistant_id = (
-            snapshot.get("assistant_id") or None
-        )  # Convert empty string to None
+        client_configuration = await sync_to_async(
+            resolve_provider_configuration_for_version
+        )(agent_version)
+        client_api_key = client_configuration.api_key
+        client_assistant_id = client_configuration.assistant_id
         client_phone_number = (
             snapshot.get("contact_number") or None
         )  # Convert empty string to None
         client_uses_own_provider = bool(client_api_key)
-        client_provider = snapshot.get("provider", "vapi")
+        client_provider = (
+            provider_for_version(agent_version) if agent_version else "vapi"
+        )
 
         system_provider = resolve_system_voice_provider(client_provider)
 
