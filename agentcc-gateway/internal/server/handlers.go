@@ -441,6 +441,25 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 	return nil, ""
 }
 
+// orgProviderIDs lists the org's enabled providers in the order inference
+// tries them: sorted by ID, so a model several providers list always goes to
+// the same one. servable are those with credentials, which inference may use;
+// the rest are enabled but cannot serve.
+func orgProviderIDs(orgCfg *tenant.OrgConfig) (servable, unservable []string) {
+	for providerID, pcfg := range orgCfg.Providers {
+		switch {
+		case pcfg == nil || !pcfg.Enabled:
+		case pcfg.HasCredentials():
+			servable = append(servable, providerID)
+		default:
+			unservable = append(unservable, providerID)
+		}
+	}
+	slices.Sort(servable)
+	slices.Sort(unservable)
+	return servable, unservable
+}
+
 // orgProviderFor returns the org's enabled provider for model that can be
 // built, its ID, and the model name to send it.
 //
@@ -459,13 +478,7 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 	if orgCfg == nil || h.orgProviderCache == nil {
 		return nil, "", "", nil
 	}
-	ids := make([]string, 0, len(orgCfg.Providers))
-	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
-			ids = append(ids, providerID)
-		}
-	}
-	slices.Sort(ids)
+	ids, _ := orgProviderIDs(orgCfg)
 
 	type match struct{ providerID, upstreamModel string }
 	var matches []match
@@ -2529,13 +2542,13 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		return nil, false
 	}
 
+	// A model several providers list is owned by the one inference routes to,
+	// so its price is the same on every call and matches what a request costs.
+	servable, unservable := orgProviderIDs(orgCfg)
 	seen := make(map[string]bool)
 	result := make([]models.ModelObject, 0)
-	for providerName, pc := range orgCfg.Providers {
-		if !pc.Enabled {
-			continue
-		}
-		for _, modelID := range pc.Models {
+	for _, providerName := range append(servable, unservable...) {
+		for _, modelID := range orgCfg.Providers[providerName].Models {
 			if seen[modelID] {
 				continue
 			}
