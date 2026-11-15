@@ -25552,6 +25552,42 @@ export interface DuplicateCommitApi {
   repeat_action_id?: string;
 }
 
+export interface RecordSkippedApi {
+  /** @minLength 1 */
+  table: string;
+  /** @minLength 1 */
+  why: string;
+}
+
+export type TrialRecordsApiChangesItem = { [key: string]: unknown };
+
+/**
+ * The records the trial changed, before and after.
+ */
+export interface TrialRecordsApi {
+  changes: TrialRecordsApiChangesItem[];
+  skipped?: RecordSkippedApi[];
+  /** Changes past the cap, counted, not listed. */
+  truncated?: number;
+}
+
+export type TrialStartApiState =
+  (typeof TrialStartApiState)[keyof typeof TrialStartApiState];
+
+export const TrialStartApiState = {
+  seeded: "seeded",
+  differs: "differs",
+  unknown: "unknown",
+} as const;
+
+/**
+ * Whether the trial started from the seeded records, as every trial should.
+ */
+export interface TrialStartApi {
+  state: TrialStartApiState;
+  tables?: string[];
+}
+
 export type ActorDecisionApiPlay =
   (typeof ActorDecisionApiPlay)[keyof typeof ActorDecisionApiPlay];
 
@@ -25664,6 +25700,14 @@ export interface TrialStateApi {
   state_changes?: TrialStateChangeApi[];
   /** Writes the world committed twice after the agent's answer was lost; the trial fails on them. */
   duplicates?: DuplicateCommitApi[];
+  /** False when World changes are not recorded for this agent: its tools run inside it. */
+  recorded?: boolean;
+  /** Why they were not recorded. */
+  why?: string;
+  /** True when what changed in the world could not be read; checks that needed it read Unmeasured. */
+  unreadable?: boolean;
+  records?: TrialRecordsApi;
+  start?: TrialStartApi;
   decisions?: ActorDecisionApi[];
   approvals?: ApprovalLineApi[];
   usage?: ActorUsageApi[];

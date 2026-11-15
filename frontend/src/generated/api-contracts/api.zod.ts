@@ -53817,6 +53817,46 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .describe(
         "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
       ),
+    recorded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "False when World changes are not recorded for this agent: its tools run inside it.",
+      ),
+    why: zod.string().optional().describe("Why they were not recorded."),
+    unreadable: zod
+      .boolean()
+      .optional()
+      .describe(
+        "True when what changed in the world could not be read; checks that needed it read Unmeasured.",
+      ),
+    records: zod
+      .object({
+        changes: zod.array(zod.object({}).passthrough()),
+        skipped: zod
+          .array(
+            zod.object({
+              table: zod.string().min(1),
+              why: zod.string().min(1),
+            }),
+          )
+          .optional(),
+        truncated: zod
+          .number()
+          .optional()
+          .describe("Changes past the cap, counted, not listed."),
+      })
+      .optional()
+      .describe("The records the trial changed, before and after."),
+    start: zod
+      .object({
+        state: zod.enum(["seeded", "differs", "unknown"]),
+        tables: zod.array(zod.string().min(1)).optional(),
+      })
+      .optional()
+      .describe(
+        "Whether the trial started from the seeded records, as every trial should.",
+      ),
     decisions: zod
       .array(
         zod.object({

@@ -96996,6 +96996,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/DuplicateCommit",
           },
         },
+        recorded: {
+          title: "Recorded",
+          description:
+            "False when World changes are not recorded for this agent: its tools run inside it.",
+          type: "boolean",
+        },
+        why: {
+          title: "Why",
+          description: "Why they were not recorded.",
+          type: "string",
+        },
+        unreadable: {
+          title: "Unreadable",
+          description:
+            "True when what changed in the world could not be read; checks that needed it read Unmeasured.",
+          type: "boolean",
+        },
+        records: {
+          $ref: "#/definitions/TrialRecords",
+        },
+        start: {
+          $ref: "#/definitions/TrialStart",
+        },
         decisions: {
           type: "array",
           items: {
@@ -120417,6 +120440,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TrialRecords: {
+      description: "The records the trial changed, before and after.",
+      required: ["changes"],
+      type: "object",
+      properties: {
+        changes: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        skipped: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RecordSkipped",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          description: "Changes past the cap, counted, not listed.",
+          type: "integer",
+        },
+      },
+    },
+    TrialStart: {
+      description:
+        "Whether the trial started from the seeded records, as every trial should.",
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["seeded", "differs", "unknown"],
+        },
+        tables: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     TrialStateChange: {
       required: [
         "who",
@@ -133352,6 +133419,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    RecordSkipped: {
+      required: ["table", "why"],
+      type: "object",
+      properties: {
+        table: {
+          title: "Table",
+          type: "string",
+          minLength: 1,
+        },
+        why: {
+          title: "Why",
+          type: "string",
+          minLength: 1,
         },
       },
     },
