@@ -23,7 +23,10 @@ from simulate.services.harness_versioning.read import (
     _message_label,
     version_refs,
 )
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import (
+    pair_proof_counts,
+    versioning_enabled,
+)
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -210,16 +213,35 @@ def run_warnings(
     environment_version, suite_version = pins.environment_version, pins.suite_version
     environment_label = _message_label(_label(environment_version.version_number))
     warnings = []
-    if not HarnessSuiteValidation.no_workspace_objects.filter(
-        suite_version=suite_version,
-        environment_version=environment_version,
-        status=HarnessSuiteValidation.Status.PASSED,
-    ).exists():
+    suite_label = _message_label(_label(suite_version.version_number))
+    status, proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("status", "proofs")
+        .first()
+    ) or (None, None)
+    counts = (
+        pair_proof_counts(suite_version.id, environment_version.id)
+        if status != HarnessSuiteValidation.Status.PASSED and proofs
+        else None
+    )
+    if counts and (counts["proved"] or counts["kept_as_written"]):
+        # Validated, but not every case proved: say how the cases stand, not "not proved".
+        warnings.append(
+            _warning(
+                "suite_partly_proved",
+                f"Suite {suite_label} on environment {environment_label}:"
+                f" {counts['proved']} proved, {counts['kept_as_written']} kept as written,"
+                f" {counts['not_proved']} not proved",
+                "suite",
+            )
+        )
+    elif status != HarnessSuiteValidation.Status.PASSED:
         warnings.append(
             _warning(
                 "suite_unproved",
-                f"Suite {_message_label(_label(suite_version.version_number))}"
-                " hasn't been proved"
+                f"Suite {suite_label} hasn't been proved"
                 f" against environment {environment_label}",
                 "suite",
             )
