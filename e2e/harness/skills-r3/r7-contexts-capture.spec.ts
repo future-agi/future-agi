@@ -193,13 +193,13 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
   await shot('context-dependents');
   await page.getByRole('button', { name: 'Prepare draft updates for 2 contexts', exact: true }).click();
-  const acknowledgement = page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 2 contexts.', exact: true });
+  const acknowledgement = page.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 2 context drafts.', exact: true });
   await expect(acknowledgement).toBeVisible();
   await shot('context-impact-preview');
   await acknowledgement.check();
   await page.getByRole('checkbox', { name: 'Select escalation-agent v1 for update', exact: true }).uncheck();
   await expect(page.getByText('Selection changed — prepare again.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: /Accept these linked-skill versions/ })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /Accept these skill versions/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
   await shot('context-selection-changed');
   await page.getByRole('checkbox', { name: 'Select support-agent v1 for update', exact: true }).uncheck();
@@ -207,7 +207,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await shot('context-selection-empty');
   await page.getByRole('checkbox', { name: 'Select support-agent v1 for update', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare draft updates for 1 context', exact: true }).click();
-  await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 1 context draft.', exact: true }).check();
   await page.getByRole('button', { name: 'Apply selected updates to 1 context draft', exact: true }).click();
   await expect(page.getByText(/ draft now uses .+\. Production unchanged\./)).toBeVisible();
   await shot('context-draft-updated');

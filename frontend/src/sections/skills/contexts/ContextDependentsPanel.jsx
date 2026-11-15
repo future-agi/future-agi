@@ -45,10 +45,16 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
   if (query.isError || state === 'error') return <ErrorState title="Dependents unavailable" detail="Couldn't load the contexts that use this skill. Check your connection and try again." onRetry={query.refetch} />;
   if (!query.data || !query.data.results.length || state === 'empty') return <EmptyState title={empty.title} description={empty.description} />;
   const active = view === 'active';
+  // One count line, in words: active rows count the contexts (a context can hold two releases that use the skill).
+  const paged = query.data.total_pages > 1;
+  const contextCount = paged ? query.data.count : new Set(query.data.results.map((row) => row.context_id)).size;
+  const countLine = active
+    ? `${contextCount} ${contextCount === 1 ? 'agent context uses' : 'agent contexts use'} this skill${paged ? ' (on this page)' : ''}`
+    : `${query.data.count} earlier context ${query.data.count === 1 ? 'release' : 'releases'}`;
   return <>
-    <Typography variant="s3" color="text.secondary">{query.data.count} {query.data.count === 1 ? 'reference' : 'references'} · <Tooltip title={query.data.as_of || 'Time unavailable'}><span>Checked {relativeTime(query.data.as_of)}</span></Tooltip></Typography>
+    <Typography variant="s3" color="text.secondary">{countLine} · <Tooltip title={query.data.as_of || 'Time unavailable'}><span>Checked {relativeTime(query.data.as_of)}</span></Tooltip></Typography>
     <TableContainer><Table size="small" aria-label={active ? 'Published context dependents' : 'Historical context references'} sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } } }}>
-      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{active && <TableCell padding="checkbox"><Typography variant="s3">Update</Typography></TableCell>}<TableCell>Context release</TableCell><TableCell>Labels</TableCell><TableCell>Version</TableCell><TableCell>Update state</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
+      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{active && <TableCell padding="checkbox"><Typography variant="s3">Update</Typography></TableCell>}<TableCell>Agent context</TableCell><TableCell>Labels</TableCell><TableCell>Version</TableCell><TableCell>Update state</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
       <TableBody>{query.data.results.map((row) => {
         const pinned = Boolean(row.requested.version) || row.update_state === 'pinned_as_intended';
         const hasLabels = Boolean(row.labels?.length);
@@ -62,7 +68,7 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
               <Checkbox size="small" checked={selected.some((item) => item.context_id === row.context_id && item.context_version === row.context_version)} disabled={disabled} sx={{ ...(disabled ? { color: 'action.disabled' } : {}), p: { xs: 0.5, sm: 1.125 } }} onChange={() => onToggle(row)} inputProps={{ 'aria-label': `Select ${row.name} v${row.context_version} for update` }} />
             </Stack></Tooltip>;
           })()}</TableCell>}
-          <TableCell sx={at(1, 1)}><Stack component="span" direction="row" alignItems="center" spacing={0.5}><Typography component="span" variant="s1" sx={{ overflowWrap: 'anywhere' }}>{row.name} · v{row.context_version}</Typography>{pinned && <Iconify icon="solar:lock-keyhole-linear" width={16} aria-hidden sx={{ color: 'text.disabled', flexShrink: 0 }} />}</Stack></TableCell>
+          <TableCell sx={at(1, 1)}><Stack component="span" direction="row" alignItems="center" spacing={0.5}><Typography component="span" variant="s1" sx={{ overflowWrap: 'anywhere' }}>{row.name}<Typography component="span" variant="s3" color="text.secondary"> v{row.context_version}</Typography></Typography>{pinned && <Iconify icon="solar:lock-keyhole-linear" width={16} aria-hidden sx={{ color: 'text.disabled', flexShrink: 0 }} />}</Stack></TableCell>
           <TableCell data-empty={hasLabels ? undefined : 'true'} sx={{ ...at(2, 2), justifySelf: { xs: 'end' } }}><LabelChips labels={row.labels} /></TableCell>
           <TableCell sx={at(1, 2)}><Typography variant="s3" color="text.secondary">{pinned ? `Pinned v${row.locked_version}` : `Follows ${row.requested.label} · v${row.locked_version}`}</Typography></TableCell>
           <TableCell sx={{ ...at(2, 1), justifySelf: { xs: 'end' } }}><StatusBadge status={done.includes(row.context_id) ? 'draft' : states[row.update_state]?.[0] || 'unknown'} label={done.includes(row.context_id) ? 'Draft ready' : states[row.update_state]?.[1] || 'Unknown'} /></TableCell>
@@ -103,7 +109,7 @@ function Dependents({ skillId, state }) {
   return <Stack spacing={1.5}>
     <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
       <Stack spacing={0.5}><Typography variant="m3" component="h2">Used by</Typography>
-        {query.data && !query.isError && <Typography variant="s1">{contexts.length} {contexts.length === 1 ? 'agent context uses' : 'agent contexts use'} {skill.data?.name || 'this skill'}.{query.data.total_pages > 1 ? ' (on this page)' : ''}{contexts.length > 0 && ` ${contexts.map((row) => row.requested.version ? `${row.name} is pinned to v${row.locked_version}` : `${row.name} follows ${row.requested.label}${row.update_state === 'update_available' && skill.data?.labels?.find((label) => label.name === row.requested.label)?.version ? ` and can update to v${skill.data.labels.find((label) => label.name === row.requested.label).version}` : ''}`).join('; ')}.`}</Typography>}
+        {query.data && !query.isError && contexts.length > 0 && <Typography variant="s1">{`${contexts.map((row) => row.requested.version ? `${row.name} is pinned to v${row.locked_version}` : `${row.name} follows ${row.requested.label}${row.update_state === 'update_available' && skill.data?.labels?.find((label) => label.name === row.requested.label)?.version ? ` and can update to v${skill.data.labels.find((label) => label.name === row.requested.label).version}` : ''}`).join('; ')}.`}</Typography>}
       </Stack>
       <Tooltip title="Refresh dependents"><IconButton aria-label="Refresh dependents" onClick={() => { query.refetch(); history.refetch(); }}><Iconify icon="solar:refresh-linear" width={16} /></IconButton></Tooltip>
     </Stack>

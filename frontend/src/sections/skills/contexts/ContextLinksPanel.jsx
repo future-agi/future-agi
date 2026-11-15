@@ -143,7 +143,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         {(preview.changes || []).map((change) => <Typography key={change.skillId} variant="s1">{change.mount} · {change.change} · {change.before ? `v${change.before.version}` : "absent"} → {change.after ? `v${change.after.version}` : "removed"}</Typography>)}
         {preview.checks?.summary?.errors > 0 && <Alert severity="error">The compiled context has blocking checks. No partial dependency set can be applied.</Alert>}
         {!current && <Alert severity="warning">{session.mutationError ? "Recover the original dependency update with Retry dependency update before previewing or publishing." : "The draft changed. Preview again before applying."}</Alert>}
-        <FormControlLabel control={<Checkbox checked={confirmed} disabled={!current || operation.pending} onChange={(event) => setConfirmed(event.target.checked)} />} label="Accept these linked-skill versions and update rules for 1 context." />
+        <FormControlLabel control={<Checkbox checked={confirmed} disabled={!current || operation.pending} onChange={(event) => setConfirmed(event.target.checked)} />} label="Accept these skill versions and update rules into 1 context draft." />
         <Button color="primary" variant="contained" disabled={!onApply || !current || !confirmed || operation.pending || preview.checks?.summary?.errors > 0} onClick={apply}>Apply selected updates to draft</Button>
       </>}
     </>}

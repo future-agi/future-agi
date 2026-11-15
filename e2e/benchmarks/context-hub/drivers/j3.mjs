@@ -204,7 +204,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await reviewPlans('followers-dependency-review');
           await command('source-label-aba', operationsArgs('source-aba', '8'));
           ledger.fault('source-aba', 'source-production-eight-seven-eight');
-          await click(`Accept these linked-skill versions and update rules for ${followers.length} contexts.`, 'stale-plan-accept', 'checkbox');
+          await click(`Accept these skill versions and update rules into ${followers.length} context drafts.`, 'stale-plan-accept', 'checkbox');
           const rejected = [];
           const onResponse = (res) => { if (res.url().endsWith('/dependencies/apply/') && res.request().method() === 'POST') rejected.push(res); };
           page.on('response', onResponse);
@@ -218,7 +218,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await operator.recoveryDecision('preview-rejected-plans-again', () => page.getByRole('button', { name: `Preview again for ${followers.length} contexts that did not update`, exact: true }).click());
           await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
           await reviewPlans('renew-dependency-review');
-          await click(`Accept these linked-skill versions and update rules for ${followers.length} contexts.`, 'followers-accept-v8', 'checkbox');
+          await click(`Accept these skill versions and update rules into ${followers.length} context drafts.`, 'followers-accept-v8', 'checkbox');
           await click(`Apply selected updates to ${followers.length} context drafts`, 'followers-apply');
           for (const parent of followers) {
             await expect.poll(async () => compiled(await read(`contexts/${parent.id}/draft/`, signal)), { timeout: 60_000 }).toBe(8);

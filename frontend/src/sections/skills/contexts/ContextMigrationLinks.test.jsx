@@ -26,7 +26,7 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
   expect(preview).toHaveBeenCalledOnce();
   expect(preview).toHaveBeenCalledWith({ revision: 1, links: [{ skillId: "one", selector: { version: 1 } }, { skillId: "two", selector: { version: 3 } }], refreshSkillIds: [] });
   expect(screen.getByRole("button", { name: "Apply selected updates to draft" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Accept these linked-skill versions and update rules for 1 context." }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Accept these skill versions and update rules into 1 context draft." }));
   fireEvent.click(screen.getByRole("button", { name: "Apply selected updates to draft" }));
   await waitFor(() => expect(apply).toHaveBeenCalledOnce());
 });

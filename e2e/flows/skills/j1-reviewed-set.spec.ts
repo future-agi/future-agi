@@ -156,7 +156,7 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
     await expect(page.getByRole('button', { name: 'Copy full Compiled candidate', exact: true })).toBeVisible();
     const apply = page.getByRole('button', { name: 'Apply selected updates to draft', exact: true });
     await expect(apply).toBeDisabled();
-    await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
+    await page.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 1 context draft.', exact: true }).check();
     await apply.click();
     await expect(page.getByRole('heading', { name: 'Linked skills (3)', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Review changes', exact: true }).click();
