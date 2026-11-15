@@ -11,6 +11,7 @@ from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
 from simulate.services.agent_definition import (
     is_masked,
+    provider_family,
     resolve_vapi_configuration_for_version,
     sync_provider_credentials,
 )
@@ -457,7 +458,8 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         new_api_key = validated_data.get("api_key")
         if (
             creds_input.provider_was_provided
-            and creds_input.provider != instance.provider
+            and provider_family(creds_input.provider)
+            != provider_family(instance.provider)
             and (not new_api_key or is_masked(new_api_key))
         ):
             # A new provider must not inherit the old definition's fallback key.
@@ -641,7 +643,8 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             instance.api_key = api_key
         elif (
             creds_input.provider_was_provided
-            and creds_input.provider != creds_input.previous_provider
+            and provider_family(creds_input.provider)
+            != provider_family(creds_input.previous_provider)
         ):
             instance.api_key = ""
         instance.model = validated_data.get("model", instance.model)
