@@ -9,6 +9,7 @@ from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
     HarnessCapabilityScopeSerializer,
+    HarnessRunHeldBackSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
     phone_number_error,
@@ -1426,6 +1427,14 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     grading = HarnessCapabilityGradingSerializer()
     requirements_recorded = serializers.BooleanField(
         help_text="Every selected case's needs were read from its stored documents."
+    )
+    running = serializers.IntegerField(
+        min_value=0, help_text="Selected cases a run of this selection would send."
+    )
+    held_back = HarnessRunHeldBackSerializer()
+    reasons = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each holding row's reason, in plain words.",
     )
 
 
