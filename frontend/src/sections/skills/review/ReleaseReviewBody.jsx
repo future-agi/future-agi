@@ -378,6 +378,7 @@ TypedEvidenceList.propTypes = {
   onShare: PropTypes.func,
   onInspect: PropTypes.func,
   summaries: PropTypes.array,
+  showPrivateNote: PropTypes.bool,
 };
 
 export function ExternalPipeline({ reference }) {
