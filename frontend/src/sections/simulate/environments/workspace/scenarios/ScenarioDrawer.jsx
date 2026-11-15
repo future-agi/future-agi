@@ -15,6 +15,7 @@ import {
   TEST_CONDITIONS_COPY,
   needsAMissingDoor,
   testConditionLine,
+  testConditionRoute,
 } from "./testConditions.constants";
 
 // One scenario, opened from its table row, laid out as the designer's
@@ -232,9 +233,19 @@ function ScenarioSheet({ row, env }) {
       <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
         <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
           {row.faults.map((fault, index) => (
-            <Typography key={`${fault.action}-${index}`} className="sd-val">
-              {testConditionLine(fault)}
-            </Typography>
+            <Box key={`${fault.action}-${index}`}>
+              <Typography className="sd-val">
+                {testConditionLine(fault, env)}
+              </Typography>
+              {testConditionRoute(fault, env) && (
+                <Typography
+                  className="sd-val"
+                  sx={{ typography: "s2", color: "text.subtitle" }}
+                >
+                  {testConditionRoute(fault, env)}
+                </Typography>
+              )}
+            </Box>
           ))}
           {noDoor && !row.callActors?.length && (
             <Typography className="sd-val" sx={{ color: "warning.main" }}>

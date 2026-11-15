@@ -239,6 +239,41 @@ describe("ScenarioDrawer actors", () => {
     ).toBeInTheDocument();
   });
 
+  it("names a test condition by the tool the person knows, with its route under it", () => {
+    open(
+      {
+        ...API_ROW,
+        faults: [
+          {
+            action: "orders.update_status",
+            mode: "error",
+            on_call: 1,
+            status: 503,
+            message: "The order status service is down",
+          },
+        ],
+      },
+      {
+        env: {
+          doorReach: { update_order_status: true },
+          toolEntrypoints: [
+            {
+              tool: "update_order_status",
+              mode: "service",
+              endpoint: "/orders/update_status",
+            },
+          ],
+        },
+      },
+    );
+    expect(
+      screen.getByText(
+        "update_order_status: Answers with an error on call 1 (503: The order status service is down)",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("orders.update_status")).toBeInTheDocument();
+  });
+
   it("says actors cannot act and faults cannot be set when the agent runs its tools inside it", () => {
     const env = {
       doorReach: { refund: false },

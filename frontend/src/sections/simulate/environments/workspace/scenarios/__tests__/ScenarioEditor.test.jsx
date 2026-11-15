@@ -85,6 +85,24 @@ describe("ScenarioEditor test conditions", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it("names an added fault by its tool, with the route under it", () => {
+    openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+    const list = within(screen.getByTestId("test-conditions"));
+    expect(
+      list.getByText(
+        "apply_discount: Times out before it runs on call 1 after 30 s",
+      ),
+    ).toBeInTheDocument();
+    expect(list.getByText("crm.apply_discount")).toBeInTheDocument();
+  });
+
   it("disables tools that run inside the agent", () => {
     openEditor();
     fireEvent.click(
