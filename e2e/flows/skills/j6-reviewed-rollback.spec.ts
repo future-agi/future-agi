@@ -127,7 +127,7 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
       await page.getByRole('button', { name, exact: true }).first().click();
     }
     await expect(page).toHaveURL(new RegExp(`request=${fresh.id}`));
-    const acknowledged = page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+    const acknowledged = page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
     await expect(acknowledged).toBeEnabled();
     await expect(page.getByText('Original reviewed synthetic policy.', { exact: false }).first()).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('j6-lower-release-review.png') });

@@ -229,12 +229,9 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('button', { name: 'Continue to publish', exact: true }).click();
       const reviewed = page.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true });
       await reviewed.check();
-      const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+      const warning = page.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
       if (await warning.count()) await warning.check();
       await shot(`review-${parent.name}`);
-      await page.getByRole('button', { name: 'Confirm review', exact: true }).click();
-      // Acknowledgment invalidates the draft and remounts the digest-bound
-      // review. Do not tick the old controls while that refresh is in flight.
       await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible({ timeout: UI_READY });
       await reviewed.check();
       if (await warning.count()) await warning.check();
@@ -306,7 +303,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         await page.getByLabel('Assigned reviewer').click();
         await page.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
         await page.getByRole('button', { name: 'Prepare review', exact: true }).click();
-        await page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
+        await page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true }).check();
         const submitted = page.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
         await page.getByRole('button', { name: 'Send review request', exact: true }).click();
         const response = await submitted;
@@ -314,7 +311,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         const release = (await response.json()).result;
         expect((await req(author, 'GET', `contexts/${parent.id}/`)).context.labels).toEqual([]);
         await reviewerPage.goto(`${UI}/${parent.id}/review?request=${release.id}`);
-        const reviewed = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+        const reviewed = reviewerPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
         await expect(reviewed).toBeEnabled();
         await reviewed.check();
         await reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click();

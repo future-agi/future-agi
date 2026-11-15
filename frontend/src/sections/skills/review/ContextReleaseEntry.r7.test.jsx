@@ -65,3 +65,10 @@ it('never ranks a newer unrecorded result above a recorded pass', () => {
   expect(suggestedEvidence([unrecorded, passing], packet)).toEqual([{ source: 'skills_text', sourceId: 'run', annotationRevision: 7 }]);
   expect(suggestedEvidence([unrecorded], packet)).toEqual([]);
 });
+
+it('is a small text button in the Versions row, never an outlined or contained button', () => {
+  render(<MemoryRouter><ContextLabelRequestPanel contextId="context" version={{ id: 'candidate', number: 2, digest: 'digest' }} /></MemoryRouter>);
+  const button = screen.getByRole('button', { name: 'Request release review' });
+  expect(button).toHaveClass('MuiButton-text');
+  expect(button).toHaveClass('MuiButton-sizeSmall');
+});

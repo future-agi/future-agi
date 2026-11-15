@@ -164,7 +164,7 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
     const reviewCandidate = async () => {
       const reviewed = page.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true });
       if (!(await reviewed.isChecked())) await reviewed.check();
-      const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+      const warning = page.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
       if (await warning.count() && !(await warning.isChecked())) await warning.check();
     };
     await reviewCandidate();

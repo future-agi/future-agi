@@ -124,7 +124,7 @@ try {
       for (const kind of ['agent_context', 'skill']) {
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}`);
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
-        const acknowledge = page.getByRole('checkbox', { name: /I reviewed this exact candidate/ });
+        const acknowledge = page.getByRole('checkbox', { name: /I've checked this version/ });
         await acknowledge.check();
         await page.getByRole('button', { name: 'Approve release' }).click();
         // Approval changes the server request status and remounts acknowledgment;
@@ -144,7 +144,7 @@ try {
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}&stale=1`);
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
         await page.getByText(/Review is stale or unavailable/).waitFor();
-        assert.equal(await page.getByRole('checkbox', { name: /I reviewed this exact candidate/ }).isDisabled(), true);
+        assert.equal(await page.getByRole('checkbox', { name: /I've checked this version/ }).isDisabled(), true);
         assert.equal(await page.getByRole('button', { name: 'Approve release' }).isDisabled(), true);
       }
       await page.close();

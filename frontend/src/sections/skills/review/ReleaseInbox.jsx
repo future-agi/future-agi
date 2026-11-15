@@ -39,6 +39,23 @@ import { skillsRouteSx } from "../components/routeGutter";
 import { ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 
+// Someone denied Reviews cannot ask from here, so they copy the request for an admin (the Install tab's pattern).
+function RequestReviewerAccess() {
+  const [outcome, setOutcome] = useState(null);
+  const request = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Unavailable');
+      await navigator.clipboard.writeText(`Please give me reviewer access to Skills reviews: ${window.location.href}`);
+      setOutcome('copied');
+    } catch { setOutcome('error'); }
+  };
+  return <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}>
+    <Button variant="outlined" size="small" onClick={request}>Copy request for admin</Button>
+    {outcome === 'copied' && <Typography variant="s3" role="status">Copied the request for an admin.</Typography>}
+    {outcome === 'error' && <Typography variant="s3" role="status">Could not copy. Ask a workspace admin for reviewer access.</Typography>}
+  </Stack>;
+}
+
 function InboxRows({
   data,
   status,
@@ -105,7 +122,7 @@ function InboxRows({
             <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ display: 'block', width: 1, textAlign: 'left', py: 1.5, pr: 5, borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
                 <Stack direction="row" gap={1} alignItems="center" justifyContent="space-between" sx={{ minWidth: 0 }}>
-                  <Stack direction="row" alignItems="center" sx={{ minWidth: 0 }}>{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                  <Stack direction="row" alignItems="center" sx={{ minWidth: 0 }}>{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
                   <Box sx={{ flexShrink: 0 }}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} label={item.status === 'changes_requested' ? 'Changes requested' : undefined} /></Box>
                 </Stack>
                 {item.transition && <Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined}>{releaseTitle(item.transition)}</Typography>}
@@ -156,7 +173,7 @@ function InboxRows({
                           : "Skill"}
 
                       </Typography>
-                      {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
+                      {item.status === 'pending' && <Typography variant="s3" color="text.secondary">{currentUserId && item.recipients?.some((person) => person.id === currentUserId) ? 'Waiting for your approval' : `Waiting on ${item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}`}</Typography>}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
@@ -259,11 +276,11 @@ export default function ReleaseInbox({
         description="Review changes before they reach production."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
-          {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request review</Button>}
+          {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request release review</Button>}
         </>}
       />
       {scopeKey && !['off', 'denied', 'forbidden', 'unavailable'].includes(state) && onToggleAuthored && <CustomTabs value={authored ? 'mine' : 'assigned'} onChange={(_, value) => { if ((value === 'mine') !== authored) onToggleAuthored(); }} aria-label="Review inbox views" sx={{ mb: 1.5 }}><Tab value="assigned" label={data?.pendingCount ? `Assigned to me · ${data.pendingCount} waiting` : 'Assigned to me'} /><Tab value="mine" label="My requests" /></CustomTabs>}
-      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
+      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." actions={<RequestReviewerAccess />} /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
           {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored, currentUserId }}

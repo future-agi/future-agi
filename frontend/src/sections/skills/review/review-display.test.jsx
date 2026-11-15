@@ -94,8 +94,10 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   expect(screen.getByText('From your test')).toBeVisible();
   composer.unmount();
 
-  const consent = render(<ShareAllEvidence packet={packet} evidence={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 result' }));
+  // One private result is shared from its own row; the bulk button needs two or more.
+  const consent = render(<ShareAllEvidence row packet={packet} evidence={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
+  expect(within(screen.getByRole('dialog')).getByText('Share 1 private result with the workspace?')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('Passed on test cases')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
   // The record is named by title with a Private badge; its ID is one hover away and never printed.
@@ -192,13 +194,31 @@ it('shows the result count the author can still attach when none is attached', (
   render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} availableEvidence={0} />);
   expect(summaryRows().getByText('No matching test evidence. Not tested is not a pass.')).toBeVisible();
 });
-it('orders the pending decision Add comment, Request changes, Approve release, with one reason under the primary', () => {
+it('orders the pending decision as one footer: Add comment on the left, then the reason, Request changes and Approve release on the right', () => {
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'pending' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={vi.fn()} />);
   const names = ['Add comment', 'Request changes', 'Approve release'];
   const buttons = names.map((name) => screen.getByRole('button', { name }));
   buttons.forEach((button, index) => { if (index) expect(buttons[index - 1].compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); });
   expect(screen.getByRole('button', { name: 'Approve release' })).toHaveAccessibleDescription('Tick the acknowledgment to approve');
   expect(screen.getAllByText('Tick the acknowledgment to approve')).toHaveLength(1);
+  const follows = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const reason = screen.getByText('Tick the acknowledgment to approve');
+  expect(follows(screen.getByRole('checkbox'), buttons[0])).toBe(true);
+  expect(follows(buttons[0], reason)).toBe(true);
+  expect(follows(reason, buttons[1])).toBe(true);
+  expect(buttons[0]).toHaveClass('MuiButton-text');
+  expect(buttons[1]).toHaveClass('MuiButton-outlined');
+  expect(buttons[2]).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Decision ↓' })).toBeVisible();
+});
+it('tells the assigned reviewer the request waits for their approval, and others who it waits for', () => {
+  const pending = { id: 'request', revision: 1, status: 'pending', recipients: [{ id: 'reviewer-id', name: 'Robin Reviewer' }] };
+  const view = (currentUserId) => <ReleaseRequestPanel scopeKey="scope" state="ready" request={pending} currentUserId={currentUserId} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={vi.fn()} />;
+  const { rerender } = render(view('reviewer-id'));
+  expect(screen.getByText('Waiting for your approval', { exact: true })).toBeVisible();
+  expect(screen.queryByText(/Robin Reviewer/)).not.toBeInTheDocument();
+  rerender(view('someone-else'));
+  expect(screen.getByText("Waiting for Robin Reviewer's approval", { exact: true })).toBeVisible();
 });
 it('pauses a stale request with one title, one sentence, one action and Refresh inside the disclosure', () => {
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'approved' }} preview={{ packet, current: false, fingerprint: 'fp' }} review={{ complete: true }} staleCode="release_conflict" permissions={{ canDecide: true, canExecute: true }} onRenew={vi.fn()} onRefresh={vi.fn()} />);
@@ -236,8 +256,11 @@ it('renders the receipt as one table of facts and a clear action hierarchy', () 
   ['Before the move', 'After the move', 'Approved by', 'Released by'].forEach((label) => expect(table.getByText(label, { selector: 'dt' })).toBeVisible());
   expect(table.queryByText('Recorded', { selector: 'dt' })).not.toBeInTheDocument();
   expect(screen.queryByText('Released', { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'View version' })).toHaveClass('MuiButton-contained');
+  // The next job for a context is confirming apps picked the release up, so that is the one primary.
+  expect(screen.getByRole('link', { name: 'Check apps picked up v2' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('link', { name: 'Check apps picked up v2' })).toHaveAttribute('href', expect.stringContaining('?tab=consumers'));
+  expect(screen.getByRole('link', { name: 'View version' })).toHaveClass('MuiButton-outlined');
   expect(screen.getByRole('link', { name: 'View release history' })).toHaveClass('MuiButton-outlined');
-  expect(screen.getByRole('link', { name: 'Watch delivery' })).toHaveClass('MuiButton-text');
+  expect(screen.queryByRole('link', { name: 'Watch delivery' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Copy receipt link' })).toHaveClass('MuiButton-text');
 });

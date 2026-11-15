@@ -349,7 +349,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const reviewer = new MeasuredOperator({ ledger, actor: 'owner', step: stage.id, phase: stage.phase, signal });
           for (const [index, parent] of followers.entries()) {
             await reviewer.transition(`parent-${index}-reviewer-arrival`, () => reviewer.configurationEdit(`parent-${index}-request-link`, () => reviewerPage.goto(`/dashboard/skills/contexts/${parent.id}/review?request=${packets[index].id}`)));
-            const reviewed = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+            const reviewed = reviewerPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
             await expect(reviewed).toBeEnabled();
             await reviewer.review(`parent-${index}-release-review`, ['parent-candidate', 'target', 'evidence-absence', 'release-consequence'], [], () => reviewed.check(), decision);
             await reviewer.approve(`parent-${index}-approve-packet`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);

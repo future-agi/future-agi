@@ -237,13 +237,11 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('review-candidate', () => op.click(page.getByRole('button', { name: 'Continue to publish' }), 'review-changes'));
           await edit('version-note', () => page.getByLabel('Version note').fill('Cap refunds at the order total'));
           await op.click(page.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ }), 'review-candidate-against-head');
-          await op.click(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ }), 'acknowledge-warnings');
-          await op.click(page.getByRole('button', { name: 'Confirm review', exact: true }), 'acknowledge-head');
-          // The acknowledged head reloads the review for the same candidate bytes. The reviewer's two acknowledgements
-          // and version note carry across that step (asserted, not assumed); any change would start the review over.
+          await op.click(page.getByRole('checkbox', { name: /I've read the check warnings/ }), 'acknowledge-warnings');
+          // One publish click acknowledges the reviewed head and publishes; the ticks and note are checked before it.
           await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeEnabled();
           await expect(page.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ })).toBeChecked();
-          await expect(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ })).toBeChecked();
+          await expect(page.getByRole('checkbox', { name: /I've read the check warnings/ })).toBeChecked();
           await expect(page.getByLabel('Version note')).toHaveValue('Cap refunds at the order total');
           const published = page.waitForResponse((res) => res.url().endsWith(`${root}draft/publish/`) && res.request().method() === 'POST');
           published.catch(() => {});

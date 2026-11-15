@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import ObjectHeader from "../components/ObjectHeader";
 import ActionReason, { reasonProps } from '../components/ActionReason';
+import { useStickyFooterHeight } from '../components/stickyFooter';
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
 import { mountName, publishSentence } from "../utils/conclusions";
@@ -41,6 +42,7 @@ import {
   ReviewState,
 } from "../review/ReleaseReviewBody";
 import CapabilityChanges from "../review/CapabilityChanges";
+import DecisionFooterRow from "../review/DecisionFooterRow";
 
 function DraftPublication({
   name,
@@ -48,15 +50,21 @@ function DraftPublication({
   onCarry,
   draftReview,
   canPublish,
-  onAcknowledgeHead,
   onPublish,
   onPublishAndRequest,
+  publishOperation,
   oneStepOperation,
   onRefresh,
 }) {
   const [warningFingerprint, setWarningFingerprint] = useState(null);
   const [ackFingerprint, setAckFingerprint] = useState(null);
-  const operation = useReviewedOperation();
+  // The publish operation lives in the controller: the head acknowledgment inside
+  // the one publish click advances the draft revision and remounts this form, and
+  // an unknown outcome must stay retryable with its original idempotency key.
+  const localOperation = useReviewedOperation();
+  const operation = publishOperation || localOperation;
+  const footer = useRef(null);
+  useStickyFooterHeight(footer);
   // Acknowledging the head issues a new review fingerprint for the very same candidate bytes.
   // The reviewer's two acknowledgements carry across that one step, and only when the candidate,
   // its origin, the reviewed head and its static warnings are all unchanged; any other change
@@ -111,7 +119,25 @@ function DraftPublication({
   // One quiet reason beside the actions while one of them waits: the acknowledgments first, then the confirmation.
   const warningsPending = draftReview.checks?.summary.warnings > 0 && !warnings;
   const acknowledgmentReason = !reviewed ? "Tick the review box to publish." : warningsPending ? "Tick the warnings box to publish." : null;
-  const publishReason = acknowledgmentReason || (!draftReview.headAcknowledged ? "Confirm the review above to publish only." : null);
+  // A conflict means the draft or the published head moved after the reviewer ticked: the ticks clear and the
+  // review reloads, so the next publish is for what the reviewer sees now.
+  const stalled = operation.stale ? operation.failure : oneStep !== operation && oneStep.stale ? oneStep.failure : null;
+  const reset = useRef(null);
+  useEffect(() => { reset.current = () => { setAckFingerprint(null); setWarningFingerprint(null); onCarry(null); onRefresh?.(); }; });
+  useEffect(() => { if (stalled) reset.current(); }, [stalled]);
+  const clearStale = () => { if (!stalled) return; operation.clearFailure(); if (oneStep !== operation) oneStep.clearFailure(); };
+  const blocked = (send) => !send || (draftReview.baseVersion !== draftReview.expectedHeadVersion && !draftReview.headChanges);
+  const carryAcknowledgments = () => onCarry({
+    reviewed,
+    note,
+    warned: warnings,
+    candidateDigest: draftReview.candidateDigest,
+    baseVersion: draftReview.baseVersion,
+    expectedHeadVersion: draftReview.expectedHeadVersion,
+    headDigest: draftReview.headDigest,
+    warnings: draftReview.checks?.summary.warnings ?? null,
+  });
+  const publishInput = { ...fields, headAcknowledged: draftReview.headAcknowledged === true, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings };
   const fields = {
     revision: draftReview.revision,
     expectedDigest: draftReview.candidateDigest,
@@ -119,13 +145,16 @@ function DraftPublication({
     reviewFingerprint: draftReview.reviewFingerprint,
   };
   return (
-    <Stack spacing={3} sx={{ mt: 3 }}>
+    <Stack spacing={3} sx={{ mt: 3, pb: "calc(var(--skills-sticky-footer-height, 0px) + 16px)" }}>
       <Section title="What publishing creates">
         <Stack spacing={1}>
-          {/* Conclusion first, in one line: the version this creates, what changes in it, and where production stays. */}
-          <Typography variant="m3" role="status">
-            {publishLead(name, draftReview)} Production stays {draftReview.productionVersion ? `on v${draftReview.productionVersion}` : "unassigned"} until it is reviewed and released.
-          </Typography>
+          {/* Conclusion first, in one line: the version this creates, what changes in it, and where production stays. Reload sits beside it. */}
+          <Stack direction={{ xs: "column", sm: "row" }} gap={1} alignItems={{ sm: "flex-start" }} justifyContent="space-between">
+            <Typography variant="m3" role="status" sx={{ minWidth: 0 }}>
+              {publishLead(name, draftReview)} Production stays {draftReview.productionVersion ? `on v${draftReview.productionVersion}` : "unassigned"} until it is reviewed and released.
+            </Typography>
+            {onRefresh && <Button variant="text" size="small" disabled={locked} onClick={() => { clearStale(); onRefresh(); }} sx={{ flexShrink: 0, alignSelf: "flex-start" }}>Reload draft</Button>}
+          </Stack>
           {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
             <Alert severity="warning">
               This repair starts from v{draftReview.baseVersion}, not the latest v{draftReview.expectedHeadVersion}. Publishing makes it the new latest without the other changes in v{draftReview.expectedHeadVersion}.
@@ -211,137 +240,100 @@ function DraftPublication({
         )}
       </Section>
       <Box id="review-publication">
+        <TextField
+          fullWidth
+          size="small"
+          multiline
+          minRows={2}
+          label="Version note"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          disabled={locked}
+          inputProps={{ maxLength: 2000 }}
+          helperText="Optional"
+        />
+      </Box>
+      {/* One sticky decision bar: the acknowledgments on the left; on the right the reason while a button waits,
+          then Publish version, then Publish and request review. One click on either records the reviewed head and publishes. */}
+      <Box ref={footer} data-sticky-footer sx={{ position: "sticky", bottom: 0, zIndex: 2, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", minHeight: 64, py: 1, px: 1.5 }}>
         <Stack spacing={1.5}>
-          <TextField
-            size="small"
-            multiline
-            minRows={2}
-            label="Version note"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            disabled={locked}
-            inputProps={{ maxLength: 2000 }}
-            helperText="Optional"
-          />
-          {/* The acknowledgments and the step that locks them to this draft read as one group. */}
-          <Stack spacing={1} role="group" aria-label="Review acknowledgments">
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={reviewed}
-                  disabled={locked}
-                  onChange={(_, checked) =>
-                    setAckFingerprint(
-                      checked ? draftReview.reviewFingerprint : null,
-                    )
-                  }
-                />
-              }
-              label="I reviewed these changes against the current published version."
-            />
-            {draftReview.checks?.summary.warnings > 0 && (
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={warnings && reviewed}
-                    disabled={locked || !reviewed}
-                    onChange={(_, checked) =>
-                      setWarningFingerprint(
-                        checked ? draftReview.reviewFingerprint : null,
-                      )
-                    }
-                  />
-                }
-                label="I acknowledge the static warnings for this exact candidate."
-              />
-            )}
-            {draftReview.headAcknowledged ? (
-              <Typography variant="s3" role="status" sx={{ fontWeight: 500 }}>Review confirmed</Typography>
-            ) : (
-              <Stack spacing={0.5} alignItems="flex-start">
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  size="small"
-                  disabled={
-                    !ready ||
-                    !onAcknowledgeHead ||
-                    (draftReview.baseVersion !==
-                      draftReview.expectedHeadVersion &&
-                      !draftReview.headChanges)
-                  }
-                  onClick={() =>
-                    operation.run(async (input) => {
-                      const acknowledged = await onAcknowledgeHead(input);
-                      // Recorded before the review reloads and remounts for the same candidate.
-                      onCarry({
-                        reviewed,
-                        note,
-                        warned: warnings,
-                        candidateDigest: draftReview.candidateDigest,
-                        baseVersion: draftReview.baseVersion,
-                        expectedHeadVersion: draftReview.expectedHeadVersion,
-                        headDigest: draftReview.headDigest,
-                        warnings: draftReview.checks?.summary.warnings ?? null,
-                      });
-                      return acknowledged;
-                    }, fields)
-                  }
-                >
-                  Confirm review
-                </Button>
-                <Typography variant="s3" color="text.secondary">Locks this review to the current draft, so later edits can&apos;t be published by mistake.</Typography>
-              </Stack>
-            )}
-          </Stack>
-          <OperationFeedback operation={operation} />
-          {oneStep !== operation && <OperationFeedback operation={oneStep} />}
-          {operation.result && (
-            <Alert severity="info">
-              Operation recorded. Reload the acknowledged draft or immutable
-              publication receipt before another action. Production was not
-              moved.
-            </Alert>
+          {stalled ? (
+            <Alert severity="warning" role="status">The draft changed since you reviewed it. Review the changes again.</Alert>
+          ) : (
+            <>
+              <OperationFeedback operation={operation} />
+              {oneStep !== operation && <OperationFeedback operation={oneStep} />}
+            </>
           )}
-          {/* One footer row: Reload draft on the left; on the right the reason sits on the same baseline as the two publish actions. */}
-          <Stack direction={{ xs: "column", sm: "row" }} useFlexGap gap={1} flexWrap={{ sm: 'wrap' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
-            {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ ml: { sm: -1 }, alignSelf: { xs: 'flex-start', sm: 'center' } }}>Reload draft</Button>}
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ ml: { sm: 'auto' }, minWidth: 0 }}>
-              <ActionReason id="publish-review-reason" reason={publishReason} sx={{ textAlign: { sm: 'right' } }} />
-              <Button variant="outlined" {...reasonProps('publish-review-reason', publishReason)} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
-                onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
+          <DecisionFooterRow
+            left={
+              <Stack spacing={0.5} role="group" aria-label="Review acknowledgments" sx={{ flex: "1 1 100%", minWidth: 0 }}>
+                <FormControlLabel
+                  sx={{ mr: 0 }}
+                  componentsProps={{ typography: { variant: "s3" } }}
+                  control={
+                    <Checkbox
+                      checked={reviewed}
+                      disabled={locked}
+                      onChange={(_, checked) => {
+                        clearStale();
+                        setAckFingerprint(checked ? draftReview.reviewFingerprint : null);
+                      }}
+                    />
+                  }
+                  label="I reviewed these changes against the current published version."
+                />
+                {draftReview.checks?.summary.warnings > 0 && (
+                  <FormControlLabel
+                    sx={{ mr: 0 }}
+                    componentsProps={{ typography: { variant: "s3" } }}
+                    control={
+                      <Checkbox
+                        checked={warnings && reviewed}
+                        disabled={locked || !reviewed}
+                        onChange={(_, checked) => setWarningFingerprint(checked ? draftReview.reviewFingerprint : null)}
+                      />
+                    }
+                    label="I've read the check warnings for this version."
+                  />
+                )}
+              </Stack>
+            }
+            reason={<ActionReason id="publish-review-reason" reason={acknowledgmentReason} sx={{ textAlign: { sm: "right" } }} />}
+            secondary={
+              <Button
+                variant="outlined"
+                {...reasonProps("publish-review-reason", acknowledgmentReason)}
+                disabled={!ready || blocked(onPublish)}
+                onClick={() => {
+                  // Recorded before the review reloads and remounts for the same candidate.
+                  carryAcknowledgments();
+                  operation.run(onPublish, publishInput);
+                }}
+              >
                 Publish version
               </Button>
-              {/* J4 one-step path: the same reviewed identity acknowledges the
-                  head when needed, publishes the immutable candidate and opens
-                  the release-review request with it carried forward. Production
-                  is not moved; sharing and submission stay explicit. */}
-              {onPublishAndRequest && (
+            }
+            primary={
+              onPublishAndRequest && (
+                // J4 one-step path: the same reviewed identity acknowledges the head when needed, publishes the
+                // immutable candidate and opens the release-review request with it carried forward. Production
+                // is not moved; sharing and submission stay explicit.
                 <Button
                   variant="contained"
                   color="primary"
-                  {...reasonProps('publish-review-reason', acknowledgmentReason)}
-                  disabled={
-                    !ready ||
-                    (draftReview.baseVersion !==
-                      draftReview.expectedHeadVersion &&
-                      !draftReview.headChanges)
-                  }
-                  onClick={() =>
-                    oneStep.run(onPublishAndRequest, {
-                      ...fields,
-                      headAcknowledged: draftReview.headAcknowledged === true,
-                      baseVersion: draftReview.baseVersion,
-                      note,
-                      acknowledgeWarnings: warnings,
-                    })
-                  }
+                  {...reasonProps("publish-review-reason", acknowledgmentReason)}
+                  disabled={!ready || blocked(onPublishAndRequest)}
+                  onClick={() => {
+                    carryAcknowledgments();
+                    oneStep.run(onPublishAndRequest, publishInput);
+                  }}
                 >
                   Publish and request review
                 </Button>
-              )}
-            </Stack>
-          </Stack>
+              )
+            }
+          />
         </Stack>
       </Box>
     </Stack>
@@ -353,9 +345,9 @@ DraftPublication.propTypes = {
   onCarry: PropTypes.func.isRequired,
   draftReview: PropTypes.object.isRequired,
   canPublish: PropTypes.bool,
-  onAcknowledgeHead: PropTypes.func,
   onPublish: PropTypes.func,
   onPublishAndRequest: PropTypes.func,
+  publishOperation: PropTypes.object,
   oneStepOperation: PropTypes.object,
   onRefresh: PropTypes.func,
 };

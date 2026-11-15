@@ -67,7 +67,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   return <Stack spacing={1.5} sx={skillsRouteSx}>
     {header}
     <View scopeKey={scopeKey} state={state} {...query.data} renewalReason={renewalReason} staleCode={query.data?.staleCode || query.data?.renewalRequired || (paused ? 'review_stale' : undefined)} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={async () => { const result = await query.refetch(); if (!result?.isError && result?.data?.preview?.current) setRefusedRevision(null); return result; }} onRenew={() => setRenewing(true)}
-      renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
+      renewalOpen={renewing} currentUserId={access.scope?.userId} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
       onDecide={async (input, options) => {
         try { return await decide.mutateAsync({ ...input, ...options }); }
         catch (error) { if (isStaleReview(error)) setRefusedRevision(revisionKey); throw error; }
@@ -138,6 +138,7 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
   // revision and remounts the review, and an unknown publish outcome must stay
   // retryable with its original idempotency key.
   const oneStep = useReviewedOperation();
+  const publishOperation = useReviewedOperation();
   const data = query.data;
   const head = data?.review;
   const state = viewState || (!contextReviewReady() ? 'unavailable' : detail.isError || draft.isError || query.isError ? 'error' : detail.isLoading || draft.isLoading || query.isLoading ? 'loading' : data ? 'ready' : 'unavailable');
@@ -146,27 +147,32 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
     complete: data.complete, changes: data.originChanges, headChanges: data.headChanges, acceptedLock: draft.data?.resolvedLock, checks: data.checks,
     headAcknowledged: draft.data?.headAcknowledged && draft.data?.reviewFingerprint === head.reviewFingerprint,
     note: draft.data?.note, productionVersion: data.releaseState.labels.find((label) => label.name === 'production')?.version };
+  // One chain for both publish buttons (A6): acknowledge the reviewed head only
+  // when the current draft still needs it (a retry after an unknown outcome
+  // reuses the earlier acknowledgment of the same bytes), then publish with the
+  // held idempotency key. The server rechecks digest, head and fingerprint on
+  // both writes, so a stale draft fails with a conflict and nothing is published.
+  const acknowledgeThenPublish = async ({ headAcknowledged, idempotencyKey, ...input }, options) => {
+    let fields = input;
+    if (!headAcknowledged) {
+      const current = (await draft.refetch()).data;
+      if (current?.headAcknowledged && current.digest === input.expectedDigest) fields = { ...input, revision: current.revision, reviewFingerprint: current.reviewFingerprint };
+      else {
+        const acked = await acknowledge.mutateAsync({ ...input, ...options });
+        fields = { ...input, revision: acked.revision, reviewFingerprint: acked.reviewFingerprint };
+      }
+    }
+    return publish.mutateAsync({ ...fields, idempotencyKey, ...options });
+  };
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
-    onRetry={refresh} onRefresh={refresh} onAcknowledgeHead={(input, options) => acknowledge.mutateAsync({ ...input, ...options })}
-    onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); // A repair published from older content is verified next: open its application tests directly.
+    onRetry={refresh} onRefresh={refresh}
+    onPublish={async (input, options) => { const receipt = await acknowledgeThenPublish(input, options); // A repair published from older content is verified next: open its application tests directly.
       const repair = input.baseVersion != null && input.expectedHeadVersion != null && input.baseVersion !== input.expectedHeadVersion;
       navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}${repair ? '&tab=tests' : ''}`); return receipt; }}
+    publishOperation={publishOperation}
     oneStepOperation={oneStep}
-    onPublishAndRequest={async ({ headAcknowledged, idempotencyKey, ...input }, options) => {
-      // J4: acknowledge the reviewed head only when the current draft still
-      // needs it (a retry after an unknown publish outcome reuses the earlier
-      // acknowledgment of the same bytes). The server rechecks digest, head
-      // and fingerprint on both writes.
-      let fields = input;
-      if (!headAcknowledged) {
-        const current = (await draft.refetch()).data;
-        if (current?.headAcknowledged && current.digest === input.expectedDigest) fields = { ...input, revision: current.revision, reviewFingerprint: current.reviewFingerprint };
-        else {
-          const acked = await acknowledge.mutateAsync({ ...input, ...options });
-          fields = { ...input, revision: acked.revision, reviewFingerprint: acked.reviewFingerprint };
-        }
-      }
-      const receipt = await publish.mutateAsync({ ...fields, idempotencyKey, ...options });
+    onPublishAndRequest={async (input, options) => {
+      const receipt = await acknowledgeThenPublish(input, options);
       navigate(reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: detail.data?.context.name || '', candidateId: receipt.version.id, number: receipt.version.number, digest: receipt.version.digest }));
       return receipt;
     }} />;
