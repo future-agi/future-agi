@@ -17,11 +17,7 @@ import SharedSection from "src/components/section";
 import { sessionTracesLink } from "src/sections/projects/Insights/insightsLinks";
 import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
-import {
-  EVIDENCE_COPY,
-  caseShowsDefault,
-  errorText,
-} from "./evidence.constants";
+import { EVIDENCE_COPY, errorText } from "./evidence.constants";
 import {
   isEvidenceCaseDrafted,
   isEvidenceCaseWaiting,
@@ -95,7 +91,7 @@ export default function EvidenceReviewDrawer({
       caseIds: waiting.map((one) => one.id),
       shows: Object.fromEntries(
         waiting
-          .map((one) => [one.id, shows[one.id] ?? caseShowsDefault(one)])
+          .map((one) => [one.id, shows[one.id]])
           .filter(([, value]) => value),
       ),
     });

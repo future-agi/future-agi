@@ -14,7 +14,6 @@ import {
   CASE_ROLE,
   EVIDENCE_COPY,
   PART_LABELS,
-  caseShowsDefault,
   cutAtWord,
   partGroups,
 } from "./evidence.constants";
@@ -115,7 +114,9 @@ export default function EvidenceCaseCard({
   const [allTurns, setAllTurns] = useState(false);
   const held = PARTS.filter((part) => HELD.has(item[part]?.status));
   const missing = PARTS.filter((part) => !HELD.has(item[part]?.status));
-  const choice = shows ?? caseShowsDefault(item);
+  // A label is what an annotator said, not how the source ended: the person
+  // chooses, or the builder judges from the evidence.
+  const choice = shows ?? "";
   return (
     // A panel: flat, with a hairline border and the panel radius.
     <Box

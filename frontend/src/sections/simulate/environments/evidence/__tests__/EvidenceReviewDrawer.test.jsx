@@ -246,17 +246,32 @@ describe("EvidenceReviewDrawer", () => {
     ).toBeInTheDocument();
   });
 
-  it("drafts the waiting cases with what each record shows", async () => {
+  it("makes no choice from an annotation alone, so the draft sends none", async () => {
+    const good = {
+      name: "Quality",
+      kind: "text",
+      value: "good",
+      notes: "",
+      target: "session",
+    };
+    evidence = bundle({
+      cases: [item({ labels: { ...part("present"), labels: [good] } })],
+    });
     axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
     renderDrawer();
-    const button = await screen.findByRole("button", {
-      name: "Draft 1 scenario",
+    const choice = await screen.findByRole("combobox", {
+      name: /^What should this case's scenario be\?/,
     });
-    await userEvent.click(button);
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 1 scenario" }),
+    );
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
         case_ids: ["c1"],
-        shows: { c1: "failure" },
+        shows: {},
       }),
     );
   });
@@ -276,7 +291,7 @@ describe("EvidenceReviewDrawer", () => {
       "Not set: the builder judges from the evidence",
     );
     expect(
-      screen.getByText(/^Nothing here records how it ended/),
+      screen.getByText(/^You haven't said how it ended/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Draft 1 scenario" }),
@@ -296,7 +311,13 @@ describe("EvidenceReviewDrawer", () => {
       name: /^What should this case's scenario be\?/,
     });
     expect(choice).toHaveTextContent(
-      "Reproduce the failure as a regression test",
+      "Not set: the builder judges from the evidence",
+    );
+    await userEvent.click(choice);
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Reproduce the failure as a regression test",
+      }),
     );
     expect(
       screen.getByText(/^Keeps: the situation, what the user said/),
@@ -342,7 +363,9 @@ describe("EvidenceReviewDrawer", () => {
     const [choice] = screen.getAllByRole("combobox", {
       name: /^What should this case's scenario be\?/,
     });
-    expect(choice).toHaveTextContent("Reproduce the failure as a test");
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
     await userEvent.click(choice);
     const options = screen
       .getAllByRole("option")
