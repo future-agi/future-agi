@@ -649,3 +649,25 @@ def test_apply_failed_reads_draft_with_reason(user, workspace, storage):
     record_failed_changes(environment, [])
     environment.refresh_from_db()
     assert _views(environment)[REFUND_KEYS[0]]["state"] == "active"
+
+
+def test_an_archived_case_with_a_failed_change_stays_archived(user, workspace, storage):
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessScenario
+    from simulate.services.hosted_harness_conversation import record_failed_changes
+
+    environment = _environment(user, workspace, storage, "lc-apply-failed-archived")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(KEYS, PROVED))
+    HostedHarnessScenario.no_workspace_objects.filter(
+        job=environment, scenario_key=REFUND_KEYS[1]
+    ).update(archived_at=timezone.now(), archive_reason="retired route")
+    record_failed_changes(
+        environment, [{"scenario_key": REFUND_KEYS[1], "reason": "bad check"}]
+    )
+    environment.refresh_from_db()
+
+    view = _views(environment)[REFUND_KEYS[1]]
+
+    assert (view["state"], view["reason"]) == ("archived", "archived")
