@@ -41,6 +41,7 @@ LATEST = (
     ('simulate','0103_harness_job_verify_of'),
     ('simulate','0104_agent_fix_variations'),
     ('simulate','0105_harness_job_fix_eval_cost'),
+    ('simulate','0106_harness_job_graded_for'),
     ('tracer','0098_useralertmonitor_webhook_url'),
     ('tracer','0131_merge_alert_webhook'),
     ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
@@ -272,7 +273,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(SQL_ADDITIONS),8)
         self.assertEqual(len(SAMPLING_ADDITIONS),10)
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,50),(REVISIONS[0],LATEST+FLOOR_ONLY,55)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,51),(REVISIONS[0],LATEST+FLOOR_ONLY,56)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -280,8 +281,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 50),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 55)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 51),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 56)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
@@ -317,7 +318,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,50)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,51)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -350,7 +351,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,50),(REVISIONS[0],LATEST+FLOOR_ONLY,55)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,51),(REVISIONS[0],LATEST+FLOOR_ONLY,56)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)

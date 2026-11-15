@@ -763,12 +763,22 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
     fix's limit is held against: a check run not settled yet (usage not sealed, or evals
     still grading) holds at least a worst case for each execution, and a settled run a
-    winner's grading may read still holds its evals' worst case while the fix goes on."""
+    winner's grading may read still holds its evals' worst case while the fix goes on.
+
+    A retry reads again the runs the failed fix finished, and grades them: their evals count
+    for the retry (``graded_for``), never for the failed fix that paid their simulation."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     actual = ExpressionWrapper(
         Coalesce(F("check_runs__fix_cost_usd"), Value(Decimal(0)))
-        + F("check_runs__fix_eval_cost_usd"),
+        + Case(
+            When(
+                check_runs__graded_for__isnull=True,
+                then=F("check_runs__fix_eval_cost_usd"),
+            ),
+            default=Value(Decimal(0)),
+            output_field=money,
+        ),
         output_field=money,
     )
     evals = Coalesce(
@@ -806,6 +816,7 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         graded
         & Q(state__in=AgentFixRun.ACTIVE_STATES)
         & Q(check_runs__test_execution__status=TestExecution.ExecutionStatus.COMPLETED)
+        & Q(check_runs__graded_for__isnull=True)
     )
     pending_evals = Case(
         When(
@@ -834,9 +845,41 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         Value(Decimal(0)),
         output_field=money,
     )
+    # The runs it read again: what their evals billed, and while it goes on, the worst
+    # case of the evals its winner's grading runs on them.
+    adopted = HostedHarnessJob.no_workspace_objects.filter(
+        graded_for=OuterRef("pk"), deleted=False
+    ).values("graded_for")
+    adopted_billed = Coalesce(
+        Subquery(adopted.annotate(total=Sum("fix_eval_cost_usd")).values("total")),
+        Value(Decimal(0)),
+        output_field=money,
+    )
+    adopted_held = Case(
+        When(
+            state__in=AgentFixRun.ACTIVE_STATES,
+            then=ExpressionWrapper(
+                Coalesce(
+                    Subquery(
+                        adopted.annotate(total=Sum("scenario_count")).values("total")
+                    ),
+                    0,
+                )
+                * (_worst_case(evals) - _worst_case(0)),
+                output_field=money,
+            ),
+        ),
+        default=Value(Decimal(0)),
+        output_field=money,
+    )
     return runs.annotate(
-        fix_spent_usd=ExpressionWrapper(F("spent_usd") + spent, output_field=money),
-        committed_usd=ExpressionWrapper(F("spent_usd") + committed, output_field=money),
+        fix_spent_usd=ExpressionWrapper(
+            F("spent_usd") + spent + adopted_billed, output_field=money
+        ),
+        committed_usd=ExpressionWrapper(
+            F("spent_usd") + committed + adopted_billed + adopted_held,
+            output_field=money,
+        ),
     )
 
 
@@ -1132,12 +1175,21 @@ def graded_check_runs(
     fix_run: AgentFixRun, winner: AgentFixCandidate
 ) -> tuple[list[HostedHarnessJob], list[HostedHarnessJob]]:
     """The base version's baseline repeats and the winner's final check: the runs a fix's
-    evals grade once it has a winner, and all they compare."""
+    evals grade once it has a winner, and all they compare. A retry's baselines include the
+    ones it read again from the failed fix, and only those: what its limit holds."""
     if not hasattr(fix_run, "check_run_list"):
         fix_run.check_run_list = list(
             HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run)
         )
-    base = _each_repeat(base_check_runs(fix_run), _BASELINE_LABEL)
+    own = [
+        run
+        for run in fix_run.check_run_list
+        if run.agent_version_id == fix_run.base_agent_version_id
+    ]
+    adopted = HostedHarnessJob.no_workspace_objects.filter(
+        graded_for=fix_run, deleted=False
+    ).order_by("created_at")
+    base = _each_repeat([*own, *adopted], _BASELINE_LABEL)
     final = _each_repeat(
         (
             run

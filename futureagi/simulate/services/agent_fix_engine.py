@@ -287,6 +287,14 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
         if finished is not None:
+            if is_graded_label(request.label) and finished.graded_for_id != locked.id:
+                # This retry's winner grades it: its evals are new spend, held against
+                # this fix's limit as its own graded runs' are.
+                _require_budget(locked, executions, request.label, read_again=True)
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id).update(
+                    graded_for=locked
+                )
+                finished.graded_for = locked
             return finished
         if not replay:
             _require_budget(locked, executions, request.label)
@@ -399,9 +407,16 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
             )
 
 
-def _require_budget(fix_run: AgentFixRun, executions: int, label: str) -> None:
+def _require_budget(
+    fix_run: AgentFixRun, executions: int, label: str, *, read_again: bool = False
+) -> None:
     budget = Decimal(str(fix_run.request["budget_usd"]))
     worst = worst_case_usd_per_execution(fix_run, graded=is_graded_label(label))
+    if read_again:
+        # A run read again from the failed fix: that fix paid its simulation.
+        worst -= worst_case_usd_per_execution(fix_run, graded=False)
+        if worst <= 0:
+            return
     needed = committed_usd(fix_run) + executions * worst
     if needed > budget:
         raise HostedHarnessError(

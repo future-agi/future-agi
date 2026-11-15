@@ -59,6 +59,7 @@ from simulate.selectors.agent_fix import (
     launch_options,
     limited_validation,
     ran_at,
+    with_spend,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import (
@@ -2940,6 +2941,113 @@ class TestWinnerGrading:
             AgentFixCandidate.no_workspace_objects.get(id=candidate.id),
             override_reason="",
         )
+
+
+class TestRetryGrading:
+    """A retry reads again the baselines the failed fix finished, and its winner grades
+    them: their evals are the retry's to hold and pay, never the failed fix's."""
+
+    def _retry(self, source_run, user, *, labels=("baseline-r1",)):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        finished = {label: _check(failed, label=label) for label in labels}
+        for run in finished.values():
+            _finished_and_sealed(run)
+            HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+                state="completed"
+            )
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+        return failed, retried, finished
+
+    def _limit(self, fix_run, budget_usd):
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "budget_usd": budget_usd}
+        )
+        fix_run.refresh_from_db()
+
+    def test_a_baseline_read_again_holds_its_evals_against_the_retry_s_limit(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.7)
+        candidate = _candidate(retried)
+
+        assert _check(retried, label="baseline-r1").id == finished["baseline-r1"].id
+        # Its simulation was the failed fix's; its eval, which the winner runs, is not.
+        assert committed_usd(retried) == Decimal("0.25")
+        # So a screen that would fit without that eval does not.
+        assert _refusal(
+            _check, retried, label="c1-target-r1", version_id=candidate.agent_version_id
+        ) == ("fix_budget_exhausted", 402)
+
+    def test_a_baseline_whose_evals_do_not_fit_is_not_read_again(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.2)
+
+        assert _refusal(_check, retried, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        finished["baseline-r1"].refresh_from_db()
+        assert finished["baseline-r1"].graded_for_id is None
+
+    def test_what_the_evals_of_a_baseline_read_again_bill_is_the_retry_s_spend(
+        self, source_run, user, temporal
+    ):
+        _mapped_eval(source_run)
+        failed, retried, finished = self._retry(source_run, user)
+        _check(retried, label="baseline-r1")
+        spent = dict(
+            with_spend(
+                AgentFixRun.no_workspace_objects.filter(id__in=[failed.id, retried.id])
+            ).values_list("id", "fix_spent_usd")
+        )
+
+        accrue_check_run_eval_cost(finished["baseline-r1"].test_execution_id, 25)
+
+        now = dict(
+            with_spend(
+                AgentFixRun.no_workspace_objects.filter(id__in=[failed.id, retried.id])
+            ).values_list("id", "fix_spent_usd")
+        )
+        assert now[retried.id] - spent[retried.id] == Decimal("0.25")
+        assert now[failed.id] == spent[failed.id]
+
+    def test_a_retry_grades_only_the_baselines_it_read_again(
+        self, source_run, user, temporal
+    ):
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(
+            source_run, user, labels=("baseline-r1", "baseline-r2")
+        )
+        _check(retried, label="baseline-r1")
+        candidate = _candidate(retried)
+        _finished_and_sealed(
+            _check(
+                retried, label="c1-finalist-r1", version_id=candidate.agent_version_id
+            )
+        )
+
+        base, _final = graded_check_runs(
+            AgentFixRun.no_workspace_objects.get(id=retried.id), candidate
+        )
+        # The second repeat was never asked for again: its evals were never held.
+        assert [run.id for run in base] == [finished["baseline-r1"].id]
 
 
 class TestCheckRunEvalCost:
