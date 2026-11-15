@@ -1004,14 +1004,14 @@
 
 **Goal:** Keep comparison rows and detail on the adopted snapshot when concurrent later blocks rebuild an expired comparison
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:794`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:798`
 
 **Tags:** —
 
 **User steps:**
 
 1. upload two matching datasets, compare by input and open the first row detail
-2. expire the stored comparison and scroll the real grid to pages two and three while delaying both real responses
+2. retain real earlier-page reads before deleting the comparison through its API, then hold both old-ID page two and page three rebuild responses while scrolling the real grid
 3. release page two first, confirm the old drawer closes, then release the competing page three response
 4. revisit rows thirty and thirty-one and open row thirty detail from the adopted snapshot
 5. return to row zero and open its rebuilt detail
@@ -1027,19 +1027,20 @@
 
 **Goal:** Retire old comparison rows and detail when a later block rebuilds to zero, then keep same-ID refreshes settled
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1099`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1171`
 
 **Tags:** —
 
 **User steps:**
 
-1. upload matching datasets, compare by input, open detail, then make only the synthetic peer inputs disjoint and expire the comparison
+1. upload matching datasets, compare by input, open detail, update only the synthetic peer inputs through the public cell-edit API to remove all overlap, then invalidate metadata through the comparison DELETE API
 2. observe a real zero-row comparison with no old detail or summary rows
 3. call the existing real grid API for non-purge and purge refresh without clearing the comparison ID
 4. sort the empty result and observe that it remains empty without another POST
 
 **Backend state verified:**
 
+- public cell edits preserve the synthetic peer row IDs and outputs and leave zero shared input values in Postgres
 - the real comparison endpoint returns a server-minted ID and zero row/page counts
 - each same-ID refresh completes locally with no additional comparison POSTs during a bounded observation window
 - the later-block rollover makes at most two comparison POSTs and adopts a new ID
@@ -1054,7 +1055,7 @@
 
 **Goal:** Keep an initially empty comparison settled during same-ID grid refresh and explicit download recovery
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1099`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1171`
 
 **Tags:** —
 
@@ -1081,7 +1082,7 @@
 
 **Goal:** Recover a genuinely expired comparison download without rebuilding on an unrelated dataset error or automatically retrying CSV
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1243`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1377`
 
 **Tags:** —
 

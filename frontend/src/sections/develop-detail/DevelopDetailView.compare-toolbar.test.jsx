@@ -152,13 +152,19 @@ vi.mock("./Optimization/RunOptimization", () => ({ default: Null }));
 vi.mock("./OptimizationTab/OptimizeTab", () => ({ default: Null }));
 vi.mock("./Evaluation/EditEvaluation", () => ({ default: Null }));
 vi.mock("./ExperimentTab/ExperimentTab", () => ({ default: Null }));
-vi.mock("./AddColumn/AddColumnApiCall/AddColumnApiCall", () => ({ default: Null }));
-vi.mock("./AddColumn/ExtractEntities/ExtractEntities", () => ({ default: Null }));
+vi.mock("./AddColumn/AddColumnApiCall/AddColumnApiCall", () => ({
+  default: Null,
+}));
+vi.mock("./AddColumn/ExtractEntities/ExtractEntities", () => ({
+  default: Null,
+}));
 vi.mock("./AddColumn/Classification/Classification", () => ({ default: Null }));
 vi.mock("./AddColumn/ExecuteCode/ExecuteCode", () => ({ default: Null }));
 vi.mock("./AddColumn/ExtractJsonKey/ExtractJsonKey", () => ({ default: Null }));
 vi.mock("./AddColumn/Retrieval/Retrieval", () => ({ default: Null }));
-vi.mock("./AddColumn/ConditionalNode/ConditionalNodeV2", () => ({ default: Null }));
+vi.mock("./AddColumn/ConditionalNode/ConditionalNodeV2", () => ({
+  default: Null,
+}));
 vi.mock("./Experiment/RunExperiment", () => ({ default: Null }));
 vi.mock("./DataTab/DevelopDataV2", () => ({ default: Null }));
 vi.mock("./DataTab/DevelopEvaluationDrawer", () => ({ default: Null }));
@@ -296,7 +302,9 @@ describe("DevelopDetailView comparison toolbar", () => {
     renderView();
     await loadPage();
 
-    expect(screen.getAllByRole("button", { name: "Download comparison CSV" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: "Download comparison CSV" }),
+    ).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Columns" })).toHaveLength(1);
     expect(screen.queryByText("Dataset actions")).not.toBeInTheDocument();
     expect(screen.getAllByText("Selected dataset controls")).toHaveLength(1);
@@ -307,13 +315,20 @@ describe("DevelopDetailView comparison toolbar", () => {
     });
 
     await user.click(downloadButton());
-    await waitFor(() => expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1));
-    expect(mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL)).toEqual([
-      [DOWNLOAD_URL, {
-        dataset_ids: ["dataset-b"],
-        base_column_name: "input",
-        compare_id: COMPARE_ID,
-      }],
+    await waitFor(() =>
+      expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL),
+    ).toEqual([
+      [
+        DOWNLOAD_URL,
+        {
+          dataset_ids: ["dataset-b"],
+          base_column_name: "input",
+          compare_id: COMPARE_ID,
+        },
+      ],
     ]);
     expect(window.HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
     expect(window.URL.revokeObjectURL).toHaveBeenCalledWith("blob:comparison");
@@ -328,9 +343,12 @@ describe("DevelopDetailView comparison toolbar", () => {
     renderView();
     await loadPage();
     let resolveDownload;
-    mocks.post.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveDownload = resolve;
-    }));
+    mocks.post.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
 
     const button = downloadButton();
     await user.click(button);
@@ -338,7 +356,9 @@ describe("DevelopDetailView comparison toolbar", () => {
     expect(button).toHaveAttribute("aria-busy", "true");
     expect(within(button).getByRole("progressbar")).toBeInTheDocument();
     await user.click(button);
-    expect(mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL)).toHaveLength(1);
+    expect(
+      mocks.post.mock.calls.filter(([url]) => url === DOWNLOAD_URL),
+    ).toHaveLength(1);
 
     await act(async () => resolveDownload({ data: "input,output\n" }));
     await waitFor(() => expect(button).toBeEnabled());
@@ -354,7 +374,9 @@ describe("DevelopDetailView comparison toolbar", () => {
     expect(columnsButton).toBeDisabled();
     await loadPage();
     expect(columnsButton).toBeEnabled();
-    expect(grid.props.columnDefs.find((col) => col.field === "input-a").hide).toBe(false);
+    expect(
+      grid.props.columnDefs.find((col) => col.field === "input-a").hide,
+    ).toBe(false);
 
     columnsButton.focus();
     await user.keyboard("{Enter}");
@@ -364,11 +386,15 @@ describe("DevelopDetailView comparison toolbar", () => {
     expect(checkbox).toBeChecked();
     await user.click(checkbox);
     await waitFor(() => {
-      expect(grid.props.columnDefs.find((col) => col.field === "input-a").hide).toBe(true);
+      expect(
+        grid.props.columnDefs.find((col) => col.field === "input-a").hide,
+      ).toBe(true);
     });
     expect(checkbox).not.toBeChecked();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(columnsButton).toHaveAttribute("aria-expanded", "false"));
+    await waitFor(() =>
+      expect(columnsButton).toHaveAttribute("aria-expanded", "false"),
+    );
   });
 
   it("keeps an empty comparison downloadable and wires typed-expiration recovery back to its grid", async () => {
@@ -376,31 +402,51 @@ describe("DevelopDetailView comparison toolbar", () => {
     mocks.post.mockResolvedValueOnce(tableResponse({ empty: true }));
     renderView();
     const success = await loadPage();
-    expect(success).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    expect(success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
     expect(grid.api.showNoRowsOverlay).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Columns" })).toBeDisabled();
     expect(downloadButton()).toBeEnabled();
     grid.api.refreshServerSide.mockClear();
-    mocks.post.mockRejectedValueOnce({ statusCode: 404, code: "compare_not_found" });
+    mocks.post.mockRejectedValueOnce({
+      statusCode: 404,
+      code: "compare_not_found",
+    });
 
     await user.click(downloadButton());
-    await waitFor(() => expect(grid.api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true }));
+    await waitFor(() =>
+      expect(grid.api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+        purge: true,
+      }),
+    );
     expect(mocks.post).toHaveBeenLastCalledWith(DOWNLOAD_URL, {
       dataset_ids: ["dataset-b"],
       base_column_name: "input",
       compare_id: COMPARE_ID,
     });
-    expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(COMPARISON_EXPIRED_MESSAGE, { variant: "info" });
+    expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(
+      COMPARISON_EXPIRED_MESSAGE,
+      { variant: "info" },
+    );
     expect(window.URL.createObjectURL).not.toHaveBeenCalled();
 
     // AG Grid's reload is manual at this layout boundary. The real datasource
     // must rebuild with null, rather than reusing its terminal empty snapshot.
-    mocks.post.mockResolvedValueOnce(tableResponse({ compareId: NEW_COMPARE_ID }));
+    mocks.post.mockResolvedValueOnce(
+      tableResponse({ compareId: NEW_COMPARE_ID }),
+    );
     await loadPage();
-    expect(mocks.post).toHaveBeenLastCalledWith(TABLE_URL, expect.objectContaining({ compare_id: null }));
+    expect(mocks.post).toHaveBeenLastCalledWith(
+      TABLE_URL,
+      expect.objectContaining({ compare_id: null }),
+    );
     await waitFor(() => expect(downloadButton()).toBeEnabled());
     await user.click(downloadButton());
-    await waitFor(() => expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1),
+    );
     expect(mocks.post).toHaveBeenLastCalledWith(DOWNLOAD_URL, {
       dataset_ids: ["dataset-b"],
       base_column_name: "input",
@@ -412,13 +458,16 @@ describe("DevelopDetailView comparison toolbar", () => {
     { baseColumn: "" },
     { selectedDatasets: [] },
     { selectedDatasets: ["dataset-a"] },
-  ])("disables download for an incomplete comparison selection %j", async (state) => {
-    const user = userEvent.setup();
-    renderView(state);
-    expect(downloadButton()).toBeDisabled();
-    await user.click(downloadButton());
-    expect(mocks.post).not.toHaveBeenCalled();
-  });
+  ])(
+    "disables download for an incomplete comparison selection %j",
+    async (state) => {
+      const user = userEvent.setup();
+      renderView(state);
+      expect(downloadButton()).toBeDisabled();
+      await user.click(downloadButton());
+      expect(mocks.post).not.toHaveBeenCalled();
+    },
+  );
 
   it("runs the existing evaluation action for a loaded comparison", async () => {
     const user = userEvent.setup();
@@ -426,32 +475,48 @@ describe("DevelopDetailView comparison toolbar", () => {
     expect(screen.getByRole("button", { name: "Evaluate" })).toBeDisabled();
     await loadPage();
     await user.click(screen.getByRole("button", { name: "Evaluate" }));
-    expect(screen.getAllByRole("dialog", { name: "Run comparison evaluation" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("dialog", { name: "Run comparison evaluation" }),
+    ).toHaveLength(1);
   });
 
   it.each([
     { role: "Viewer", fromScenario: false },
     { role: "Owner", fromScenario: true },
-  ])("preserves evaluation restrictions for %j without blocking download", async ({ role, fromScenario }) => {
-    mocks.role = role;
-    renderView({ fromScenario });
-    await loadPage();
-    expect(screen.getByRole("button", { name: "Evaluate" })).toBeDisabled();
-    expect(downloadButton()).toBeEnabled();
-  });
+  ])(
+    "preserves evaluation restrictions for %j without blocking download",
+    async ({ role, fromScenario }) => {
+      mocks.role = role;
+      renderView({ fromScenario });
+      await loadPage();
+      expect(screen.getByRole("button", { name: "Evaluate" })).toBeDisabled();
+      expect(downloadButton()).toBeEnabled();
+    },
+  );
 
   it.each([
     { isCompare: false, tab: "data", content: "Dataset actions" },
     { isCompare: false, tab: "experiments", content: "Experiment actions" },
     { isCompare: false, tab: "summary", content: "Dataset summary" },
     { isCompare: true, tab: "summary", content: "Comparison summary" },
-  ])("preserves the dedicated toolbar/content without resurrecting retired slots for %j", ({ content, ...state }) => {
-    renderView(state);
-    expect(screen.getAllByText(content)).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "Download comparison CSV" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Columns" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Retired experiment actions")).not.toBeInTheDocument();
-    expect(screen.queryByText("Retired comparison summary actions")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Selected dataset controls")).toHaveLength(1);
-  });
+  ])(
+    "preserves the dedicated toolbar/content without resurrecting retired slots for %j",
+    ({ content, ...state }) => {
+      renderView(state);
+      expect(screen.getAllByText(content)).toHaveLength(1);
+      expect(
+        screen.queryByRole("button", { name: "Download comparison CSV" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Columns" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Retired experiment actions"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Retired comparison summary actions"),
+      ).not.toBeInTheDocument();
+      expect(screen.getAllByText("Selected dataset controls")).toHaveLength(1);
+    },
+  );
 });
