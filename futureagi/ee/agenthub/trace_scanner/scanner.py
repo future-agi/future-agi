@@ -617,7 +617,7 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
             names = _shown_tool_names(shown)
             if not names:
                 return "cited_field_missing", []
-            if not _passage_names_tools(passage, names, trace):
+            if passage is None or not _passage_names_tools(passage, names, trace):
                 return "not_in_cited_field", []
             checked.append(passage)
             continue
@@ -626,10 +626,10 @@ def _bind(verdict: dict[str, Any], trace, shown) -> tuple[str | None, list[str]]
         values = _field_values(trace, span_id, name)
         if not values:
             return "cited_field_missing", []
-        if _passage_in_field(passage, values):
+        if passage is not None and _passage_in_field(passage, values):
             checked.append(passage)
             continue
-        head = _leading_quote(passage, values) if lone else None
+        head = _leading_quote(passage, values) if lone and passage is not None else None
         if head is None:
             return "not_in_cited_field", []
         checked.append(head)

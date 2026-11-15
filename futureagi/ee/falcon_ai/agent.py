@@ -67,6 +67,8 @@ class AgentLoop:
         self._budget_warned = False
         # Partial state — accessible after cancellation for saving
         self.partial_content = ""
+        # Text of the last turn alone; ``partial_content`` joins all turns.
+        self.final_turn_content = ""
         self.partial_tool_calls = []
         self.assistant_message_id = None
 
@@ -169,12 +171,15 @@ class AgentLoop:
         skill=None,
         system_prompt_override=None,
         tools_override=None,
+        raise_on_stream_error: bool = False,
     ):
         """Execute the agent loop with mode detection, parallel tool execution, and retry.
 
         Args:
             system_prompt_override: If provided, replaces the default PromptBuilder
                 system prompt. Used by AgentEvaluator to inject eval-specific instructions.
+            raise_on_stream_error: Evaluation callers propagate failures instead of
+                returning partial content. Chat keeps its error callback behavior.
             tools_override: If provided, replaces the mode-detected tools list.
                 Used by AgentEvaluator to restrict available tools.
         """
@@ -326,6 +331,7 @@ class AgentLoop:
         tool_call_counter = 0
         consecutive_errors = 0
 
+        finish_reason = None
         for iteration in range(self.MAX_ITERATIONS):
             # Force wrap-up when approaching the limit
             # Token-budget-based warning — more natural than iteration count
@@ -369,6 +375,7 @@ class AgentLoop:
             # Stream LLM response with retry
             tool_calls_accumulator = {}
             current_content = ""
+            self.final_turn_content = ""
             finish_reason = None
 
             # Debug: log message structure for eval debugging
@@ -458,6 +465,8 @@ class AgentLoop:
             except ManagedServiceError:
                 raise
             except Exception as e:
+                if raise_on_stream_error:
+                    raise
                 error_detail = str(e)
                 # Extract response body from httpx errors for debugging
                 if hasattr(e, "response") and e.response is not None:
@@ -483,6 +492,7 @@ class AgentLoop:
 
             full_content += current_content
             self.partial_content = full_content
+            self.final_turn_content = current_content
             self.partial_tool_calls = all_tool_calls_log
 
             # If LLM returned nothing (no text and no tool calls), break to prevent empty iterations
@@ -805,6 +815,7 @@ class AgentLoop:
             "input_tokens": self.total_input_tokens,
             "output_tokens": self.total_output_tokens,
             "title": title,
+            "finish_reason": finish_reason,
         }
 
     async def _maybe_generate_title(
