@@ -1654,9 +1654,9 @@
 
 ### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
 
-**Goal:** An admin monitors and then enforces a guardrail on one API key, corrects invalid keyword configuration without losing edits, and preserves cache isolation and org-wide guardrails
+**Goal:** An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and six built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content
 
-**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:41`
+**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:53`
 
 **Tags:** —
 
@@ -1670,6 +1670,10 @@
 6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
 7. try an empty Keyword Blocklist in the policy dialog, retain its inline error and correct it through Configure; the saved selected key is blocked while clean and unselected requests pass
 8. reject malformed keyword creates and updates atomically; retain an edited draft on a real server validation error, then save the corrected draft
+9. correct syntax and family-invalid JSON for PII, Content Moderation, Secret Detection, Language Detection, Topic Restriction and Input Validation, including disabled-draft re-enable refusal without policy writes
+10. save each corrected policy for its own key, verify exact persisted and pushed configuration, then reload and reopen Configure
+11. send safe text with each corrected selected key and read its unique uncached mock echo
+12. refuse a selected native Responses request with previous_response_id without releasing content, verify its blocked log, and confirm ordinary chat still works
 
 **Backend state verified:**
 
@@ -1681,6 +1685,10 @@
 - the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
 - keyword correction persists exact words and the intended key in PostgreSQL and the pushed gateway config; selected matching requests are blocked while clean and unselected requests pass
 - invalid keyword creates and updates return 400 without partial policy or assignment changes; the real server error retains the UI draft and a corrected retry saves it
+- six built-in invalid drafts make no policy write, and correction retains the exact authored configuration and intended key in the policy API and PostgreSQL
+- all six corrected built-in policies reach the gateway with exact enabled checks, thresholds, configurations and selected gateway key IDs
+- safe text on every corrected selected key returns the unique mock echo without a guardrail trigger or cache reuse
+- a native Responses request with uninspectable selected input returns input_guardrail_unsupported without content and records the exact blocked selected-policy request
 
 ## knowledge-base
 
