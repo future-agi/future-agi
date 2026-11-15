@@ -173,6 +173,53 @@ def test_csv_literal_nan_is_a_supplied_value(auth_client, media_dataset):
     assert cell.value is None
 
 
+@pytest.mark.parametrize("literal", ["nan", "NA", "null"])
+def test_xlsx_na_like_strings_are_supplied_values(auth_client, media_dataset, literal):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.active.append(["text", "audio", "image"])
+    workbook.active.append([literal, literal, literal])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    response = _file_upload(
+        auth_client,
+        media_dataset,
+        SimpleUploadedFile("literal.xlsx", buffer.getvalue()),
+    )
+    assert response.status_code == 200, response.json()
+    assert Cell.objects.get(dataset=media_dataset, column__name="text").value == literal
+    for kind in ("image", "audio"):
+        cell = Cell.objects.get(dataset=media_dataset, column__name=kind)
+        assert cell.status == CellStatus.ERROR.value
+        assert cell.value is None
+    assert GetDatasetTableView()._get_dataset_status(media_dataset)["failed_cells"] == 2
+
+
+@pytest.mark.parametrize("kind", ["image", "audio"])
+def test_extensionless_media_preserves_fixed_validation_reason(
+    auth_client, media_dataset, kind
+):
+    url = "https://media.example/unknown"
+    with patch("model_hub.views.utils.utils.safe_fetch") as fetch:
+        fetch.return_value = MagicMock(
+            status_code=200,
+            headers={"Content-Type": "application/octet-stream"},
+            final_url=url,
+        )
+        response = _file_upload(
+            auth_client,
+            media_dataset,
+            SimpleUploadedFile("rows.csv", f"text,{kind}\nrow,{url}\n".encode()),
+        )
+    assert response.status_code == 200, response.json()
+    cell = Cell.objects.get(dataset=media_dataset, column__name=kind)
+    assert cell.status == CellStatus.ERROR.value
+    assert json.loads(cell.value_infos) == {
+        "reason": f"URL has no {kind} content-type and no matching {kind} extension."
+    }
+
+
 def _media_data(kind):
     if kind == "document":
         return (

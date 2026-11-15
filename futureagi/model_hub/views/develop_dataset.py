@@ -372,6 +372,10 @@ _CELL_UPLOAD_VALIDATION_REASONS = frozenset(
         )
     ]
     + [extra_install_hint(module, "audio") for module in ("av", "soundfile")]
+    + [
+        f"URL has no {kind} content-type and no matching {kind} extension."
+        for kind in ("image", "audio")
+    ]
 )
 
 
