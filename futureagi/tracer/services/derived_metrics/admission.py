@@ -246,11 +246,16 @@ def eligible_projects(now: datetime):
         # PAUSED_EXPIRY_SLACK: the next pass then finds the interval elapsed.
         .filter(
             Q(paused_reason="")
+            | Q(pending_expiry=True)
             | Q(cleanup_id__isnull=False)
             | Q(last_started_at__isnull=True)
             | Q(last_started_at__lte=now - expiry_interval() - PAUSED_EXPIRY_SLACK)
         )
-        .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False))
+        .filter(
+            Q(simulation_agent_id__isnull=True)
+            | Q(cleanup_id__isnull=False)
+            | Q(head_manifest_id__isnull=False)
+        )
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .filter(
             Q(consecutive_failures=0)
@@ -286,7 +291,7 @@ def eligible_projects(now: datetime):
 
 @contextmanager
 def _project_admission(
-    project_id: UUID, expiry_id: UUID | None = None
+    project_id: UUID, expiry_id: UUID | None = None, *, privacy_only=False
 ) -> Iterator[bool]:
     # Lifecycle -> parent -> refresh. Visibility linearizes at the locked claim;
     # cleanup authorization instead names an existing immutable publication debt.
@@ -296,6 +301,11 @@ def _project_admission(
         # draining a mutation. Skip that project, never stall fleet dispatch.
         if not project_lock(project_id, blocking=False):
             yield False
+            return
+        if expiry_id is None and privacy_only:
+            yield MetricProjectRefresh.objects.filter(
+                project_id=project_id, project__deleted=False
+            ).exists()
             return
         if expiry_id is None:
             yield metrics_enabled(project=project_id) and (
@@ -314,7 +324,6 @@ def _project_admission(
         )
         yield bool(
             state
-            and metrics_enabled(project=project_id)
             and _expiry_requests(project_id, state.project.organization_id)
             .filter(pk=expiry_id)
             .exists()
@@ -322,8 +331,7 @@ def _project_admission(
 
 
 def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
-    if not metrics_enabled():
-        return []
+    enabled = metrics_enabled()
     now, limit = clock(), concurrent_projects()
     with transaction.atomic():
         with connections["default"].cursor() as cursor:
@@ -335,7 +343,8 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                 return []
         from tracer.services.derived_metrics import size_cap
 
-        size_cap.resume_within_limit(now=now)
+        if enabled:
+            size_cap.resume_within_limit(now=now)
         free = max(
             0,
             limit
@@ -359,13 +368,16 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                     and (state.pending_repair or state.routine_repair_due)
                 )
             )
-            if state.paused_reason:
+            privacy_only = not metrics_enabled(project=state.project_id)
+            if state.paused_reason or privacy_only or state.pending_expiry:
                 purpose = "expiry"
-            expiry_id = state.cleanup_id if state.simulation_agent_id else None
+            expiry_id = state.cleanup_id
             if expiry_id:
                 purpose = "cleanup"
             job = f"cleanup:{expiry_id}" if expiry_id else purpose
-            with _project_admission(state.project_id, expiry_id) as admitted:
+            with _project_admission(
+                state.project_id, expiry_id, privacy_only=purpose == "expiry"
+            ) as admitted:
                 if not admitted:
                     continue
                 if (
@@ -483,7 +495,9 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
     count = 0
     for reservation in reserve_projects(clock=clock):
         with _project_admission(
-            reservation.grant.project_id, reservation.expiry_id
+            reservation.grant.project_id,
+            reservation.expiry_id,
+            privacy_only=reservation.purpose == "expiry",
         ) as admitted:
             if not admitted:
                 _release_queued(reservation)
@@ -589,7 +603,8 @@ def execute_reservation(
     lease = ProjectLease(
         reservation.grant, clock=clock, deadline=monotonic() + PASS_SECONDS
     )
-    if not metrics_enabled(project=lease.project_id):
+    privacy_only = reservation.purpose in {"expiry", "cleanup"}
+    if not privacy_only and not metrics_enabled(project=lease.project_id):
         _release_queued(reservation)
         return False
     with execution_slot(lease.project_id) as admitted, lifecycle_lock_budget(lease):
@@ -599,7 +614,9 @@ def execute_reservation(
         claimed = False
         previous_head = None
         try:
-            with _project_admission(lease.project_id, reservation.expiry_id) as visible:
+            with _project_admission(
+                lease.project_id, reservation.expiry_id, privacy_only=privacy_only
+            ) as visible:
                 if not visible:
                     _release_queued(reservation)
                     return False
@@ -613,7 +630,7 @@ def execute_reservation(
                 lease.renew()
             # Admission commits before the runner: publication/physical cleanup
             # require their existing independent commit boundaries.
-            if not metrics_enabled(project=lease.project_id):
+            if not privacy_only and not metrics_enabled(project=lease.project_id):
                 return False
             previous_head = MetricProjectRefresh.objects.values_list(
                 "head_manifest_id", flat=True
@@ -828,7 +845,8 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         if purpose == "expiry" or state.paused_reason:
             # Paused as too large: privacy work only, never new calculation.
             run_expiry_pass(writer)
-            writer.collect_garbage()
+            if MetricProjectRefresh.for_project(lease.project_id).head_manifest_id:
+                writer.collect_garbage()
             return
         if state.head_manifest_id is not None and run_due_expiry(
             writer, state.head_manifest
@@ -891,10 +909,14 @@ def run_due_expiry(writer, head) -> bool:
 def run_expiry_pass(writer) -> None:
     """Physical expiry only, nothing new calculated (paused or expiry due)."""
     from tracer.services.derived_metrics import backfill
-    from tracer.services.derived_metrics.retention import expire_project
+    from tracer.services.derived_metrics.retention import (
+        expire_project,
+        finish_unpublished_replan,
+    )
 
     head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
     if head is None:
+        finish_unpublished_replan(writer)
         return
     expire_project(
         writer,

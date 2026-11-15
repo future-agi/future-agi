@@ -76932,7 +76932,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         complete_through: {
           title: "Complete through",
           description:
-            "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
           type: "string",
           format: "date-time",
           "x-nullable": true,
@@ -77018,7 +77018,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         complete_through: {
           title: "Complete through",
           description:
-            "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
           type: "string",
           format: "date-time",
           "x-nullable": true,
@@ -77301,6 +77301,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         effective_window: {
           $ref: "#/definitions/MetricEffectiveWindow",
+        },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          type: "integer",
+          minimum: 0,
         },
         partial: {
           title: "Partial",
@@ -111145,10 +111163,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
           "x-nullable": true,
         },
+        retention_floor: {
+          title: "Retention floor",
+          description:
+            "Permanent floor of the published retained-only state; current source policy can be stricter.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        retention_policy: {
+          title: "Retention policy",
+          type: "string",
+          enum: ["follow_source"],
+        },
         calculated_through: {
           title: "Calculated through",
           description:
-            "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+            "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
           type: "string",
           format: "date-time",
           "x-nullable": true,

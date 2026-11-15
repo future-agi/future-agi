@@ -9,7 +9,7 @@ import pytest
 from django.core.cache import cache
 from django.utils import timezone
 
-from tracer.services.derived_metrics import service
+from tracer.services.derived_metrics import service, source_retention
 from tracer.services.derived_metrics.queries import PREVIEW_QUERY_SETTINGS
 from tracer.tests import test_derived_metric_clickhouse as metric_fixtures
 from tracer.tests.test_derived_metric_spec import sentence
@@ -21,7 +21,14 @@ ROOT = "/tracer/derived-metrics/"
 
 
 @pytest.fixture(autouse=True)
-def clear_preview_cache():
+def clear_preview_cache(monkeypatch):
+    # Compiler/transport fixtures use an explicit current 30-day source policy.
+    # The maintained uncached policy adapter has separate real-PG regressions.
+    monkeypatch.setattr(
+        source_retention,
+        "current_cutoff",
+        lambda *args, **kwargs: timezone.now() - timedelta(days=30),
+    )
     cache.clear()
     yield
     cache.clear()
@@ -751,3 +758,27 @@ def test_live_cancel_terminates_the_registered_native_query(metric_ch):
         "SELECT count() FROM system.processes WHERE query_id = %(query)s",
         {"query": query_id},
     ) == [(0,)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("during_query", [False, True])
+def test_preview_withholds_values_when_source_policy_expires(
+    auth_client,
+    preview_url,
+    monkeypatch,
+    during_query,
+):
+    cutoff = {"value": timezone.now() - timedelta(days=30 if during_query else 1)}
+    monkeypatch.setattr(
+        source_retention, "current_cutoff", lambda *args, **kwargs: cutoff["value"]
+    )
+
+    def shorten():
+        cutoff["value"] = timezone.now() - timedelta(days=1)
+
+    fake = FakeClickHouse(on_query=shorten if during_query else None)
+    with client_patch(fake):
+        response = auth_client.post(preview_url, window(), format="json")
+    assert response.status_code == 503 and response.data["code"] == "retention_expired"
+    assert "results" not in response.data and "sample_units" not in response.data
+    assert bool(fake.calls) == during_query

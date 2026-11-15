@@ -50,6 +50,7 @@ from tracer.services.derived_metrics.storage import BUCKET_TOTALS, FIELD_VALUES
 from tracer.services.derived_metrics.unit_reads import field_recipe
 
 QUARTER = timedelta(minutes=15)
+MAX_OPEN_BUCKETS = 4096
 NOUNS = {
     "conversation": "conversations",
     "span": "spans",
@@ -114,6 +115,10 @@ class MetricReadStore(ClickHousePublicationStore):
                 # wide CI expression. The fourth-read compilation alone can use
                 # the entire interactive budget; keep these reads interpreted.
                 "compile_expressions": 0,
+                # Aggregate/sort compilation is independent of scalar JIT and
+                # still consumed 100 ms in a bounded read with scalar JIT off.
+                "compile_aggregate_expressions": 0,
+                "compile_sort_description": 0,
                 # The scalar compiler uses legacy-compatible SQL. Avoid repeated
                 # analyzer expansion of its nested support/interval expressions.
                 "enable_analyzer": 0,
@@ -236,22 +241,16 @@ def _floor15(value):
 
 
 def cut_terms(manifest, definition):
-    """(calculated, settled) 15-minute bounds of a forward version's pinned head.
+    """(calculated, settled) 15-minute bounds of every supported version's pinned head.
 
     calculated: the lesser of the consumed watermark and a pending burst
     sweep's floor (a head pinned before the current one also bounds by its own
     frozen watermark), floored to its bucket. Nothing starting at or after it
     is in these values. settled: the same less the settle interval (a span,
     once ended, settles at once): a unit first arriving within it may not have
-    arrived yet, so its bucket cannot be final either. None for history.
+    arrived yet, so its bucket cannot be final either.
     """
     if manifest is None:
-        return None
-    if getattr(
-        definition, "history_mode", None
-    ) != DerivedMetricVersion.HistoryMode.FORWARD and not _paused(manifest):
-        # A paused project (size_cap) calculates nothing past its frozen cut,
-        # whatever its history mode, so every metric reads final buckets only.
         return None
     from tracer.services.derived_metrics.changes import from_ns
 
@@ -273,8 +272,11 @@ def cut_terms(manifest, definition):
         frozen = (
             manifest.published_by.source_ceilings.get("cursor_updates") or {}
         ).get("watermark_ns")
-        if frozen is not None:
-            watermarks.append(int(frozen))
+        if frozen is None:
+            frozen = manifest.published_by.source_ceilings.get("read_watermark_ns")
+        # Old checkpoints without a frozen cut cannot prove fresh coverage.
+        # Never substitute a newer head's watermark for this pinned value.
+        watermarks.append(int(frozen) if frozen is not None else 0)
     through = from_ns(min(watermarks))
     cursor = state["reconciliation_cursor"] or {}
     if state["pending_repair"] and cursor.get("floor"):
@@ -299,7 +301,7 @@ def _paused(manifest):
 
 
 def calculated_through(manifest, definition):
-    """The calculated 15-minute bound (cut_terms), or None for history."""
+    """The calculated 15-minute bound of this pinned publication."""
     terms = cut_terms(manifest, definition)
     return None if terms is None else terms[0]
 
@@ -309,29 +311,46 @@ def open_buckets(store, metric, definition, manifest, start, end):
 
     Refresh keeps a unit open, and out of every total, until settle_minutes
     after its LAST arrival, however long ago it started. Only the committed
-    units say which: a bucket holding one is not final. Nominates from raw
-    field history in the range, then collapses complete keys.
+    units say which: a bucket holding one is not final. Nominate only raw open
+    rows in the range, then collapse their COMPLETE keys and reapply the predicate.
+    A closed/deleted/moved winner must still suppress an older open revision.
     """
     fields, params = windowed_rows_select(
         FIELD_VALUES,
         manifest,
         org_id=metric.organization_id,
         project_id=metric.project_id,
-        predicate="bucket_start >= %(open_start)s AND bucket_start < %(open_end)s",
+        predicate=(
+            "bucket_start >= %(open_start)s AND bucket_start < %(open_end)s "
+            "AND status = 'open' AND is_deleted = 0"
+        ),
         params={"open_start": start, "open_end": end},
         key_in={
             "field_id": (definition.metric_id,),
             "field_version": (definition.version,),
         },
+        columns=(
+            *FIELD_VALUES.logical_key,
+            "generation",
+            FIELD_VALUES.version_column,
+            "bucket_start",
+            "status",
+            "is_deleted",
+        ),
         param_prefix="open_fields",
     )
     rows = _rows(
         store,
         f"SELECT bucket_start, count() AS units FROM ({fields}) "
         "WHERE is_deleted = 0 AND status = 'open' "
-        "GROUP BY bucket_start ORDER BY bucket_start LIMIT 4096",
+        f"GROUP BY bucket_start ORDER BY bucket_start LIMIT {MAX_OPEN_BUCKETS + 1}",
         params,
     )
+    if len(rows) > MAX_OPEN_BUCKETS:
+        raise MetricUnavailableError(
+            "metric_finality_unavailable",
+            "Too many unsettled buckets for this read. Choose a shorter window.",
+        )
     return {
         (
             row["bucket_start"]
@@ -343,7 +362,7 @@ def open_buckets(store, metric, definition, manifest, start, end):
 
 
 class Finality:
-    """Which 15-minute buckets of a forward window are final.
+    """Which 15-minute buckets of a history or forward window are final.
 
     A bucket is final only if it ends at or before ``settled`` and holds no
     unit refresh still keeps open; ``opened`` maps each bucket holding open
@@ -401,8 +420,8 @@ class Finality:
         }
 
 
-def read_finality(store, metric, definition, manifest, window):
-    """Finality of a forward window, or None for history (no bound).
+def read_finality(store, metric, definition, manifest, window, *, include_start=None):
+    """Finality of a pinned window, including history-mode windows.
 
     Without ``store`` only the calculated and settle bounds apply.
     """
@@ -412,14 +431,16 @@ def read_finality(store, metric, definition, manifest, window):
     calculated, settled = terms
     end = min(window["window_end"], settled)
     opened = {}
-    if store is not None and window["window_start"] < end:
-        opened = open_buckets(
-            store, metric, definition, manifest, window["window_start"], end
-        )
+    start = window["window_start"]
+    if include_start is not None:
+        start = min(start, include_start)
+    if store is not None and start < end:
+        opened = open_buckets(store, metric, definition, manifest, start, end)
     return Finality(calculated, settled, opened, paused=_paused(manifest))
 
 
 def provenance(manifest, definition, through=None):
+    floor = manifest.published_by.source_ceilings.get("retention_floor")
     return {
         "manifest_id": manifest.id,
         "generation": manifest.generation,
@@ -432,6 +453,8 @@ def provenance(manifest, definition, through=None):
         "history_mode": definition.history_mode,
         "coverage_start": definition.coverage_start,
         "calculated_through": through,
+        **({"retention_floor": floor} if floor else {}),
+        "retention_policy": "follow_source",
     }
 
 
@@ -658,7 +681,14 @@ def _not_calculated_yet(stop, reason, message):
 
 
 def require_calculated_window(
-    definition, window, manifest=None, *, whole=False, store=None, metric=None
+    definition,
+    window,
+    manifest=None,
+    *,
+    whole=False,
+    store=None,
+    metric=None,
+    include_start=None,
 ):
     """Reject a window with no final bucket; return its Finality (or None).
 
@@ -669,6 +699,12 @@ def require_calculated_window(
     the rest. ``whole`` (a durable snapshot) needs every bucket final: it never
     freezes a partial window.
     """
+    if metric is not None:
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
     if not window_is_calculated(definition, window):
         raise MetricUnavailableError(
             "window_not_calculated",
@@ -676,7 +712,9 @@ def require_calculated_window(
         )
     if "window_end" not in window:
         return None
-    finality = read_finality(store, metric, definition, manifest, window)
+    finality = read_finality(
+        store, metric, definition, manifest, window, include_start=include_start
+    )
     if finality is None:
         return None
     nonfinal = finality.nonfinal(window)
@@ -714,23 +752,36 @@ def read_kpi(metric, data, *, store=None):
         "window_end": window["window_start"],
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
+        from tracer.services.derived_metrics.source_retention import window_retained
+
+        previous_available = window_is_calculated(
+            definition, previous
+        ) and window_retained(
+            metric.organization_id, previous["window_start"], manifest=manifest
+        )
+        # One complete-key proof covers both periods. The reported current
+        # window is unchanged; previous/open buckets never enter its totals.
         finality = require_calculated_window(
-            definition, window, manifest, store=store, metric=metric
+            definition,
+            window,
+            manifest,
+            store=store,
+            metric=metric,
+            include_start=previous["window_start"] if previous_available else None,
         )
         # The value is over the window's FINAL buckets only: never one past
         # the calculated or settle bound, nor one holding an open unit (a
         # long-open session must not freeze the rest of the window).
         exclude = finality.nonfinal(window) if finality else ()
         # The previous period is compared only if it is wholly final.
-        previous_final = window_is_calculated(definition, previous) and (
+        previous_final = previous_available and (
             finality is None
-            or not open_buckets(
-                store,
-                metric,
-                definition,
-                manifest,
-                previous["window_start"],
-                previous["window_end"],
+            or (
+                previous["window_end"] <= finality.settled
+                and not any(
+                    previous["window_start"] <= bucket < previous["window_end"]
+                    for bucket in finality.opened
+                )
             )
         )
         if previous_final:
@@ -759,9 +810,18 @@ def read_kpi(metric, data, *, store=None):
         )
         if delta is not None and not math.isfinite(delta):
             delta = None
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
+        if previous_final:
+            require_window(
+                metric.organization_id, previous["window_start"], manifest=manifest
+            )
         return {
             "provenance": provenance(
-                manifest, definition, calculated_through(manifest, definition)
+                manifest, definition, finality.calculated if finality else None
             ),
             "effective_window": window,
             **_disclosure(finality, window),
@@ -880,11 +940,16 @@ def read_trend(metric, data, *, store=None):
                 for row in result
             ]
         result.sort(key=lambda row: (row["window_start"], row["group_key"]))
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
         return {
             "provenance": provenance(
-                manifest, definition, calculated_through(manifest, definition)
+                manifest, definition, finality.calculated if finality else None
             ),
-            "partial": bool(finality and finality.nonfinal(window)),
+            **_disclosure(finality, window),
             "effective_window": window,
             "results": result,
         }
@@ -1141,7 +1206,7 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
         if drivers and cutoff is not None and window["window_start"] < cutoff:
             raise MetricUnavailableError(
                 "retention_expired",
-                "This window includes expired evidence; anonymous KPI totals remain readable.",
+                "This window includes expired source data. Choose a later start.",
             )
         sql, params = _fields_select(
             metric, definition, manifest, window, ids=ids, cutoff=cutoff

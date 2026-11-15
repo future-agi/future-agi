@@ -28943,6 +28943,13 @@ export const MetricReadProvenanceApiHistoryMode = {
   forward: "forward",
 } as const;
 
+export type MetricReadProvenanceApiRetentionPolicy =
+  (typeof MetricReadProvenanceApiRetentionPolicy)[keyof typeof MetricReadProvenanceApiRetentionPolicy];
+
+export const MetricReadProvenanceApiRetentionPolicy = {
+  follow_source: "follow_source",
+} as const;
+
 export interface MetricReadProvenanceApi {
   manifest_id: string;
   /** @minimum 0 */
@@ -28960,7 +28967,10 @@ export interface MetricReadProvenanceApi {
   /** forward: started with no history; values exist from coverage_start */
   history_mode?: MetricReadProvenanceApiHistoryMode;
   coverage_start?: string;
-  /** forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor) */
+  /** Permanent floor of the published retained-only state; current source policy can be stricter. */
+  retention_floor?: string;
+  retention_policy?: MetricReadProvenanceApiRetentionPolicy;
+  /** Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor) */
   calculated_through?: string;
 }
 
@@ -28977,7 +28987,7 @@ export interface MetricEffectiveWindowApi {
 export interface MetricDriversApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
-  /** forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
   complete_through?: string;
   /** true when any bucket of the window is not final */
   partial?: boolean;
@@ -29378,7 +29388,7 @@ export interface DerivedMetricDeltaUncertaintyApi {
 export interface MetricKpiApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
-  /** forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
   complete_through?: string;
   /** true when any bucket of the window is not final */
   partial?: boolean;
@@ -29535,6 +29545,12 @@ export interface MetricTrendPointApi {
 export interface MetricTrendApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** @minimum 0 */
+  nonfinal_buckets?: number;
+  /** @minimum 0 */
+  open_units?: number;
   /** true when any point is not_calculated or settling */
   partial?: boolean;
   results: MetricTrendPointApi[];

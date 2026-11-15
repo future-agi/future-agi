@@ -1,7 +1,7 @@
 """Bounded drill-down: which frozen units move one persisted rollup value.
 
 Reads only the run's immutable snapshot (never mutable raw telemetry), so the
-answer matches the persisted value and still works after raw retention. The
+answer matches the persisted value while its source remains retained. The
 group's weighted totals come from the persisted result row, so one scan of the
 snapshot ranks the units:
 
@@ -107,8 +107,6 @@ def _trace_id(unit_id: str, selection_unit: str) -> str | None:
 
 
 def read_contributors(run, rollup="overall", group_key="", limit=20):
-    if getattr(run, "kind", "run") != "snapshot":
-        return _read_contributors(run, rollup, group_key, limit)
     from tracer.services.derived_metrics.snapshots import snapshot_read
 
     with snapshot_read(run) as current:

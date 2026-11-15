@@ -527,16 +527,20 @@ def test_sketch_buckets_merge_real_states_and_empty_is_not_zero(
 @pytest.mark.parametrize(
     ("days", "deltas"), [(1, 4), (7, 4), (30, 4), (90, 4), (90, 19)]
 )
-def test_m10_complete_service_budget_with_retired_parts(
-    live_writer, workspace, observe_project, days, deltas
+def test_m10_complete_service_budget_with_source_retained_parts(
+    live_writer, workspace, observe_project, days, deltas, monkeypatch
 ):
     """Real PG pins, current PLUS previous, and genuinely dimension-grouped trend.
 
     This is a compacted read-path gate, not the separate 10M source/refresh gate.
-    The repeated fixture buckets contain real live+retired sufficient statistics.
+    The repeated fixture buckets contain retained-only sufficient statistics.
+    The expired seed is physically removed before constructing the same read grid.
     19 deltas is the most a head carries before its next pass compacts it
     (METRICS_MAX_DELTAS_BEFORE_COMPACTION's default), under the same budget.
     """
+    from ee.usage.models.usage import PlanEntitlement
+    from tfc.capabilities import retention as policy_adapter
+    from tfc.licensing.types import DeploymentFlavor
     from tracer.services.derived_metrics.publication import committed_rows_select
     from tracer.services.derived_metrics.retention import expire_project
     from tracer.services.derived_metrics.storage import RETIRED_PARTS
@@ -545,7 +549,19 @@ def test_m10_complete_service_budget_with_retired_parts(
         seed_fields_and_buckets,
     )
 
+    monkeypatch.setattr(
+        policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD
+    )
+    policy, _ = PlanEntitlement.objects.get_or_create(
+        organization=workspace.organization,
+        plan="free",
+        feature="retention_traces_days",
+        defaults={"value_int": 900},
+    )
+    policy.value_int = 900
+    policy.save(update_fields=["value_int"])
     writer, size = live_writer, days * 96
+    watermark = int((AT + timedelta(days=days + 1)).timestamp()) * 10**9
     template = numeric_definition(uuid4())
     metric = DerivedMetric.objects.create(
         organization=workspace.organization,
@@ -566,23 +582,24 @@ def test_m10_complete_service_budget_with_retired_parts(
         group_dims=["region"],
         backfill_status="complete",
     )
-    old_id, live_id = str(uuid4()), str(uuid4())
+    old_id, live_id, retained_id = str(uuid4()), str(uuid4()), str(uuid4())
     seed_fields_and_buckets(
         writer,
         definition,
         [
-            (old_id, AT + timedelta(minutes=2), 4, ""),
+            (old_id, AT - timedelta(days=181), 4, ""),
             (live_id, AT + timedelta(minutes=10), 6, ""),
+            (retained_id, AT + timedelta(minutes=11), 4, ""),
         ],
     )
     expired = expire_project(
         writer,
         [definition],
-        retention_days=lambda: 1,
+        retention_days=lambda: 180,
         now=AT + timedelta(days=1, minutes=7),
     )
     assert expired["purged"]
-    # A changed survivor forces a rebuild that must preserve anonymous parts.
+    # A changed retained survivor rebuilds from the two live units only.
     head = seed_fields_and_buckets(
         writer,
         definition,
@@ -596,10 +613,13 @@ def test_m10_complete_service_budget_with_retired_parts(
         org_id=metric.organization_id,
         project_id=metric.project_id,
     )
-    assert writer.store.execute(
-        f"SELECT unit_count, weighted_n FROM ({retired}) WHERE is_deleted = 0",
-        params,
-    ) == [(1, 4.0)]
+    assert (
+        writer.store.execute(
+            f"SELECT unit_count, weighted_n FROM ({retired}) WHERE is_deleted = 0",
+            params,
+        )
+        == []
+    )
     head = writer.compact()
     source, params = committed_rows_select(
         BUCKET_TOTALS,
@@ -635,7 +655,7 @@ def test_m10_complete_service_budget_with_retired_parts(
         },
         collect_payloads=False,
     )
-    writer.seal(attempt)
+    writer.seal(attempt, cursors={"watermark_ns": watermark})
     writer.stage_and_publish(attempt)
     head = writer.compact()
     source, params = committed_rows_select(
@@ -667,7 +687,7 @@ def test_m10_complete_service_budget_with_retired_parts(
             }
         )
         writer.freeze(attempt, BUCKET_TOTALS, replacement, bindings)
-        writer.seal(attempt)
+        writer.seal(attempt, cursors={"watermark_ns": watermark})
         current_head = writer.stage_and_publish(attempt)
     DerivedMetric.activate_version(metric.id, definition.id, expected_active_id=None)
     metric = DerivedMetric.objects.select_related("project", "active_version").get(
@@ -725,7 +745,7 @@ def test_m10_complete_service_budget_with_retired_parts(
                 "buckets": size,
                 "dimension_values": 2,
                 "deltas": deltas,
-                "retired_parts_verified": True,
+                "expired_parts_absent": True,
                 **measurements,
             }
         )

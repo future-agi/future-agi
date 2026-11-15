@@ -22,7 +22,11 @@ def current_trace_retention_days(organization_id):
         )
     from ee.usage.services.entitlements import Entitlements
 
-    days = Entitlements.get_retention_days(str(organization_id), "traces")
+    # Privacy decisions cannot depend on cache invalidation or its TTL. Inherited
+    # plan changes and failed Redis invalidations must take effect on this read.
+    days = Entitlements.get_retention_days(
+        str(organization_id), "traces", use_cache=False
+    )
     # The maintained provider uses -1 for explicit unlimited retention. Missing,
     # malformed, or other negative policy values must never turn into unlimited.
     if type(days) is not int or (days != -1 and days <= 0):

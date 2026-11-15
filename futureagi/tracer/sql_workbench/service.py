@@ -133,6 +133,9 @@ def _resource_limit(name, default):
 
 
 def query_scope(actor, project, start, end, sql):
+    from .metric_retention import require_source
+
+    require_source(actor.organization_id, project.id, start, sql)
     _, references = validate(sql)
     if (
         project.organization_id != actor.organization_id
@@ -220,7 +223,7 @@ def reusable_result(actor, project, key, now):
     seconds = result_cache_seconds()
     if not seconds or not key:
         return None
-    return (
+    job = (
         SQLExecution.objects.filter(
             cache_key=key,
             project_id=project.id,
@@ -234,6 +237,13 @@ def reusable_result(actor, project, key, now):
         .order_by("-finished_at")
         .first()
     )
+
+    if job is not None:
+        from .metric_retention import guard_result
+
+        if not guard_result(job):
+            return None
+    return job
 
 
 @dataclass(frozen=True)
@@ -555,7 +565,10 @@ def execution(actor, project_id, job_id):
 
 
 def snapshot(job: SQLExecution, *, include_result: bool = True) -> ExecutionSnapshot:
-    expired = job.expires_at <= timezone.now()
+    from .metric_retention import guard_result
+
+    allowed = guard_result(job) if include_result else True
+    expired = not allowed or job.expires_at <= timezone.now()
     stale = job.deadline <= timezone.now() and job.state in {"queued", "running"}
     return {
         "id": str(job.id),
@@ -801,6 +814,10 @@ def add_widget(actor, project_id, saved_id, dashboard_id):
 
 def export_result(actor, project_id, job_id, format):
     job = execution(actor, project_id, job_id)
+    from .metric_retention import guard_result
+
+    if not guard_result(job):
+        raise ResultExpired("This result has expired. Run the query again.")
     if job.state != "succeeded":
         raise ResultNotReady("Only successful results can be downloaded.")
     if job.expires_at <= timezone.now():

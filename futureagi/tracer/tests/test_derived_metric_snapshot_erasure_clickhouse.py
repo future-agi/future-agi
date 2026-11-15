@@ -31,7 +31,21 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def capture_case(live_writer, workspace, observe_project, user, request):
+def capture_case(live_writer, workspace, observe_project, user, request, monkeypatch):
+    from ee.usage.models.usage import PlanEntitlement
+    from tfc.capabilities import retention as policy_adapter
+    from tfc.licensing.types import DeploymentFlavor
+
+    # This fixture captures 90 retained days, not an exemption from source policy.
+    monkeypatch.setattr(
+        policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD
+    )
+    PlanEntitlement.objects.update_or_create(
+        organization=workspace.organization,
+        plan="free",
+        feature="retention_traces_days",
+        defaults={"value_int": 900},
+    )
     metric = DerivedMetric.objects.create(
         organization=workspace.organization,
         workspace=workspace,
@@ -80,7 +94,9 @@ def capture_case(live_writer, workspace, observe_project, user, request):
     live_writer._freeze_buckets(
         attempt, None, definition, overlay, params, complete_fields=True
     )
-    live_writer.seal(attempt)
+    live_writer.seal(
+        attempt, cursors={"watermark_ns": int(timezone.now().timestamp()) * 10**9}
+    )
     live_writer.stage_and_publish(attempt)
     data = {
         "window_start": end - timedelta(days=90),

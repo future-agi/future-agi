@@ -1,6 +1,7 @@
 """Bounded, resumable erasure of frozen and live metrics using the B02R outbox.
 
-Retention and ordinary conversation deletion deliberately do not enter here.
+Live retention uses the writer cleanup protocol; frozen-copy expiry uses this
+outbox. Ordinary conversation deletion is not an explicit metric erasure.
 Private subjects never appear in exceptions, logs or receipts. A receipt means
 physical deletion, including historical result versions, not just PG deletion.
 """
@@ -11,7 +12,8 @@ from contextvars import ContextVar
 from datetime import timedelta
 from uuid import uuid4
 
-from django.db import connections
+import structlog
+from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -106,13 +108,27 @@ def erase_metric_data(
             pk=project_id, organization_id=organization_id
         ).exists():
             raise ValueError("project is not in the organization")
-    return MetricErasureRequest.record(
+    request = MetricErasureRequest.record(
         organization_id=organization_id,
         project_id=project_id,
         scope_kind=scope_kind,
         subject_ids=subject_ids,
         requested_by_id=requested_by_id,
     )
+    from tracer.sql_workbench.metric_retention import invalidate_scope
+
+    try:
+        # A database error must not poison a caller-owned transaction and roll
+        # back its outbox while the command reports that erasure was queued.
+        with transaction.atomic():
+            invalidate_scope(organization_id, project_id)
+    except Exception as exc:
+        # Preserve the outbox. Readers deny its namespace once committed; the
+        # worker retries payload removal before it can record completion.
+        structlog.get_logger(__name__).warning(
+            "metric_sql_cleanup_pending", error_type=type(exc).__name__
+        )
+    return request
 
 
 def _runs(request):
@@ -609,6 +625,9 @@ def _process_erasure(request_id, *, store=None, writer=None):
     with nullcontext(store) if store else snapshot_store() as connection:
         try:
             request.refresh_from_db()
+            from tracer.sql_workbench.metric_retention import invalidate_scope
+
+            invalidate_scope(request.organization_key, request.project_key)
             if request.store_payload.get("protocol") == "metric_snapshot_redaction":
                 _redact(connection, request, token)
                 request.refresh_from_db()

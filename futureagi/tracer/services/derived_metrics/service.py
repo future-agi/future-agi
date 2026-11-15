@@ -366,7 +366,7 @@ def execute_run(run_id: UUID | str) -> None:
             )
             .get(pk=run_id)
         )
-        if run.status != DerivedMetricRun.Status.QUEUED:
+        if run.deleted_at or run.status != DerivedMetricRun.Status.QUEUED:
             return
         if not _authorized_metric(run.definition.metric) or not _requester_can_run(run):
             run.status, run.error = (
@@ -498,10 +498,14 @@ def _compute(run: DerivedMetricRun) -> None:
         params,
         settings=QUERY_SETTINGS,
     )
+    from tracer.services.derived_metrics.source_retention import require_run
+
+    require_run(run)
     with transaction.atomic():
         current = DerivedMetricRun.objects.select_for_update().get(pk=run.id)
         if (
-            current.attempt_id != run.attempt_id
+            current.deleted_at is not None
+            or current.attempt_id != run.attempt_id
             or current.lease_expires_at <= timezone.now()
         ):
             raise RuntimeError("Metric execution lease expired before publication.")
@@ -533,6 +537,14 @@ def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
     if run.kind == "snapshot":
         raise MetricInputError(
             "Saved snapshots cannot be rerun. Save a new snapshot instead."
+        )
+    from tracer.services.derived_metrics.source_retention import window_retained
+
+    if run.deleted_at or not window_retained(
+        run.definition.metric.organization_id, run.window_start
+    ):
+        raise MetricInputError(
+            "This result is no longer available under source retention."
         )
     require_computable(run.definition)
     if (
@@ -595,8 +607,6 @@ def shape_result(row: dict, *, include_uncertainty: bool) -> dict:
 
 
 def read_results(run, rollup="overall", after="", limit=50, include_uncertainty=False):
-    if getattr(run, "kind", "run") != "snapshot":
-        return _read_results(run, rollup, after, limit, include_uncertainty)
     from tracer.services.derived_metrics.snapshots import snapshot_read
 
     with snapshot_read(run) as current:
@@ -1099,6 +1109,9 @@ def preview(
             "trace_preview_unavailable",
             "Trace preview is not available until the measured trace reader is installed.",
         )
+    from tracer.services.derived_metrics.source_retention import require_window
+
+    require_window(scope.organization, start)
     recipe = field_recipe(definition)
     recipe.source.selection_unit = "span" if definition.level == "span" else "session"
     from tracer.models.derived_metric import MetricProjectRefresh
@@ -1201,6 +1214,7 @@ def preview(
                     }
                 ) from exc
             raise
+    require_window(scope.organization, start)
     names = [column[0] for column in columns]
     results = [
         shape_result(dict(zip(names, row, strict=True)), include_uncertainty=True)

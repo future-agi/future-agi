@@ -334,7 +334,12 @@ class RefreshWriter:
             ):
                 raise MetricStateConflict("project erasure is in progress")
             ceilings = dict(ceilings or {})
-            head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
+            state = MetricProjectRefresh.for_project(self.lease.project_id)
+            head = state.head_manifest
+            # A checkpoint may advance no cursor of its own. Preserve the
+            # copied head's consumed cut so an old pin never borrows a later
+            # publication's watermark when another writer advances the project.
+            ceilings["read_watermark_ns"] = state.watermark_ns
             inherited = (
                 head.published_by.source_ceilings.get("retention_floor")
                 if head
@@ -668,6 +673,9 @@ class RefreshWriter:
                     project_id=self.lease.project_id
                 ).update(
                     pending_expiry=True, last_error_code=MetricRetentionChanged.code
+                )
+                MetricRefreshAttempt.abort(
+                    attempt.id, reason=PASS_YIELD, **self.lease.check()
                 )
             raise
 
@@ -1283,8 +1291,16 @@ class RefreshWriter:
         if self.retention_days is None:
             return False
         cutoff = physical_cutoff(self, now=self.lease.clock(), head=head)
+        floor = head.published_by.source_ceilings.get("retention_floor")
+        if floor:
+            floor = datetime.fromisoformat(str(floor))
+            cutoff = max(cutoff, floor) if cutoff else floor
         if cutoff is None:
             return False
+        from tracer.services.derived_metrics.retention import _expired_aggregates
+
+        if _expired_aggregates(self, head, cutoff):
+            return True
         attempts = tuple(UUID(str(a)) for _, a in head.allowed_attempts())
         for table in (
             FIELD_VALUES,
@@ -1649,7 +1665,7 @@ class RefreshWriter:
             # forward, so obsolete/abandoned payload needs its own trigger. Omit
             # BEFORE this pass's expiry: that checkpoint then needs fewer stored
             # recipes, and a version whose pin this expiry invalidates keeps the
-            # anonymous history the expiry produces until a later pass omits it.
+            # retained-only history until a later pass omits it.
             self.compact()
         if (
             cutoff is not None
@@ -2644,6 +2660,12 @@ class RefreshWriter:
             )
         if _dirty_starts is not None:
             dirty = set(_dirty_starts)
+        floor = attempt.source_ceilings.get("retention_floor")
+        if floor:
+            floor = datetime.fromisoformat(str(floor))
+            dirty = {
+                value for value in dirty if datetime.fromisoformat(str(value)) >= floor
+            }
         # The exhaustive physical-key scan and frozen/digest ceremony are per
         # bounded SET of dirty quarters, not per quarter. The same pre-fold
         # statistics keep bucket_start in their key, so folding remains exact.
@@ -2723,9 +2745,19 @@ class RefreshWriter:
                 ) as parts:
                     captured = True
                     replacement = replacement_select(parts, old)
-                    vanished = self.store.execute(
-                        f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
-                        p,
+                    if complete_fields and attempt.purpose == "compaction":
+                        # A complete checkpoint has no older keys to mask. Drop
+                        # departed group labels instead of preserving tombstones.
+                        replacement = (
+                            f"SELECT * FROM ({replacement}) WHERE is_deleted = 0"
+                        )
+                    vanished = (
+                        []
+                        if complete_fields and attempt.purpose == "compaction"
+                        else self.store.execute(
+                            f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
+                            p,
+                        )
                     )
                     self.append(
                         attempt,
