@@ -22,6 +22,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.models.harness_versioning import HashKind, VersionOrigin, VersionStatus
 from simulate.pydantic_schemas.agent_fix import (
     CheckRunRequest,
     FixRequest,
@@ -936,6 +937,57 @@ class TestWhatAFixLeavesBehind:
         assert counts["variation_rows_left"] == 0
         assert not _bound(environment, fix_run).exists()
         assert Row.all_objects.filter(id__in=rows, deleted=True).count() == 3
+
+    def test_newer_clean_fixes_never_keep_the_sweep_from_a_fix_whose_rows_are_left(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _base_run(fix_run)
+        with patch.object(agent_fix_runs, "Row") as row:
+            row.all_objects.filter.side_effect = OperationalError("gone")
+            close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+        _clean_fix_after(fix_run)
+
+        # One place in the batch, and a newer fix with nothing left bound.
+        with patch("simulate.services.agent_fix_sweep._BATCH_LIMIT", 1):
+            with patch.object(agent_fix_runs, "Row") as row:
+                row.all_objects.filter.side_effect = OperationalError("gone")
+                still = sweep_lost_fix_runs()
+            counts = sweep_lost_fix_runs()
+
+        # The cleanup that keeps failing is reported, then the next sweep drops its rows.
+        assert still["variation_rows_left"] == 1
+        assert counts["variation_rows_left"] == 0
+        assert not _bound(environment, fix_run).exists()
+
+
+def _clean_fix_after(fix_run):
+    """A fix closed after this one, on a private suite of its own, with nothing bound."""
+    environment = fix_run.environment
+    newer = AgentFixRun.no_workspace_objects.create(
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        environment=environment,
+        source_run=fix_run.source_run,
+        base_agent_version_id=fix_run.base_agent_version_id,
+        state=AgentFixRun.State.STOPPED,
+        request=fix_run.request,
+        finished_at=timezone.now() + timedelta(seconds=1),
+    )
+    suite = HarnessSuiteVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        status=VersionStatus.ACTIVE,
+        origin=VersionOrigin.FIX,
+        hash=f"clean-{newer.id.hex}",
+        hash_kind=HashKind.TREE_V1,
+        archive_size=0,
+        fix_run=newer,
+        documents={"variations": {f"{PARENT}-fix{newer.id.hex[:8]}-v1": PARENT}},
+    )
+    AgentFixRun.no_workspace_objects.filter(id=newer.id).update(suite_version=suite)
+    return newer
 
 
 class TestARunTheEnvironmentMovedOnFrom:
