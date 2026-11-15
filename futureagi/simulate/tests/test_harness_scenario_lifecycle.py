@@ -671,3 +671,39 @@ def test_an_archived_case_with_a_failed_change_stays_archived(user, workspace, s
     view = _views(environment)[REFUND_KEYS[1]]
 
     assert (view["state"], view["reason"]) == ("archived", "archived")
+
+
+def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-source-proof")
+    _suite(environment, _ten())
+    _with_rules_and_files(environment.environment_version, ["Refund at most once."], {})
+    quote = "Identify the caller by full name and date of birth."
+    _cite(environment, {REFUND_KEYS[0]: [{"kind": "rule", "ref": "", "quote": quote}]})
+    _proofs(
+        environment,
+        {
+            **dict.fromkeys(KEYS, PROVED),
+            REFUND_KEYS[0]: {
+                **PROVED,
+                "proved": False,
+                "blocked_reason": "source_unresolved",
+            },
+            REFUND_KEYS[1]: {
+                **PROVED,
+                "proved": False,
+                "blocked_reason": "source_unresolved",
+            },
+        },
+    )
+
+    views = _views(environment)
+
+    assert views[REFUND_KEYS[0]]["reason"] == "source_unresolved"
+    assert views[REFUND_KEYS[0]]["reason_text"].startswith(
+        "A cited source is not in this environment: rule Identify the caller"
+    )
+    # No source the platform can point at: the text says so without empty blanks.
+    assert (
+        views[REFUND_KEYS[1]]["reason_text"]
+        == "A cited source is not in this environment."
+    )

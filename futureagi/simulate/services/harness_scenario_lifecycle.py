@@ -137,6 +137,8 @@ def reason_text(
                 for name in ("who", "field", "excerpt", "grader_field")
             }
         )
+    if code == "source_unresolved" and not values.get("kind"):
+        return "A cited source is not in this environment."
     return REASON_TEXTS.get(code, code).format_map(values)
 
 
@@ -459,10 +461,10 @@ def scenario_lifecycle(
             view["source_changed_version"] = environment_version.version_number
             view["source_changed_version_id"] = str(environment_version.id)
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
-        if bad is not None and view["state"] in (
-            "validated",
-            "active",
-            "kept_as_written",
+        # The proof can already read source_unresolved; its text still names the source.
+        if bad is not None and (
+            view["state"] in ("validated", "active", "kept_as_written")
+            or view.get("reason") == "source_unresolved"
         ):
             view.update(
                 state="draft",
