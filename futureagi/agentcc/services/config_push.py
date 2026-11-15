@@ -35,7 +35,6 @@ logger = structlog.get_logger(__name__)
 # Map org-config rule names → gateway registry names
 _RULE_TO_REGISTRY = {
     **BUILTIN_CONFIG_ALIASES,
-    "injection-detector": "prompt-injection",
     # These are the same in both:
     "content-moderation": "content-moderation",
     "keyword-blocklist": "keyword-blocklist",
@@ -793,6 +792,23 @@ def _project_key_check(check):
     return result
 
 
+def _colliding_key_check(checks):
+    """No arbitrary winner/config merge: represent the identity as unavailable.
+
+    Only enabled entries contribute intent. Block wins over Warn over Log, while
+    an entirely disabled group remains disabled. Policy mode/fail_open continue
+    to govern the marker at the existing gateway unavailable-check boundary.
+    """
+    enabled = [check for check in checks if check["enabled"]]
+    actions = {check["action"] for check in enabled}
+    marker = _failed_key_check()
+    marker["enabled"] = bool(enabled)
+    marker["action"] = (
+        "block" if "block" in actions else "warn" if "warn" in actions else "log"
+    )
+    return marker
+
+
 def _build_key_policy(org_id, policy, gateway_ids):
     # Copy before credential injection and normalization. Saved malformed values
     # stay intact for explicit repair, including falsey nonobjects such as null.
@@ -807,7 +823,7 @@ def _build_key_policy(org_id, policy, gateway_ids):
         if isinstance(check.get("name"), str) and check["name"].strip()
     ]
     _inject_guardrail_credentials(named, org_id, policies=[policy])
-    mapped = {}
+    grouped = {}
     unusable = 0
     for check in checks:
         if (
@@ -825,7 +841,11 @@ def _build_key_policy(org_id, policy, gateway_ids):
             cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
         if registry_name not in BUILTIN_CONFIG_NAMES:
             _normalize_eval_ids(cfg)
-        mapped[registry_name] = projected
+        grouped.setdefault(registry_name, []).append(projected)
+    mapped = {
+        name: entries[0] if len(entries) == 1 else _colliding_key_check(entries)
+        for name, entries in grouped.items()
+    }
     # An unnameable check cannot overwrite a valid sibling (including a custom
     # check whose name happens to resemble our placeholder).
     for index in range(unusable):

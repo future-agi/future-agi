@@ -247,7 +247,7 @@ const GuardrailCheckDialog = ({
       }
       const errors =
         form.enabled && policyActive
-          ? selectedConfigErrors(checkName, config)
+          ? selectedConfigErrors(checkName, config, form.confidence_threshold)
           : {};
       setBuiltinErrors(errors);
       if (Object.keys(errors).length) return;

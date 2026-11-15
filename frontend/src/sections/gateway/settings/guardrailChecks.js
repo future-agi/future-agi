@@ -72,6 +72,17 @@ const SELECTORS = {
       "bitcoin",
     ],
   },
+  "prompt-injection": {
+    field: "categories",
+    values: [
+      "structured_role_injection",
+      "instruction_override",
+      "role_manipulation",
+      "system_prompt_extraction",
+      "delimiter_injection",
+      "encoding_bypass",
+    ],
+  },
   "content-moderation": {
     field: "categories",
     values: ["toxicity", "hate_speech", "violence", "sexual", "self_harm"],
@@ -109,9 +120,29 @@ const BUILTIN_CONFIG_HELP = {
     "Use deny_patterns and require_patterns arrays of Go regex strings. Length limits (min_message_length, max_message_length, max_total_length) are optional nonnegative integers; zero disables a limit. Pattern checks here are partial: common syntax errors, lookarounds and backreferences are rejected. Character ranges, repetition bounds and Unicode class names are not checked here. The Go runtime validates remaining syntax; saving does not prove a pattern is valid.",
 };
 
+const BUILTIN_ALIASES = {
+  "pii-detector": "pii-detection",
+  "secrets-detector": "secret-detection",
+  "injection-detector": "prompt-injection",
+};
+export const canonicalCheckName = (name) =>
+  Object.hasOwn(BUILTIN_ALIASES, name) ? BUILTIN_ALIASES[name] : name;
+export const hasDuplicateCheckIdentity = (checks) => {
+  const names = checks.map((check) => canonicalCheckName(check.name));
+  return new Set(names).size !== names.length;
+};
 export const hasBuiltinConfigEditor = (name) =>
-  Object.hasOwn(BUILTIN_CONFIG_HELP, name);
-export const builtinConfigHelp = (name) => BUILTIN_CONFIG_HELP[name];
+  Object.hasOwn(BUILTIN_CONFIG_HELP, canonicalCheckName(name));
+export const builtinConfigHelp = (name) => {
+  const canonical = canonicalCheckName(name);
+  const details = {
+    "prompt-injection":
+      " Sensitivity is high, medium (default) or low, case-insensitive.",
+    "content-moderation":
+      " category_threshold is a positive integer match count (default 3), not confidence. Weights are finite numbers; zero/negative weights use default 1. The maximum weighted score, boosted by any category scoring at least 0.9, must strictly exceed the confidence threshold.",
+  };
+  return BUILTIN_CONFIG_HELP[canonical] + (details[canonical] || "");
+};
 export const isConfigObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const isText = (value) =>
@@ -185,9 +216,69 @@ const boundedGoPatternError = (pattern) => {
 // names and the shared org editor keep their own contracts. No coercion, mutation
 // or raw parameter values in errors. Missing config intentionally uses defaults;
 // explicit null/scalars/arrays do not.
-export const selectedConfigErrors = (name, config) => {
+const MODERATION_COUNTS = {
+  toxicity: 15,
+  hate_speech: 15,
+  violence: 15,
+  sexual: 13,
+  self_harm: 15,
+};
+const moderationErrors = (config, threshold) => {
+  const count = Object.hasOwn(config, "category_threshold")
+    ? config.category_threshold
+    : 3;
+  if (!Number.isInteger(count) || count <= 0 || count >= 2 ** 63) {
+    return {
+      category_threshold:
+        "category_threshold must be a positive representable integer below 2^63.",
+    };
+  }
+  const weights = Object.hasOwn(config, "weights") ? config.weights : {};
+  if (!isConfigObject(weights))
+    return { weights: "Weights must be a JSON object." };
+  if (
+    Object.keys(MODERATION_COUNTS).some(
+      (name) => name in weights && !Number.isFinite(weights[name]),
+    )
+  ) {
+    return { weights: "Known category weights must be finite numbers." };
+  }
+  const selected = new Set(
+    config.categories?.length
+      ? config.categories
+      : Object.keys(MODERATION_COUNTS),
+  );
+  let weightedSum = 0;
+  let totalWeight = 0;
+  let maximum = 0;
+  Object.entries(MODERATION_COUNTS).forEach(([name, phrases]) => {
+    if (!selected.has(name)) return;
+    // Match the constructor: <=0 means default weight1, not disabled.
+    const weight = weights[name] > 0 ? weights[name] : 1;
+    const score = Math.min(1, phrases / count);
+    weightedSum += score * weight;
+    totalWeight += weight;
+    maximum = Math.max(maximum, score);
+  });
+  if (!Number.isFinite(totalWeight) || !Number.isFinite(weightedSum)) {
+    return { weights: "Category weights must have a finite aggregate." };
+  }
+  let aggregate = weightedSum / totalWeight;
+  if (maximum >= 0.9 && aggregate < maximum) aggregate = maximum;
+  if (!(aggregate > threshold)) {
+    return {
+      category_threshold:
+        "category_threshold and weights cannot exceed the confidence threshold.",
+    };
+  }
+  return {};
+};
+
+export const selectedConfigErrors = (checkName, config, threshold = 0.8) => {
+  const name = canonicalCheckName(checkName);
   if (name === "keyword-blocklist") return keywordConfigErrors(config);
-  if (!hasBuiltinConfigEditor(name) || config === undefined) return {};
+  if (!hasBuiltinConfigEditor(name)) return {};
+  if (config === undefined) config = {};
   if (!isConfigObject(config))
     return { config: "Config must be a JSON object." };
   const errors = {};
@@ -199,6 +290,18 @@ export const selectedConfigErrors = (name, config) => {
         config[field].some((item) => !values.includes(item)))
     ) {
       errors[field] = `${field} must be an array of supported detector names.`;
+    }
+    if (name === "content-moderation" && !errors[field]) {
+      Object.assign(errors, moderationErrors(config, threshold));
+    }
+    if (
+      name === "prompt-injection" &&
+      "sensitivity" in config &&
+      (typeof config.sensitivity !== "string" ||
+        !["high", "medium", "low"].includes(config.sensitivity.toLowerCase()))
+    ) {
+      errors.sensitivity =
+        "Sensitivity must be high, medium or low (case-insensitive).";
     }
   } else if (name === "language-detection") {
     if ("allowed_scripts" in config && !isStringArray(config.allowed_scripts)) {

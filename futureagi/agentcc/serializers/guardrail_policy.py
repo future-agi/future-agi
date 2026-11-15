@@ -7,6 +7,7 @@ from rest_framework import serializers
 from agentcc.guardrail_config_validation import (
     BUILTIN_CONFIG_NAMES,
     builtin_config_error,
+    duplicate_check_identity,
 )
 from agentcc.models import AgentccAPIKey
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
@@ -222,12 +223,25 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             or not active
         ):
             return
+        if duplicate_check_identity(checks):
+            raise serializers.ValidationError(
+                {
+                    "checks": (
+                        "Duplicate canonical check identities cannot run on the gateway. "
+                        "Remove duplicates or deactivate the policy."
+                    )
+                }
+            )
         for i, check in enumerate(checks):
             if not check.get("enabled", True):
                 continue
             name = check["name"]
             if name != "keyword-blocklist":
-                reason = builtin_config_error(name, check.get("config", {}))
+                reason = builtin_config_error(
+                    name,
+                    check.get("config", {}),
+                    check.get("threshold", check.get("confidence_threshold", 0.8)),
+                )
                 if reason:
                     raise serializers.ValidationError(
                         {"checks": f"Check at index {i} ({name}): {reason}"}
