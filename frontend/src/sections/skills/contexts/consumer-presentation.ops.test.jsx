@@ -20,7 +20,10 @@ it('uses one calm summary and one waiting message for an unreported app', () => 
   expect(within(table).getByRole('columnheader', { name: 'Kind' })).toBeVisible();
   expect(within(table).getByText('App')).toBeVisible();
   expect(within(table).getByText('No report from this app yet')).toBeVisible();
-  expect(within(table).getAllByText('Waiting for first report')).toHaveLength(1);
+  // The report state is said once (the badge), not again in a second line or an all-dash column.
+  expect(within(table).queryByText('Waiting for first report')).toBeNull();
+  expect(within(table).queryByRole('columnheader', { name: 'Last delivered' })).toBeNull();
+  expect(within(table).queryByRole('columnheader', { name: 'Last report' })).toBeNull();
   expect(screen.getByRole('link', { name: 'How apps report' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/rollout-recovery');
 });
 
@@ -32,6 +35,22 @@ it('keeps pin and stale evidence distinct and pluralizes the delivery summary', 
   expect(screen.getByText('Stale observation')).toBeVisible();
   const table = screen.getByRole('table', { name: 'Context delivery observations' });
   expect(table.querySelector('time')).toHaveAttribute('datetime', '2026-11-13T02:00:00.000Z');
+  // One consumer has a report, so the Last report column appears; none has a delivery, so Last delivered stays hidden.
+  expect(within(table).getByRole('columnheader', { name: 'Last report' })).toBeVisible();
+  expect(within(table).queryByRole('columnheader', { name: 'Last delivered' })).toBeNull();
+});
+
+it('shows Last delivered once any consumer has a delivered release', () => {
+  renderConsumers({ ...data, results: [{ ...row, loaded: { versionId: 'v2', digest: 'sha256:x' } }] });
+  expect(within(screen.getByRole('table', { name: 'Context delivery observations' })).getByRole('columnheader', { name: 'Last delivered' })).toBeVisible();
+});
+
+it('writes a recent snapshot time in lowercase inside the sentence and keeps the full time in the tooltip', () => {
+  const now = Date.now();
+  renderConsumers({ ...data, asOf: new Date(now).toISOString() });
+  const line = screen.getByText(/^As of/);
+  expect(line).toHaveTextContent('As of just now');
+  expect(line.querySelector('time')).toHaveAttribute('datetime', new Date(now).toISOString());
 });
 
 it.each([null, -1, Infinity, 1e300])('does not invent a report timestamp for age %s', (age) => {

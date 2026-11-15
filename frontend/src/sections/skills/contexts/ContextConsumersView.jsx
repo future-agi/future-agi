@@ -1,6 +1,6 @@
 import { cloneElement, isValidElement, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, Drawer, IconButton, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Drawer, IconButton, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import When from '../components/When';
 import Iconify from 'src/components/iconify';
 import Section from 'src/components/section';
@@ -16,7 +16,8 @@ import { ReviewState } from '../review/ReleaseReviewBody';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
 import CapabilityNotice from '../components/CapabilityNotice';
-import { consumerStateNames, consumerNextStep, needsDeliveryVerification, consumerReportAt } from './consumerPresentation';
+import { formatUtcFull, formatWhen } from '../utils/format';
+import { consumerStateNames, consumerNextStep, needsDeliveryVerification, consumerReportAt, midSentence } from './consumerPresentation';
 
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 const stageNames = { desired: 'Desired', resolved: 'Resolved', installed: 'Installed', discovered: 'Discovered', loaded: 'Delivered' };
@@ -25,8 +26,18 @@ function Stage({ stage, versionNumbers = {} }) {
   return versionNumbers[stage.versionId] !== undefined ? <Typography variant="s1">v{versionNumbers[stage.versionId]}</Typography> : <IdentityChip label="Release" kind="id" value={stage.versionId} />;
 }
 Stage.propTypes = { stage: PropTypes.object, versionNumbers: PropTypes.object };
+// "As of just now": a relative time inside a sentence starts lowercase. Same structure as When
+// (short text, full UTC time in a keyboard-reachable tooltip), so the flows' title lookups still hold.
+export function AsOf({ value }) {
+  const full = formatUtcFull(value);
+  if (!full) return 'Time not reported';
+  return <Tooltip title={full} describeChild>
+    <Box component="time" dateTime={new Date(value).toISOString()} tabIndex={0} sx={{ whiteSpace: 'nowrap', borderRadius: 0.5, '&:focus-visible': { outline: 2, outlineColor: 'primary.main', outlineOffset: 2 } }}>{midSentence(formatWhen(value))}</Box>
+  </Tooltip>;
+}
+AsOf.propTypes = { value: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]) };
 const primaryRegistration = (action) => isValidElement(action) ? cloneElement(action, { variant: 'contained' }) : action;
-const emptyDescription = 'Register an application or repository so its deliveries can be checked.';
+const emptyDescription = 'Connect an app or repository so its deliveries can be checked.';
 function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionNumbers, previewState, registrationAction }) {
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState('');
@@ -35,9 +46,13 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
   const rows = previewState === 'filtered-empty' ? [] : data.results.filter((row) => row.binding.name.toLowerCase().includes(search.trim().toLowerCase()) && (status === 'all' || row.states.includes(status)));
   const clear = () => { setSearch(''); setStatus('all'); };
   const missing = data.results.filter(needsDeliveryVerification).length;
+  // A column with nothing in it for every consumer says nothing, so it appears once any consumer has a value.
+  const anyDelivered = data.results.some((row) => row.loaded);
+  const anyReport = data.results.some((row) => consumerReportAt(row, data.asOf));
+  const columns = ['Consumer', 'Kind', 'Target release', ...(anyDelivered ? ['Last delivered'] : []), 'Verification', ...(anyReport ? ['Last report'] : []), 'Inspect'];
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="s1" color="text.secondary">{missing > 0 ? `${missing} of ${data.results.length} connected ${data.results.length === 1 ? 'consumer' : 'consumers'} ${missing === 1 ? 'needs' : 'need'} a delivery report to confirm the version received.` : 'Connected consumers report the version they receive; delivery does not prove use.'} <Link href="https://docs.futureagi.com/docs/skills/rollout-recovery" target="_blank" rel="noopener noreferrer">How apps report</Link></Typography>
-    <Typography variant="s3" color="text.secondary">As of <When value={data.asOf} fallback="Time not reported" /></Typography>
+    <Typography variant="s3" color="text.secondary">As of <AsOf value={data.asOf} /></Typography>
     {data.results.length > 0 && registrationAction}
     {data.results.length > 0 && <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
       <FormSearchField label="Search consumers" placeholder="Search consumers" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
@@ -53,14 +68,14 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
     {!data.results.length ? <EmptyState variant="first-run" title="No apps connected yet" description={emptyDescription} action={primaryRegistration(registrationAction)} />
       : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
         : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
-          <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Kind', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
+          <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
           <TableBody>{rows.map((row) => <TableRow key={row.binding.id} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
             <TableCell sx={{ gridColumn: '1 / 3' }}><Button color="inherit" sx={{ px: 0, minWidth: 0, justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', whiteSpace: 'normal', maxWidth: 1 }} onClick={() => setSelectedId(row.binding.id)}>{row.binding.name}</Button><Typography component="div" variant="s3">{row.binding.selector.version ? `Pinned v${row.binding.selector.version}` : `Follow ${row.binding.selector.label}`}</Typography></TableCell>
             <TableCell sx={{ ...mobileLabel('Kind'), gridColumn: '1 / -1', gridRow: 4 }}><Typography variant="s1">{row.binding.kind === 'runtime' ? 'App' : row.binding.kind === 'repository' ? 'Repository' : 'Unknown'}</Typography></TableCell>
             <TableCell sx={{ ...mobileLabel('Target release'), gridRow: 2 }}>{row.desired ? <Stage stage={row.desired} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
-            <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}>{row.loaded ? <Stage stage={row.loaded} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
+            {anyDelivered && <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}>{row.loaded ? <Stage stage={row.loaded} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>}
             <TableCell sx={{ gridColumn: '1 / 4', gridRow: 3 }}><Stack spacing={0.5} alignItems="flex-start">{row.states.map((state) => <StatusBadge key={state} status={state} role={state === 'unknown' ? 'neutral' : undefined} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
-            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3"><When value={consumerReportAt(row, data.asOf)} fallback="Waiting for first report" /></Typography></TableCell>
+            {anyReport && <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3"><When value={consumerReportAt(row, data.asOf)} fallback="—" /></Typography></TableCell>}
             <TableCell sx={{ gridColumn: 3, gridRow: 1 }}><Button size="small" variant="outlined" aria-label={`Inspect ${row.binding.name}`} onClick={() => setSelectedId(row.binding.id)}>Inspect</Button></TableCell>
           </TableRow>)}</TableBody>
         </Table></TableContainer>}

@@ -119,14 +119,14 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await ownerPage.getByRole('tab', { name: 'Agent contexts', exact: true }).click();
     await ownerPage.getByRole('button', { name, exact: true }).click();
     await ownerPage.getByRole('tab', { name: 'Consumers', exact: true }).click();
-    await ownerPage.getByRole('button', { name: 'Register application target', exact: true }).click();
+    await ownerPage.getByRole('button', { name: 'Connect an app', exact: true }).click();
     const dialog = ownerPage.getByRole('dialog');
     await dialog.getByLabel('Target name', { exact: true }).fill('Refund agent');
-    await dialog.getByLabel('Runtime manifest file').setInputFiles(manifestPath);
+    await dialog.getByLabel('Config file', { exact: true }).setInputFiles(manifestPath);
     await expect(dialog.getByText(manifest.entrypoint, { exact: true })).toBeVisible();
     await ownerPage.screenshot({ path: `${output}/shots/00-register-target.png` });
     const created = ownerPage.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/contexts/${id}/bindings/`) && res.request().method() === 'POST');
-    await dialog.getByRole('button', { name: 'Register target', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Connect app', exact: true }).click();
     binding = (await (await created).json()).result;
     await expect(ownerPage.getByText('Registered Refund agent · configuration r1', { exact: true })).toBeVisible();
   } finally { await ownerContext.close(); }

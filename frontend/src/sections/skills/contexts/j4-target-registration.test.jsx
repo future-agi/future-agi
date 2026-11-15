@@ -14,13 +14,13 @@ beforeEach(() => {
 afterEach(cleanup);
 const choose = (value) => {
   const file = new File([typeof value === 'string' ? value : JSON.stringify(value)], 'manifest.json', { type: 'application/json' });
-  fireEvent.change(screen.getByLabelText('Runtime manifest file'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Config file'), { target: { files: [file] } });
 };
 
 it('registers one runtime target with the build manifest, never a typed digest', async () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
-  const submit = screen.getByRole('button', { name: 'Register target' });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
+  const submit = screen.getByRole('button', { name: 'Connect app' });
   expect(submit).toBeDisabled();
   fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
   choose(manifest);
@@ -35,24 +35,24 @@ it('registers one runtime target with the build manifest, never a typed digest',
 
 it('rejects a manifest that is not a JSON object', async () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
   choose('[1, 2]');
   expect(await screen.findByText(/not a JSON object/)).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Connect app' })).toBeDisabled();
 });
 
 it('defaults the target name from the manifest entrypoint without overriding a typed name', async () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
   await screen.findByText('refund_agent.app:invoke');
   expect(screen.getByLabelText('Target name')).toHaveValue('refund_agent');
-  fireEvent.click(screen.getByRole('button', { name: 'Register target' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect app' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ name: 'refund_agent' })));
   cleanup();
   render(<ContextTargetRegistration contextId="context" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
   choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
   await screen.findByText('refund_agent.app:invoke');
@@ -61,14 +61,22 @@ it('defaults the target name from the manifest entrypoint without overriding a t
 
 it('cannot be opened without writer permission', () => {
   render(<ContextTargetRegistration contextId="context" canRegister={false} />);
-  expect(screen.getByRole('button', { name: 'Register application target' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Connect an app' })).toBeDisabled();
 });
 
-it('explains why connecting is unavailable before a manifest is chosen', () => {
+it('explains why connecting is unavailable before a config file is chosen, in the footer beside the buttons', () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
-  expect(within(screen.getByRole('dialog')).getByText('Register application target')).toBeVisible();
-  expect(screen.getByText('Choose the app manifest (JSON) file from your app build.')).toBeVisible();
-  expect(screen.getByRole('group', { name: 'App manifest (JSON)' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Connect an app')).toBeVisible();
+  expect(within(dialog).getByText("Upload your app's config file (JSON).")).toBeVisible();
+  const reason = within(dialog).getByText("Choose your app's config file.");
+  expect(reason).toBeVisible();
+  // The reason shares the footer row with Cancel and Connect app, and describes the disabled primary.
+  const submit = within(dialog).getByRole('button', { name: 'Connect app' });
+  expect(reason.parentElement).toBe(submit.parentElement.parentElement);
+  expect(submit).toBeDisabled();
+  expect(submit).toHaveAccessibleDescription("Choose your app's config file.");
+  expect(screen.getByRole('group', { name: 'Config file (JSON)' })).toBeVisible();
+  expect(screen.queryByText(/manifest/i)).toBeNull();
 });

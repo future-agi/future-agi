@@ -218,16 +218,16 @@ export async function createDriver({ jobId, runId, registration }) {
           requireValue((await roleResponse).ok(), 'Reviewer authority not granted');
           await openContext(admin, 'context-detail');
           await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Consumers', exact: true }), 'open-consumers'));
-          await op.click(admin.getByRole('button', { name: 'Register application target', exact: true }), 'open-target-registration');
+          await op.click(admin.getByRole('button', { name: 'Connect an app', exact: true }), 'open-target-registration');
           const dialog = admin.getByRole('dialog');
           const chooser = admin.waitForEvent('filechooser');
-          await op.click(dialog.getByRole('button', { name: 'Choose runtime manifest', exact: true }), 'choose-runtime-manifest');
+          await op.click(dialog.getByRole('button', { name: 'Choose config file', exact: true }), 'choose-runtime-manifest');
           await (await chooser).setFiles(input.manifestPath);
           await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
           // The visible name defaults from the build entrypoint; nothing typed.
           await expect(dialog.getByLabel('Target name', { exact: true })).toHaveValue('refund_agent');
           const created = responseFor(admin, `/contexts/${input.contextId}/bindings/`);
-          await op.click(dialog.getByRole('button', { name: 'Register target', exact: true }), 'register-target');
+          await op.click(dialog.getByRole('button', { name: 'Connect app', exact: true }), 'register-target');
           const binding = (await (await created).json()).result;
           bindingId = binding.id;
           await expect(admin.getByText('Registered refund_agent · configuration r1', { exact: true })).toBeVisible();

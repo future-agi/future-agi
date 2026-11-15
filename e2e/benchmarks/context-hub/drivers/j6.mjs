@@ -281,6 +281,9 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(files).toBeVisible();
         const items = closure.files.map((_, index) => `closure-file-${index}`);
         const exceptions = closure.files.flatMap((file, index) => (changed.includes(file.path) ? [`closure-file-${index}`] : []));
+        // The closure table shows its first rows and keeps the rest behind one disclosure; open it so every file is inspected.
+        const moreFiles = authorPage.getByRole('button', { name: /^Show \d+ more files?$/ });
+        if (await moreFiles.count()) await operator.click(moreFiles, 'show-all-closure-files');
         const retiredHash = await record('retired-child-closure', { retired_status: retired.status, closure_paths: closure.files.map((file) => file.path), changed });
         const decision = decisionFor({ candidate: closure.files.map((file) => [file.path, sha256(Buffer.from(file.content, 'utf8'))]), production: [...before] },
           { candidate_version_id: v1.id, production_version_id: v3.id, release_revision: (await read(`${context}release-state/`, signal)).release_revision });
@@ -350,7 +353,7 @@ export async function createDriver({ jobId, runId, registration }) {
         // The view shows the release revision the review was made against; wait for it to match the moved release
         // (a change after the review restarts it), so no later poll can restart the new review.
         const movedRevision = (await read(`${context}release-state/`, signal)).release_revision;
-        await expect(authorPage.getByText(`Reviewed against release revision ${movedRevision}.`, { exact: false })).toBeVisible({ timeout: 60_000 });
+        await expect(authorPage.getByText(`Reviewed against the current production release (revision ${movedRevision}).`, { exact: false })).toBeVisible({ timeout: 60_000 });
         const reack = authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ });
         await expect(reack).toBeEnabled({ timeout: 30_000 });
         await expect(reack).not.toBeChecked();
