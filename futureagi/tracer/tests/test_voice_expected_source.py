@@ -29,6 +29,7 @@ def untagged(rows, **_kwargs):
             tags=[],
             source_tag_names=[],
             manual_tags=[],
+            tag_assignment_exists=False,
             tag_revision=0,
             tag_target=None,
         )
@@ -90,3 +91,6 @@ def test_ordinary_voice_callers_keep_existing_behavior(monkeypatch):
         monkeypatch, [span(ROOT, kind="conversation")], expected=None
     )
     assert response.status_code == 200
+    observation_spans = response.data["result"]["observation_span"]
+    assert [row["id"] for row in observation_spans] == [ROOT]
+    assert observation_spans[0]["tag_assignment_exists"] is False
