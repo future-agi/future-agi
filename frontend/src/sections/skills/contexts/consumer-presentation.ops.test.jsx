@@ -19,12 +19,28 @@ it('uses one calm summary and one waiting message for an unreported app', () => 
   const table = screen.getByRole('table', { name: 'Context delivery observations' });
   expect(within(table).getByRole('columnheader', { name: 'Kind' })).toBeVisible();
   expect(within(table).getByText('App')).toBeVisible();
-  expect(within(table).getByText('No report from this app yet')).toBeVisible();
+  // Nothing has reported, so the list says so once and each row carries the short tag.
+  expect(screen.getByText('No app has reported a version yet.')).toBeVisible();
+  expect(within(table).getByText('No report')).toBeVisible();
+  expect(within(table).queryByText('No report from this app yet')).toBeNull();
+  expect(within(table).getByRole('columnheader', { name: 'App or repository' })).toBeVisible();
+  expect(within(table).queryByRole('columnheader', { name: 'Consumer' })).toBeNull();
+  expect(within(table).getByText('App · Target v2 · Follow production')).toBeInTheDocument();
   // The report state is said once (the badge), not again in a second line or an all-dash column.
   expect(within(table).queryByText('Waiting for first report')).toBeNull();
   expect(within(table).queryByRole('columnheader', { name: 'Last delivered' })).toBeNull();
   expect(within(table).queryByRole('columnheader', { name: 'Last report' })).toBeNull();
   expect(screen.getByRole('link', { name: 'How apps report' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/rollout-recovery');
+});
+
+it('keeps the long tag when some apps have reported, so rows stay distinguishable', () => {
+  const reported = { ...row, binding: { ...row.binding, id: 'live', name: 'Live app' }, states: ['matches_target'], loaded: { versionId: 'v2', digest: 'sha256:x' }, observationAgeSeconds: 60 };
+  renderConsumers({ ...data, count: 2, results: [row, reported] });
+  expect(screen.queryByText('No app has reported a version yet.')).toBeNull();
+  const table = screen.getByRole('table', { name: 'Context delivery observations' });
+  expect(within(table).getByText('No report from this app yet')).toBeVisible();
+  expect(within(table).queryByText('No report')).toBeNull();
+  expect(within(table).getByText('App · Target v2 · Delivered v2 · Follow production')).toBeInTheDocument();
 });
 
 it('keeps pin and stale evidence distinct and pluralizes the delivery summary', () => {

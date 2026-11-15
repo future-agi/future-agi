@@ -64,17 +64,19 @@ it('cannot be opened without writer permission', () => {
   expect(screen.getByRole('button', { name: 'Connect an app' })).toBeDisabled();
 });
 
-it('explains why connecting is unavailable before a config file is chosen, in the footer beside the buttons', () => {
+it('says what to do once before a config file is chosen, and keeps the reason on the disabled primary', () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Connect an app')).toBeVisible();
-  expect(within(dialog).getByText("Upload your app's config file (JSON).")).toBeVisible();
-  const reason = within(dialog).getByText("Choose your app's config file.");
-  expect(reason).toBeVisible();
-  // The reason shares the footer row with Cancel and Connect app, and describes the disabled primary.
+  expect(within(dialog).getByText("Upload your app's config file.")).toBeVisible();
+  expect(within(dialog).queryByText(/\(JSON\)\./)).toBeNull();
+  // The footer does not repeat the instruction. It says what connecting does, beside Cancel and Connect app,
+  // and the disabled primary still carries its reason for assistive technology.
   const submit = within(dialog).getByRole('button', { name: 'Connect app' });
-  expect(reason.parentElement).toBe(submit.parentElement.parentElement);
+  const note = within(dialog).getByText("Connecting doesn't change production.");
+  expect(note).toBeVisible();
+  expect(note.parentElement).toBe(submit.parentElement.parentElement);
   expect(submit).toBeDisabled();
   expect(submit).toHaveAccessibleDescription("Choose your app's config file.");
   expect(screen.getByRole('group', { name: 'Config file (JSON)' })).toBeVisible();

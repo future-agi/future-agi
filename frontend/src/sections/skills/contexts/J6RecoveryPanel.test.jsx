@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { enqueueSnackbar } from "notistack";
 import J6RecoveryPanel from "./J6RecoveryPanel";
+
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 const refresh = vi.fn();
 const previewMutate = vi.fn();
@@ -26,6 +29,7 @@ vi.mock("src/api/skills/j6-recovery", () => ({
 beforeEach(() => {
   vi.useFakeTimers();
   refresh.mockClear();
+  enqueueSnackbar.mockClear();
   previewMutate.mockClear();
   submitMutate.mockClear();
   previewState = {};
@@ -54,12 +58,23 @@ it("keeps the recovery facts current while the tab is visible and stops on unmou
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-it("names the release revision a rollback review is made against", () => {
+it("names the release a rollback review is made against and keeps the revision in technical details", () => {
   recovery = {
     cohort: [],
     releaseRevision: 7,
     canPromote: true,
     candidates: [
+      {
+        id: "v2-id",
+        number: 2,
+        digest: "sha256:v2",
+        eligible: false,
+        selectable: false,
+        isProduction: true,
+        reasons: ["current_production"],
+        children: [],
+        unavailableChildren: [],
+      },
       {
         id: "v1-id",
         number: 1,
@@ -75,10 +90,13 @@ it("names the release revision a rollback review is made against", () => {
   };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  // The bound revision is visible without opening anything.
-  expect(
-    screen.getByText(/Reviewed against the current production release \(revision 7\)\./),
-  ).toBeVisible();
+  // The sentence names the production version in words; the bound revision is an attribute and sits in technical details.
+  const sentence = screen.getByText(/Reviewed against the release that made v2 production\./);
+  expect(sentence).toBeVisible();
+  expect(sentence).toHaveAttribute("data-release-revision", "7");
+  expect(sentence.textContent).not.toMatch(/revision/);
+  expect(screen.getByText("Release revision 7")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Request details" })).toBeVisible();
 });
 
 const rollbackCandidate = {
@@ -362,8 +380,53 @@ it('gives denied rollback access a calm next step', () => {
   window.history.replaceState({}, '', '?state=denied');
   try {
     render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-    expect(screen.getByText('Only admins and reviewers can start a rollback. Ask a workspace admin.')).toBeVisible();
+    expect(screen.getByText('Only admins and reviewers can start a rollback.')).toBeVisible();
+    expect(screen.queryByText(/Ask a workspace admin/)).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy request for admin' })).toBeEnabled();
+  } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('copies a ready-to-send request for an admin from the denied notice', async () => {
+  window.history.replaceState({}, '', '?state=denied');
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy request for admin' })); });
+    expect(writeText).toHaveBeenCalledWith(`Please start a rollback of Support policy, or give me reviewer access: ${window.location.href}`);
+    expect(enqueueSnackbar).toHaveBeenCalledWith('Copied the request for an admin', { variant: 'success' });
+  } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('names the chosen version in the request when a member cannot start the rollback', async () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: false, candidates: suggestedCandidates };
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Only admins and reviewers can start a rollback.')).toBeVisible();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy request for admin' })); });
+  expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^Please start a rollback of Support policy to v1, or give me reviewer access: http/));
+});
+
+it('reports a copy failure instead of a false success', async () => {
+  window.history.replaceState({}, '', '?state=denied');
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy request for admin' })); });
+    expect(enqueueSnackbar).toHaveBeenCalledWith("Couldn't copy the request. Ask an admin to start the rollback.", { variant: 'error' });
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith('Copied the request for an admin', expect.anything());
+  } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('says what failed to load and that nothing changed', () => {
+  window.history.replaceState({}, '', '?state=error');
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    expect(screen.getByText("Couldn't load recovery details.")).toBeVisible();
+    expect(screen.getByText('Nothing was changed.')).toBeVisible();
+    expect(screen.queryByText(/consumer facts/)).toBeNull();
   } finally { window.history.replaceState({}, '', '/'); }
 });
 
@@ -405,7 +468,7 @@ it('keeps restore copy beside the commands and disabled until a full commit is e
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare recovery on your machine' }));
   expect(screen.queryByLabelText('Last reviewed commit')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Advanced recovery' }));
   const copy = screen.getByRole('button', { name: 'Copy restore commands' });
@@ -433,7 +496,7 @@ it('names the version to roll back to in plain words and keeps the review-releas
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText('Roll back to: v1 (suggested)')).toBeVisible();
   expect(screen.queryByText(/Recovery release/)).toBeNull();
-  expect(screen.getByText(/Reviewed against the current production release \(revision 7\)\./)).toBeVisible();
+  expect(screen.getByText(/Reviewed against the release that made v\d+ production\./)).toBeVisible();
   expect(screen.getByRole('table', { name: 'Recovery releases' })).toBeVisible();
 });
 
@@ -445,7 +508,7 @@ it('uses plain words for the application steps, the CLI and the reviewer check',
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
   expect(screen.getByText(/The reviewer's access is checked when you submit\./)).toBeVisible();
   expect(screen.queryByText(/review authority/)).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare recovery on your machine' }));
   // The credential stays in the main flow; the commit field and thread steps sit behind Advanced recovery.
   expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
   expect(screen.queryByText('Check apps that are mid-conversation')).toBeNull();
@@ -500,6 +563,31 @@ it('shows recovery progress as the numbered three-step stepper with the current 
   expect(steps.map((item) => item.getAttribute('aria-current'))).toEqual(['step', null, null]);
 });
 
+it('collapses the stepper to one "Step N of 3" line for the phone card', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Step 1 of 3 · Request')).toBeInTheDocument();
+});
+
+it('reads a lifted quarantine as "Approval complete", keeps the server note in technical details, and shows a live quarantine reason as written', () => {
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, candidates: [
+    { ...rollbackCandidate, id: 'v3-id', number: 3, isProduction: true, eligible: false, selectable: false, reasons: ['current_production'], quarantineReason: 'Policy review complete' },
+    { ...rollbackCandidate, id: 'v2-id', number: 2, eligible: false, selectable: false, reasons: ['quarantined'], quarantineReason: 'Leaked a customer key' },
+    rollbackCandidate,
+  ] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  const table = screen.getByRole('table', { name: 'Recovery releases' });
+  expect(within(table).getByText('Approval for v3 is complete.')).toBeVisible();
+  expect(within(table).getByText(/· Approval complete/)).toBeInTheDocument();
+  // The release is still not a rollback target: the note changes the wording, never the eligibility.
+  expect(within(table).queryByText('Policy review complete')).toBeNull();
+  // A quarantined release keeps its reason, and Choose stays refused.
+  expect(within(table).getAllByText(/Leaked a customer key/).length).toBeGreaterThan(0);
+  expect(screen.getByRole('button', { name: 'Choose v2' })).toBeDisabled();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Technical details' })[0]);
+  expect(screen.getByText('Safety review note for v3: Policy review complete')).toBeInTheDocument();
+});
+
 it('keeps the reviewer select full width before and after the request is prepared', () => {
   recovery = { cohort: [], releaseRevision: 7, canPromote: true, lastReleaserId: 'u3', candidates: [rollbackCandidate] };
   reviewers = [{ id: 'u3', name: 'Releaser' }];
@@ -545,7 +633,7 @@ it('names evidence in plain words and keeps the revision the review is bound to 
   expect(screen.getByRole('checkbox', { name: 'Attach Answer check' })).toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: 'Attach Application test' })).toBeInTheDocument();
   expect(screen.queryByText(/Text comparison|Application verification/)).toBeNull();
-  expect(screen.getByText('Reviewed against the current production release (revision 7). If production changes, review and acknowledge the rollback again.')).toBeVisible();
+  expect(screen.getByText(/^Reviewed against the release that made v\d+ production\. If production changes, review and acknowledge the rollback again\.$/)).toBeVisible();
 });
 
 it('never collapses a changed file, even when more than six files differ', () => {
