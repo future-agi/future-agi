@@ -611,6 +611,35 @@ def test_a_post_build_turn_with_a_malformed_usage_keeps_the_row_and_bills_nothin
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_command_from_another_conversation_is_not_billed(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    """A chat sandbox's capability must not bill a turn against someone else's command."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    _job, conversation, _command, capability = _post_build_turn(organization, "mine")
+    _other_job, _other_conversation, other_command, _ = _post_build_turn(
+        organization, "theirs"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(other_command.id), "usage": _TURN_USAGE},
+        )
+
+    assert _turn_rows(other_command) == []
+    assert billed == []
+
+
+@pytest.mark.django_db
 def test_an_oss_post_build_turn_keeps_its_usage_unpriced(
     organization, monkeypatch, django_capture_on_commit_callbacks
 ):
