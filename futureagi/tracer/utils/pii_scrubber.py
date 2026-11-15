@@ -241,9 +241,11 @@ def scrub_pii_in_string(text: str, *, strict: bool = False) -> str:
                 # error ever carries the value.
                 logger.warning("pii_scrub_value_masked", reason=reason)
                 return UNSCANNABLE_VALUE
+            # `from None`: the original exception's text can quote the value, and a
+            # chained cause travels with this error into logs and task failures.
             raise PIIScrubError(
                 f"PII redaction failed ({type(exc).__name__}); the value is not stored."
-            ) from exc
+            ) from None
         logger.warning("pii_scrub_string_failed", exc_info=True)
         return text
 

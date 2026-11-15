@@ -1,6 +1,7 @@
 """Tests for tracer.utils.pii_scrubber."""
 
 import json
+import traceback
 from unittest import mock
 
 import pytest
@@ -341,6 +342,28 @@ class TestScrubPiiInSpanBatch:
         }
         assert spans[1]["attributes"] == {"fi.output.value": "all good"}
         log.warning.assert_called_once_with("pii_scrub_value_masked", reason=reason)
+
+    def test_a_failure_carries_no_text_of_the_value_in_its_traceback(self):
+        # Engine errors can quote their input; the chained cause would carry it into
+        # the ingestion log (format_exc) and the task's failure record.
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "mail jane@example.com"},
+            }
+        ]
+        with self._engines(
+            analyze=RuntimeError("cannot parse 'mail jane@example.com'")
+        ):
+            with pytest.raises(RuntimeError) as raised:
+                scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert raised.value.__cause__ is None
+        assert "jane@example.com" not in "".join(
+            traceback.format_exception(raised.value)
+        )
 
     def test_a_json_encoded_value_fails_closed_too(self):
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
