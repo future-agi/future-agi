@@ -48,6 +48,7 @@ import {
   useSaveErrorFeedAlert,
   useTestErrorFeedAlert,
 } from "src/api/errorFeed/alerts";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const TRIGGERS = [
   { value: "new_issue", label: "A new issue is created" },
@@ -1126,11 +1127,7 @@ export default function ErrorFeedAlerts() {
           minHeight: 0,
         }}
       >
-        {isLoading && (
-          <Box display="flex" justifyContent="center" py={8}>
-            <CircularProgress />
-          </Box>
-        )}
+        {isLoading && <LoadingScreen compact />}
         {isError && (
           <MuiAlert severity="error">
             Could not load Error Feed alert rules.

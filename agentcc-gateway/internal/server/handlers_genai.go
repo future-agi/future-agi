@@ -212,6 +212,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
+	canonicalReq.TranslatedFrom = "google"
 
 	switch action {
 	case "generateContent":
@@ -534,7 +535,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -630,7 +631,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = translatedStreamChatCompletion(ctx, provider, canonicalReq)
+		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		return nil
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
