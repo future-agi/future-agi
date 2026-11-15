@@ -38,3 +38,8 @@ it('fails closed after an export error and makes no cleanup claim', async () => 
   expect(screen.queryByRole('button', { name: 'Download exact ZIP' })).not.toBeInTheDocument();
   expect(saveAs).not.toHaveBeenCalled();
 });
+it('calls the export by what it keeps, the folder structure, not source paths', () => {
+  render(<J1MigrationExport resourceId="leaf" number={2} />);
+  expect(screen.getByText('Export with folder structure')).toBeInTheDocument();
+  expect(screen.queryByText(/source paths/)).not.toBeInTheDocument();
+});

@@ -159,7 +159,7 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
     await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
     await apply.click();
     await expect(page.getByRole('heading', { name: 'Linked skills (3)', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue to publish', exact: true }).click();
     await expect(page.getByText('What publishing creates', { exact: true })).toBeVisible();
     const reviewCandidate = async () => {
       const reviewed = page.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true });

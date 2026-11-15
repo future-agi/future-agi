@@ -426,3 +426,16 @@ it('keeps Draft with AI disabled with its tooltip when the feature is on but per
   await screen.findByLabelText('File content');
   expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled();
 });
+it('picks the panel with underline tabs, so the pill control is left to Document, Source and Preview', async () => {
+  mount();
+  await screen.findByLabelText('File content');
+  const panels = screen.getByRole('tablist', { name: 'Editor panels' });
+  expect(within(panels).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Files', 'Editor', 'Checks and tests']);
+  // Underline tabs draw an indicator; the pill control hides it.
+  const indicator = (tablist) => tablist.closest('.MuiTabs-root').querySelector('.MuiTabs-indicator');
+  expect(indicator(panels)).not.toBeNull();
+  expect(indicator(panels).style.display).not.toBe('none');
+  const document = screen.getByRole('tablist', { name: 'Skill document view' });
+  expect(indicator(document).style.display).toBe('none');
+  expect(within(document).getByRole('tab', { name: 'Source' })).toBeInTheDocument();
+});

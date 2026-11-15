@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import RetainedMigrationPanel from './RetainedMigrationPanel';
@@ -29,10 +29,16 @@ it('treats choosing a private folder as the folder format and asks for inventory
   expect(screen.getByText('1 source files selected')).toBeVisible();
 });
 
-it('names the import options in plain words', () => {
+it('names the import options in plain words and keeps the file formats under one Supported formats', () => {
   view();
   expect(screen.getByRole('button', { name: 'Supported formats' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'List made with the command line' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'List made with the command line' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/langfuse-skills-v1|exchange/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Supported formats' }));
+  const formats = screen.getByRole('region', { name: 'Supported formats' });
+  expect(formats).toHaveTextContent('langfuse-skills-v1');
+  expect(formats).toHaveTextContent('Native Langfuse exports need converting first');
+  expect(within(formats).getByRole('button', { name: 'Choose list file' })).toBeInTheDocument();
   expect(screen.queryByText(/CLI inventory|source identity|inventory packet/i)).not.toBeInTheDocument();
 });
 
@@ -63,7 +69,7 @@ it('previews every source of one inventory packet into one reviewed set', async 
   const table = await screen.findByRole('table', { name: 'Retained migration items' });
   await waitFor(() => expect(table).toHaveTextContent('folder-skill'));
   expect(table).toHaveTextContent('exchange-skill');
-  expect(screen.getByText(/2 sources · list of skills to import/)).toBeInTheDocument();
+  expect(screen.getByText('2 sources: a folder and a Langfuse file')).toBeInTheDocument();
   expect(api.preview).toHaveBeenCalledTimes(2);
   expect(api.preview.mock.calls[0][0]).toEqual({ exportData: { format: 'langfuse-skills-v1' } });
   const form = api.preview.mock.calls[1][0].form;
@@ -87,10 +93,11 @@ it('rejects a file that is not an inventory packet without previewing anything',
   expect(api.preview).not.toHaveBeenCalled();
 });
 
-it('explains exchange-file preparation beside the picker before any upload', () => {
+it('explains export-file preparation beside the picker before any upload', () => {
   view();
-  expect(screen.getByRole('combobox', { name: 'Source' })).toHaveTextContent('Langfuse exchange file (JSON)');
-  expect(screen.getByText(/Native Langfuse exports need converting first/)).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Source' })).toHaveTextContent('Langfuse export file (JSON)');
+  expect(screen.getByText('Use a Langfuse skills export file.')).toBeVisible();
+  expect(screen.queryByText(/exchange/i)).not.toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'How to prepare the file' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/migration#before-migration');
   expect(screen.getByRole('button', { name: 'Choose export file' })).toBeVisible();
 });
@@ -118,4 +125,18 @@ it('keeps the reviewed set mounted while sources change, with a way back to it',
   fireEvent.click(screen.getByRole('button', { name: 'Back to review' }));
   expect(screen.queryByRole('button', { name: 'Preview import', exact: true })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Change sources' })).toBeVisible();
+});
+
+it('names a single folder source in the review summary', async () => {
+  api.preview.mockResolvedValueOnce(plan);
+  view();
+  fireEvent.change(screen.getByLabelText('Retained private folder'), { target: { files: [new File(['x'], 'SKILL.md')] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview import', exact: true }));
+  expect(await screen.findByText('1 source: a folder')).toBeVisible();
+});
+
+it('says only how many sources came back from an earlier session', async () => {
+  api.reload.mockResolvedValueOnce([plan]);
+  view({ initialPlanIds: ['plan-1'] });
+  expect(await screen.findByText('1 source')).toBeVisible();
 });

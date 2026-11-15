@@ -167,6 +167,32 @@ it('assembles the packet\'s proposed context from exactly the published versions
   expect(context.publish.mock.calls[0][0].keys).toBe(context.prepare.mock.calls[0][0].keys);
 });
 
+it('words the compiled-candidate warnings acknowledgment like the publish page, and publishes with it only once ticked', async () => {
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  const publish = vi.fn(async (input) => ({ resourceId: input.resourceId, version: 1 }));
+  const lock = [{ mount: 'skills/one/', skillId: 'resource-one', version: 1, versionId: 'v-one', digest: digest('1') }, { mount: 'skills/two/', skillId: 'resource-two', version: 1, versionId: 'v-two', digest: digest('2') }];
+  const prepared = { contextId: 'ctx', name: 'trial', links: [], preview: { candidateDigest: digest('c'), resolvedLock: { links: lock }, checks: { summary: { errors: 0, warnings: 1 }, items: [{ code: 'description_short', severity: 'warning', message: 'Describe when to use this context.', path: 'AGENTS.md' }] } } };
+  context.prepare.mockResolvedValueOnce(prepared);
+  context.publish.mockResolvedValueOnce({ contextId: 'ctx', canIssueCredentials: true, receipt: { version: { id: 'ctx-v1', number: 1, digest: digest('c') } } });
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={publish} onCreateContext={vi.fn()} contextProposal={{ name: 'trial', description: 'Private trial', agents: 'Root\n' }} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import and publish 2 items' }));
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview agent context' }));
+  await screen.findByRole('table', { name: 'Pinned links' });
+  expect(screen.queryByText(/I acknowledge the static warnings/)).not.toBeInTheDocument();
+  const warnings = screen.getByRole('checkbox', { name: "I've read the check warnings for this version." });
+  expect(warnings).toBeDisabled();
+  expect(warnings).not.toBeChecked();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Accept these 2 exact pinned versions and this compiled candidate.' }));
+  expect(warnings).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Publish agent context' })).toBeDisabled();
+  fireEvent.click(warnings);
+  fireEvent.click(screen.getByRole('button', { name: 'Publish agent context' }));
+  await screen.findByText('Pilot credential for v1');
+  expect(context.publish.mock.calls.at(-1)[0]).toMatchObject({ prepared, acknowledgeWarnings: true });
+});
+
 it('keeps import consequence copy synchronized with the actual publication choice', () => {
   const onConsequenceChange = vi.fn();
   render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={vi.fn()} onPublish={vi.fn()} onConsequenceChange={onConsequenceChange} />);

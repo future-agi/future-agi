@@ -15,15 +15,15 @@ import { enqueueSnackbar } from "notistack";
 import VersionsTab from "../versions/VersionsTab";
 import SkillDetailView from "./SkillDetailView";
 
-const access = vi.hoisted(() => ({ isViewer: false, archived: null, dependents: { data: undefined } }));
-vi.mock("../contexts/ContextLibraryView", () => ({ useContextAuthoring: () => (access.archived ? { bindings: { archived: access.archived } } : null) }));
-vi.mock("src/api/skills/context-dependents", () => ({ useContextDependents: vi.fn(() => access.dependents) }));
-vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: access.isViewer, canWrite: !access.isViewer }) }));
+const access = vi.hoisted(() => ({ isViewer: false, archivedReady: false, canAdmin: true }));
+vi.mock("src/api/skills/context-dependents", () => ({ useContextDependents: vi.fn(() => ({ data: undefined })) }));
+vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: access.isViewer, canWrite: !access.isViewer, canAdmin: access.canAdmin }) }));
 vi.mock("../sources/GitHubSourcePanel", () => ({ default: () => null, GitHubSourceStatus: () => null }));
 vi.mock("src/api/skills", () => ({
   useSkill: vi.fn(),
   useSkillVersion: () => ({ data: { digest: "sha256:" + "a".repeat(64) } }),
   useArchiveSkill: vi.fn(),
+  archivedSkillsReady: () => access.archivedReady,
   downloadVersionZip: vi.fn(),
   getSkillErrorCode: (error) => error?.code,
 }));
@@ -86,7 +86,7 @@ function show(search = "") {
   );
 }
 beforeEach(() => {
-  access.archived = null; access.dependents = { data: undefined };
+  access.archivedReady = false; access.canAdmin = true;
   vi.clearAllMocks();
   access.isViewer = false;
   useSkill.mockReturnValue(success(skill));
@@ -282,7 +282,7 @@ describe("Skill detail route", () => {
         expect(screen.getByLabelText("Loading skill")).toBeInTheDocument();
       if (state === "error")
         expect(
-          screen.getByText("Could not load this skill"),
+          screen.getByText("Couldn't load this skill"),
         ).toBeInTheDocument();
       if (state === "empty")
         expect(screen.getByText("Not published yet")).toBeInTheDocument();
@@ -301,7 +301,7 @@ describe("Skill detail route", () => {
       error: { code: "skill_not_found" },
     });
     const view = show();
-    expect(screen.getByText("Skill not found")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Skill not found" })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Back to Skills" }),
     ).toHaveAttribute("href", "/dashboard/skills");
@@ -312,7 +312,7 @@ describe("Skill detail route", () => {
       refetch: vi.fn(),
     });
     show();
-    expect(screen.getByText("Could not load this skill")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load this skill")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });
@@ -337,13 +337,13 @@ it("switches the viewed version in the identity row and resets the file path", (
   expect(screen.getByLabelText("URL")).toHaveTextContent("version=2&path=SKILL.md&tab=files");
 });
 
-it('keeps viewer edit visibly disabled and Use skill primary', () => {
+it('keeps viewer edit visibly disabled and Use skill outlined', () => {
   access.isViewer = true;
   useSkill.mockReturnValue(success({ ...skill, hasDraft: false, permissions: { canArchive: false } }));
   show();
   expect(screen.getByRole('button', { name: 'Edit latest v4' })).toBeDisabled();
   expect(screen.getByText("Viewers can't edit. Ask a workspace admin for edit access.")).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Use skill' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Use skill' })).toHaveClass('MuiButton-outlined');
   fireEvent.click(screen.getByRole('button', { name: 'Use skill' }));
   expect(screen.getByLabelText('URL')).toHaveTextContent('tab=use');
   fireEvent.click(screen.getByRole('button', { name: 'Skill actions' }));
@@ -368,12 +368,13 @@ describe("header shape in every state (UX iteration 3, LIB4)", () => {
     expect(within(crumbs).getByRole("link", { name: "Skills" })).toHaveAttribute("href", "/dashboard/skills");
     expect(within(crumbs).getByText("refund-policy")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "refund-policy" })).toBeInTheDocument();
-    expect(screen.getByText("Could not load this skill")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load this skill")).toBeInTheDocument();
     view.unmount();
     useSkill.mockReturnValue({ isError: true, error: { code: "skill_not_found" } });
     showNamed(null);
-    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByText("Skill")).toBeInTheDocument();
-    expect(screen.getByText("Skill not found")).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByText("Not found")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Skill not found" })).toBeInTheDocument();
+    expect(screen.getAllByText("Skill not found")).toHaveLength(2);
   });
   it("loads as a header-shaped skeleton: one progressbar named Loading skill", () => {
     useSkill.mockReturnValue({ isPending: true });
@@ -404,8 +405,8 @@ describe("Archive confirm (UX iteration 4, LIB1)", () => {
     expect(dialog.getByText("production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
     expect(dialog.getByText("Restoring an archived skill isn't available in this workspace; contact support to restore it.")).toBeInTheDocument();
   });
-  it("points to Archived skills when the workspace can restore, and drops the label line without labels", () => {
-    access.archived = { list: vi.fn() };
+  it("points a workspace admin to Archived skills when the workspace can restore, and drops the label line without labels", () => {
+    access.archivedReady = true;
     useSkill.mockReturnValue(success({ ...skill, labels: [] }));
     show();
     const dialog = openArchive();
@@ -415,24 +416,24 @@ describe("Archive confirm (UX iteration 4, LIB1)", () => {
   });
 });
 
-describe("header button weight (UX iteration 4, LIB3)", () => {
+describe("Archive confirm for non-admins (UX iteration 5, LIB1)", () => {
+  it("sends a member with archive permission to a workspace admin for restore", () => {
+    access.archivedReady = true;
+    access.canAdmin = false;
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("A workspace admin can restore it from More → Archived skills.")).toBeInTheDocument();
+    expect(dialog.queryByText(/contact support/)).not.toBeInTheDocument();
+  });
+});
+
+describe("header button weight (UX iteration 5, LIB2)", () => {
   const edit = () => screen.getByRole("link", { name: "Resume your draft" });
-  const row = (overrides = {}) => ({ context_id: "c1", context_version: 2, labels: ["production"], requested: { label: "production" }, update_state: "update_available", ...overrides });
-  it.each([["files"], ["versions"], ["usage"], ["use"]])("stays contained on %s, where no panel has its own primary", (tab) => {
+  it.each(["files", "tests", "dependents", "versions", "usage", "use"])("is outlined on %s, so the header never changes weight", (tab) => {
     show(`?tab=${tab}`);
-    expect(edit()).toHaveClass("MuiButton-contained");
-  });
-  it("is outlined on Tests, which draws its own run button", () => {
-    show("?tab=tests");
     expect(edit()).toHaveClass("MuiButton-outlined");
-  });
-  it("is outlined on Used by only when a context can be updated", () => {
-    access.dependents = { data: { results: [row()] } };
-    show("?tab=dependents");
-    expect(edit()).toHaveClass("MuiButton-outlined");
-    cleanup();
-    access.dependents = { data: { results: [row({ update_state: "current" }), row({ context_id: "c2", requested: { version: 1 } })] } };
-    show("?tab=dependents");
-    expect(edit()).toHaveClass("MuiButton-contained");
+    expect(edit()).not.toHaveClass("MuiButton-contained");
   });
 });

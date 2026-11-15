@@ -16,7 +16,7 @@ function ExportVersion({ resourceId, number }) {
     try { setFiles(await request.mutateAsync()); }
     catch { setError('Could not prepare this exact export. Check your access and try again.'); }
   };
-  return <Section title="Export with source paths">
+  return <Section title="Export with folder structure">
     <Stack spacing={1.5}>
       <Typography variant="s1">Prepare v{number}’s files and a mapping file to download, so you can re-import later.</Typography>
       <Typography variant="s3" color="text.secondary">Keep both downloads together. This does not change the source.</Typography>

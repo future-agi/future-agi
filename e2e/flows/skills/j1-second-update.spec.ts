@@ -205,7 +205,7 @@ test('SKILLS-E2E-011: preserve a personal draft before replacing a diverged reta
       // Viewed v2 must not silently export latest v3.
       await page.goto(`/dashboard/skills/${id}?version=${number}`);
       await page.getByRole('button', { name: 'Skill actions', exact: true }).click();
-      await page.getByRole('menuitem', { name: 'Export with source paths', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Export with folder structure', exact: true }).click();
       await page.getByRole('button', { name: `Prepare v${number} migration export`, exact: true }).click();
       await expect(page.getByRole('button', { name: 'Download exact ZIP', exact: true })).toBeVisible({ timeout: UI_READY });
       const zipDownload = page.waitForEvent('download');

@@ -35,7 +35,7 @@ afterEach(cleanup);
 it('keeps the AGENTS root editable and never invokes the legacy publication API', () => {
   mount();
   expect(screen.getByLabelText('Context file source')).toHaveValue('Standing policy');
-  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Continue to publish' })).toBeDisabled();
   expect(screen.queryByText('Legacy publication must not mount')).not.toBeInTheDocument();
   expect(legacy.save).not.toHaveBeenCalled();
 });
@@ -85,7 +85,7 @@ it('opens the review after saving without asking to leave unsaved changes', asyn
     <Route path="/review" element={<p>Review page</p>} />
   </Routes></MemoryRouter>);
   fireEvent.change(screen.getByLabelText('Context file source'), { target: { value: 'Edited policy' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to publish' }));
   expect(await screen.findByText('Review page')).toBeInTheDocument();
   expect(screen.queryByText('Leave with unsaved changes?')).not.toBeInTheDocument();
   expect(resourceApi.saveDraft).toHaveBeenCalledOnce();
@@ -94,5 +94,11 @@ it('opens the review after saving without asking to leave unsaved changes', asyn
 it('keeps the unsaved-changes guard when no review route is available', async () => {
   mount({}, { onReview: undefined });
   fireEvent.change(screen.getByLabelText('Context file source'), { target: { value: 'Edited policy' } });
-  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Continue to publish' })).toBeDisabled();
+});
+
+it('describes the checks in plain words, without internal terms', () => {
+  mount();
+  expect(screen.getByText('Checks cover the saved context, including its linked skills.')).toBeInTheDocument();
+  expect(screen.queryByText(/accepted dependencies/)).not.toBeInTheDocument();
 });

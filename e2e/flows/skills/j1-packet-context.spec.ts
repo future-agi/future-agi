@@ -123,7 +123,7 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
     const publish = page.getByRole('button', { name: 'Publish agent context', exact: true });
     await expect(publish).toBeDisabled();
     await page.getByRole('checkbox', { name: 'Accept these 3 exact pinned versions and this compiled candidate.', exact: true }).check();
-    const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+    const warning = page.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
     if (await warning.count()) await warning.check();
     const published = page.waitForResponse(res => res.url().endsWith(`/contexts/${contextId}/draft/publish/`) && res.request().method() === 'POST');
     await publish.click();

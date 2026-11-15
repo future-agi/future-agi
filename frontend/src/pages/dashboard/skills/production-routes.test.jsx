@@ -283,6 +283,8 @@ it('loads later-page dependencies and reads linked/generated saved bytes through
   fireEvent.click(await screen.findByRole('option', { name: 'Later published skill' }));
   fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));
   expect(screen.getByText('Later published skill')).toBeVisible();
+  // The editor starts with the linked skills folder closed; open it to reach the locked bytes.
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'skills' }));
   fireEvent.click(await screen.findByRole('treeitem', { name: 'SKILL.md' }));
   expect(await screen.findByRole('textbox', { name: 'skills/policy/SKILL.md' })).toHaveValue('Accepted linked bytes');
   expect(screen.getByRole('textbox', { name: 'skills/policy/SKILL.md' })).toHaveAttribute('readonly');

@@ -234,7 +234,7 @@ export async function createDriver({ jobId, runId, registration }) {
           });
           await expect(page.getByText('POLICY-REFUND: capped-25')).toBeVisible();
           await expect(page.getByText('Saved', { exact: true })).toBeVisible();
-          await op.transition('review-candidate', () => op.click(page.getByRole('button', { name: 'Review changes' }), 'review-changes'));
+          await op.transition('review-candidate', () => op.click(page.getByRole('button', { name: 'Continue to publish' }), 'review-changes'));
           await edit('version-note', () => page.getByLabel('Version note').fill('Cap refunds at the order total'));
           await op.click(page.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ }), 'review-candidate-against-head');
           await op.click(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ }), 'acknowledge-warnings');

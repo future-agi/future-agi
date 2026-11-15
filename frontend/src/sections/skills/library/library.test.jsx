@@ -5,14 +5,16 @@ import { renderWithRouter } from "src/utils/test-utils";
 import SkillsLibraryView from "./SkillsLibraryView";
 import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillsDialog from "./ImportSkillsDialog";
+import ArchivedSkillsView from "./ArchivedSkillsView";
+import { enqueueSnackbar } from "notistack";
 
 const api = vi.hoisted(() => ({
-  isViewer: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
-  assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(), archived: null,
+  isViewer: false, canAdmin: true, restoreReady: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
+  assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
 }));
-// The Archived skills binding decides whether the archive confirm promises a way back.
-vi.mock("../contexts/ContextLibraryView", () => ({ useContextAuthoring: () => (api.archived ? { bindings: { archived: api.archived } } : null) }));
 vi.mock("src/api/skills", () => ({
+  // The generated contract decides whether the archive confirm promises a way back.
+  archivedSkillsReady: () => api.restoreReady,
   useSkillsList: api.list,
   useSkill: () => ({ data: { ...skill, labels: skill.labels.map((label) => ({ ...label, canMove: api.canMove })), protectedLabelNames: ["production"], permissions: { canArchive: api.canArchive, canManageLabelProtection: api.canMove }, releaseRevision: 3 } }),
   useSkillTemplates: api.templates,
@@ -23,8 +25,26 @@ vi.mock("src/api/skills", () => ({
   downloadSkillsZip: api.download,
   getSkillErrorCode: (error) => error.code,
 }));
-vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: api.isViewer, canWrite: !api.isViewer }) }));
+vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: api.isViewer, canWrite: !api.isViewer, canAdmin: api.canAdmin }) }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// CTX5 rewrites the restore dialog's own copy in parallel, so this lane tests the view against a stand-in.
+// The stand-in runs the real operation hook, so the retained key and retry behave as they do in the dialog.
+vi.mock("../contexts/ContextSafetyDialog", async () => {
+  const { useAuthoringOperation } = await vi.importActual("../editor/HotfixHeadReview");
+  return { default: function Dialog({ scopeKey, resource, review, canAct, onApply, onApplied, onClose }) {
+    const operation = useAuthoringOperation(scopeKey);
+    const input = { expectedReleaseRevision: review.releaseRevision, note: "", expectedReviewFingerprint: review.reviewFingerprint };
+    const done = (result) => { if (result) onApplied(result); };
+    return <div role="dialog" aria-label={`Restore ${resource.name}`}>
+      {review.labels.map((label) => <p key={label.name}>{label.name} v{label.version}</p>)}
+      {review.blockers.map((blocker) => <p key={blocker}>{blocker}</p>)}
+      <p data-testid="can-act">{String(canAct)}</p>
+      <button disabled={review.blocked} onClick={async () => done(await operation.run(onApply, input))}>Confirm restore</button>
+      <button onClick={async () => done(await operation.retry())}>Retry restore</button>
+      <button onClick={onClose}>Close</button>
+    </div>;
+  } };
+});
 
 const skill = {
   id: "skill-1", name: "support-policy", description: "Use when answering customer refund questions.",
@@ -48,7 +68,7 @@ const bundle = (key, status = "new", warnings = 0, errors = 0) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.isViewer = false; api.canArchive = true; api.archived = null;
+  api.isViewer = false; api.canAdmin = true; api.restoreReady = false; api.canArchive = true;
   api.canMove = true; api.assistEnabled = true;
   api.list.mockReturnValue(listResult());
   api.templates.mockReturnValue({ data: templates, isPending: false, isError: false, refetch: vi.fn() });
@@ -96,7 +116,7 @@ describe("Skills library", () => {
     expect(screen.getByText("v3")).toBeInTheDocument();
     expect(screen.getByText(/82 skills/)).toBeInTheDocument();
     expect(screen.getByText(/42 in production/)).toBeInTheDocument();
-    expect(screen.getByText(/719 fetches/)).toBeInTheDocument();
+    expect(screen.getByText(/719 uses in 7 days/)).toBeInTheDocument();
     expect(screen.getByText(/17 drafts/)).toBeInTheDocument();
     expect(screen.getByText(/drafts/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "support-policy" }));
@@ -120,7 +140,7 @@ describe("Skills library", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 0 }));
     renderLibrary("?search=missing&tag=support&label=production&page=3&sort=name&order=asc&keep=yes");
     expect(screen.getByText("No skills match these filters.")).toBeInTheDocument();
-    expect(screen.getByText(/719 fetches/)).toBeInTheDocument();
+    expect(screen.getByText(/719 uses in 7 days/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write from scratch" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Clear filters/i }));
     expect(new URLSearchParams(window.location.search).get("search")).toBeNull();
@@ -260,8 +280,8 @@ describe("Skills library", () => {
     expect(dialog.getByRole("button", { name: "Archive" })).toHaveClass("MuiButton-contained");
   });
 
-  it("points to Archived skills only when this workspace can restore, and omits the label line without labels", () => {
-    api.archived = { list: vi.fn() };
+  it("points an admin to Archived skills when the workspace can restore, and omits the label line without labels", () => {
+    api.restoreReady = true;
     api.list.mockReturnValue(listResult({ results: [{ ...skill, labels: [] }] }));
     renderLibrary();
     fireEvent.click(screen.getByRole("button", { name: "Actions for support-policy" }));
@@ -270,6 +290,17 @@ describe("Skills library", () => {
     expect(dialog.getByText("You can restore it from More → Archived skills.")).toBeInTheDocument();
     expect(dialog.queryByText(/isn't available in this workspace/)).not.toBeInTheDocument();
     expect(dialog.queryByText(/points at/)).not.toBeInTheDocument();
+  });
+
+  it("sends someone who can archive but is not an admin to a workspace admin", () => {
+    api.restoreReady = true;
+    api.canAdmin = false;
+    renderLibrary();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for support-policy" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("A workspace admin can restore it from More → Archived skills.")).toBeInTheDocument();
+    expect(dialog.queryByText(/contact support/)).not.toBeInTheDocument();
   });
 
   it("names the usage column by what it counts", () => {
@@ -632,5 +663,135 @@ describe("one import footer (UX iteration 3, LIB2)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "GitHub" }));
     expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Preview import" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Archived skills (UX iteration 5, LIB1)", () => {
+  const LABELS_CHANGED = "The labels changed since you opened this. Review again.";
+  const archived = (overrides = {}) => ({
+    id: "archived-1", name: "refund-policy", description: "Use when reviewing refund requests.", latestVersion: 2, releaseRevision: 5,
+    archivedAt: "2026-11-10T09:30:00Z", labels: [{ name: "production", version: 1 }], ...overrides,
+  });
+  const review = (overrides = {}) => ({ subjectId: "archived-1", releaseRevision: 5, reviewFingerprint: `sha256:${"a".repeat(64)}`, labels: [{ name: "production", version: 1, isProtected: true }], blocked: false, blockers: [], ...overrides });
+  const scopeKey = "org:workspace:admin";
+  const page = (results = [archived()]) => ({ scopeKey, data: { results, count: results.length, page: 1, pageSize: 25 }, isLoading: false, refetch: vi.fn() });
+  const handlers = (overrides = {}) => ({ onReview: vi.fn().mockResolvedValue(review()), onRestore: vi.fn().mockResolvedValue({ id: "archived-1" }), onOpenSkill: vi.fn(), onBack: vi.fn(), canRestore: true, ...overrides });
+  const show = (props = {}) => renderWithRouter(<ArchivedSkillsView scopeKey={scopeKey} query={page()} {...handlers()} {...props} />, { route: "/dashboard/skills/archived" });
+
+  it("lists archived skills with the labels that come back, the latest version and when it was archived", () => {
+    show();
+    expect(screen.getByRole("heading", { name: "Archived skills" })).toBeVisible();
+    expect(screen.getByText("Restore a skill to bring back its versions, labels and history.")).toBeVisible();
+    const table = within(screen.getByRole("table", { name: "Archived skills" }));
+    for (const name of ["Skill", "Labels", "Latest", "Archived"]) expect(table.getByRole("columnheader", { name })).toBeInTheDocument();
+    expect(table.getByText("refund-policy")).toBeVisible();
+    expect(table.getByText("Use when reviewing refund requests.")).toBeVisible();
+    expect(table.getByText("Production v1")).toBeVisible();
+    expect(table.getByText("v2")).toBeVisible();
+    expect(table.getByRole("time")).toHaveAttribute("datetime", "2026-11-10T09:30:00.000Z");
+    expect(screen.queryByText("archived-1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Inspect history/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a dash when no time or labels are reported", () => {
+    show({ query: page([archived({ archivedAt: null, labels: [] })]) });
+    expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
+  it("restores after a fresh review, says so, and offers Open skill", async () => {
+    const props = handlers();
+    show(props);
+    fireEvent.click(screen.getByRole("button", { name: "Restore refund-policy" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Restore refund-policy" }));
+    expect(props.onReview).toHaveBeenCalledWith(expect.objectContaining({ id: "archived-1" }));
+    expect(dialog.getByText("production v1")).toBeVisible();
+    expect(dialog.getByTestId("can-act")).toHaveTextContent("true");
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm restore" }));
+    await waitFor(() => expect(props.onRestore).toHaveBeenCalledTimes(1));
+    const [skill, input, options] = props.onRestore.mock.calls[0];
+    expect(skill.id).toBe("archived-1");
+    expect(input).toEqual({ expectedReleaseRevision: 5, note: "", expectedReviewFingerprint: `sha256:${"a".repeat(64)}` });
+    expect(options.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledWith("refund-policy restored", expect.objectContaining({ variant: "success" })));
+    const action = enqueueSnackbar.mock.calls.at(-1)[1].action;
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    renderWithRouter(action("key"));
+    fireEvent.click(screen.getByRole("button", { name: "Open skill" }));
+    expect(props.onOpenSkill).toHaveBeenCalledWith(expect.objectContaining({ id: "archived-1" }));
+  });
+
+  it("blocks Restore while a live skill uses the name, and says what to do", async () => {
+    show(handlers({ onReview: vi.fn().mockResolvedValue(review({ blocked: true, blockers: ["A live skill already uses this name. Rename or archive that skill first."] })) }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore refund-policy" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("A live skill already uses this name. Rename or archive that skill first.")).toBeVisible();
+    expect(dialog.getByRole("button", { name: "Confirm restore" })).toBeDisabled();
+  });
+
+  it("closes the review and asks for a new one when the labels changed (impact_changed)", async () => {
+    const onReview = vi.fn().mockResolvedValue(review());
+    const onRestore = vi.fn().mockRejectedValue({ code: "impact_changed", statusCode: 409 });
+    show(handlers({ onReview, onRestore }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore refund-policy" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm restore" }));
+    expect(await screen.findByText(LABELS_CHANGED)).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+    // Review again loads the labels from the server once more and starts from an empty acknowledgment.
+    fireEvent.click(screen.getByRole("button", { name: "Restore refund-policy" }));
+    await screen.findByRole("dialog");
+    expect(onReview).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(LABELS_CHANGED)).not.toBeInTheDocument();
+  });
+
+  it("repeats one restore with the same key after an unknown outcome", async () => {
+    const onRestore = vi.fn().mockRejectedValueOnce(new Error("Network Error")).mockResolvedValueOnce({ id: "archived-1" });
+    show(handlers({ onRestore }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore refund-policy" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm restore" }));
+    await waitFor(() => expect(onRestore).toHaveBeenCalledTimes(1));
+    fireEvent.click(dialog.getByRole("button", { name: "Retry restore" }));
+    await waitFor(() => expect(onRestore).toHaveBeenCalledTimes(2));
+    expect(onRestore.mock.calls[1][2].idempotencyKey).toBe(onRestore.mock.calls[0][2].idempotencyKey);
+    expect(onRestore.mock.calls[1][1]).toEqual(onRestore.mock.calls[0][1]);
+  });
+
+  it("keeps Restore off for anyone who can't act", () => {
+    show(handlers({ canRestore: false }));
+    expect(screen.getByRole("button", { name: "Restore refund-policy" })).toBeDisabled();
+  });
+
+  it("has a skeleton, an error with Retry, an empty state and a workspace-admin message", () => {
+    const view = show({ query: { scopeKey, isLoading: true } });
+    expect(screen.getByLabelText("Loading archived skills")).toBeInTheDocument();
+    view.unmount();
+    const refetch = vi.fn();
+    const failed = show({ query: { scopeKey, error: { statusCode: 500 }, refetch } });
+    expect(screen.getByText("Couldn't load archived skills.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    failed.unmount();
+    const empty = show({ query: page([]) });
+    expect(screen.getByText("No archived skills")).toBeVisible();
+    expect(screen.getByText("Skills you archive appear here. Restoring brings back their versions, labels and history.")).toBeVisible();
+    empty.unmount();
+    show({ query: { scopeKey, error: { response: { status: 403 } } } });
+    expect(screen.getByText("Only workspace admins can see archived skills.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to skills" }));
+  });
+
+  it("pages 25 at a time", () => {
+    const onPageChange = vi.fn();
+    show({ query: { scopeKey, data: { results: [archived()], count: 60, page: 1, pageSize: 25 } }, onPageChange });
+    expect(screen.getByText("1–25 of 60")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect(onPageChange).toHaveBeenCalledWith(2);
+  });
+
+  it("does not show another workspace's rows after a scope change", () => {
+    show({ scopeKey: "org:other", query: page() });
+    expect(screen.queryByText("refund-policy")).not.toBeInTheDocument();
   });
 });

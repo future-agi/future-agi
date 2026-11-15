@@ -12,10 +12,14 @@ import './skillIcons';
 const DEFAULT_PINNED = ['SKILL.md'];
 // Files the platform adds so apps load the right versions. Their paths stay listed under this group.
 const OTHER_FILES_NOTE = 'Added by Future AGI so apps load the right versions.';
+// The platform's context descriptor reads as settings, not as a file to edit. Its path stays in the title and the description.
+// Generated folders start closed unless the caller says which folders to close (collapsedFolders), as the draft editor does.
+const CONTEXT_SETTINGS_LABEL = 'Context settings (generated)';
+const plainPath = (path) => path.replace(/^group:[a-z]+\//, '');
 
-export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [] }) {
+export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [], collapsedFolders }) {
   const noteId = useId();
-  const [collapsed, setCollapsed] = useState(() => new Set([...generatedFolders, 'group:linked', 'group:generated']));
+  const [collapsed, setCollapsed] = useState(() => new Set([...(collapsedFolders ?? generatedFolders), 'group:linked', 'group:generated']));
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pathInput, setPathInput] = useState('');
@@ -57,6 +61,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     visit(tree, 1, null);
     return visible;
   }, [files, pinned, collapsed]);
+  const isContextSettings = (row) => row.type !== 'folder' && generatedFolders.some((folder) => plainPath(row.path) === `${folder.replace(/\/$/, '')}/context.json`);
   const activePath = rows.some((row) => row.path === focused) ? focused : rows.find((row) => row.path === selectedPath)?.path || rows[0]?.path;
   const selectedFile = files.find((file) => file.path === selectedPath);
   const protectedRoot = protectedPaths.includes(selectedPath);
@@ -127,7 +132,8 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     <Box role="tree" aria-label="Skill files">
       {rows.map((row, index) => <ButtonBase key={row.path} component="div" role="treeitem"
         ref={(element) => { if (element) refs.current.set(row.path, element); else refs.current.delete(row.path); }}
-        tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-describedby={row.path === 'group:generated' ? noteId : undefined} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
+        tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-describedby={row.path === 'group:generated' ? noteId : undefined}
+        {...(isContextSettings(row) ? { title: plainPath(row.path), 'aria-description': plainPath(row.path) } : {})} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
         aria-selected={row.path === selectedPath} aria-expanded={row.type === 'folder' ? !collapsed.has(row.path) : undefined}
         onFocus={() => setFocused(row.path)} onKeyDown={(event) => onKeyDown(event, row, index)} onClick={() => activate(row)}
         sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 32, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
@@ -137,7 +143,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
             <Typography variant="s1" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{row.name}</Typography>
             <Typography id={noteId} variant="s3" color="text.secondary" sx={{ display: 'block' }}>{OTHER_FILES_NOTE}</Typography>
           </Box>
-          : <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>}
+          : <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{isContextSettings(row) ? CONTEXT_SETTINGS_LABEL : row.name}</Typography>}
         {generatedFolders.includes(row.path) && <Typography variant="s3" color="text.secondary">Generated</Typography>}
         {row.status && <FileStatusBadge status={row.status} />}
       </ButtonBase>)}
@@ -156,7 +162,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
 }
 FileTree.propTypes = {
   files: PropTypes.arrayOf(PropTypes.shape({ path: PropTypes.string.isRequired, status: PropTypes.string })).isRequired,
-  generatedFolders: PropTypes.arrayOf(PropTypes.string),
+  generatedFolders: PropTypes.arrayOf(PropTypes.string), collapsedFolders: PropTypes.arrayOf(PropTypes.string),
   selectedPath: PropTypes.string, onSelect: PropTypes.func.isRequired, onCreate: PropTypes.func, onRename: PropTypes.func,
   onDelete: PropTypes.func, pinned: PropTypes.arrayOf(PropTypes.string), protectedPaths: PropTypes.arrayOf(PropTypes.string), isPathReadOnly: PropTypes.func, readOnly: PropTypes.bool,
 };

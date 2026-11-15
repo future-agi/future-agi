@@ -1,13 +1,12 @@
 import ActionReason from "../components/ActionReason";
 import ArchiveConfirmContent from "./archiveCopy";
-import { useContextAuthoring } from "../contexts/ContextLibraryView";
 import { useSkillsAccess } from "../utils/access";
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import { Box, Button, IconButton, ListItemIcon, Menu, MenuItem } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
-import { downloadSkillsZip, useArchiveSkill, useSkill } from "src/api/skills";
+import { archivedSkillsReady, downloadSkillsZip, useArchiveSkill, useSkill } from "src/api/skills";
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
@@ -17,9 +16,10 @@ import { buildInstallCommand } from "src/sections/skills/utils/install";
 
 export default function SkillRowMenu({ skill }) {
   const navigate = useNavigate();
-  const { isViewer, canWrite } = useSkillsAccess();
+  const { isViewer, canWrite, canAdmin } = useSkillsAccess();
   const archive = useArchiveSkill();
-  const canRestore = Boolean(useContextAuthoring()?.bindings?.archived);
+  const restoreGate = archivedSkillsReady();
+  const canRestore = restoreGate && canAdmin;
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -65,7 +65,7 @@ export default function SkillRowMenu({ skill }) {
         {!canArchive && <ActionReason id={`archive-${skill.id}-reason`} reason={detail.isPending ? "Checking archive permission…" : "You can't archive this skill. Ask a workspace admin."} />}
       </Menu>
       <ConfirmDialog open={confirm} onClose={() => { if (!archive.isPending) setConfirm(false); }} closeDisabled={archive.isPending}
-        title={`Archive ${skill.name}?`} content={<ArchiveConfirmContent labels={skill.labels} canRestore={canRestore} />}
+        title={`Archive ${skill.name}?`} content={<ArchiveConfirmContent labels={skill.labels} restoreGate={restoreGate} canRestore={canRestore} />}
         action={<Button variant="contained" color="error" disabled={archive.isPending || !canArchive} onClick={(event) => { event.stopPropagation(); archiveSkill(); }}>Archive</Button>} />
     </Box>
   );
