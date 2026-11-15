@@ -21,7 +21,13 @@ import {
 
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
-import { keywordConfigErrors, keywordConfigNeedsJson } from "./guardrailChecks";
+import {
+  builtinConfigHelp,
+  hasBuiltinConfigEditor,
+  keywordConfigErrors,
+  keywordConfigNeedsJson,
+  selectedConfigErrors,
+} from "./guardrailChecks";
 
 const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
@@ -53,9 +59,17 @@ const GuardrailCheckDialog = ({
   providerMeta,
   keywordPolicyEditor = false,
   keywordPolicyActive = true,
+  selectedPolicyEditor = false,
+  selectedPolicyActive = true,
 }) => {
-  const editPolicyKeyword =
-    keywordPolicyEditor && checkName === "keyword-blocklist";
+  const policyEditor = selectedPolicyEditor || keywordPolicyEditor;
+  const policyActive = selectedPolicyEditor
+    ? selectedPolicyActive
+    : keywordPolicyActive;
+  const editPolicyKeyword = policyEditor && checkName === "keyword-blocklist";
+  const editPolicyBuiltin = policyEditor && hasBuiltinConfigEditor(checkName);
+  const [builtinJson, setBuiltinJson] = useState("{}");
+  const [builtinErrors, setBuiltinErrors] = useState({});
   const [keywordConfig, setKeywordConfig] = useState({});
   const [keywordJson, setKeywordJson] = useState(null);
   const [keywordErrors, setKeywordErrors] = useState({});
@@ -73,6 +87,14 @@ const GuardrailCheckDialog = ({
 
   useEffect(() => {
     if (!open) return;
+
+    if (editPolicyBuiltin) {
+      const config = initialData?.config;
+      setBuiltinJson(
+        JSON.stringify(config === undefined ? {} : config, null, 2),
+      );
+      setBuiltinErrors({});
+    }
 
     if (editPolicyKeyword) {
       const config = initialData?.config;
@@ -134,7 +156,7 @@ const GuardrailCheckDialog = ({
       }
       setMaskedCredentials({});
     }
-  }, [open, initialData, providerMeta, editPolicyKeyword]);
+  }, [open, initialData, providerMeta, editPolicyKeyword, editPolicyBuiltin]);
 
   // Fetch async options for async-select fields when dialog opens
   useEffect(() => {
@@ -207,15 +229,34 @@ const GuardrailCheckDialog = ({
         }
       }
       const errors =
-        form.enabled && keywordPolicyActive ? keywordConfigErrors(config) : {};
+        form.enabled && policyActive ? keywordConfigErrors(config) : {};
       setKeywordErrors(errors);
       if (Object.keys(errors).length) return;
       data.config = config;
     }
 
-    // Add provider-specific fields inside config sub-object. Selected-policy
-    // keywords use the lossless editor above; org/provider editors are unchanged.
-    if (providerMeta?.fields && !editPolicyKeyword) {
+    if (editPolicyBuiltin) {
+      let config;
+      try {
+        config = JSON.parse(builtinJson);
+      } catch {
+        setBuiltinErrors({
+          config: "Enter valid JSON. Original edits are kept for correction.",
+        });
+        return;
+      }
+      const errors =
+        form.enabled && policyActive
+          ? selectedConfigErrors(checkName, config)
+          : {};
+      setBuiltinErrors(errors);
+      if (Object.keys(errors).length) return;
+      data.config = config;
+    }
+
+    // Selected policies use lossless config editors; org/provider editors keep
+    // their existing field contract without the selected-only strict validation.
+    if (providerMeta?.fields && !editPolicyKeyword && !editPolicyBuiltin) {
       const cfg = {};
       providerMeta.fields.forEach(({ key, type }) => {
         const val = providerFields[key];
@@ -613,14 +654,42 @@ const GuardrailCheckDialog = ({
             </>
           )}
 
-          {/* Provider-specific fields */}
-          {!editPolicyKeyword && providerMeta?.fields?.length > 0 && (
+          {editPolicyBuiltin && (
             <>
               <Divider />
-              <Typography variant="subtitle2">Provider Settings</Typography>
-              {providerMeta.fields.map(renderProviderField)}
+              <TextField
+                label={`${displayName} configuration (JSON)`}
+                value={builtinJson}
+                onChange={(event) => {
+                  setBuiltinJson(event.target.value);
+                  setBuiltinErrors({});
+                }}
+                multiline
+                minRows={6}
+                fullWidth
+                size="small"
+                error={Object.keys(builtinErrors).length > 0}
+                helperText={
+                  Object.values(builtinErrors).join(" ") ||
+                  "Original configuration is shown without changes. Unknown keys are preserved."
+                }
+              />
+              <Typography variant="s3" color="text.secondary">
+                {builtinConfigHelp(checkName)}
+              </Typography>
             </>
           )}
+
+          {/* Provider-specific fields */}
+          {!editPolicyKeyword &&
+            !editPolicyBuiltin &&
+            providerMeta?.fields?.length > 0 && (
+              <>
+                <Divider />
+                <Typography variant="subtitle2">Provider Settings</Typography>
+                {providerMeta.fields.map(renderProviderField)}
+              </>
+            )}
         </Stack>
       </DialogContent>
       <DialogActions>

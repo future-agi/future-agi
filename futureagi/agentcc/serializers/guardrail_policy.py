@@ -4,6 +4,10 @@ import uuid
 import structlog
 from rest_framework import serializers
 
+from agentcc.guardrail_config_validation import (
+    BUILTIN_CONFIG_NAMES,
+    builtin_config_error,
+)
 from agentcc.models import AgentccAPIKey
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
 from integrations.services.credentials import CredentialManager
@@ -12,6 +16,10 @@ logger = structlog.get_logger(__name__)
 
 SENSITIVE_KEYS = {"api_key", "secret_key", "access_key", "password"}
 ENCRYPTED_SENTINEL = "__encrypted__"
+
+# Identity token supplied only by the org-config view, never request data. The
+# exception also requires the original and effective row to remain global.
+_ORG_CONFIG_EDITOR_CONTEXT = object()
 
 
 def _extract_secrets(checks):
@@ -123,9 +131,10 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         return normalized
 
     def validate(self, attrs):
+        self._validate_reserved_transition(attrs)
         self._validate_stored_checks_before_running(attrs)
         if "checks" in attrs:
-            self._validate_keyword_checks_before_running(attrs, attrs["checks"])
+            self._validate_builtin_checks_before_running(attrs, attrs["checks"])
         if self.instance is not None and not ({"scope", "applied_keys"} & attrs.keys()):
             # A change that leaves scope and keys alone (Active, mode, checks)
             # is not refused for a pairing an older version saved.
@@ -145,6 +154,24 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         # Project policies are persisted but not evaluated by the gateway yet.
         return attrs
 
+    def _validate_reserved_transition(self, attrs):
+        instance = self.instance
+        if (
+            instance is not None
+            and instance.name.startswith("__")
+            and instance.scope != AgentccGuardrailPolicy.SCOPE_KEY
+            and (
+                attrs.get("scope", instance.scope) != instance.scope
+                or attrs.get("name", instance.name) != instance.name
+            )
+        ):
+            # Check the original identity, including simultaneous rename/repair.
+            # Refuse rename alone too, so it cannot erase that identity before a
+            # second request changes scope. Already-key legacy rows can recover.
+            raise serializers.ValidationError(
+                {"scope": "Reserved policies cannot be renamed or reassigned"}
+            )
+
     def _validate_stored_checks_before_running(self, attrs):
         # Every save through this API makes an active key policy run on the
         # gateway. A row saved before checks were validated can hold values
@@ -159,7 +186,7 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             return
         try:
             self.validate_checks(instance.checks)
-            self._validate_keyword_checks_before_running(attrs, instance.checks)
+            self._validate_builtin_checks_before_running(attrs, instance.checks)
         except serializers.ValidationError as e:
             details = (
                 e.detail.get("checks", []) if isinstance(e.detail, dict) else e.detail
@@ -183,7 +210,7 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 }
             ) from e
 
-    def _validate_keyword_checks_before_running(self, attrs, checks):
+    def _validate_builtin_checks_before_running(self, attrs, checks):
         # Validate effective state, not just the submitted field: operators must
         # still be able to deactivate a legacy row or disable its broken check.
         instance = self.instance
@@ -196,7 +223,15 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         ):
             return
         for i, check in enumerate(checks):
-            if check["name"] != "keyword-blocklist" or not check.get("enabled", True):
+            if not check.get("enabled", True):
+                continue
+            name = check["name"]
+            if name != "keyword-blocklist":
+                reason = builtin_config_error(name, check.get("config", {}))
+                if reason:
+                    raise serializers.ValidationError(
+                        {"checks": f"Check at index {i} ({name}): {reason}"}
+                    )
                 continue
             config = check.get("config")
             reason = None
@@ -242,14 +277,23 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
         # value here would block every later settings save. The gateway
         # contract still validates that row's checks before they go live.
         instance = self.instance
-        return isinstance(
-            instance, AgentccGuardrailPolicy
-        ) and instance.name.startswith("__")
+        data = getattr(self, "initial_data", {})
+        return (
+            self.context.get("org_config_editor") is _ORG_CONFIG_EDITOR_CONTEXT
+            and isinstance(instance, AgentccGuardrailPolicy)
+            and instance.name == "__ui_guardrails__"
+            and instance.scope == AgentccGuardrailPolicy.SCOPE_GLOBAL
+            and data.get("scope", instance.scope) == AgentccGuardrailPolicy.SCOPE_GLOBAL
+            and data.get("name", instance.name) == instance.name
+        )
 
     def validate_checks(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("checks must be a JSON array")
         strict = not self._is_org_config_row()
+        scope = getattr(self, "initial_data", {}).get(
+            "scope", self.instance.scope if self.instance else "global"
+        )
         for i, check in enumerate(value):
             if not isinstance(check, dict):
                 raise serializers.ValidationError(
@@ -278,10 +322,15 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} has invalid enabled"
                 )
-            # Keyword config is validated against effective policy state in
-            # validate(), so resubmitting malformed config cannot block recovery.
+            # Defer selected builtin config to effective-state validation so
+            # malformed config cannot block deactivation/disable recovery. Keep
+            # nonselected public envelope rules (and the existing keyword rule).
+            deferred_config = check["name"] == "keyword-blocklist" or (
+                scope == AgentccGuardrailPolicy.SCOPE_KEY
+                and check["name"] in BUILTIN_CONFIG_NAMES
+            )
             if (
-                check["name"] != "keyword-blocklist"
+                not deferred_config
                 and "config" in check
                 and not isinstance(check["config"], dict)
             ):

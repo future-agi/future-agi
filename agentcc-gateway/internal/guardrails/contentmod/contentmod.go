@@ -20,12 +20,14 @@ type categoryChecker struct {
 type ContentModerationGuardrail struct {
 	categories     []categoryChecker
 	categoryThresh int // matches per category to reach score 1.0
+	configErr      error
 }
 
 // New creates a ContentModerationGuardrail from rule config.
 func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 	g := &ContentModerationGuardrail{
 		categoryThresh: 3,
+		configErr:      validateConfig(cfg),
 	}
 
 	if cfg != nil {
@@ -91,7 +93,34 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 	return g
 }
 
-func (g *ContentModerationGuardrail) Name() string           { return "content-moderation" }
+// ValidateConfig reports constructor-time selector errors for selected policies,
+// without changing legacy Check behavior or retaining mutable caller config.
+func (g *ContentModerationGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	value, present := cfg["categories"]
+	if !present {
+		return nil
+	}
+	list, ok := value.([]interface{})
+	if !ok {
+		return fmt.Errorf("content-moderation categories must be an array of supported category names")
+	}
+	catalog := defaultCategories()
+	for _, item := range list {
+		name, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("content-moderation categories must contain only supported category names")
+		}
+		if _, supported := catalog[name]; !supported {
+			return fmt.Errorf("content-moderation categories contains an unsupported category name")
+		}
+	}
+	// An empty list intentionally keeps all default categories enabled.
+	return nil
+}
+
+func (g *ContentModerationGuardrail) Name() string            { return "content-moderation" }
 func (g *ContentModerationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates messages for harmful content.
