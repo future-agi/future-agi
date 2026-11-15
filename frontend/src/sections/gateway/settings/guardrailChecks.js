@@ -185,9 +185,9 @@ const boundedGoPatternError = (pattern) => {
 // names and the shared org editor keep their own contracts. No coercion, mutation
 // or raw parameter values in errors. Missing config intentionally uses defaults;
 // explicit null/scalars/arrays do not.
-export const selectedConfigErrors = (name, config = {}) => {
+export const selectedConfigErrors = (name, config) => {
   if (name === "keyword-blocklist") return keywordConfigErrors(config);
-  if (!hasBuiltinConfigEditor(name)) return {};
+  if (!hasBuiltinConfigEditor(name) || config === undefined) return {};
   if (!isConfigObject(config))
     return { config: "Config must be a JSON object." };
   const errors = {};

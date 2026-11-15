@@ -12,6 +12,12 @@ const families = [
 ];
 
 describe("selected builtin config R3", () => {
+  it("preserves the existing omitted keyword configuration error", () => {
+    expect(validate("keyword-blocklist", undefined)).toEqual({
+      words: "Enter words as a nonempty array of strings.",
+    });
+  });
+
   it.each(families)("offers the %s builtin in the policy catalog", (name) => {
     expect(checks.GUARDRAIL_CHECKS.some((check) => check.name === name)).toBe(
       true,
