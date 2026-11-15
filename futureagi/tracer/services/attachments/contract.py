@@ -71,6 +71,9 @@ class CapturePolicy:
     allow_unredacted_media_with_text_pii: bool = False
     # There is no qualified local media sanitizer in Wave A.
     record_audio: bool = False
+    # Importing an already-completed recording is its own explicit permission;
+    # record_audio (starting a recorder) never implies it, nor the reverse.
+    allow_import: bool = False
 
     def validate(self):
         if any(type(value) is not bool for value in asdict(self).values()):
@@ -83,6 +86,14 @@ class CapturePolicy:
 UPLOAD_SOURCES = ("Bytes", "Blob", "OwnedRecordingFile")
 # Server-internal kinds written by trusted server paths, never by a client body.
 INTERNAL_SOURCES = ("imported_recording",)
+# Import source kinds that a DEPLOYED route can actually create: "RemoteUrl"
+# needs a mounted trusted resolver that seals envelopes (``envelopes.seal``);
+# "ProviderFile" needs a mounted provider registration and webhook intake
+# (``provider_recordings.register``/``verify_livekit_webhook``) and, in
+# addition, a qualified output reader. The route that mounts such a path adds
+# its kind here. Empty today: nothing deployed calls either, so advertising a
+# kind would promise an import that no client can start.
+IMPORT_SOURCE_PRODUCERS: set[str] = set()
 # Only types whose bytes the validation worker can settle are accepted, and only
 # their modalities are advertised. Accepting a type nothing can validate would
 # strand uploads in validating. ``probe.py`` sniffs each of these; any other
@@ -116,7 +127,27 @@ def server_policy(scope):
             scope.allow_unredacted_media_with_text_pii
         ),
         record_audio=bool(scope.record_audio),
+        allow_import=bool(scope.allow_import),
     )
+
+
+def allowed_sources(scope):
+    """F01 SourceKinds this scope accepts: uploads, plus serviceable imports.
+
+    An import kind is advertised only while ``allow_import`` is on AND a
+    deployed route can create that source (``IMPORT_SOURCE_PRODUCERS``).
+    ``ProviderFile`` also needs a qualified provider output reader, because
+    without one every such import fails ``source_unavailable``.
+    """
+    sources = list(UPLOAD_SOURCES)
+    if scope.allow_import:
+        from tracer.services.attachments.provider_recordings import READERS
+
+        if "RemoteUrl" in IMPORT_SOURCE_PRODUCERS:
+            sources.append("RemoteUrl")
+        if "ProviderFile" in IMPORT_SOURCE_PRODUCERS and READERS:
+            sources.append("ProviderFile")
+    return sources
 
 
 def policy_document(scope):
@@ -125,7 +156,7 @@ def policy_document(scope):
     return {
         "version": str(scope.policy_version),
         "enabled": enabled,
-        "allowed_sources": list(UPLOAD_SOURCES) if enabled else [],
+        "allowed_sources": allowed_sources(scope) if enabled else [],
         "allowed_modalities": sorted(SERVER_MODALITIES) if enabled else [],
         "require_media_redaction": bool(scope.require_media_redaction),
         "require_metadata_removal": False,

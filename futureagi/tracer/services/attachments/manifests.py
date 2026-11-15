@@ -20,13 +20,18 @@ from django.utils import timezone
 
 from tracer.models.attachment import (
     AttachmentManifestRevision,
+    AttachmentOccurrence,
     AttachmentRecording,
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
 )
 from tracer.services.attachments.bootstrap import authorize, check_session
-from tracer.services.attachments.contract import AttachmentError, fingerprint
+from tracer.services.attachments.contract import (
+    INTERNAL_SOURCES,
+    AttachmentError,
+    fingerprint,
+)
 from tracer.services.attachments.occurrences import (
     Parent,
     not_found,
@@ -180,6 +185,7 @@ def read_manifest(viewer, authority, *, recording_id, parent):
     if recording is None or recording.manifest is None:
         raise not_found()
     manifest = dict(recording.manifest)
+    now = timezone.now()
     live = {
         str(value)
         for value in AttachmentUpload.objects.filter(
@@ -187,8 +193,22 @@ def read_manifest(viewer, authority, *, recording_id, parent):
             recording=recording,
             state__in=MANIFEST_UPLOAD_STATES,
             occurrence__deleted_at__isnull=True,
-            occurrence__expires_at__gt=timezone.now(),
+            occurrence__expires_at__gt=now,
         ).values_list("occurrence__client_id", flat=True)
+    }
+    # Completed-recording imports publish server-made segment occurrences with
+    # no upload row; the same deletion and expiry fences apply to them.
+    live |= {
+        str(value)
+        for value in AttachmentOccurrence.objects.filter(
+            scope=scope,
+            recording=recording,
+            attachment__source_kind__in=INTERNAL_SOURCES,
+            attachment__state=AttachmentState.READY,
+            attachment__deleted_at__isnull=True,
+            deleted_at__isnull=True,
+            expires_at__gt=now,
+        ).values_list("client_id", flat=True)
     }
     segments, gaps = [], list(manifest["gaps"])
     for segment in manifest["segments"]:

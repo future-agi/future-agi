@@ -368,7 +368,7 @@ def test_second_tombstone_of_one_attachment_does_not_wedge_the_sweep(recording):
     assert AttachmentOutbox.objects.filter(event="erase").count() == 1
 
 
-def test_upload_less_tombstone_queues_attachment_keyed_erase_without_stalling(
+def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
     setup, monkeypatch
 ):
     scope, _ = setup
@@ -407,10 +407,16 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_without_stalling(
     )
     store = ErasableStore()
     counts = lifecycle.drain_outbox(storage=store)
-    assert counts["erase_error_cleanup_unsupported"] == 1
-    assert counts["erase_done"] == 1 and store.erased == [upload.id]
+    # Both rows are erased in one tick: the attachment-keyed one by its own key.
+    assert counts["erase_done"] == 2
+    assert sorted(map(str, store.erased)) == sorted(
+        [str(upload.id), str(orphan.client_id)]
+    )
     erase.refresh_from_db()
-    assert erase.processed_at is None and erase.available_at > timezone.now()
+    orphan.refresh_from_db()
+    # Repeated once after the horizon (a derivative may still be in flight).
+    assert erase.processed_at is None
+    assert erase.available_at == orphan.deleted_at + retention.ATTACHMENT_ERASE_HORIZON
 
 
 # --- Sweeps --------------------------------------------------------------------

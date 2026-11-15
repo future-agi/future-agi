@@ -21,3 +21,26 @@ FI_ATTACHMENTS_STORAGE = {
     "serving_access_key": os.getenv("FI_ATTACHMENTS_SERVING_ACCESS_KEY", ""),
     "serving_secret_key": os.getenv("FI_ATTACHMENTS_SERVING_SECRET_KEY", ""),
 }
+
+# Completed-recording imports (B07/B08/B10/B11). All inert while disabled.
+# "id:base64url(32 bytes)[,id:key...]"; the first key seals. Never SECRET_KEY.
+FI_ATTACHMENTS_ENVELOPE_KEYS = os.getenv("FI_ATTACHMENTS_ENVELOPE_KEYS", "")
+# Exact hosts (or parent domains) the importer may contact. Empty denies all.
+FI_ATTACHMENTS_IMPORT_HOSTS = tuple(
+    host.strip().lower()
+    for host in os.getenv("FI_ATTACHMENTS_IMPORT_HOSTS", "").split(",")
+    if host.strip()
+)
+FI_ATTACHMENTS_TRANSFER_SECONDS = int(
+    os.getenv("FI_ATTACHMENTS_TRANSFER_SECONDS", "120")
+)
+FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND = int(
+    os.getenv("FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND", str(8 * 1024 * 1024))
+)
+# Private worker scratch for one source snapshot plus one output window.
+FI_ATTACHMENTS_WORK_DIR = os.getenv("FI_ATTACHMENTS_WORK_DIR", "")
+# Caps of the deployment import budget row ``global:imports``, in percent
+# (1-100) of the deployment caps (``imports.import_budgets``). Default: half.
+FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = int(
+    os.getenv("FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT", "50")
+)

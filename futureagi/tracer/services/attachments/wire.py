@@ -29,6 +29,8 @@ PUBLIC = {
     "invalid_chunk": (400, "unsupported_version"),
     "length_mismatch": (400, "unsupported_version"),
     "unsupported_version": (400, "unsupported_version"),
+    # A RecordingImportRequest the import admission rules reject (F01 fixtures).
+    "validation_failed": (400, "unsupported_version"),
     "idempotency_key_required": (400, "unsupported_version"),
     # 401: credentials absent/ineligible, or an expired capability.
     "unauthenticated": (401, "credential_scope_unsupported"),
@@ -54,6 +56,8 @@ PUBLIC = {
     "binding_fenced": (409, "conflict"),
     "segment_conflict": (409, "conflict"),
     "manifest_conflict": (409, "conflict"),
+    # Completed-recording import (imports.py) codes.
+    "conflict": (409, "conflict"),
     "deleted": (409, "deleted"),
     "expired": (409, "expired"),
     # 413 / 416 / 429.
