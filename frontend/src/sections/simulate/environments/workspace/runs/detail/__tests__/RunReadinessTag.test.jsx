@@ -54,6 +54,21 @@ describe("RunReadinessTag", () => {
     expect(screen.getByText("Ready when started")).toBeInTheDocument();
   });
 
+  it("counts a Partial row on a ready answer instead of reading ready", async () => {
+    const partial = {
+      answer: { kind: "ready" },
+      rows: [
+        row("start", "supported"),
+        row("files", "partial", { label: "Files", reason: "PDF only" }),
+      ],
+    };
+    render(<RunReadinessTag snapshot={partial} selection={null} />);
+
+    await userEvent.click(screen.getByText("Started with 1 limit"));
+    expect(screen.queryByText("Ready when started")).toBeNull();
+    expect(screen.getByText("Files: Partial, PDF only")).toBeInTheDocument();
+  });
+
   it("counts the rows not Supported and lists them with the held-back cases", async () => {
     render(<RunReadinessTag snapshot={LIMITED} selection={HELD} />);
 
