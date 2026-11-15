@@ -248,7 +248,7 @@ export function InProductionAction({ contextId, newer }) {
 }
 InProductionAction.propTypes = { contextId: PropTypes.string.isRequired, newer: PropTypes.bool };
 
-function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, currentForm, formPrimary, productionVersion, versions = [], planCeiling }) {
+function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, formPrimary, productionVersion, versions = [], planCeiling }) {
   const query = useNativeRun(contextId, evidenceId);
   const context = useContextDetail(contextId);
   const navigate = useNavigate();
@@ -278,8 +278,8 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const earlierKind = !stale ? false : inProduction ? 'production' : releaseReady ? 'review' : 'rerun';
   useEffect(() => { onEarlier?.(earlierKind); return () => onEarlier?.(false); }, [earlierKind, onEarlier]);
   useEffect(() => { const offered = releaseReady && !inProduction; onReady?.(offered); return () => onReady?.(false); }, [releaseReady, inProduction, onReady]);
-  if (query.isLoading) return <ContentSkeleton label="Loading verification result" />;
-  if (query.isError) return <ErrorState title="Could not load this verification" onRetry={query.refetch} />;
+  if (query.isLoading) return <ContentSkeleton label="Loading application test result" />;
+  if (query.isError) return <ErrorState title="Couldn't load this application test" onRetry={query.refetch} />;
   const run = query.data;
   if (!run) return null;
   const titles = Object.fromEntries((run.cases || []).map((item) => [item.id, item.title]));
@@ -312,7 +312,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const offerReview = ready && !inProduction;
   // One contained action per view state. The release review leads unless the reviewer is working in the
   // setup (formPrimary); a rerun leads only for an earlier result that offers nothing else.
-  const rerunLeads = earlierKind === 'rerun' && !currentForm;
+  const rerunLeads = earlierKind === 'rerun' && !formPrimary;
   const continueLeads = offerReview && !formPrimary;
   const newer = Boolean(context.data?.ownDraft) || versions.some((item) => Number(item.number) > Number(candidate?.version));
   const continueReason = !canWrite ? 'Only a workspace author can request a release review.' : null;
@@ -360,7 +360,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { restoreFocus.current = true; setOpen(null); }} />}
   </Stack>;
 }
-RunDetail.propTypes = { planCeiling: PropTypes.oneOfType([PropTypes.number, PropTypes.string]), productionVersion: PropTypes.number, versions: PropTypes.array, formPrimary: PropTypes.bool, currentForm: PropTypes.bool, onEarlier: PropTypes.func, onReady: PropTypes.func, onRunCurrent: PropTypes.func, contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object, selection: PropTypes.object, cases: PropTypes.array.isRequired };
+RunDetail.propTypes = { planCeiling: PropTypes.oneOfType([PropTypes.number, PropTypes.string]), productionVersion: PropTypes.number, versions: PropTypes.array, formPrimary: PropTypes.bool, onEarlier: PropTypes.func, onReady: PropTypes.func, onRunCurrent: PropTypes.func, contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object, selection: PropTypes.object, cases: PropTypes.array.isRequired };
 
 function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onStarted, runs, productionVersion, seed, onSelectionChange, onCeilingChange, onEngage, primary }) {
   const preview = usePreviewNativeRun(contextId);
@@ -449,7 +449,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
     <Stack spacing={1.5}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
         <TextField select size="small" label="Test version" value={candidate} onChange={(event) => setOver({ ...over, candidate: event.target.value })} sx={{ minWidth: 150 }}>{versionOptions}</TextField>
-        <TextField select size="small" label="Compare with" InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }} error={candidateIsProduction} helperText={candidateIsProduction ? 'Choose a different version, or No comparison.' : production === '' && Number(productionVersion) === Number(candidate) ? `v${candidate} is production, so it runs once as the candidate.` : undefined} value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 190 }}><MenuItem value="">No comparison</MenuItem>{compareOptions}</TextField>
+        <TextField select size="small" label="Compare with" InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }} error={candidateIsProduction} helperText={candidateIsProduction ? 'Choose a different version, or No comparison.' : production === '' && Number(productionVersion) === Number(candidate) ? `v${candidate} is production, so it runs once as the version tested.` : undefined} value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 190 }}><MenuItem value="">No comparison</MenuItem>{compareOptions}</TextField>
         <TextField select size="small" label="Was failing on" InputLabelProps={{ shrink: true }} SelectProps={{ displayEmpty: true }} error={candidateIsReference && ('candidate' in over || 'reference' in over)} helperText={candidateIsReference ? ('candidate' in over || 'reference' in over ? 'Choose a version different from the one being tested.' : `v${reference} is where it was failing. Choose the version that should fix it.`) : duplicateBaseline ? `v${reference} is also production, so it runs once.` : undefined} value={reference} onChange={(event) => setOver({ ...over, reference: event.target.value })} sx={{ minWidth: 170 }}><MenuItem value="">Not set</MenuItem>{versionOptions}</TextField>
         <TextField select size="small" label="Runs per case" value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))} sx={{ minWidth: 130 }}><MenuItem value={1}>1</MenuItem><MenuItem value={3}>3</MenuItem></TextField>
       </Stack>
@@ -575,8 +575,9 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   // setup's run or preview button. Opening the setup alone changes nothing: a result that offers its
   // release review keeps it as the primary. An earlier result leads with its own action (RunDetail),
   // except one for the version production already serves, which offers none, so the setup leads.
-  const engaged = !focus || currentForm || Boolean(seed) || draftHandoff;
-  const formPrimary = runOpen && (earlier ? (currentForm || earlier === 'production') : (!packetReady || engaged));
+  // A reproduction handoff (seed) is engagement until the result in focus covers it and is ready.
+  const engaged = !focus || currentForm || (Boolean(seed) && !packetReady) || draftHandoff;
+  const formPrimary = runOpen && (earlier ? (currentForm || Boolean(seed) || earlier === 'production') : (!packetReady || engaged));
   const markEdited = useCallback(() => setCurrentForm(true), []);
   const historySection = <Section title={<Typography component="span" variant="m3">History</Typography>} description="Both kinds of test, newest first. Open a run to inspect the version it tested.">
     <TextField select size="small" label="Test type" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} sx={{ minWidth: 180, mb: 1.5 }}><MenuItem value="all">All tests</MenuItem><MenuItem value="answers">Answer checks</MenuItem><MenuItem value="application">Application tests</MenuItem></TextField>
@@ -589,7 +590,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   return <Stack spacing={3}>
     <Box ref={resultRegion} tabIndex={-1} role="region" aria-label="Latest result">
       <Section>
-        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady, secondary: formPrimary, hasTarget: Boolean(target), applicationAvailable: Boolean(targets.data) && !runtimeOff }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} currentForm={currentForm} formPrimary={formPrimary} productionVersion={productionVersion} versions={versions} planCeiling={planCeiling} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or an application test below. Neither changes production." />}
+        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady, secondary: formPrimary, hasTarget: Boolean(target), applicationAvailable: Boolean(targets.data) && !runtimeOff }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} formPrimary={formPrimary} productionVersion={productionVersion} versions={versions} planCeiling={planCeiling} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or an application test below. Neither changes production." />}
       </Section>
     </Box>
     {showHistoryFirst && historySection}

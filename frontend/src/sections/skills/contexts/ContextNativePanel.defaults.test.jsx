@@ -188,7 +188,7 @@ it('explains an automatically omitted production comparison', () => {
   // The current result folds the setup; the reviewer opens it to see the plan.
   fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
   expect(screen.getByRole('combobox', { name: /^Compare with/ })).toHaveTextContent('No comparison');
-  expect(screen.getByText('v6 is production, so it runs once as the candidate.')).toBeVisible();
+  expect(screen.getByText('v6 is production, so it runs once as the version tested.')).toBeVisible();
 });
 
 it('keeps the latest retained result visible when application options fail', () => {
@@ -544,6 +544,21 @@ describe('exactly one contained button', () => {
     expect(screen.getByText('This result is for v7 with 1 case. Your selection adds Working chargeback case (1 more case) · up to $1.5.')).toBeVisible();
     expect(containedNames()).toEqual(['Continue to release review']);
     expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
+  });
+  it('reproduction handoff whose result is ready: Continue to release review, not a paid rerun', () => {
+    h.runs = [{ id: 'repro', arms: [{ variant: 'candidate', version: 7 }, { variant: 'reference', version: 4 }] }];
+    h.detail = { id: 'repro', status: 'completed', received: 2, planned: 2, arms: [{ variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' }, { variant: 'reference', version: 4 }],
+      cases: [{ id: 'refund', title: 'Original refund failure', historical: true }], decision: { state: 'release_ready', reasons: [] } };
+    renderPanel({ seed: { caseId: 'refund', reference: 4 } });
+    expect(screen.queryByText('Earlier result')).not.toBeInTheDocument();
+    expect(containedNames()).toEqual(['Continue to release review']);
+  });
+  it('reproduction handoff over an earlier, different result: the run button', async () => {
+    ready();
+    renderPanel({ seed: { caseId: 'refund', reference: 4 } });
+    await screen.findByRole('button', { name: 'Run application test' });
+    expect(screen.getByText('Earlier result')).toBeVisible();
+    expect(containedNames()).toEqual(['Run application test']);
   });
   it('earlier result that failed: the rerun leads', () => {
     h.detail.arms[0] = { variant: 'candidate', version: 7 };

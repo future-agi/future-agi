@@ -43,8 +43,8 @@ function toolStructure(text) {
     else leaves.push(`${humanizeKey(path)}: ${node === null ? "empty" : String(node)}`);
   };
   walk(named ? value[keys[0]] : value, "");
-  const shown = leaves.slice(0, 6);
-  return { name: named ? keys[0] : null, summary: leaves.length ? `${shown.join(" · ")}${leaves.length > shown.length ? ` · ${leaves.length - shown.length} more` : ""}` : "No values" };
+  // Every value is listed: the share acknowledgment covers all of it, so nothing hides behind "more".
+  return { name: named ? keys[0] : null, summary: leaves.length ? leaves.join(" · ") : "No values" };
 }
 function ReviewedExample({
   preview,

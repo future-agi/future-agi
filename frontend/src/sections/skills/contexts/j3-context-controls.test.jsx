@@ -70,7 +70,7 @@ it('does not let a late preview authorize a changed candidate', async () => {
   await prepare(); reviewInventory();
   view.rerender(<MemoryRouter><ContextTestsPanel contextId="parent" version={{ ...version, number: 3, digest: `sha256:${'b'.repeat(64)}` }} /></MemoryRouter>);
   expect(screen.getByRole('button', { name: 'Run answer check' })).toBeDisabled();
-  expect(screen.getByText(/saved candidate changed/)).toBeVisible();
+  expect(screen.getByText(/saved version changed/)).toBeVisible();
   expect(state.create).not.toHaveBeenCalled();
 });
 it('recovers an uncertain admission using the identical body and key, without a second preview', async () => {

@@ -120,6 +120,13 @@ describe("captured tool results and footer (UX iteration 4)", () => {
     expect(screen.getByRole("checkbox", { name: /confirmed the expected behavior/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Share this redacted request/ })).not.toBeChecked();
   });
+  it("lists every value of a large structured result in its summary, never hiding some behind a count", () => {
+    const wide = Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`field_${index + 1}`, index + 1]));
+    render(<CaseImportDialog {...props} preview={{ ...capture, segments: [capture.segments[0], { id: "tool-1", kind: "tool_result", text: JSON.stringify({ ledger: wide }) }] }} onSave={vi.fn()} />);
+    const tool = screen.getByRole("group", { name: "ledger" });
+    for (let index = 1; index <= 9; index += 1) expect(tool).toHaveTextContent(`Field ${index}: ${index}`);
+    expect(tool).not.toHaveTextContent(/more$/);
+  });
   it("keeps a plain-text tool result as an open, editable field", () => {
     render(<CaseImportDialog {...props} onSave={vi.fn()} />);
     expect(screen.getByRole("textbox", { name: "Redacted tool result 1" })).toHaveValue("Purchased fourteen days ago.");

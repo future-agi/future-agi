@@ -295,7 +295,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
     {preview && <Stack spacing={1.5}>
       <Typography variant="m3">Up to {preview.attemptCount} runs · at most ${(Math.ceil(Number(preview.estimate.upperBoundUsd) * 100) / 100).toFixed(2)}</Typography>
       <Typography variant="s3">Test runs are private and don’t change production. The task provider, {providerName(preview.providerDisclosure.taskProvider)}, receives the files and request below.</Typography>
-      {!currentCandidate && <Alert severity="warning">The saved candidate changed. Preview and review the new compiled context before running.</Alert>}
+      {!currentCandidate && <Alert severity="warning">The saved version changed. Preview and review the new compiled context before running.</Alert>}
       <TestInventoryReview subjectName={contextName} subjectKind="agent_context" subjectId={contextId} preview={preview} value={inventory.review} onChange={setInventory} disabled={locked || !currentCandidate} consentHeading="Before this runs">
         <FormControlLabel control={<Checkbox checked={providerConsent} disabled={locked || !currentCandidate} onChange={(event) => setProviderConsent(event.target.checked)} />} label="I acknowledge provider processing of this reviewed context and test request." />
       </TestInventoryReview>
