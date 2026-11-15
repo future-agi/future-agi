@@ -40,7 +40,7 @@ test('SIM-E2E-011: the Contract tab lists the declared workers, and a worker the
   await testInfo.attach('participants-seed', { contentType: 'application/json', body: JSON.stringify(seed) });
 
   await test.step('api: the environment detail serves the declared workers', async () => {
-    const detail = await actor.api.get<EnvironmentDetail>(`/simulate/harness-environments/${seed.environmentId}/`);
+    const detail = await actor.api.get<EnvironmentDetail>(`/simulate/api/harness-environments/${seed.environmentId}/`);
     const workers = detail.contract?.workers ?? [];
     expect(workers.map((one) => [one.id, one.binding])).toEqual([['order_lookup', 'separate'], ['refund', 'shared']]);
     expect(workers[0].allowed_tools).toEqual(['get_order', 'list_refunds']);
