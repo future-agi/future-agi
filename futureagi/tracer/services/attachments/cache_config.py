@@ -21,7 +21,7 @@ def verify_admission_cache(settings: LazySettings) -> None:
     if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
         return
     config = settings.CACHES.get("default", {})
-    options = config.get("OPTIONS", {})
+    options: object = config.get("OPTIONS", {})
     location = config.get("LOCATION")
     try:
         url = urlsplit(location) if isinstance(location, str) else None
@@ -35,6 +35,7 @@ def verify_admission_cache(settings: LazySettings) -> None:
         and url is not None
         and url.scheme in {"redis", "rediss"}
         and bool(url.hostname)
+        and isinstance(options, dict)
         and options.get("CLIENT_CLASS", REDIS_CLIENT) == REDIS_CLIENT
         and not options.get(
             "IGNORE_EXCEPTIONS",

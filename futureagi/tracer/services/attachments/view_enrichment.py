@@ -328,7 +328,7 @@ def enrich_voice_detail(*, request, result, reader=None):
                 [entry["reference"]["occurrence_id"] for entry in items],
                 recording_id,
             )
-            if playable:
+            if playable and manifest is not None:
                 # Stable anchor: database row order is not timeline order.
                 projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]
         elif len(items) == 1:
