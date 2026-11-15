@@ -144,6 +144,8 @@ def get_default_span_config(*, include_user_fields: bool = False):
         FieldConfig(id="cost", name="Total Cost", is_visible=True, group_by=None),
         FieldConfig(id="model", name="Model", is_visible=True, group_by=None),
         FieldConfig(id="start_time", name="Timestamp", is_visible=True, group_by=None),
+        # Available in Display without changing existing saved-view visibility.
+        FieldConfig(id="tags", name="Tags", is_visible=False, group_by=None),
         # Hidden by default
         FieldConfig(id="span_id", name="Span Id", is_visible=False, group_by=None),
         FieldConfig(id="trace_id", name="Trace Id", is_visible=False, group_by=None),
