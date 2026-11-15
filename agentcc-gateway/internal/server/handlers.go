@@ -531,8 +531,8 @@ func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID s
 	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil {
 		return p, id, upstream, true
 	}
-	// A fallback model does not grant another credential source.
-	if h.orgProvidersOnly(ctx, rc) || ctx.Err() != nil {
+	// Keep the credential eligibility already established for an explicit lock.
+	if (h.orgProvidersOnly(ctx, rc) && rc.Metadata["provider_locked"] != "true") || ctx.Err() != nil {
 		return nil, "", model, false
 	}
 	result, err := h.registry.ResolveExcluding(model, excluded)

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -278,6 +281,104 @@ func TestAdaptiveOrgFailoverReportsRoutingProvider(t *testing.T) {
 				slowCalls, slowHealth := globalSlowCalls.Load(), srv.handlers.healthMonitor.GetHealth("slow")
 				if slowCalls > 1 || slowHealth.ErrorCount != slowCalls || (slowCalls == 1 && slowHealth.CircuitState != "open") {
 					t.Fatalf("operator slow breaker: calls=%d (before org requests %d) errors=%d circuit=%s", slowCalls, slowBefore, slowHealth.ErrorCount, slowHealth.CircuitState)
+				}
+			})
+		}
+	}
+}
+
+// An explicit provider lock permits a model fallback on the same operator
+// provider even when the org has no credentials configured for it.
+func TestOrgOnlyLockedOperatorModelFallback(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, breakerEnabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/breaker=%t", stream, breakerEnabled), func(t *testing.T) {
+				var primaryCalls, backupCalls atomic.Int64
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/v1/chat/completions" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					var request struct {
+						Model  string `json:"model"`
+						Stream bool   `json:"stream"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					switch request.Model {
+					case "primary-model":
+						primaryCalls.Add(1)
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusServiceUnavailable)
+						io.WriteString(w, `{"error":{"message":"synthetic upstream unavailable","type":"server_error"}}`)
+					case "backup-model":
+						backupCalls.Add(1)
+						if request.Stream {
+							w.Header().Set("Content-Type", "text/event-stream")
+							io.WriteString(w, "data: {\"id\":\"synthetic\",\"model\":\"backup-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"synthetic backup response\"}}]}\n\ndata: [DONE]\n\n")
+							return
+						}
+						w.Header().Set("Content-Type", "application/json")
+						io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"backup-model","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic backup response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+					default:
+						w.WriteHeader(http.StatusBadRequest)
+					}
+				}))
+				t.Cleanup(upstream.Close)
+
+				cfg := config.DefaultConfig()
+				cfg.Providers = map[string]config.ProviderConfig{
+					"a": {BaseURL: upstream.URL, APIFormat: "openai", Models: []string{"primary-model", "backup-model"}},
+				}
+				cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}}}
+				cfg.Routing = config.RoutingConfig{
+					DefaultStrategy: "round-robin",
+					Targets: map[string][]config.RoutingTargetConfig{
+						"primary-model": {{Provider: "a"}},
+					},
+					ModelFallbacks: map[string][]string{"primary-model": {"backup-model"}},
+					ProviderLock:   config.ProviderLockConfig{Enabled: true},
+					Failover:       config.FailoverConfig{Enabled: true, MaxAttempts: 1},
+					CircuitBreaker: config.CircuitBreakerConfig{Enabled: breakerEnabled, FailureThreshold: 3, Cooldown: time.Hour},
+				}
+				srv, gateway := adaptiveServer(t, cfg)
+				store := tenant.NewStore()
+				store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{}})
+				srv.handlers.tenantStore = store
+				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+
+				// Without a lock, the same key cannot use operator credentials.
+				status, body := adaptiveHTTP(t, gateway, "primary-model", "synthetic-org-probe", stream)
+				if status != http.StatusForbidden || !strings.Contains(body, "not available for this API key") {
+					t.Fatalf("unlocked response: status=%d body=%s", status, body)
+				}
+				if primaryCalls.Load() != 0 || backupCalls.Load() != 0 {
+					t.Fatalf("unlocked upstream calls: primary=%d backup=%d", primaryCalls.Load(), backupCalls.Load())
+				}
+
+				status, body, headers := adaptiveHTTPResponse(t, gateway, "primary-model", "synthetic-org-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"a"}})
+				if status != http.StatusOK || !strings.Contains(body, "synthetic backup response") || !strings.Contains(body, `"model":"backup-model"`) || (stream && !strings.Contains(body, "[DONE]")) {
+					t.Fatalf("locked fallback response: status=%d primary_calls=%d backup_calls=%d body=%s", status, primaryCalls.Load(), backupCalls.Load(), body)
+				}
+				if got := headers.Get("x-agentcc-provider"); got != "a" {
+					t.Fatalf("fallback provider=%q, want a", got)
+				}
+				if got := headers.Get("x-agentcc-provider-locked"); got != "a" {
+					t.Fatalf("accepted provider lock=%q, want a", got)
+				}
+				if got := headers.Get("x-agentcc-fallback-used"); got != "true" {
+					t.Fatalf("fallback used=%q, want true", got)
+				}
+				if primaryCalls.Load() != 1 || backupCalls.Load() != 1 {
+					t.Fatalf("upstream calls: primary=%d backup=%d, want 1/1", primaryCalls.Load(), backupCalls.Load())
+				}
+				if breakerEnabled {
+					health := srv.handlers.healthMonitor.GetHealth("a")
+					if health.CircuitState != "closed" {
+						t.Fatalf("breaker state=%s, want closed", health.CircuitState)
+					}
 				}
 			})
 		}
