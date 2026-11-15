@@ -16,7 +16,7 @@ const (
 type CatalogueInfo struct {
 	Source    string    `json:"source"`
 	URL       string    `json:"url,omitempty"`
-	Entries   int       `json:"entries"`                   // models priced: bundled plus fetched
+	Entries   int       `json:"entries"`                   // models in the live catalogue: bundled, fetched and config overrides
 	Fetched   int       `json:"fetched_entries,omitempty"` // models the last good fetch held
 	LoadedAt  time.Time `json:"loaded_at"`
 	LastError string    `json:"last_error,omitempty"` // newest failed fetch; cleared by the next good one
@@ -42,7 +42,7 @@ func NewCatalogue(target *atomic.Pointer[ModelDB], overrides map[string]ModelOve
 	c := &Catalogue{
 		models:    BundledModels,
 		overrides: overrides,
-		info:      CatalogueInfo{Source: SourceBundled, Entries: len(BundledModels), LoadedAt: time.Now()},
+		info:      CatalogueInfo{Source: SourceBundled, LoadedAt: time.Now()},
 		target:    target,
 	}
 	c.rebuild()
@@ -69,7 +69,7 @@ func (c *Catalogue) Overlay(fetched map[string]*ModelInfo, url string) {
 		merged[id] = m
 	}
 	c.models = merged
-	c.info = CatalogueInfo{Source: SourceFetched, URL: url, Entries: len(merged), Fetched: len(fetched), LoadedAt: time.Now()}
+	c.info = CatalogueInfo{Source: SourceFetched, URL: url, Fetched: len(fetched), LoadedAt: time.Now()}
 	c.rebuild()
 }
 
@@ -88,5 +88,7 @@ func (c *Catalogue) recordFailure(err error) {
 
 // rebuild must run with c.mu held.
 func (c *Catalogue) rebuild() {
-	c.target.Store(New(c.models, c.overrides))
+	db := New(c.models, c.overrides)
+	c.info.Entries = db.Count()
+	c.target.Store(db)
 }
