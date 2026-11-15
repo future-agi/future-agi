@@ -61,6 +61,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	ctx = p.withResolvedKeyPolicies(ctx, rc)
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -78,7 +79,12 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePre)
+	if result := p.runOrgGuardrails(ctx, rc, StagePre); result.Action != pipeline.Continue {
+		return result
+	}
+	// Post-stage key Block checks cannot safely inspect the existing relays
+	// before output is released. Refuse those streams before calling upstream.
+	return p.checkKeyPolicyStreamAdmission(ctx, rc)
 }
 
 // ProcessResponse runs post-stage guardrails.
@@ -379,11 +385,11 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // own body, Request is nil and Response holds usage only; the handler puts the
 // text in GuardrailRequest and GuardrailResponse instead.
 //
-// A guardrail that rewrites content, as PII redaction does, rewrites Request,
-// which is what the gateway sends upstream. On those routes it rewrites a
-// copy, so it finds and reports what it would remove but cannot remove it.
+// Remediation is supported only for wire-backed content. Projections must
+// remain unchanged across checks, or a later Block would inspect different
+// content from the bytes the handler actually sends.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
-	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
 	if input.Request == nil {
 		input.Request = rc.GuardrailRequest
 	}

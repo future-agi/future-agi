@@ -109,6 +109,11 @@ type CheckInput struct {
 	Request  *models.ChatCompletionRequest
 	Response *models.ChatCompletionResponse // nil for pre-stage
 	Metadata map[string]string
+
+	// InspectionOnly marks a projection of bytes forwarded unchanged by the
+	// handler. Remediation may be observed, but must never alter the content
+	// seen by subsequent checks: only a wire-backed request can be rewritten.
+	InspectionOnly bool `json:"-"`
 }
 
 // CheckResult is the output of a guardrail check.

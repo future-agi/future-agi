@@ -19,30 +19,25 @@ import (
 // Precedence: org checks run first, followed by key policies in priority/name/ID
 // order. Block > redact > warn > log; key policies cannot disable or weaken an
 // org check. Monitor policies inspect snapshots only: they never block, redact,
-// or change any response, including when a check fails closed. Post-stage checks
-// on streamed output can report a block but cannot retract already relayed text.
+// or change any response, including when a check fails closed. Streaming requests
+// with selected-key Enforce Block post checks are refused during admission.
 func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.RequestContext, orgID string, cfg *tenant.GuardrailConfig, stage Stage) pipeline.PluginResult {
 	keyID := rc.Metadata["auth_key_id"]
 	if keyID == "" {
 		return pipeline.ResultContinue()
 	}
-	policies := sortedKeyPolicies(cfg.KeyPoliciesFor(keyID))
+	resolved := p.keyPoliciesForInvocation(ctx, orgID, keyID, cfg)
+	cfg = resolved.config
 	timeout := p.defaultTimeout
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
 	}
-	for _, pol := range policies {
-		names := sortedCheckNames(pol.Checks)
-		checks := make([]orgCheck, 0, len(names))
-		for _, name := range names {
-			check := pol.Checks[name]
-			if check == nil || !check.Enabled {
-				continue
-			}
-			// Unlike org checks, these still run when a static rule uses the same name.
-			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
-			if g != nil && g.Stage() == stage {
-				checks = append(checks, orgCheck{name: name, check: check, g: g})
+	for _, entry := range resolved.policies {
+		pol := entry.policy
+		checks := make([]orgCheck, 0, len(entry.checks))
+		for _, c := range entry.checks {
+			if c.g.Stage() == stage {
+				checks = append(checks, c)
 			}
 		}
 		if len(checks) == 0 {
@@ -250,7 +245,11 @@ func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, ch
 			return g
 		}
 	}
-	return p.getGuardrailScoped(orgID, name, cacheKey, check)
+	// The factory was already attempted with the policy's own config. Do not
+	// retry it through getGuardrailScoped: a failed resolution is one unavailable
+	// check, while a legitimately configured static/custom implementation remains
+	// a valid fallback.
+	return p.registry[name]
 }
 
 func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action) (string, string) {
