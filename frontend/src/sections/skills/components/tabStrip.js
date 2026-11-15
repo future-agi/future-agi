@@ -203,8 +203,23 @@ export function useActiveTabInView(ref, value) {
       // The tab row itself (its width changes when the app font arrives).
       const strip = scroller.querySelector('.MuiTabs-flexContainer') || scroller.firstElementChild;
       if (strip) observer.observe(strip);
+      // Each tab: a label that widens (the app font) changes the content
+      // width without resizing the row, and so does a tab added later.
+      scroller.querySelectorAll('[role="tab"]').forEach((tab) => observer.observe(tab));
+    }
+    // A tab that appears or goes away after mount (a destination whose
+    // availability loads later) changes whether the strip overflows.
+    let mutations;
+    const row = scroller?.querySelector('.MuiTabs-flexContainer') || scroller?.firstElementChild;
+    if (row && typeof MutationObserver !== 'undefined') {
+      mutations = new MutationObserver(() => {
+        row.querySelectorAll('[role="tab"]').forEach((tab) => observer?.observe(tab));
+        run();
+      });
+      mutations.observe(row, { childList: true });
     }
     return () => {
+      mutations?.disconnect();
       alive = false;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settle);

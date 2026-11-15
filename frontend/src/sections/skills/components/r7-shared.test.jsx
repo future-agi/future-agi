@@ -1,4 +1,4 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -20,7 +20,7 @@ import CapabilityNotice from './CapabilityNotice';
 import ActionReason, { reasonProps } from './ActionReason';
 import { ScrollTable, stackedTableSx } from './responsiveTable';
 import When from './When';
-import { markTabFade, scrollTabsSx } from './tabStrip';
+import { markTabFade, scrollTabsProps, scrollTabsSx, useActiveTabInView } from './tabStrip';
 import CodeBlock from 'src/components/code-block/CodeBlock';
 import { createTheme } from '@mui/material/styles';
 import { coverageText, evidenceCoverage, evidenceOutcome, outcomeBadge, outcomeLabel } from '../utils/review-display';
@@ -551,6 +551,23 @@ describe('tab strip arrows', () => {
     const { root, scroller } = stripWith({ content: 520, width: 326, arrowsShown: false });
     markTabFade(scroller);
     expect(root).toHaveAttribute('data-tab-overflow', 'true');
+  });
+  it('measures again when a tab is added after mount (a destination whose availability loads later)', async () => {
+    function Strip({ labels }) {
+      const ref = useRef(null);
+      useActiveTabInView(ref, 'a');
+      return <CustomTabs ref={ref} value="a" {...scrollTabsProps} sx={scrollTabsSx} aria-label="Strip">{labels.map((label) => <Tab key={label} value={label} label={label} />)}</CustomTabs>;
+    }
+    Strip.propTypes = { labels: PropTypes.arrayOf(PropTypes.string) };
+    const { rerender } = render(<Strip labels={['a', 'b']} />);
+    const scroller = document.querySelector('.MuiTabs-scroller');
+    Object.defineProperty(scroller, 'scrollWidth', { configurable: true, get: () => scroller.querySelectorAll('[role="tab"]').length * 100 });
+    Object.defineProperty(scroller, 'clientWidth', { configurable: true, get: () => 250 });
+    rerender(<Strip labels={['a', 'b']} />);
+    markTabFade(scroller);
+    expect(scroller.parentElement).toHaveAttribute('data-tab-overflow', 'false');
+    rerender(<Strip labels={['a', 'b', 'c']} />);
+    await waitFor(() => expect(scroller.parentElement).toHaveAttribute('data-tab-overflow', 'true'));
   });
   it('hides the arrows only through the measured flag', () => {
     expect(scrollTabsSx['&[data-tab-overflow="false"] > .MuiTabs-scrollButtons']).toEqual({ display: 'none' });
