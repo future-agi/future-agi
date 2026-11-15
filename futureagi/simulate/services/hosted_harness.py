@@ -382,7 +382,12 @@ def create_selected_harness_run(
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
-                environment, child_idempotency_key, resolved, scenario_keys, trials
+                environment,
+                child_idempotency_key,
+                resolved,
+                scenario_keys,
+                trials,
+                seed=seed,
             )
             if replayed is not None:
                 return replayed, False
@@ -1117,10 +1122,11 @@ def _replayed_run(
     resolved: ResolvedPins,
     scenario_keys: list[str],
     trials: int,
+    seed: int | None = None,
 ) -> HostedHarnessJob | None:
     """The run an earlier request with this key created, when this one repeats it.
 
-    A key reused for other versions, scenarios or trials is refused.
+    A key reused for other versions, scenarios, trials or another seed is refused.
     """
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
@@ -1148,6 +1154,7 @@ def _replayed_run(
         existing.workspace_id != environment.workspace_id
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
+        or (seed is not None and existing.seed != seed)
     ):
         raise HostedHarnessError(
             "idempotency_conflict",
