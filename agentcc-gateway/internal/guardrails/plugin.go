@@ -61,6 +61,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	ctx = p.withResolvedKeyPolicies(ctx, rc)
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -78,7 +79,12 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePre)
+	if result := p.runOrgGuardrails(ctx, rc, StagePre); result.Action != pipeline.Continue {
+		return result
+	}
+	// Post-stage key Block checks cannot safely inspect the existing relays
+	// before output is released. Refuse those streams before calling upstream.
+	return p.checkKeyPolicyStreamAdmission(ctx, rc)
 }
 
 // ProcessResponse runs post-stage guardrails.
