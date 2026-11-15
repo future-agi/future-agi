@@ -31,7 +31,7 @@ const UI_READY = 60_000;
 
 type Envelope<T> = { result: T };
 type Policy = { id: string; name: string; scope: string; mode: string; applied_keys: string[]; gateway_synced: boolean };
-type KeyPolicyWire = { id: string; name: string; mode: string; key_ids: string[]; checks: Record<string, { action: string }> };
+type KeyPolicyWire = { id: string; name: string; mode: string; key_ids: string[]; checks: Record<string, { action: string; config?: { words: string[]; max_matches: number } }> };
 type GatewayConfigs = { data: Record<string, { cache?: { enabled: boolean }; guardrails?: { key_policies?: KeyPolicyWire[] } }> };
 // agentcc/models/request_log.py and services/log_ingestion.py: api_key_id is the
 // gateway key ID, not the API key model's primary key; cache_hit is a PG boolean.
@@ -43,7 +43,7 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
   annotation: flowAnnotation({
     id: 'GW-E2E-007',
     area: 'gateway',
-    userGoal: 'An admin monitors and then enforces a guardrail on one API key without cached responses bypassing its policy, disabling caching for unselected keys, or weakening org-wide guardrails',
+    userGoal: 'An admin monitors and then enforces a guardrail on one API key, corrects invalid keyword configuration without losing edits, and preserves cache isolation and org-wide guardrails',
     steps: [
       'seed a local mock provider, two gateway keys and enabled organization caching with a minted cache namespace',
       'open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope',
@@ -51,6 +51,8 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       'switch the policy to Enforce in the dialog; the identical key A request is refused with content_blocked and key B still gets an exact-cache echo',
       'add an org-wide Secret Detection block with caching disabled and set the key policy back to Monitor; key A is still refused',
       'create the documented key policy body through the API; an unknown key ID is refused without creating a policy',
+      'try an empty Keyword Blocklist in the policy dialog, retain its inline error and correct it through Configure; the saved selected key is blocked while clean and unselected requests pass',
+      'reject malformed keyword creates and updates atomically; retain an edited draft on a real server validation error, then save the corrected draft',
     ],
     backendChecks: [
       'the gateway admin config carries enabled caching and the UI-saved key policy mode, block action and key A gateway key ID during the cache phase',
@@ -59,12 +61,14 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       'after the UI Enforce save, the identical key A request gets 403 content_blocked, no choices and an uncached blocked key-policy log',
       'an org-wide block wins over a key policy in monitor mode for the same check',
       'the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row',
+      'keyword correction persists exact words and the intended key in PostgreSQL and the pushed gateway config; selected matching requests are blocked while clean and unselected requests pass',
+      'invalid keyword creates and updates return 400 without partial policy or assignment changes; the real server error retains the UI draft and a corrected retry saves it',
     ],
   }),
 }, async ({ browser, probe }, testInfo) => {
-  test.setTimeout(900_000);
-  // Three UI/config groups (360s), two batched log polls (120s), seven requests
-  // (210s), seeding/documented API (90s), and 120s headroom.
+  test.setTimeout(1_260_000);
+  // Existing rollout/cache/org phases (900s), four keyword UI_READY groups
+  // (240s), and two config-push ASYNC_JOB budgets (120s).
   // An organization of this test's own, so its policies and org-wide block never reach
   // other specs on the worker's shared actor (as GW-E2E-004 does).
   const accounts = await request.newContext({ baseURL: E2E.apiUrl });
@@ -288,6 +292,119 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       expect(enforced.status(), await enforced.text()).toBe(200);
       expect((await enforced.json() as Envelope<Policy>).result.mode).toBe('enforce');
       expect(await count()).toBe(before + 1);
+
+      // 8. Keyword validation/recovery is part of the same selected-key rollout.
+      // Keep the previous cache/org assertions intact; these prompts contain no secret.
+      // PolicyDialog.jsx and guardrailChecks.js pin the controls and validation text.
+      const keywordName = `e2e-gw7-keyword-${suffix}`;
+      const keyword = `e2e-keyword-${suffix}`;
+      const keywordDescription = `e2e-keyword-description-${suffix}`;
+      const keywordKey = (await actor.api.post<Envelope<CreatedKey>>('/agentcc/api-keys/', { name: `e2e-keyword-key-${suffix}` })).result;
+      const keywordConfig = { words: [keyword], max_matches: 1 };
+      const keywordChecks = [{ name: 'keyword-blocklist', enabled: true, action: 'block', config: keywordConfig, threshold: 0.8 }];
+      const screenshot = async (name: string) => {
+        const path = testInfo.outputPath(`${name}.png`);
+        await page.screenshot({ path, fullPage: true, animations: 'disabled', mask: [page.locator('.MuiAutocomplete-root')] });
+        await testInfo.attach(name, { path, contentType: 'image/png' });
+      };
+      await page.goto(POLICIES_ROUTE);
+      await page.getByRole('button', { name: 'New policy', exact: true }).first().click({ timeout: UI_READY });
+      await expect(dialog).toBeVisible({ timeout: UI_READY });
+      await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(keywordName);
+      await dialog.getByRole('textbox', { name: 'Description', exact: true }).fill(keywordDescription);
+      await picker.fill(keywordKey.name);
+      await page.getByRole('option', { name: new RegExp(`^${keywordKey.name} \\(`) }).click({ timeout: UI_READY });
+      await dialog.getByRole('radio', { name: 'Enforce', exact: true }).check();
+      await dialog.getByRole('checkbox', { name: 'Keyword Blocklist', exact: true }).check();
+      const writes: string[] = [];
+      const observeWrite = (req: import('@playwright/test').Request) => {
+        if (new URL(req.url()).pathname === POLICIES && req.method() === 'POST') writes.push(req.method());
+      };
+      page.on('request', observeWrite);
+      try {
+        await page.getByRole('button', { name: 'Save policy', exact: true }).click();
+        await expect(dialog.getByText('Keyword Blocklist: Enter words as a nonempty array of strings, with no blank entries. Open Configure to correct it, or disable the check.', { exact: true })).toBeVisible({ timeout: UI_READY });
+        await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(keywordName, { timeout: UI_READY });
+        expect(writes).toEqual([]);
+        await screenshot('keyword-empty-validation');
+      } finally {
+        page.off('request', observeWrite);
+      }
+      await dialog.getByRole('button', { name: 'Configure', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Blocked Keywords', exact: true }).fill(keyword);
+      // max_matches=1 gives one exact match confidence 1, above the UI threshold .8.
+      await page.getByRole('spinbutton', { name: 'Max matches', exact: true }).fill('1');
+      await screenshot('keyword-configured');
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      const keywordPolicy = await savePolicy(page);
+      expect(keywordPolicy).toMatchObject({ name: keywordName, mode: 'enforce', scope: 'key', applied_keys: [keywordKey.id], gateway_synced: true });
+      await testInfo.attach('keyword-seeded-ids', { contentType: 'application/json', body: JSON.stringify({ policy: keywordPolicy.id, key: keywordKey.id, gatewayKey: keywordKey.gateway_key_id, keywordName, keyword }) });
+      // Serializer and model fields, not a list-count proxy for the saved state.
+      const storedKeyword = () => probe.pg<{ name: string; description: string; scope: string; mode: string; applied_keys: string[]; checks: unknown[]; is_active: boolean; runs_on_gateway: boolean }>(
+        'SELECT name, description, scope, mode, applied_keys, checks, is_active, runs_on_gateway FROM agentcc_guardrail_policy WHERE id=$1 AND organization_id=$2 AND deleted=false',
+        [keywordPolicy.id, actor.organizationId],
+      );
+      const expectedKeyword = { name: keywordName, description: keywordDescription, scope: 'key', mode: 'enforce', applied_keys: [keywordKey.id], checks: keywordChecks, is_active: true, runs_on_gateway: true };
+      await expect.poll(storedKeyword, POLL.ASYNC_JOB).toEqual([expectedKeyword]);
+      await expect.poll(async () => {
+        const res = await gateway.get('/-/orgs/configs', { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
+        expect(res.status()).toBe(200);
+        const wire = await res.json() as GatewayConfigs;
+        const policy = wire.data[actor.organizationId]?.guardrails?.key_policies?.find(p => p.id === keywordPolicy.id);
+        return policy ? { mode: policy.mode, key_ids: policy.key_ids, check: policy.checks['keyword-blocklist'] } : null;
+      }, POLL.ASYNC_JOB).toEqual({ mode: 'enforce', key_ids: [keywordKey.gateway_key_id], check: expect.objectContaining({ action: 'block', config: { words: [keyword], max_matches: 1 } }) });
+      const keywordRequest = async (key: CreatedKey, content: string) => gateway.post('/v1/chat/completions', {
+        headers: { Authorization: `Bearer ${key.key}` },
+        data: { model: `${provider}/gpt-4o-mini`, messages: [{ role: 'user', content }] },
+      });
+      await expectBlocked(await keywordRequest(keywordKey, keyword));
+      for (const [key, content] of [[keyA, keyword], [keywordKey, `e2e-clean-${suffix}`]] as const) {
+        const res = await keywordRequest(key, content);
+        expect(res.status(), await res.text()).toBe(200);
+        expect((await res.json()).choices[0].message.content).toBe(`echo: ${content}`);
+      }
+
+      // 9. DRF rejects malformed writes before changing any policy/assignment fields.
+      const malformedChecks = [{ ...keywordChecks[0], config: { words: keyword } }];
+      const beforeInvalid = await count();
+      const invalidCreate = await docsApi.post(POLICIES, { data: { ...expectedKeyword, name: `${keywordName}-invalid`, checks: malformedChecks } });
+      expect(invalidCreate.status(), await invalidCreate.text()).toBe(400);
+      expect(await count()).toBe(beforeInvalid);
+      const invalidPatch = await docsApi.patch(`${POLICIES}${keywordPolicy.id}/`, { data: {
+        description: `${keywordDescription}-rejected`, applied_keys: [keyA.id], checks: malformedChecks,
+      } });
+      expect(invalidPatch.status(), await invalidPatch.text()).toBe(400);
+      expect((await storedKeyword())[0].description).toBe(keywordDescription);
+      expect(await storedKeyword()).toEqual([expectedKeyword]);
+
+      await page.goto(POLICIES_ROUTE);
+      await page.getByRole('button', { name: `Actions for ${keywordName}`, exact: true }).click({ timeout: UI_READY });
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+      const draftDescription = `${keywordDescription}-corrected`;
+      await dialog.getByRole('textbox', { name: 'Description', exact: true }).fill(draftDescription);
+      // Fault injection changes only the outgoing config. Django supplies the real
+      // 400; no API response, persisted state or client validation is stubbed.
+      const policyURL = `${E2E.apiUrl}${POLICIES}${keywordPolicy.id}/`;
+      await page.route(policyURL, route => {
+        if (route.request().method() !== 'PATCH') return route.continue();
+        return route.continue({ postData: JSON.stringify({ ...route.request().postDataJSON(), checks: malformedChecks }) });
+      });
+      try {
+        const rejected = page.waitForResponse(res => res.url() === policyURL && res.request().method() === 'PATCH', { timeout: UI_READY });
+        await page.getByRole('button', { name: 'Save policy', exact: true }).click();
+        expect((await rejected).status()).toBe(400);
+        await expect(dialog.getByText('Check at index 0 (keyword-blocklist): words must be a non-empty array of non-blank strings', { exact: true })).toBeVisible({ timeout: UI_READY });
+        await expect(dialog.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(draftDescription, { timeout: UI_READY });
+        expect(await storedKeyword()).toEqual([expectedKeyword]);
+        await screenshot('keyword-server-validation');
+      } finally {
+        await page.unroute(policyURL);
+      }
+      expect(await savePolicy(page)).toMatchObject({ id: keywordPolicy.id, gateway_synced: true, applied_keys: [keywordKey.id] });
+      expect(await storedKeyword()).toEqual([{ ...expectedKeyword, description: draftDescription }]);
+      await expect(dialog).toBeHidden({ timeout: UI_READY });
+      await expect(page.getByTestId(`guardrail-policy-row-${keywordPolicy.id}`)).toBeVisible({ timeout: UI_READY });
+      await screenshot('keyword-recovered');
     } finally {
       await docsApi.dispose();
     }

@@ -1654,7 +1654,7 @@
 
 ### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
 
-**Goal:** An admin monitors and then enforces a guardrail on one API key without cached responses bypassing its policy, disabling caching for unselected keys, or weakening org-wide guardrails
+**Goal:** An admin monitors and then enforces a guardrail on one API key, corrects invalid keyword configuration without losing edits, and preserves cache isolation and org-wide guardrails
 
 **Spec:** `flows/gateway/key-guardrail-policy.spec.ts:41`
 
@@ -1668,6 +1668,8 @@
 4. switch the policy to Enforce in the dialog; the identical key A request is refused with content_blocked and key B still gets an exact-cache echo
 5. add an org-wide Secret Detection block with caching disabled and set the key policy back to Monitor; key A is still refused
 6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
+7. try an empty Keyword Blocklist in the policy dialog, retain its inline error and correct it through Configure; the saved selected key is blocked while clean and unselected requests pass
+8. reject malformed keyword creates and updates atomically; retain an edited draft on a real server validation error, then save the corrected draft
 
 **Backend state verified:**
 
@@ -1677,6 +1679,8 @@
 - after the UI Enforce save, the identical key A request gets 403 content_blocked, no choices and an uncached blocked key-policy log
 - an org-wide block wins over a key policy in monitor mode for the same check
 - the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
+- keyword correction persists exact words and the intended key in PostgreSQL and the pushed gateway config; selected matching requests are blocked while clean and unselected requests pass
+- invalid keyword creates and updates return 400 without partial policy or assignment changes; the real server error retains the UI draft and a corrected retry saves it
 
 ## knowledge-base
 
