@@ -826,7 +826,9 @@ def _retry_unscrubbed_batch(
                 task_id=f"{payload_key}-pii-retry",
                 start_delay=PII_SCRUB_RETRY_DELAYS[attempt],
             )
-        except Exception as exc:
+        # The store and Temporal raise many types; any of them drops the batch, logged
+        # below. Raising would hand the raw batch to Sentry in this frame's variables.
+        except Exception as exc:  # noqa: BLE001
             dropped = True
             error = f"{error} Retry not enqueued ({type(exc).__name__})."
     logger.warning(

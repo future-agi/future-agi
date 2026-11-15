@@ -561,3 +561,79 @@ class TestUnscrubbedBatchRetry:
 
         assert log.warning.call_args.args == ("pii_scrub_batch_dropped",)
         assert "RuntimeError" in log.warning.call_args.kwargs["error"]
+
+    def test_a_retry_store_that_redis_refuses_sends_no_raw_byte_to_sentry(
+        self, monkeypatch
+    ):
+        """Sentry attaches frame variables to error events; the re-store holds the batch."""
+        import logging
+
+        import sentry_sdk
+        from redis.exceptions import RedisError
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        from tfc.logging import sentry as project_sentry
+        from tfc.utils.payload_storage import get_payload_storage
+        from tracer.utils import trace_ingestion
+        from tracer.utils.pii_scrubber import PIIScrubError
+
+        sentinel = b"raw-batch-sentinel-5c1e jane@acme.com"
+        events = []
+        scrub = project_sentry._get_before_send()  # the project's own scrubber
+
+        def capture(event, hint):
+            events.append(scrub(event, hint))
+            return None  # nothing leaves the test
+
+        redis = mock.Mock()
+        redis.setex.side_effect = RedisError("OOM command not allowed")
+        storage = get_payload_storage()
+        monkeypatch.setattr(storage, "_redis_available", True)
+        monkeypatch.setattr(storage, "_redis_client", redis)
+        spans = [{"project_name": "proj", "attributes": {"fi.input.value": "x"}}]
+        task = trace_ingestion.bulk_create_observation_span_task
+        sentry_sdk.init(
+            dsn="https://public@sentry.invalid/1",
+            before_send=capture,
+            include_local_variables=True,  # as tfc/logging/sentry.py sets them
+            attach_stacktrace=True,
+            default_integrations=False,
+            integrations=[
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+            ],
+        )
+        try:
+            with (
+                mock.patch(
+                    "ee.usage.deployment.DeploymentMode.is_oss", return_value=True
+                ),
+                mock.patch.object(
+                    trace_ingestion.transaction, "atomic", contextlib.nullcontext
+                ),
+                mock.patch.object(
+                    trace_ingestion.payload_storage, "retrieve", return_value=sentinel
+                ),
+                mock.patch.object(trace_ingestion, "deserialize_trace_payload"),
+                mock.patch.object(
+                    trace_ingestion, "_parse_otel_request", return_value=spans
+                ),
+                mock.patch.object(trace_ingestion, "normalize_span_attributes"),
+                mock.patch.object(
+                    trace_ingestion,
+                    "get_pii_settings_for_projects",
+                    return_value={"proj": True},
+                ),
+                mock.patch.object(
+                    trace_ingestion,
+                    "scrub_pii_in_span_batch",
+                    side_effect=PIIScrubError("PII redaction failed (MemoryError)."),
+                ),
+                mock.patch.object(task, "apply_async") as enqueued,
+            ):
+                task("payload:in", "org", "user", "ws", "protobuf")
+        finally:
+            sentry_sdk.init()  # no DSN: no client
+
+        redis.setex.assert_called_once()  # the re-store reached Redis and failed
+        enqueued.assert_not_called()
+        assert b"raw-batch-sentinel" not in json.dumps(events, default=str).encode()
