@@ -84,11 +84,14 @@ class EffectiveTagBindingMixin(_TagBindingBase):
         # unbounded project assignment lookup or a source-only approximation).
         from tracer.services.clickhouse.read_budget import ReadDeadline
         from tracer.services.clickhouse.v2.effective_tags import (
+            MAX_TAG_QUERY_BYTES,
             EffectiveTagRelation,
+            bind_effective_tag_query,
             prepare_effective_tag_params,
         )
         from tracer.services.entity_tags import TagReadUnavailable
 
+        deadline = None
         if params and any(
             isinstance(value, EffectiveTagRelation) for value in params.values()
         ):
@@ -111,6 +114,15 @@ class EffectiveTagBindingMixin(_TagBindingBase):
                 allow_window_scan=True,
                 window_overlay=True,
             )
+        if params:
+            query, params = bind_effective_tag_query(
+                query,
+                params,
+                max_query_size=int(
+                    (settings or {}).get("max_query_size", MAX_TAG_QUERY_BYTES)
+                ),
+            )
+        if deadline is not None:
             timeout_ms = server_execution_cap_ms = deadline.remaining_ms()
         return super().execute_ch_query(
             query,

@@ -16,13 +16,16 @@ unavailable, never a truncated membership set.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
+from types import SimpleNamespace
 from typing import Any
 
 from clickhouse_driver.errors import Error as ClickHouseError
+from clickhouse_driver.util.escape import escape_param, escape_params
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Q
@@ -354,6 +357,14 @@ def graph_tag_overlay_params(
     """
     if not project_ids or (window_start is None) != (window_end is None):
         raise TagReadUnavailable("tag_scope_required")
+    if (
+        values is not None
+        and shared_tag_parameter_bytes(
+            {"projects": project_ids, "names": list(dict.fromkeys(values))}
+        )
+        > MAX_TAG_OVERLAY_BYTES
+    ):
+        raise TagReadUnavailable("tag_overlay_budget_exceeded")
     reader = execute or (graph_overlay_executor() if window_start is not None else None)
     phase: int | None = 0  # only paged walks justify a history probe
 
@@ -395,13 +406,9 @@ def graph_tag_overlay_params(
             f"{prefix}_span_keys": span_keys,
             f"{prefix}_assigned_keys": assigned,
         }
-        rendered = (
-            _literal_bytes(trace_keys)
-            + _literal_bytes(span_keys)
-            + _literal_bytes(assigned)
-            + _literal_bytes(project_ids)
-        )
-        return params, rendered
+        if values is not None:
+            params[f"{prefix}_names"] = list(dict.fromkeys(values))
+        return params, shared_tag_parameter_bytes(params)
     except TagReadUnavailable as error:
         # Only a started paged walk can make a spent deadline over budget;
         # curated reads and sparse suppression lookups do not walk that history.
@@ -484,13 +491,122 @@ def _scope_params(
     }
 
 
+# The native driver renders datetime parameters in the server timezone. That
+# changes their value but not their byte length; no connection is needed to
+# measure a query. Collection fingerprints use this same escaping (including
+# quotes, backslashes, control characters and UTF-8), not str(value) estimates.
+_LITERAL_CONTEXT = SimpleNamespace(
+    server_info=SimpleNamespace(get_timezone=lambda: "UTC")
+)
+_TAG_PARAMETER = re.compile(r"(?<!%)%\(([^)]+)\)s")
+_QUERY_START = re.compile(
+    r"(?:\s|--[^\n]*(?:\n|$)|/\*.*?\*/)*(WITH|SELECT)\b", re.I | re.S
+)
+MAX_TAG_QUERY_BYTES = 262_144
+
+
+def _collection_literal(value: list | tuple) -> str:
+    return str(escape_param(value, _LITERAL_CONTEXT))
+
+
 def _literal_bytes(values: Iterable[Any]) -> int:
-    """Upper bound of the rendered size of a bound tuple/scalar collection."""
-    total = 2
-    for value in values:
-        parts = value if isinstance(value, tuple) else (value,)
-        total += 4 + sum(len(str(part).encode("utf-8")) + 4 for part in parts)
-    return total
+    """Actual native-driver literal bytes, including escaping and delimiters."""
+    value = values if isinstance(values, (tuple, list)) else tuple(values)
+    return len(_collection_literal(value).encode("utf-8"))
+
+
+def shared_tag_parameter_bytes(params: dict[str, Any]) -> int:
+    """Bytes of unique collection constants after shared SQL binding.
+
+    Used by both list preparation and graph preflight. Names are Array(String),
+    key/candidate sets are tuples; their distinct SQL types are not conflated.
+    Equal literals across projects/leaves are charged once, exactly as the
+    execution binder emits them. The complete statement has a separate cap.
+    """
+    return sum(
+        len(literal.encode("utf-8"))
+        for literal in {
+            _collection_literal(value)
+            for value in params.values()
+            if isinstance(value, (tuple, list))
+        }
+    )
+
+
+def has_effective_tag_params(params: dict[str, Any]) -> bool:
+    """Recognize prepared overlays too, including concrete graph parameters."""
+    return any(name.endswith("_assigned_keys") for name in params)
+
+
+def bind_effective_tag_query(
+    query: str,
+    params: dict[str, Any],
+    *,
+    max_query_size: int = MAX_TAG_QUERY_BYTES,
+) -> tuple[str, dict[str, Any]]:
+    """Share repeated collection literals and check the actual wire SQL size.
+
+    Values remain bound parameters: only compiler-owned aliases enter SQL.
+    CH25 scalar WITH aliases propagate through nested SELECT/WITH and UNION
+    branches, unlike copying a candidate/overlay set into every tag subquery.
+    Only repeated constants are lifted, so applying this at a selector and
+    again at its service is idempotent. Non-tag statements are unchanged.
+    """
+    if not has_effective_tag_params(params):
+        return query, params
+    if shared_tag_parameter_bytes(params) > MAX_TAG_OVERLAY_BYTES:
+        raise TagReadUnavailable("tag_overlay_budget_exceeded")
+    groups: dict[str, list[str]] = {}
+    for match in _TAG_PARAMETER.finditer(query):
+        name = match.group(1)
+        value = params.get(name)
+        if isinstance(value, (tuple, list)):
+            groups.setdefault(_collection_literal(value), []).append(name)
+    replacements: dict[str, str] = {}
+    bindings: list[str] = []
+    for names in groups.values():
+        if len(names) < 2:
+            continue
+        alias = f"__effective_tag_bind_{len(bindings)}"
+        # Avoid capturing an existing builder identifier (or a prior binding).
+        while alias in query or alias in replacements.values():
+            alias += "_"
+        bindings.append(f"%({names[0]})s AS {alias}")
+        replacements.update((name, alias) for name in names)
+    if bindings:
+        rewritten = _TAG_PARAMETER.sub(
+            lambda match: replacements.get(match.group(1), match.group(0)), query
+        )
+        start = _QUERY_START.match(rewritten)
+        if start is None:
+            # This hook accepts SELECT statements only. Never send an oversized
+            # unsupported statement or silently omit any part of a predicate.
+            raise TagReadUnavailable("tag_overlay_budget_exceeded")
+        position = start.start(1)
+        if start.group(1).upper() == "WITH":
+            query = (
+                rewritten[: start.end(1)]
+                + " "
+                + ", ".join(bindings)
+                + ", "
+                + rewritten[start.end(1) :]
+            )
+        else:
+            query = (
+                rewritten[:position]
+                + "WITH "
+                + ", ".join(bindings)
+                + " "
+                + rewritten[position:]
+            )
+    rendered = query % escape_params(params, _LITERAL_CONTEXT)
+    # Honor an existing caller's parser setting (sampling has its own finite
+    # cap); this hook never raises it. An unlimited setting still gets our
+    # normal finite application limit.
+    query_limit = max_query_size if max_query_size > 0 else MAX_TAG_QUERY_BYTES
+    if len(rendered.encode("utf-8")) >= query_limit:
+        raise TagReadUnavailable("tag_overlay_budget_exceeded")
+    return query, params
 
 
 def _manual_names(manual: object) -> tuple[str, ...]:
@@ -1011,13 +1127,66 @@ def prepare_effective_tag_params(
     if (
         not isinstance(start, datetime)
         or not isinstance(end, datetime)
-        or (not ids and not allow_window_scan)
+        or _utc(start) >= _utc(end)
     ):
         raise TagReadUnavailable("tag_scope_required")
-    trace_ids = tuple(str(value) for value in ids) if ids else None
     bound = dict(params)
     cache: dict[tuple, TagOverlay] = {}
-    rendered = 0
+    # Reject oversized names before building PostgreSQL JSONB predicates. The
+    # builder normally carries these arrays too; include relation-only callers
+    # (e.g. graph scheduling preflight) without counting equal arrays twice.
+    name_params = {
+        f"__tag_names_{index}": list(request.values)
+        for index, request in enumerate(pending.values())
+        if request.values is not None
+    }
+    if shared_tag_parameter_bytes({**bound, **name_params}) > MAX_TAG_OVERLAY_BYTES:
+        raise TagReadUnavailable("tag_overlay_budget_exceeded")
+    empty_navigation_target = False
+    if not ids and "candidate_span_ids" in params:
+        # Navigation knows a span ID before it knows its physical identity. Read
+        # only that finite ID set in the authorized projects/hour partitions;
+        # do not turn this target lookup into an unscoped assignment scan.
+        span_ids = tuple(dict.fromkeys(params["candidate_span_ids"]))
+        projects = tuple(
+            sorted({p for request in pending.values() for p in request.project_ids})
+        )
+        if not projects:
+            raise TagReadUnavailable("tag_scope_required")
+        if len(span_ids) > MAX_TAG_CANDIDATE_TRACES:
+            raise TagReadUnavailable("tag_candidate_budget_exceeded")
+        hour_start, hour_end = _hours(_utc(start), _utc(end))
+        rows = (
+            _execute_overlay_read(
+                execute,
+                "SELECT DISTINCT trace_id FROM spans "
+                "PREWHERE project_id IN %(tag_target_projects)s "
+                "AND toStartOfHour(start_time) >= %(tag_target_start)s "
+                "AND toStartOfHour(start_time) < %(tag_target_end)s "
+                "WHERE id IN %(tag_target_ids)s LIMIT 513",
+                {
+                    "tag_target_projects": projects,
+                    "tag_target_start": hour_start,
+                    "tag_target_end": hour_end,
+                    "tag_target_ids": span_ids,
+                },
+                deadline=deadline,
+                settings={},
+                row_limit=MAX_TAG_CANDIDATE_TRACES + 1,
+            )
+            if span_ids
+            else []
+        )
+        # Discover conservatively across versions; the exact target classifier
+        # still owns liveness, event-time and full physical-key validation.
+        if len(rows) > MAX_TAG_CANDIDATE_TRACES:
+            raise TagReadUnavailable("tag_candidate_budget_exceeded")
+        ids = tuple(str(row["trace_id"]) for row in rows)
+        empty_navigation_target = not ids
+        ids = ids or (_UNSCOPED_TRACE,)
+    if not ids and not allow_window_scan:
+        raise TagReadUnavailable("tag_scope_required")
+    trace_ids = tuple(str(value) for value in ids) if ids else None
     for name, request in pending.items():
         bound.pop(name)
         scope = _scope_params(
@@ -1030,6 +1199,8 @@ def prepare_effective_tag_params(
         )
         bound.update(scope)
         cache_key = (request.project_ids, request.values)
+        if empty_navigation_target:
+            cache[cache_key] = TagOverlay()
         if cache_key not in cache:
             windowed = window_overlay and trace_ids is None
             overlay = read_tag_overlay(
@@ -1056,15 +1227,12 @@ def prepare_effective_tag_params(
         bound[f"{name}_trace_keys"] = trace_keys
         bound[f"{name}_span_keys"] = span_keys
         bound[f"{name}_assigned_keys"] = assigned
-        # The candidate ids are rendered once per spans/traces scope clause.
-        rendered += (
-            _literal_bytes(trace_keys)
-            + _literal_bytes(span_keys)
-            + _literal_bytes(assigned)
-            + 3 * _literal_bytes(scope[f"{name}_traces"])
-        )
-        if rendered > MAX_TAG_OVERLAY_BYTES:
-            raise TagReadUnavailable("tag_overlay_budget_exceeded")
+    # The execution hook binds repeated constants once for the entire SQL,
+    # including all leaves and authorized project branches. Multiplying by an
+    # assumed number of subqueries both rejected valid batches and undercounted
+    # the real SQL. The final rendered statement is checked separately there.
+    if shared_tag_parameter_bytes({**bound, **name_params}) > MAX_TAG_OVERLAY_BYTES:
+        raise TagReadUnavailable("tag_overlay_budget_exceeded")
     deadline.remaining_ms()
     return bound
 
@@ -1113,6 +1281,11 @@ def _execute_overlay_read(
     settings: dict[str, Any],
     row_limit: int,
 ) -> list[dict[str, Any]]:
+    query, params = bind_effective_tag_query(
+        query,
+        params,
+        max_query_size=int(settings.get("max_query_size", MAX_TAG_QUERY_BYTES)),
+    )
     result = execute(
         query,
         params,
