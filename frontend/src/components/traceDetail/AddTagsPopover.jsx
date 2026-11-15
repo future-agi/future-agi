@@ -3,8 +3,11 @@ import PropTypes from "prop-types";
 import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import useSaveEntityTags, {
+  canEditEntityTags,
   isSourceTag,
   latestTagState,
+  rememberTagState,
+  tagPhysicalKey,
   tagTargetKey,
   tagUpdateErrorMessage,
 } from "./useSaveEntityTags";
@@ -51,7 +54,7 @@ const AddTagsPopover = ({
     session.current = { open, items, id: session.current.id + 1 };
   }
 
-  // The last acknowledged save of each entity (tagTargetKey -> result).
+  // Only shared manual tags/revision, never another root's effective tags.
   // The owner's entity and tags can be older than it (a drawer
   // refetch or a grid row update lands later), and the popover can be
   // reopened, or moved to another entity and back, before they catch up.
@@ -61,6 +64,8 @@ const AddTagsPopover = ({
   const baseState = React.useRef({ key: null, state: null });
   const selectedEntityRef = React.useRef(selectedEntity);
   selectedEntityRef.current = selectedEntity;
+  const selectedTypeRef = React.useRef(selectedType);
+  selectedTypeRef.current = selectedType;
   const onTagsSavedRef = React.useRef(onTagsSaved);
   onTagsSavedRef.current = onTagsSaved;
 
@@ -80,7 +85,24 @@ const AddTagsPopover = ({
   const queryClient = useQueryClient();
 
   const selectedKey = tagTargetKey(selectedEntity, selectedType);
+  const selectedPhysical = tagPhysicalKey(selectedEntity);
+  const locked = isBulk
+    ? items.some((item) => !canEditEntityTags(item.entity))
+    : !canEditEntityTags(selectedEntity);
   React.useEffect(() => {
+    // Refetches can outrun a save response. Keep their newer manual state too.
+    items.forEach((item) => {
+      if (canEditEntityTags(item.entity)) {
+        rememberTagState(acknowledged.current, item.entity, item.type);
+      }
+    });
+    if (canEditEntityTags(selectedEntityRef.current)) {
+      rememberTagState(
+        acknowledged.current,
+        selectedEntityRef.current,
+        selectedType,
+      );
+    }
     if (open) {
       confirmedTags.current = seed();
       setTags(confirmedTags.current);
@@ -89,7 +111,17 @@ const AddTagsPopover = ({
     // another entity; the entity is read through a ref so a new object for
     // the same entity does not reseed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentTags, selectedKey, selectedEntity?.tag_revision, isBulk]);
+  }, [
+    open,
+    currentTags,
+    selectedKey,
+    selectedPhysical,
+    selectedEntity?.tag_revision,
+    selectedEntity?.manual_tags,
+    selectedEntity?.source_tag_names,
+    isBulk,
+    items,
+  ]);
 
   const { mutate: saveTags, isPending } = useMutation({
     // The saved entity travels with the request: the owner can select another
@@ -127,14 +159,7 @@ const AddTagsPopover = ({
           const saved = results.flatMap((outcome, index) => {
             if (outcome.status !== "fulfilled") return [];
             const { entity, type } = savedItems[index];
-            const key = tagTargetKey(entity, type);
-            const previous = acknowledged.current.get(key);
-            if (
-              !previous ||
-              outcome.value.tag_revision >= previous.tag_revision
-            ) {
-              acknowledged.current.set(key, outcome.value);
-            }
+            rememberTagState(acknowledged.current, entity, type, outcome.value);
             return [{ result: outcome.value, entity, type }];
           });
           const failed = results.find(
@@ -166,11 +191,18 @@ const AddTagsPopover = ({
         if (sessionId === session.current.id) confirmedTags.current = savedTags;
       } else {
         const key = tagTargetKey(savedEntity, type);
-        acknowledged.current.set(key, result);
-        // Show it only if the popover still edits the entity it was saved for.
-        if (key === tagTargetKey(selectedEntityRef.current, selectedType)) {
-          baseState.current = { key, state: result };
-          confirmedTags.current = normalizeTags(result.tags);
+        rememberTagState(acknowledged.current, savedEntity, type, result);
+        const current = selectedEntityRef.current;
+        // A sibling may now be selected. Apply shared manual state, not the
+        // response's SDK tags or physical target, and never undo a refetch.
+        if (key === tagTargetKey(current, selectedTypeRef.current)) {
+          const state = latestTagState(
+            current,
+            acknowledged.current,
+            selectedTypeRef.current,
+          );
+          baseState.current = { key, state };
+          confirmedTags.current = normalizeTags(state?.tags);
           setTags(confirmedTags.current);
         }
       }
@@ -204,6 +236,7 @@ const AddTagsPopover = ({
 
   const persist = useCallback(
     (nextTags) => {
+      if (locked) return;
       setTags(nextTags);
       saveTags({
         tags: nextTags,
@@ -220,7 +253,15 @@ const AddTagsPopover = ({
         sessionId: session.current.id,
       });
     },
-    [saveTags, selectedEntity, selectedType, items, isBulk, uniqueItems],
+    [
+      saveTags,
+      selectedEntity,
+      selectedType,
+      items,
+      isBulk,
+      uniqueItems,
+      locked,
+    ],
   );
 
   const handleAdd = useCallback(
@@ -270,7 +311,9 @@ const AddTagsPopover = ({
               key={`${tag.name}-${idx}`}
               name={tag.name}
               color={tag.color}
-              readOnly={isPending || isSourceTag(selectedEntity, tag.name)}
+              readOnly={
+                locked || isPending || isSourceTag(selectedEntity, tag.name)
+              }
               onRemove={() => handleRemove(idx)}
               onColorChange={(c) => handleColorChange(idx, c)}
               onRename={(n) => handleRename(idx, n)}
@@ -282,13 +325,15 @@ const AddTagsPopover = ({
       <TagInput
         onAdd={handleAdd}
         existingNames={tags.map((t) => t.name)}
-        disabled={isPending}
+        disabled={locked || isPending}
       />
 
-      <Typography sx={{ fontSize: 12, color: "text.disabled", mt: 0.75 }}>
-        {isBulk
-          ? "Tags will be added to every selected item"
-          : "Double-click name to rename · Click dot to change color"}
+      <Typography variant="s3" sx={{ color: "text.secondary", mt: 0.75 }}>
+        {locked
+          ? "Open or refresh the trace or span details to load complete tags before editing."
+          : isBulk
+            ? "Tags will be added to every selected item"
+            : "Double-click name to rename · Click dot to change color"}
       </Typography>
     </Popover>
   );
@@ -304,10 +349,10 @@ AddTagsPopover.propTypes = {
     PropTypes.shape({
       id: PropTypes.string.isRequired,
       type: PropTypes.oneOf(["trace", "span"]).isRequired,
-      currentTags: PropTypes.array,
+      currentTags: PropTypes.oneOfType([PropTypes.array, PropTypes.string]),
     }),
   ),
-  currentTags: PropTypes.array,
+  currentTags: PropTypes.oneOfType([PropTypes.array, PropTypes.string]),
   onSuccess: PropTypes.func,
   // Called with acknowledged { result, entity, type } saves, even after close.
   onTagsSaved: PropTypes.func,

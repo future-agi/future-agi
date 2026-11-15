@@ -35,12 +35,14 @@ describe("ChatDetailsBar tag targets", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps legacy rows without tag_target editable", () => {
+  it("keeps legacy rows without authoritative editing metadata read-only", () => {
     renderBar({ trace_id: "trace-1", tags: [{ name: "chat-tag" }] });
     expect(screen.getByText("chat-tag")).toHaveAttribute(
       "data-read-only",
-      "false",
+      "true",
     );
-    expect(screen.getByRole("button", { name: "tag" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "tag" }),
+    ).not.toBeInTheDocument();
   });
 });

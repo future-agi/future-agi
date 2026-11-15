@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import applySavedEntityTags from "../applySavedEntityTags";
+import { boundObserveListRow } from "../observeListPayload";
+import {
+  canEditEntityTags,
+  latestTagState,
+} from "src/components/traceDetail/entityTagState";
 
 const PROJECT = "project-1";
 const target = (span, overrides = {}) => ({
@@ -98,6 +103,80 @@ describe("applySavedEntityTags", () => {
     expect(second.source_tag_names).toEqual(["sdk-b"]);
     expect([first.tag_revision, second.tag_revision]).toEqual([4, 4]);
     expect(child.tag_revision).toBe(0);
+  });
+
+  it("updates bounded sibling roots in cached pages without copying SDK tags or lifting bounds", () => {
+    const sdk = Array.from(
+      { length: 80 },
+      (_, i) => `${String(i).padStart(3, "0")}-${"s".repeat(196)}`,
+    );
+    const first = row("root-a", { sdk: ["sdk-a"] });
+    const second = boundObserveListRow(row("root-b", { sdk }));
+    const cachedPage = [first, second];
+    const api = gridApi(cachedPage);
+    expect(typeof second.tags).toBe("string");
+    expect(
+      applySavedEntityTags(api, {
+        result: result(["sdk-a"], 4),
+        entity: first,
+        type: "span",
+        gridKind: "span",
+      }),
+    ).toBe(2);
+    expect(cachedPage[1]).toBe(second);
+    expect(typeof second.tags).toBe("string");
+    expect(second.source_tag_names).toEqual(sdk);
+    expect(second.manual_tags).toEqual([reviewed]);
+    expect(second.tag_revision).toBe(4);
+    expect(latestTagState(second).tags.map((tag) => tag.name)).toEqual([
+      ...sdk,
+      "reviewed",
+    ]);
+    expect(canEditEntityTags(second)).toBe(true);
+  });
+
+  it("leaves incomplete sibling source metadata locked without crashing", () => {
+    const first = row("root-a", { sdk: ["sdk-a"] });
+    const second = boundObserveListRow(
+      row("root-b", {
+        sdk: Array.from({ length: 100 }, (_, i) => `${i}-${"s".repeat(200)}`),
+      }),
+    );
+    expect(typeof second.source_tag_names).toBe("string");
+    const api = gridApi([first, second]);
+    expect(
+      applySavedEntityTags(api, {
+        result: result(["sdk-a"], 4),
+        entity: first,
+        type: "span",
+        gridKind: "span",
+      }),
+    ).toBe(1);
+    expect(second.tag_revision).toBe(0);
+    expect(canEditEntityTags(second)).toBe(false);
+  });
+
+  it("applies shared manual deletions without erasing either root's SDK", () => {
+    const first = row("root-a", { sdk: ["sdk-a"], manual_tags: [reviewed] });
+    const second = row("root-b", { sdk: ["sdk-b"], manual_tags: [reviewed] });
+    const api = gridApi([first, second]);
+    const deleted = {
+      ...result(["sdk-a"], 2),
+      tags: [{ name: "sdk-a" }],
+      manual_tags: [],
+    };
+    expect(
+      applySavedEntityTags(api, {
+        result: deleted,
+        entity: first,
+        type: "span",
+        gridKind: "span",
+      }),
+    ).toBe(2);
+    expect(first.tags).toEqual([{ name: "sdk-a" }]);
+    expect(second.tags).toEqual([{ name: "sdk-b" }]);
+    expect(second.manual_tags).toEqual([]);
+    expect(second.tag_revision).toBe(2);
   });
 
   it("matches a child span on its whole physical identity", () => {
