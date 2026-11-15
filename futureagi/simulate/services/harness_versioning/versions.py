@@ -397,7 +397,24 @@ def _refuse_retired_keys(
     Only keys new to the environment's default suite are checked, compared as
     normalised tokens, so a scenario the default already holds is never refused.
     """
-    archived = archived_keys(job, documents)
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # Archiving changes no draft, so the default suite can still hold an archived case: an edit
+    # that carries it is not adding it.
+    held = {
+        _scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
+    archived = archived_keys(
+        job,
+        [
+            doc
+            for doc in documents
+            if _scenario_token(doc.get("scenario_key")) not in held
+        ],
+    )
     if archived:
         raise HostedHarnessError(
             "scenario_key_archived",
@@ -468,14 +485,6 @@ def archived_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> lis
         if str(doc.get("scenario_key") or "").strip()
     }
     keys -= {""}
-    # Archiving changes no draft, so the default suite can still hold an archived case: an edit
-    # that carries it is not adding it.
-    keys -= {
-        _scenario_token(key)
-        for key in HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=job.suite_version_id
-        ).values_list("scenario_key", flat=True)
-    }
     if not keys:
         return []
     return sorted(
