@@ -328,7 +328,8 @@ def _cut_turns(
         turn = turns[end - 1]
         if len(turn.text) > tail_room:
             if not tail:
-                tail.append(replace(turn, text=turn.text[:tail_room], truncated=True))
+                text, _ = _clip(turn.text, tail_room)
+                tail.append(replace(turn, text=text, truncated=True))
                 tail_room, end = 0, end - 1
             break
         tail.append(turn)

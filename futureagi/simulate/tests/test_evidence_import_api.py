@@ -36,6 +36,7 @@ from simulate.selectors.evidence_import import (
     SOURCE_NOT_FOUND,
     SOURCE_UNAVAILABLE,
     _clip,
+    _cut_turns,
     evidence_digest,
     evidence_document,
     import_evidence,
@@ -401,6 +402,21 @@ class TestBudget:
 
         assert kept == "x" * 10
         assert left == 5
+
+    def test_an_over_budget_last_turn_is_cut_clear_of_a_personal_value(self):
+        trace = str(uuid.uuid4())
+        words = ("word " * 20)[:45]
+        turns = (
+            Turn("user", "word " * 20, False, trace, T0),
+            # Longer than the tail's half of the room, with an address across its cut.
+            Turn("agent", words + " bob@example.com and more", False, trace, T0),
+        )
+
+        kept, cut, _omitted = _cut_turns(turns, 100)
+
+        assert cut is True
+        assert kept[-1].text == words.rstrip()
+        assert kept[-1].truncated is True
 
     def test_an_over_budget_import_is_cut_and_says_so(
         self, client, environment, project
