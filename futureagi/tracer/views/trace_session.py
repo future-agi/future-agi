@@ -815,7 +815,10 @@ def _soft_delete_trace_session_tree(trace_sessions):
     from django.db.models import Q
 
     from tracer.services.analysis_retention import retire_analysis_sources
-    from tracer.services.attachments.retention import run_deletion_hook, tombstone_deleted_traces
+    from tracer.services.attachments.retention import (
+        run_deletion_hook,
+        tombstone_deleted_traces,
+    )
     from tracer.services.attachments.session_deletion import sweep_deleted_sessions
 
     # Keep the request's project mapping before reading fresh database rows.
@@ -889,7 +892,9 @@ def _soft_delete_trace_session_tree(trace_sessions):
                 ).order_by("pk")
             )
             # Materialize before the soft-delete manager hides the updated rows.
-            deleted_traces = list(traces.filter(pk__in=trace_ids).only("id", "project_id"))
+            deleted_traces = list(
+                traces.filter(pk__in=trace_ids).only("id", "project_id")
+            )
             traces.filter(pk__in=trace_ids).update(deleted=True, deleted_at=now)
             # Only the locked, same-project parents may tombstone attachment media.
             tombstone_deleted_traces(deleted_traces)
