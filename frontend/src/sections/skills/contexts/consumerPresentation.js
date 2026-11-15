@@ -34,3 +34,6 @@ export function consumerReportAt(row, asOf) {
   const date = new Date(Date.parse(asOf) - age * 1000);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
+
+// A relative time inside a sentence ("As of just now", "in 2 min") starts lowercase; dates are left alone.
+export const midSentence = (text) => String(text).replace(/^(Just now|In )/, (lead) => lead.toLowerCase());

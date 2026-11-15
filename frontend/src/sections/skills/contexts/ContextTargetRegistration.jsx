@@ -1,13 +1,14 @@
 import { useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, DialogActions, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { LoadingButton } from "@mui/lab";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useCreateContextBinding } from "src/api/skills/context-consumers";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 import { IdentityValue } from "../review/ReleaseReviewBody";
 
-// Intent: an application owner explicitly registers one runtime target with
-// the pinned manifest its build produced. The server validates the manifest and
+// Intent: an application owner explicitly connects one runtime target with the
+// pinned config file its build produced (the runtime manifest). The server validates it and
 // derives its digest; nothing here is typed by hand or inferred from traffic.
 const SUMMARY = [
   ["code_commit", "Code commit"],
@@ -64,7 +65,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
           : "";
       if (derived) setName((current) => (current.trim() ? current : derived));
     } catch {
-      setError("The manifest is not a JSON object. Choose the file your build produced.");
+      setError("That file is not a JSON object. Choose the config file your build produced.");
     }
   };
   const valid =
@@ -73,10 +74,37 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
     manifest !== null &&
     !create.isPending && canRegister;
   const actionReason = !canRegister ? 'Ask a workspace admin for permission to connect an app.'
-    : !manifest ? 'Choose the app manifest (JSON) file from your app build.'
+    : !manifest ? 'Choose your app\'s config file.'
       : !name.trim() ? 'Enter a target name.'
         : !/^[a-z0-9][a-z0-9-]{0,39}$/.test(label) ? 'Use a label with lowercase letters, numbers or hyphens, starting with a letter or number.'
           : create.isPending ? 'Connecting the app…' : '';
+  const submit = async () => {
+    if (!valid) return;
+    setError("");
+    operationKey.current = operationKey.current || crypto.randomUUID();
+    try {
+      const binding = await create.mutateAsync({
+        idempotencyKey: operationKey.current,
+        name: name.trim(),
+        kind: "runtime",
+        selector: { label },
+        updateMode,
+        profile: "native-runtime",
+        profileVersion: "1",
+        repository: null,
+        expectedReportIntervalSeconds: 3600,
+        configuration: manifest,
+      });
+      setDone(binding);
+      setOpen(false);
+    } catch (failure) {
+      setError(
+        failure?.statusCode === 422
+          ? "The server rejected this config file. It needs every pinned runtime field."
+          : "Connecting was not confirmed. Retry keeps the same operation.",
+      );
+    }
+  };
   return (
     <>
       <Stack direction="row" spacing={1} alignItems="center">
@@ -91,7 +119,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
             setOpen(true);
           }}
         >
-          Register application target
+          Connect an app
         </Button>
         {!canRegister && <ActionReason id={`${reasonId}-access`} reason={actionReason} />}
         {done && (
@@ -105,39 +133,10 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
         onClose={() => {
           if (!create.isPending) setOpen(false);
         }}
-        title="Register application target"
-        subTitle="Connect your app using the configuration from its build. Connecting doesn't change production."
-        actionBtnTitle="Register target"
-        actionBtnProps={reasonProps(`${reasonId}-submit`, actionReason)}
-        isValid={valid}
-        isLoading={create.isPending}
+        title="Connect an app"
+        subTitle="Upload your app's config file (JSON)."
+        dialogActionSx={{ display: "none" }}
         onCancelBtn={() => setOpen(false)}
-        onSubmit={async () => {
-          setError("");
-          operationKey.current = operationKey.current || crypto.randomUUID();
-          try {
-            const binding = await create.mutateAsync({
-              idempotencyKey: operationKey.current,
-              name: name.trim(),
-              kind: "runtime",
-              selector: { label },
-              updateMode,
-              profile: "native-runtime",
-              profileVersion: "1",
-              repository: null,
-              expectedReportIntervalSeconds: 3600,
-              configuration: manifest,
-            });
-            setDone(binding);
-            setOpen(false);
-          } catch (failure) {
-            setError(
-              failure?.statusCode === 422
-                ? "The server rejected the manifest. It needs every pinned native field."
-                : "Registration was not confirmed. Retry keeps the same operation.",
-            );
-          }
-        }}
       >
         <Stack spacing={1.5}>
           <TextField
@@ -165,24 +164,24 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
             <MenuItem value="manual">Manual</MenuItem>
           </TextField>
           <Stack spacing={0.5} role="group" aria-labelledby={`${reasonId}-manifest`}>
-          <Typography id={`${reasonId}-manifest`} variant="s1" sx={{ fontWeight: 500, color: "text.primary" }}>App manifest (JSON)</Typography>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Button variant="outlined" onClick={() => file.current?.click()}>
-              Choose runtime manifest
-            </Button>
-            <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-              {manifestName || "No manifest chosen"}
-            </Typography>
-            <input
-              ref={file}
-              hidden
-              type="file"
-              accept="application/json,.json"
-              aria-label="Runtime manifest file"
-              onChange={(event) => readManifest(event.target.files?.[0])}
-            />
-          </Stack>
-          <Typography variant="s3" color="text.secondary">Choose the JSON file your app build produces. It is the manifest your app reports on startup. <Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
+            <Typography id={`${reasonId}-manifest`} variant="s1" sx={{ fontWeight: 500, color: "text.primary" }}>Config file (JSON)</Typography>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button variant="outlined" onClick={() => file.current?.click()}>
+                Choose config file
+              </Button>
+              <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
+                {manifestName || "No file chosen"}
+              </Typography>
+              <input
+                ref={file}
+                hidden
+                type="file"
+                accept="application/json,.json"
+                aria-label="Config file"
+                onChange={(event) => readManifest(event.target.files?.[0])}
+              />
+            </Stack>
+            <Typography variant="s3" color="text.secondary"><Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
           </Stack>
           {manifest &&
             SUMMARY.map(([key, title]) => (
@@ -192,9 +191,18 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
                 value={typeof manifest[key] === "string" ? manifest[key] : "Missing"}
               />
             ))}
-          <ActionReason id={`${reasonId}-submit`} reason={actionReason} />
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
+        <DialogActions sx={{ p: 0, mt: 0, gap: 1, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+          {/* The footer's left slot says why Connect app is off, or what connecting does. */}
+          {actionReason
+            ? <ActionReason id={`${reasonId}-submit`} reason={actionReason} sx={{ flex: 1, flexBasis: { xs: "100%", sm: 0 } }} />
+            : <Typography variant="s3" color="text.secondary" sx={{ flex: 1 }}>Connecting doesn&apos;t change production.</Typography>}
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" disabled={create.isPending} onClick={() => setOpen(false)}>Cancel</Button>
+            <LoadingButton variant="contained" color="primary" loading={create.isPending} disabled={!valid} {...reasonProps(`${reasonId}-submit`, actionReason)} onClick={submit}>Connect app</LoadingButton>
+          </Stack>
+        </DialogActions>
       </ModalWrapper>
     </>
   );

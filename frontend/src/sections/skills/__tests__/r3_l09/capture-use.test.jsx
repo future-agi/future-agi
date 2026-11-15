@@ -415,8 +415,8 @@ describe("independent consumer observations", () => {
     expect(screen.getByText("No report from this app yet")).toBeVisible();
     // A calm summary, not a warning: connected consumers that have not reported delivery are named and counted.
     expect(screen.getByText("1 of 1 connected consumer needs a delivery report to confirm the version received.")).toBeVisible();
-    // The queue names one missing report (no report yet); it never fills the absent delivery in.
-    expect(screen.getAllByText("Waiting for first report")).toHaveLength(1);
+    // The queue names the missing report once (the badge); it never fills the absent delivery in or repeats itself.
+    expect(screen.queryByText("Waiting for first report")).toBeNull();
     click("Pilot application");
     expect(screen.getByText("Delivery receipts")).toBeVisible();
     // The drawer retains all five independent stages; the three unreported ones stay unknown.
