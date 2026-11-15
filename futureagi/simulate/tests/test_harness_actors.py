@@ -2265,6 +2265,20 @@ def test_environment_detail_lists_declared_workers():
             SimpleNamespace(), contract, None, None, None
         )
     (worker,) = section["workers"]
+    for malformed in (None, "workers", 5, {"id": "x"}):
+        with (
+            patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+            patch.object(harness_environment, "_call_actor_list", return_value=[]),
+            patch.object(harness_environment, "_stage_output", return_value=None),
+            patch.object(harness_environment, "_end_conditions", return_value={}),
+            patch.object(harness_environment, "_provenance", return_value={}),
+        ):
+            assert (
+                harness_environment._contract_section(
+                    SimpleNamespace(), {"workers": malformed}, None, None, None
+                )["workers"]
+                == []
+            )
     assert HarnessEnvironmentWorkerSerializer(worker).data["allowed_tools"] == [
         "get_order",
         "list_refunds",

@@ -858,9 +858,10 @@ def _contract_section(
     if not contract:
         return None
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    declared = contract.get("workers")
     section["workers"] = [
         one
-        for one in contract.get("workers") or []
+        for one in (declared if isinstance(declared, list) else [])
         if isinstance(one, dict) and one.get("id")
     ]
     section["amendments"] = _amendments(contract.get("amendments"))
