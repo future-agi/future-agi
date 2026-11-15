@@ -53,7 +53,7 @@ export default function SkillRowMenu({ skill }) {
     <Box onClick={(event) => event.stopPropagation()}>
       <IconButton size="small" aria-label={`Actions for ${skill.name}`} aria-haspopup="menu" aria-expanded={Boolean(anchor)}
         onClick={(event) => { event.stopPropagation(); setAnchor(event.currentTarget); }}>
-        <Iconify icon="solar:menu-dots-bold" />
+        <Iconify icon="solar:menu-dots-bold" sx={{ pointerEvents: "none" }} />
       </IconButton>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} onClick={(event) => event.stopPropagation()}>
         <MenuItem onClick={() => { setAnchor(null); navigate(paths.dashboard.skills.detail(skill.id)); }}><ListItemIcon><Iconify icon="solar:arrow-right-up-linear" width={16} /></ListItemIcon>Open</MenuItem>

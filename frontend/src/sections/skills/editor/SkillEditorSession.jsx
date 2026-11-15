@@ -191,7 +191,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
       purpose={isContext ? `${session.baseVersion == null ? 'New context' : `Based on v${session.baseVersion}`} · ${session.resolvedLock?.links?.length || 0} linked skill${session.resolvedLock?.links?.length === 1 ? '' : 's'}` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
-        <Box data-slot="editor-status" sx={{ minWidth: 120, flexShrink: 0, textAlign: 'right' }}>
+        <Box data-slot="editor-status" sx={{ minWidth: 120, flexShrink: 0, textAlign: 'right', order: { xs: -2, sm: 0 } }}>
           {showLabel && saveLabel !== 'Saved' ? <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
             : waitingForChecks ? <ActionReason id="editor-publish-reason" reason="Waiting for checks…" sx={{ flexBasis: 'auto' }} />
             : showLabel ? <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography> : null}

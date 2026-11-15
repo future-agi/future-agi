@@ -41,7 +41,7 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
   if (created) return (
     <ModalWrapper open={open} onClose={onClose} title="Skill draft created" subTitle={options.data?.assistEnabled ? "Nothing is published. Continue writing, or ask for a private AI proposal to review." : "Nothing is published. Open the editor to continue writing."}
       actionBtnTitle="Open editor" isValid onSubmit={() => { onClose(); navigate(paths.dashboard.skills.edit(created.id)); }}>
-      <Stack spacing={2}>{options.data?.assistEnabled ? <Alert severity="info">Provide your policy. Missing facts will be questions, not invented rules.</Alert> : <Typography variant="s1" color="text.secondary">Your draft is saved privately. Open the editor to write the instructions.</Typography>}
+      <Stack spacing={2}>{options.data?.assistEnabled && <Alert severity="info">Provide your policy. Missing facts will be questions, not invented rules.</Alert>}
         {options.data?.assistEnabled && <>
           {created.permissions?.canRunTests !== true && <ActionReason id="create-action-reason-1" reason="You need test permissions to use AI assistance." />}
           <Button variant="outlined" disabled={created.permissions?.canRunTests !== true} onClick={() => { onClose(); navigate(`${paths.dashboard.skills.edit(created.id)}?assist=draft`); }}>Draft with AI</Button>
