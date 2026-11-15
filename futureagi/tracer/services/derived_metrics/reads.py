@@ -115,6 +115,10 @@ class MetricReadStore(ClickHousePublicationStore):
                 # wide CI expression. The fourth-read compilation alone can use
                 # the entire interactive budget; keep these reads interpreted.
                 "compile_expressions": 0,
+                # Aggregate/sort compilation is independent of scalar JIT and
+                # still consumed 100 ms in a bounded read with scalar JIT off.
+                "compile_aggregate_expressions": 0,
+                "compile_sort_description": 0,
                 # The scalar compiler uses legacy-compatible SQL. Avoid repeated
                 # analyzer expansion of its nested support/interval expressions.
                 "enable_analyzer": 0,

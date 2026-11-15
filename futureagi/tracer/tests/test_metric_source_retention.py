@@ -374,3 +374,14 @@ def test_finality_projection_cannot_drop_winner_keys():
         ), **kwargs,
     )
     assert "inputs" not in sql and "user_id" not in sql
+
+
+def test_small_result_reads_do_not_jit_or_relax_work_budgets():
+    client = Mock()
+    reads.MetricReadStore(client).execute("SELECT 1")
+    settings = client.execute.call_args.kwargs["settings"]
+    assert settings["compile_expressions"] == 0
+    assert settings["compile_aggregate_expressions"] == 0
+    assert settings["compile_sort_description"] == 0
+    assert settings["max_memory_usage"] == 512 * 1024 * 1024
+    assert settings["max_threads"] == 2 and settings["max_execution_time"] == 60
