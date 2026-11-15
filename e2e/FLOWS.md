@@ -1027,7 +1027,7 @@
 
 **Goal:** Retire old comparison rows and detail when a later block rebuilds to zero, then keep same-ID refreshes settled
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1171`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1216`
 
 **Tags:** —
 
@@ -1055,7 +1055,7 @@
 
 **Goal:** Keep an initially empty comparison settled during same-ID grid refresh and explicit download recovery
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1171`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1216`
 
 **Tags:** —
 
@@ -1082,7 +1082,7 @@
 
 **Goal:** Recover a genuinely expired comparison download without rebuilding on an unrelated dataset error or automatically retrying CSV
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:1377`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1547`
 
 **Tags:** —
 
