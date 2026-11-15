@@ -17,7 +17,6 @@ from simulate.services.harness_versioning import (
     diffs,
     nudges,
     rebuild,
-    versions,
 )
 from simulate.services.harness_versioning.versions import (
     dropped_documents,
@@ -130,12 +129,19 @@ def test_drops_change_the_suite_hash_and_nothing_else_does():
     tree = archives.read_archive(_suite_archive([_scenario(NAMES[0])]))
     plain = hashing.suite_hash(tree)
     record = {"format": 1, "scenarios": {_key(CANCEL): _record(CANCEL)}}
-    with_drop = hashing.suite_hash({**tree, "dropped.json": json.dumps(record).encode()})
+    with_drop = hashing.suite_hash(
+        {**tree, "dropped.json": json.dumps(record).encode()}
+    )
     same_drop_reordered = hashing.suite_hash(
         {**tree, "dropped.json": json.dumps(record, sort_keys=True, indent=1).encode()}
     )
-    failed = {"format": 1, "scenarios": {_key(CANCEL): _record(CANCEL, restore_failed="x")}}
-    other_drop = hashing.suite_hash({**tree, "dropped.json": json.dumps(failed).encode()})
+    failed = {
+        "format": 1,
+        "scenarios": {_key(CANCEL): _record(CANCEL, restore_failed="x")},
+    }
+    other_drop = hashing.suite_hash(
+        {**tree, "dropped.json": json.dumps(failed).encode()}
+    )
 
     # Without drops the hash stays ALK's scenario digest.
     assert plain == hashing.tree_digest(
@@ -312,18 +318,18 @@ class TestDropAndRestore:
         record_authoring(environment, _suite_archive(two), origin="chat")
         environment.refresh_from_db()
         first = environment.suite_version
+        # B is a case new to this environment, so a person may add it.
+        added = "cancel_late_booking"
         record_authoring(
-            environment,
-            _suite_archive([_scenario(one) for one in NAMES]),
-            origin="chat",
+            environment, _suite_archive([*two, _scenario(added)]), origin="chat"
         )
 
-        record_authoring(environment, _with_drops(two, [CANCEL]), origin="nudge")
+        record_authoring(environment, _with_drops(two, [added]), origin="nudge")
         environment.refresh_from_db()
 
         held = environment.suite_version
         assert held.id != first.id
-        assert held.documents["dropped"][_key(CANCEL)]["reason"] == REASON
+        assert held.documents["dropped"][_key(added)]["reason"] == REASON
         assert HarnessSuiteVersion._base_manager.get(id=first.id).documents.get(
             "dropped"
         ) in (None, {})
