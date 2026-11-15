@@ -1544,7 +1544,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             self.filters
         )
         self.params.update(datetime_params)
-        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
+        datetime_having = f"\n        HAVING {datetime_sql}" if datetime_sql else ""
         usage_ctes = f"""
     {identity_acquisition_cte}
     latest_candidate_spans AS (
@@ -1566,8 +1566,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             service_name,
             identity_hour,
             trace_id,
-            id
-        {datetime_having}
+            id{datetime_having}
     ),
     user_trace_usage AS (
         SELECT project_id, trace_id, end_user_id, last_active,
@@ -1931,7 +1930,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             self.filters
         )
         params.update(datetime_params)
-        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
+        datetime_having = f"\n            HAVING {datetime_sql}" if datetime_sql else ""
         requirement_select_sql = ",\n                ".join(requirement_selects)
         requirement_where_sql = "\n          AND ".join(requirement_checks)
 
@@ -1993,8 +1992,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 service_name,
                 identity_hour,
                 trace_id,
-                id
-            {datetime_having}
+                id{datetime_having}
         ),
         relation_candidate_spans AS (
             SELECT
@@ -2359,7 +2357,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             self.filters
         )
         base_params.update(datetime_params)
-        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
+        datetime_having = f"\n            HAVING {datetime_sql}" if datetime_sql else ""
 
         def common_prefix(
             state_selects: list[str],
@@ -2479,8 +2477,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 service_name,
                 identity_hour,
                 trace_id,
-                id
-            {datetime_having}
+                id{datetime_having}
         )
         {session_remap_ctes}
             """

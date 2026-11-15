@@ -224,6 +224,7 @@
       },
       "start_time": "2026-09-01 10:00:00+00:00",
       "status": "OK",
+      "tag_assignment_exists": false,
       "tag_revision": 0,
       "tag_target": {
         "expected_start_time": "2026-09-01T10:00:00.000000+00:00",
@@ -259,6 +260,7 @@
   "started_at": "2026-09-01T10:00:02.000Z",
   "status": "completed",
   "stereo_recording_url": "https://storage.example.com/recordings/baseline-call/stereo.wav",
+  "tag_assignment_exists": false,
   "tag_revision": 0,
   "tag_target": {
     "expected_start_time": "2026-09-01T10:00:00.000000+00:00",
