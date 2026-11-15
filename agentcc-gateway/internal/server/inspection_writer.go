@@ -17,15 +17,30 @@ var errInspectionRelease = errors.New("response release refused by inspection bo
 // decision before headers, each write, flush and upgrade, and writes a small
 // gateway error directly to the underlying writer on refusal.
 type inspectionWriter struct {
-	dst         http.ResponseWriter
-	state       *models.InspectionState
-	wrote       bool
-	blocked     bool
-	errorBody   bool // one write by the trusted, sanitized gateway error encoder
-	errorStatus int
+	dst               http.ResponseWriter
+	state             *models.InspectionState
+	middlewareHeaders http.Header // immutable pre-handler metadata, never upstream headers
+	wrote             bool
+	blocked           bool
+	errorBody         bool // one write by the trusted, sanitized gateway error encoder
+	errorStatus       int
 }
 
 func (w *inspectionWriter) Header() http.Header { return w.dst.Header() }
+
+// Discard all handler/provider headers, including forged correlation values.
+// Only middleware metadata captured before dispatch may survive a refusal. The
+// replacement JSON error owns its representation headers, not the old response.
+func (w *inspectionWriter) resetRefusalHeaders() {
+	headers := w.dst.Header()
+	clear(headers)
+	for key, values := range w.middlewareHeaders {
+		headers[key] = append([]string(nil), values...)
+	}
+	for _, key := range []string{"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Transfer-Encoding", "Trailer"} {
+		headers.Del(key)
+	}
+}
 
 func (w *inspectionWriter) permit() bool {
 	if w.blocked {
@@ -34,7 +49,7 @@ func (w *inspectionWriter) permit() bool {
 	if err := w.state.ReleaseError(); err != nil {
 		w.blocked = true
 		if !w.wrote {
-			clear(w.dst.Header())
+			w.resetRefusalHeaders()
 			models.WriteError(w.dst, err)
 			w.wrote = true
 		}
@@ -93,7 +108,7 @@ func (w *inspectionWriter) GuardrailError(err *models.APIError) *models.APIError
 	}
 	safe := safeInspectionError(err)
 	if !w.wrote && !w.blocked {
-		clear(w.dst.Header())
+		w.resetRefusalHeaders()
 		w.errorBody, w.errorStatus = true, safe.Status
 	} else {
 		w.blocked = true
@@ -181,7 +196,7 @@ type inspectionCloseNotifier struct{ http.CloseNotifier }
 // the guarded implementations also prevents io.Copy and ResponseController from
 // unwrapping to an unchecked destination.
 func newInspectionWriter(dst http.ResponseWriter, state *models.InspectionState) (*inspectionWriter, http.ResponseWriter) {
-	w := &inspectionWriter{dst: dst, state: state}
+	w := &inspectionWriter{dst: dst, state: state, middlewareHeaders: dst.Header().Clone()}
 	f, h, p := inspectionFlusher{w}, inspectionHijacker{w}, inspectionPusher{w}
 	mask := 0
 	if _, ok := dst.(http.Flusher); ok {
