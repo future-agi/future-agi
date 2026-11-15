@@ -1654,26 +1654,27 @@
 
 ### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
 
-**Goal:** An admin rolls a guardrail out to a single API key: monitor it first, then enforce it, without affecting other keys or weakening org-wide guardrails
+**Goal:** An admin monitors and then enforces a guardrail on one API key without cached responses bypassing its policy, disabling caching for unselected keys, or weakening org-wide guardrails
 
-**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:34`
+**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:41`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a local mock provider and two gateway keys in an organization of this test
+1. seed a local mock provider, two gateway keys and enabled organization caching with a minted cache namespace
 2. open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope
-3. a prompt with a fake AWS key sent with key A gets the unchanged echo; key B also gets it
-4. switch the policy to Enforce in the dialog; key A is refused with content_blocked and key B still gets the echo
-5. add an org-wide Secret Detection block and set the key policy back to Monitor; key A is still refused
+3. send the same fake AWS-key prompt twice with key A and twice with key B: A is monitored on each uncached echo, while B repeats from the exact cache
+4. switch the policy to Enforce in the dialog; the identical key A request is refused with content_blocked and key B still gets an exact-cache echo
+5. add an org-wide Secret Detection block with caching disabled and set the key policy back to Monitor; key A is still refused
 6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
 
 **Backend state verified:**
 
-- the gateway admin config for the organization carries the key policy with key A's gateway key ID and the mode the UI saved
-- key A's monitored request log records the policy name, mode monitor and outcome would_block, with no triggered response header; key B's log has no guardrail entry
-- with the policy enforced, key A gets 403 content_blocked and its log records outcome blocked; key B gets 200
+- the gateway admin config carries enabled caching and the UI-saved key policy mode, block action and key A gateway key ID during the cache phase
+- both identical key A Monitor requests return skip_key_policy and have distinct uncached logs with exactly one would_block policy result and no triggered response header
+- unselected key B returns miss then hit_exact, and remains hit_exact after Enforce; all three exact request logs have no guardrail entry and cache_hit false, true, true
+- after the UI Enforce save, the identical key A request gets 403 content_blocked, no choices and an uncached blocked key-policy log
 - an org-wide block wins over a key policy in monitor mode for the same check
 - the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
 

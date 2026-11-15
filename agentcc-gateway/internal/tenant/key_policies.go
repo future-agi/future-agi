@@ -1,11 +1,12 @@
 package tenant
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"sort"
 	"strings"
+	"time"
 )
 
 // KeyPoliciesFor returns the key policies that apply to requests made with
@@ -29,17 +30,29 @@ func (g *GuardrailConfig) KeyPoliciesFor(keyID string) []*KeyGuardrailPolicy {
 	return matched
 }
 
-// KeyPolicyFingerprint identifies the key and what the key policies that apply
-// to it check: their IDs, names, modes, priorities and checks. It is "" when
-// none apply. Any change to a policy that applies to the key (a check, an
-// action, Monitor to Enforce, a rename that changes the order policies run in)
-// changes it. It includes the key ID, so two keys never share a fingerprint
-// even under the same policies: a check may read the request's key (an
-// expression on metadata.auth_key_id, for example).
+// KeyPolicyFingerprint is the compatibility wrapper for
+// KeyPolicyCacheFingerprint, using a 30-second default timeout. Callers needing
+// runtime settings or cache admission MUST use KeyPolicyCacheFingerprint and
+// honor its cacheable result; this wrapper cannot report serialization failures.
 func (g *GuardrailConfig) KeyPolicyFingerprint(keyID string) string {
+	fingerprint, _ := g.KeyPolicyCacheFingerprint(keyID, 30*time.Second)
+	return fingerprint
+}
+
+// KeyPolicyCacheFingerprint identifies the key, its selected policies, and the
+// org checks and effective execution settings that govern those policies. The
+// caller must supply the engine's default timeout. The SHA256 digest keeps
+// configuration secrets out of cache keys, and includes key identity because a
+// check may inspect metadata.auth_key_id even when two keys share policies.
+//
+// With no selected policies it returns "", true. If configuration cannot be
+// serialized, it returns a nonempty sentinel and false: callers MUST bypass
+// cache reads and writes, not treat the sentinel as a reusable cache key or an
+// unscoped request.
+func (g *GuardrailConfig) KeyPolicyCacheFingerprint(keyID string, defaultTimeout time.Duration) (fingerprint string, cacheable bool) {
 	matched := g.KeyPoliciesFor(keyID)
 	if len(matched) == 0 {
-		return ""
+		return "", true
 	}
 	type entry struct {
 		ID       string                     `json:"id"`
@@ -50,23 +63,37 @@ func (g *GuardrailConfig) KeyPolicyFingerprint(keyID string) string {
 	}
 	entries := make([]entry, 0, len(matched))
 	for _, pol := range matched {
-		entries = append(entries, entry{ID: pol.ID, Name: pol.Name, Mode: strings.ToLower(strings.TrimSpace(pol.Mode)), Priority: pol.Priority, Checks: pol.Checks})
+		mode := "enforce"
+		// Match execution exactly: whitespace around "monitor" enforces.
+		if strings.EqualFold(pol.Mode, "monitor") {
+			mode = "monitor"
+		}
+		entries = append(entries, entry{ID: pol.ID, Name: pol.Name, Mode: mode, Priority: pol.Priority, Checks: pol.Checks})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
-	// encoding/json sorts map keys, so the encoding is deterministic.
-	b, err := json.Marshal(entries)
-	if err != nil {
-		// A config that cannot be encoded still must not share entries with
-		// keys that have no policies.
-		b = []byte("unencodable")
-		for _, e := range entries {
-			b = append(b, '|')
-			b = append(b, e.ID...)
-		}
+	timeout := defaultTimeout
+	if g.TimeoutMs > 0 {
+		timeout = time.Duration(g.TimeoutMs) * time.Millisecond
 	}
-	h := fnv.New128a()
-	h.Write([]byte(keyID))
-	h.Write([]byte{0})
-	h.Write(b)
-	return hex.EncodeToString(h.Sum(nil))
+	pipelineMode := "parallel"
+	if strings.EqualFold(strings.TrimSpace(g.PipelineMode), "sequential") {
+		pipelineMode = "sequential"
+	}
+	// encoding/json sorts map keys, so the encoding is deterministic.
+	b, err := json.Marshal(struct {
+		KeyID        string                     `json:"key_id"`
+		Policies     []entry                    `json:"policies"`
+		Checks       map[string]*GuardrailCheck `json:"checks"`
+		FailOpen     bool                       `json:"fail_open"`
+		Timeout      time.Duration              `json:"timeout"`
+		PipelineMode string                     `json:"pipeline_mode"`
+	}{
+		KeyID: keyID, Policies: entries, Checks: g.Checks,
+		FailOpen: g.FailOpen, Timeout: timeout, PipelineMode: pipelineMode,
+	})
+	if err != nil {
+		return "uncacheable-key-policy", false
+	}
+	digest := sha256.Sum256(b)
+	return hex.EncodeToString(digest[:]), true
 }

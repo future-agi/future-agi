@@ -23,7 +23,7 @@ type Plugin struct {
 	semanticStore cache.SemanticBackend
 	edgeHandler   *EdgeCacheHandler
 	defaultTTL    time.Duration
-	tenantStore   *tenant.Store // nil-safe; partitions entries by key policy
+	tenantStore   *tenant.Store // nil-safe; bypasses caching for selected key policies
 }
 
 // New creates a new cache plugin with a pluggable backend.
@@ -52,9 +52,9 @@ func (p *Plugin) SetSemanticStoreFromConcrete(s *cache.SemanticStore) {
 	p.semanticStore = cache.NewMemorySemanticBackend(s)
 }
 
-// SetTenantStore lets the cache see the org's guardrail key policies. A cache
-// hit skips the pre-stage guardrails, so a request made with a key that has
-// key policies must only be served what was stored under the same policies.
+// SetTenantStore lets the cache see the org's guardrail key policies. Cache
+// hits skip pre-stage guardrails, so selected keys bypass every cache layer,
+// including Monitor policies whose checks must observe each request.
 func (p *Plugin) SetTenantStore(s *tenant.Store) {
 	p.tenantStore = s
 }
@@ -74,6 +74,15 @@ func (p *Plugin) PostPriority() int { return 55 }
 
 // ProcessRequest checks the cache for a hit before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Outputs are authoritative, not caller metadata or state from an earlier
+	// invocation. In particular, a bypass must leave no key eligible for store.
+	clearCacheMetadata(rc)
+	fp, bypass := p.keyPolicyCacheState(rc)
+	if bypass {
+		skipKeyPolicyCache(rc)
+		return pipeline.ResultContinue()
+	}
+
 	// Per-org cache override: if the org has disabled caching, skip entirely.
 	if rc.Metadata["org_cache_disabled"] == "true" {
 		rc.Metadata["cache_status"] = "skip_org_disabled"
@@ -97,15 +106,12 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		return pipeline.ResultContinue()
 	}
 
-	// Build cache key.
-	fp := p.keyPolicyFingerprint(rc)
+	// Build cache key only for requests eligible for both lookup and store.
 	rc.Metadata[keyPoliciesMetadata] = fp
 	namespace := namespaceWithKeyPolicies(cacheNamespace(rc), fp)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
-	// A semantic hit answers a different (similar) prompt, so the request's
-	// own text never reached its key policies' pre-stage checks: requests on
-	// keys with key policies use exact matches only.
+	rc.Metadata[cacheInitializedMetadata] = "true"
 	semantic := p.semanticStore != nil && fp == ""
 	if semantic {
 		// Fixed now so ProcessResponse stores under it even on force-refresh or
@@ -178,6 +184,19 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 // ProcessResponse stores the response in the cache after a provider call.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Recheck assignment: a policy may have been added since lookup. A request
+	// that bypassed lookup stays bypassed even if its policies were revoked.
+	currentFP, bypass := p.keyPolicyCacheState(rc)
+	if bypass || rc.Metadata["cache_status"] == "skip_key_policy" {
+		skipKeyPolicyCache(rc)
+		return pipeline.ResultContinue()
+	}
+	// Post plugins can run without this plugin's request stage. A cache_key
+	// alone is not evidence that lookup initialized a cacheable request.
+	if rc.Metadata[cacheInitializedMetadata] != "true" {
+		return pipeline.ResultContinue()
+	}
+
 	// Skip if already a cache hit, streaming, or no response.
 	if rc.Flags.CacheHit || rc.IsStream || rc.Response == nil {
 		return pipeline.ResultContinue()
@@ -203,11 +222,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
-	// The key's policies changed while the request ran (Enforce to Monitor,
-	// say): the guardrails may have judged it under other policies than the
-	// ones its cache key names, so it is not stored there.
+	// Keep the fingerprint guard as well as the selection gate: never store
+	// under a policy identity different from the one captured during lookup.
 	fp := rc.Metadata[keyPoliciesMetadata]
-	if p.keyPolicyFingerprint(rc) != fp {
+	if currentFP != fp {
 		return pipeline.ResultContinue()
 	}
 
@@ -301,21 +319,48 @@ func cacheNamespace(rc *models.RequestContext) string {
 // was built with.
 const keyPoliciesMetadata = "cache_key_policies"
 
-// keyPolicyFingerprint identifies the request's key and the guardrail key
-// policies that apply to it, or is "" when none do. Guardrails run after the
-// cache (priority 50 vs 35), so a hit skips the pre-stage checks: an entry may
-// only be served to requests that face the same checks as the one that stored
-// it. Org-wide checks are the same for every key of the org; key policies are
-// not.
-func (p *Plugin) keyPolicyFingerprint(rc *models.RequestContext) string {
+// cacheInitializedMetadata is set only after this plugin accepts a request
+// for caching. The HTTP metadata parser reserves the cache_ prefix, so callers
+// cannot forge this marker. Reset it on every request invocation, including
+// early exits; RequestContext.Release also clears metadata before pool reuse.
+const cacheInitializedMetadata = "cache_request_initialized"
+
+func clearCacheMetadata(rc *models.RequestContext) {
+	for _, key := range []string{
+		"cache_key", keyPoliciesMetadata, cacheInitializedMetadata,
+		"cache_semantic_partition", "cache_similarity", "cache_status",
+		"edge_cache", "edge_cache_control", "edge_cache_vary", "edge_cache_etag",
+	} {
+		delete(rc.Metadata, key)
+	}
+}
+
+func skipKeyPolicyCache(rc *models.RequestContext) {
+	clearCacheMetadata(rc)
+	rc.Metadata["cache_status"] = "skip_key_policy"
+	// edge_* output metadata is not reserved by every input path. Overwrite
+	// forged public headers as well as suppressing our own edge cache headers.
+	rc.Metadata["edge_cache"] = "SKIP"
+	rc.Metadata["edge_cache_control"] = "no-store"
+}
+
+// keyPolicyCacheState returns the policy identity and whether caching must be
+// bypassed. Matching alone is sufficient, even for Monitor or disabled checks:
+// neither identical input nor a configuration fingerprint proves that skipping
+// admission (which can read context or call a webhook) is safe.
+func (p *Plugin) keyPolicyCacheState(rc *models.RequestContext) (string, bool) {
 	if p.tenantStore == nil {
-		return ""
+		return "", false
 	}
 	orgCfg := p.tenantStore.Get(rc.Metadata["org_id"])
 	if orgCfg == nil || orgCfg.Guardrails == nil {
-		return ""
+		return "", false
 	}
-	return orgCfg.Guardrails.KeyPolicyFingerprint(rc.Metadata["auth_key_id"])
+	keyID := rc.Metadata["auth_key_id"]
+	// No guessed engine default: selected policies are never cached, so this
+	// identity is defensive only, not a claim that their checks are replayable.
+	fp, cacheable := orgCfg.Guardrails.KeyPolicyCacheFingerprint(keyID, 0)
+	return fp, !cacheable || len(orgCfg.Guardrails.KeyPoliciesFor(keyID)) > 0
 }
 
 // namespaceWithKeyPolicies partitions the namespace by the key-policy
