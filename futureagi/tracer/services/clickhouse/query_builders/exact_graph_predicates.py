@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -111,6 +111,62 @@ class ExactGraphRowPredicatePlan:
     # witnesses are unbounded. Today only the effective Tag leaf: the list's tag
     # relation reads that window, so a span tagged outside it never matches.
     event_window_only: tuple[bool, ...] = ()
+    # Native trace `tags` is evaluated on ONE classifier-selected root. Keep
+    # its rank with the physical winner, then merge (rank, match) states rather
+    # than max(match) across roots/buckets. Other leaves remain any-span.
+    selected_root_predicates: tuple[int, ...] = ()
+    root_order_expression: str = ""
+
+
+def selected_root_order_sql(
+    filters: list[dict[str, Any]],
+    *,
+    window_start: datetime | None,
+    window_end: datetime | None,
+    project_version_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """The trace classifier's root eligibility and complete physical tie-break.
+
+    Evaluate this on a physical row and carry it through the SAME winner tuple
+    as the tag match. Never filter mutable time/version before replacement.
+    The leading eligibility bit permits compact max((rank, match)) states;
+    ineligible descendants can neither replace nor witness the selected root.
+    """
+    params: dict[str, Any] = {}
+    terms = ["(parent_span_id IS NULL OR parent_span_id = '')"]
+    for boundary, name, operator in (
+        (window_start, "graph_root_start", ">="),
+        (window_end, "graph_root_end", "<"),
+    ):
+        if boundary is not None:
+            # Driver datetime literals otherwise lose subsecond precision.
+            utc_boundary = boundary.astimezone(UTC) if boundary.tzinfo else boundary
+            params[name] = utc_boundary.strftime("%Y-%m-%d %H:%M:%S.%f")
+            terms.append(f"start_time {operator} toDateTime64(%({name})s, 6, 'UTC')")
+    exclusion, exclusion_params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
+        filters, column="start_time", param_prefix="graph_root_exclusion"
+    )
+    if exclusion:
+        terms.append(f"({exclusion})")
+        params.update(exclusion_params)
+    if project_version_id:
+        params["graph_root_project_version"] = str(project_version_id)
+        terms.append("project_version_id = toUUID(%(graph_root_project_version)s)")
+    eligible = " AND ".join(terms)
+    return (
+        f"tuple(toUInt8(ifNull(({eligible}), 0)), "
+        "start_time, id, toString(observation_type), toString(service_name), "
+        "toStartOfHour(start_time))",
+        params,
+    )
+
+
+def selected_root_match_sql(state: str) -> str:
+    """Decode (root order, match); without a root neither operator matches."""
+    return (
+        f"if(tupleElement(tupleElement({state}, 1), 1) = 1, "
+        f"toInt16(tupleElement({state}, 2)), toInt16(-1))"
+    )
 
 
 def _filter_parts(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -693,7 +749,7 @@ class EffectiveTagGraphCompiler:
         self.window_start = window_start
         self.window_end = window_end
         self._deadline: ReadDeadline | None = None
-        self._rendered = 0
+        self._tag_params: dict[str, Any] = {}
 
     def requirement(
         self, *, column_id: str, config: dict[str, Any], filter_index: int
@@ -701,12 +757,15 @@ class EffectiveTagGraphCompiler:
         from tracer.services.clickhouse.bounded_graph_reads import (
             BoundedGraphReadError,
         )
-        from tracer.services.clickhouse.v2.effective_tags import MAX_TAG_OVERLAY_BYTES
+        from tracer.services.clickhouse.v2.effective_tags import (
+            MAX_TAG_OVERLAY_BYTES,
+            shared_tag_parameter_bytes,
+        )
 
         if self._deadline is None:
             self._deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
         try:
-            requirement, rendered = _compile_effective_tag_filter(
+            requirement, _ = _compile_effective_tag_filter(
                 column_id=column_id,
                 config=config,
                 project_id=self.project_id,
@@ -716,8 +775,11 @@ class EffectiveTagGraphCompiler:
                 window_start=self.window_start,
                 window_end=self.window_end,
             )
-            self._rendered += rendered
-            if self._rendered > MAX_TAG_OVERLAY_BYTES:
+            self._tag_params.update(requirement[2])
+            # Execution shares identical collection literals through WITH
+            # aliases. Charge distinct driver-rendered values (including tag
+            # names/escaping), not each leaf's repeated copy of those values.
+            if shared_tag_parameter_bytes(self._tag_params) > MAX_TAG_OVERLAY_BYTES:
                 raise TagReadUnavailable("tag_overlay_budget_exceeded")
         except TagReadUnavailable as exc:
             if exc.code == "tag_overlay_budget_exceeded":
@@ -814,6 +876,7 @@ def compile_exact_graph_row_predicates(
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
+    project_version_id: str | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -838,6 +901,7 @@ def compile_exact_graph_row_predicates(
     predicates: list[str] = []
     output_window_only: list[bool] = []
     event_window_only: list[bool] = []
+    selected_root_predicates: list[int] = []
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
@@ -944,6 +1008,12 @@ def compile_exact_graph_row_predicates(
                     )
                 bound_params.update(predicate_params)
                 requirement_predicate_indexes.append(len(predicates))
+                if (
+                    effective_tag_leaf
+                    and column_id == "tags"
+                    and normalized_observe_type == "trace"
+                ):
+                    selected_root_predicates.append(len(predicates))
                 predicates.append(predicate)
                 # An effective Tag leaf is scoped to the requested event-time
                 # window, as the list's tag relation is; other relations keep
@@ -1095,6 +1165,16 @@ def compile_exact_graph_row_predicates(
         bound_params.update(datetime_params)
         contribution_predicates.append(datetime_predicate)
 
+    root_order_expression = ""
+    if selected_root_predicates:
+        root_order_expression, root_params = selected_root_order_sql(
+            filters or [],
+            window_start=window_start,
+            window_end=window_end,
+            project_version_id=project_version_id,
+        )
+        bound_params.update(root_params)
+
     return ExactGraphRowPredicatePlan(
         predicates=tuple(predicates),
         output_window_only=tuple(output_window_only),
@@ -1104,6 +1184,8 @@ def compile_exact_graph_row_predicates(
         params=bound_params,
         root_contribution=root_contribution,
         event_window_only=tuple(event_window_only),
+        selected_root_predicates=tuple(selected_root_predicates),
+        root_order_expression=root_order_expression,
     )
 
 

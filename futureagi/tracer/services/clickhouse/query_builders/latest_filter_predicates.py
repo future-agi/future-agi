@@ -1559,6 +1559,7 @@ def compile_exact_graph_filter_predicates(
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
+    project_version_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Compile exact graph filters, including overflow JSON arrays/maps.
 
@@ -1582,6 +1583,8 @@ def compile_exact_graph_filter_predicates(
     from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
         EffectiveTagGraphCompiler,
         is_effective_tag_leaf,
+        selected_root_match_sql,
+        selected_root_order_sql,
     )
     from tracer.services.clickhouse.v2.query_builders.filters import (
         ClickHouseFilterBuilderV2,
@@ -1682,7 +1685,30 @@ def compile_exact_graph_filter_predicates(
         row_clause, required, row_params = tag_compiler.requirement(
             column_id=column_id, config=config, filter_index=index
         )
-        if normalized_observe_type == "trace":
+        if normalized_observe_type == "trace" and column_id == "tags":
+            root_order, root_params = selected_root_order_sql(
+                filters or [],
+                window_start=window_start,
+                window_end=window_end,
+                project_version_id=project_version_id,
+            )
+            params.update(root_params)
+            selected_match = selected_root_match_sql("max(matched)")
+            # Select roots BEFORE tag membership, for positives and negatives.
+            # The physical FINAL winner carries its rank and match together;
+            # exclusions/version conditions must not resurrect an older part.
+            source = latest_span_membership_source_sql(
+                predicate=f"tuple({root_order}, toUInt8({row_clause}))",
+                predicate_is_state=True,
+            )
+            row_clause = f"""
+            trace_id IN (
+                SELECT trace_id FROM ({source})
+                GROUP BY trace_id
+                HAVING {selected_match} = {1 if required else 0}
+            )
+            """
+        elif normalized_observe_type == "trace":
             # Absence keeps the positive witness: no live span of the trace
             # matches, exactly as the lists' NOT IN.
             membership = "IN" if required else "NOT IN"
@@ -1744,7 +1770,7 @@ def compile_exact_graph_filter_predicates(
 
 
 def latest_span_membership_source_sql(
-    *, predicate: str = "1", identity_scope: str = ""
+    *, predicate: str = "1", identity_scope: str = "", predicate_is_state: bool = False
 ) -> str:
     """Stream live, in-window physical winners for internal graph membership.
 
@@ -1758,7 +1784,7 @@ def latest_span_membership_source_sql(
         SELECT winner.1 AS trace_id, winner.2 AS id, winner.5 AS matched
         FROM (
             SELECT tuple(trace_id, id, start_time, is_deleted,
-                         toUInt8({predicate})) AS membership_state
+                         {predicate if predicate_is_state else f"toUInt8({predicate})"}) AS membership_state
             FROM spans FINAL
             PREWHERE project_id = toUUID(%(project_id)s)
               AND toStartOfHour(start_time) >=

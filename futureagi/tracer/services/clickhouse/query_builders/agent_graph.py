@@ -22,6 +22,7 @@ from typing import Any
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
+    selected_root_match_sql,
 )
 from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
     graph_monetary_rows_sql,
@@ -58,10 +59,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         project_id: str,
         filters: list[dict] | None = None,
         annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+        project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = list(filters or [])
+        self.project_version_id = project_version_id
         self.annotation_label_ids = (
             None if annotation_label_ids is None else tuple(annotation_label_ids)
         )
@@ -86,6 +89,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
     def _latest_projection(
         row_predicates: tuple[str, ...],
         contribution_predicates: tuple[str, ...],
+        root_order_expression: str = "",
     ) -> tuple[str, str, int]:
         """Return argMax tuple expressions, aliases, and tombstone position."""
 
@@ -123,6 +127,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             )
         )
         aliases.extend(("prompt_tokens", "completion_tokens", "graph_cost_flags"))
+        if root_order_expression:
+            expressions.append(root_order_expression)
+            aliases.append("graph_root_order")
         for index, predicate in enumerate(row_predicates):
             expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             aliases.append(f"graph_row_match_{index}")
@@ -166,12 +173,14 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             window_start=self.start_date,
             window_end=self.end_date,
+            project_version_id=self.project_version_id,
         )
         self.params.update(plan.params)
 
         tuple_sql, projection_sql, tombstone_index = self._latest_projection(
             plan.predicates,
             plan.contribution_predicates,
+            plan.root_order_expression,
         )
         output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
         contribution_terms = [
@@ -189,6 +198,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         match_columns = []
         match_having = []
         for index in range(len(plan.predicates)):
+            if index in plan.selected_root_predicates:
+                selected_match = selected_root_match_sql(
+                    f"max(tuple(graph_root_order, graph_row_match_{index}))"
+                )
+                match_columns.append(f"{selected_match} AS graph_match_{index}")
+                continue
             match_condition = f"graph_row_match_{index} = 1"
             if plan.event_window_only[index]:
                 # A Tag witness counts only inside the requested window, as
@@ -285,7 +300,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 )
             )
             remote_projection, _, _ = self._latest_projection(
-                remote_predicates, plan.contribution_predicates
+                remote_predicates,
+                plan.contribution_predicates,
+                plan.root_order_expression,
             )
             versions_sql = (
                 physical_versions(tuple_sql, f"AND {hour_window}")
@@ -312,6 +329,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 "prompt_tokens",
                 "completion_tokens",
                 "graph_cost_flags",
+                *(("graph_root_order",) if plan.root_order_expression else ()),
                 *(f"graph_row_match_{index}" for index in range(len(plan.predicates))),
                 *(
                     f"graph_contribution_match_{index}"
