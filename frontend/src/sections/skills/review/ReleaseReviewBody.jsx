@@ -226,8 +226,8 @@ export function TypedEvidenceList({
             variant="panel"
             title={
               ref.source === "skills_text"
-                ? "Text comparison"
-                : "Native application evidence"
+                ? "Answer check"
+                : "Application test"
             }
           >
             <Stack spacing={1}>
@@ -480,8 +480,8 @@ export default function ReleaseReviewBody({
           { label: 'Who is affected', value: impact ? impactSentence(impact) : 'Application impact has not been measured.' },
           { label: 'Permissions', value: capabilities ? (capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.') : 'Comparison unavailable. Review the file changes before deciding.' },
           { label: 'Files', value: filesFact },
-          // The full configuration digest is one hover or focus away, never primary text; Version details holds the copyable value.
-          packet.target && { label: 'Application target', value: <Tooltip title={packet.target.configurationDigest || ''} describeChild><span tabIndex={0}>{`Application configuration r${packet.target.revision}`}</span></Tooltip> },
+          // The full configuration digest is one hover or focus away, never primary text; Technical details holds the copyable value and the revision.
+          packet.target && { label: 'Application target', value: <Tooltip title={packet.target.configurationDigest || ''} describeChild><span tabIndex={0}>App configuration</span></Tooltip> },
         ]} />
       </Stack>
       {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">
@@ -489,14 +489,10 @@ export default function ReleaseReviewBody({
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
           return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
         })} renderAction={(item) => {
-          // The reviewer decides on these exact results: each row names its identity and
-          // grading completeness without an extra Inspect step.
+          // Each row states its outcome once (the Coverage cell carries the counts). The evidence ID and the
+          // exact grading counts are one Inspect away, where the reviewer reads this result in full.
           const summary = summaries?.find((row) => evidenceKey(row) === `${item.source}:${item.id}`);
-          return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
-            <NativeOutcomes summary={summary} />
-            <IdentityChip inline kind="id" label="Evidence" value={item.id} />
-            {summary && <Typography variant="s3" color="text.secondary">{`${summary.graded ?? 'Unknown'}/${summary.planned ?? 'Unknown'} attempts graded · ${summary.incomplete ?? 'Unknown'} incomplete · ${counted(summary.regressions ?? 'Unknown', 'regression')}`}</Typography>}
-          </Stack>;
+          return <NativeOutcomes summary={summary} />;
         }} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
         {selected.filter((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. It will not be silently dropped.</Alert>)}
         {inspecting && <TechnicalDetails title="Inspected result" defaultOpen><TypedEvidenceList {...{ packet, onShare, summaries }} selected={selected.filter((ref) => evidenceKey(ref) === inspecting)} onSelectionChange={onSelectionChange ? (refs) => onSelectionChange([...selected.filter((ref) => evidenceKey(ref) !== inspecting), ...refs]) : undefined} evidence={evidence.filter((ref) => evidenceKey(ref) === inspecting)} /></TechnicalDetails>}
@@ -552,7 +548,7 @@ export default function ReleaseReviewBody({
           compared fingerprints, the per-app counts with their caveat, and the version identities. */}
       <Stack spacing={1} sx={{ minWidth: 0 }}>
         <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
-        {impact && <TechnicalDetails title="Counts by app">
+        {impact && <TechnicalDetails title="Apps affected">
           <Stack spacing={1}>
             <Typography variant="s3">
               {counted(impact.following, 'follower')} · {counted(impact.pinned, 'intentional pin')} ·{" "}
@@ -570,7 +566,7 @@ export default function ReleaseReviewBody({
             />
           </Stack>
         </TechnicalDetails>}
-        <TechnicalDetails title="Version details">
+        <TechnicalDetails title="Technical details">
           <Stack spacing={1}>
             <IdentityValue
               label="Candidate version ID"
@@ -606,11 +602,10 @@ export default function ReleaseReviewBody({
             )}
           </Stack>
         </TechnicalDetails>
-        {/* Static checks and pipeline results appear only when there is something to review. */}
+        {/* Checks and pipeline results appear only when there is something to review: no empty heading. */}
+        {!checks && <Section title="Checks"><ErrorState title="Couldn't load checks." onRetry={onRetryDependencies} /></Section>}
         {!checksEmpty && <>
-          <Section title="Static checks">
-            {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
-          </Section>
+          {checks?.items?.length > 0 && <Section title="Checks"><ChecksList checks={checks} /></Section>}
           <Section title="CI results">{packet.externalPipeline ? <ExternalPipeline reference={packet.externalPipeline} /> : <Typography variant="s3" color="text.secondary">None attached</Typography>}</Section>
         </>}
       </Stack>

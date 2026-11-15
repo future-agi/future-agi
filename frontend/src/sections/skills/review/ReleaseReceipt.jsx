@@ -20,14 +20,16 @@ export default function ReleaseReceipt({ receipt, request }) {
   const resourceUrl = subjectId ? (kind === 'agent_context' ? paths.dashboard.skills.contextDetail(subjectId) : paths.dashboard.skills.detail(subjectId)) : null;
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
   return <Stack spacing={1.5} aria-label="Release receipt">
-      <Typography variant="s3" color="text.secondary">Release receipt</Typography>
-      <Typography variant="s1" sx={{ fontWeight: 600 }}>{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography>
+      {/* The page title already states the move ("Production moved from v1 to v2"); the receipt is the record. */}
+      <Stack direction="row" gap={0.75} alignItems="baseline" flexWrap="wrap">
+        <Typography variant="s3" color="text.secondary">Release receipt</Typography>
+        {receipt.recordedAt ? <Tooltip title={receipt.recordedAt}><Typography component="span" variant="s3" color="text.secondary">· {relativeReviewTime(receipt.recordedAt)}</Typography></Tooltip> : <Typography component="span" variant="s3" color="text.secondary">· Time not reported</Typography>}
+      </Stack>
       <SummaryTable label="Release receipt details" labelWidth={140} rows={[
         { label: 'Before the move', value: before != null ? `${labelName} v${before}` : `${labelName} unassigned` },
         { label: 'After the move', value: `${labelName} v${after.version}` },
         { label: 'Approved by', value: reviewPersonName(receipt.approvedByName) },
         { label: 'Released by', value: reviewPersonName(receipt.executedByName) },
-        { label: 'Recorded', value: receipt.recordedAt ? <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip> : 'Time not reported' },
       ]} />
       <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
       <Stack direction="row" flexWrap="wrap" alignItems="center" gap={1}>

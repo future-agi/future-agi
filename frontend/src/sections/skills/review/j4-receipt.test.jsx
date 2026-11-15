@@ -11,7 +11,8 @@ afterEach(cleanup);
 it('renders a metadata-only receipt without requiring retained packet contents', () => {
   render(<ReleaseRequestPanel scopeKey="org:workspace:reviewer" state="ready" receipt={receipt} />);
   expect(screen.getByText('Release receipt')).toBeVisible();
-  expect(screen.getByText('Production moved to v2')).toBeVisible();
+  // The page title states the move once ("Production moved from v1 to v2"); the receipt itself does not repeat it.
+  expect(screen.queryByText('Production moved to v2')).not.toBeInTheDocument();
   expect(screen.queryByText('Recorded preconditions')).not.toBeInTheDocument();
   // Before/after state is the receipt's evidence and is visible without a disclosure.
   expect(screen.getByText('Before the move')).toBeVisible();

@@ -96,14 +96,14 @@ describe("typed release evidence", () => {
     );
     expect(screen.getByText("Answer check · v7 vs v4")).toBeVisible();
     expect(screen.getByText("Application test · v7 vs v4")).toBeVisible();
-    // The evidence row itself names grading completeness; Inspect adds the full record.
-    expect(
-      screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
-    ).toBeVisible();
+    // The evidence row states its outcome once; the exact grading counts and the evidence ID are read in Inspect.
+    expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence ID/)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
     expect(
       screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(screen.getByText("Evidence ID")).toBeVisible();
     expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();
     expect(screen.getAllByText(/Result not recorded; inspect before relying on it/)).toHaveLength(1);
@@ -486,7 +486,8 @@ function Arrival() {
 describe("reviewer arrival and annotation", () => {
   it("finds the exact review from a server-backed inbox without a supplied detail URL", () => {
     render(<Arrival />);
-    expect(screen.getByText("1 request waiting for your decision")).toBeVisible();
+    // The tab label carries the waiting count; no separate count line repeats it.
+    expect(screen.queryByText("1 request waiting for your decision")).not.toBeInTheDocument();
     click("refund-context");
     expect(screen.getByText(/Production moves/)).toBeVisible();
     expect(
@@ -528,7 +529,8 @@ describe("reviewer arrival and annotation", () => {
     );
     await waitFor(() => expect(seen).toHaveBeenCalledTimes(1));
     expect(seen.mock.calls[0][0]).toMatchObject({ requestId: ID, revision: 2 });
-    expect(screen.getByText("1 request waiting for your decision")).toBeVisible();
+    // The tab label carries the waiting count; no separate count line repeats it.
+    expect(screen.queryByText("1 request waiting for your decision")).not.toBeInTheDocument();
   });
   it("preserves machine verdict and appends an attributed disagreement with revision CAS", async () => {
     const append = vi.fn().mockResolvedValue({ id: ID });
@@ -788,4 +790,31 @@ it('names what the tab counts, shows Review only to the assigned reviewer and Op
   expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
   rerender(<ReleaseInbox {...props} data={{ ...data, pendingCount: 0 }} currentUserId="reviewer" />);
   expect(screen.getByRole('tab', { name: 'Assigned to me' })).toBeVisible();
+});
+
+it('uses small outlined buttons for every desktop row action', () => {
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
+  const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: false, authorId: 'author' };
+  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1, results: [released, pending] }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={vi.fn()} />);
+  [screen.getByRole('button', { name: 'Review', exact: true }), ...screen.getAllByRole('button', { name: 'Open', exact: true })].forEach((button) => {
+    expect(button).toHaveClass('MuiButton-outlined');
+    expect(button).toHaveClass('MuiButton-sizeSmall');
+  });
+});
+
+it('stacks each phone card as name and status, request title, then who and when, and opens the request from the whole card', () => {
+  media.narrow = true;
+  const onOpen = vi.fn();
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorName: 'Sam Rivera', updatedAt: '2026-11-12T11:50:00Z', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
+  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1, results: [pending] }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={onOpen} />);
+  const card = screen.getByRole('button', { name: 'Pending review', exact: true });
+  // No separate Review or Open button on a phone: the card is the one tap target; the menu stays at its top right.
+  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Open', exact: true })).not.toBeInTheDocument();
+  expect(within(card).getByText('In review')).toBeVisible();
+  expect(within(card).getByText(/Sam Rivera ·/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Actions for Pending review' })).toBeVisible();
+  expect(card.contains(screen.getByRole('button', { name: 'Actions for Pending review' }))).toBe(false);
+  fireEvent.click(card);
+  expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'pending' }));
 });

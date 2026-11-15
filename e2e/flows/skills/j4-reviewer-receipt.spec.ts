@@ -69,7 +69,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await authorPage.getByRole('button', { name: 'Request review', exact: true }).click();
     await authorPage.getByLabel('Name', { exact: true }).click();
     await authorPage.getByRole('option', { name, exact: true }).click();
-    await authorPage.getByLabel('Published candidate').click();
+    await authorPage.getByLabel('Version to release').click();
     await authorPage.getByRole('option', { name: /^v2/ }).click();
     await authorPage.getByLabel('Assigned reviewer').click();
     const reviewerOption = authorPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true });
@@ -119,7 +119,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await expect(page.getByText('Candidate policy requiring independent approval.', { exact: false }).first()).toBeVisible();
     const otherChecks = page.getByRole('button', { name: 'Other checks', exact: true });
     if (await otherChecks.count()) await otherChecks.click();
-    await page.getByRole('button', { name: 'Compared content', exact: true }).click();
+    await page.getByRole('button', { name: 'What was compared', exact: true }).click();
     await expect(page.getByText('No changes in recognized static declarations. This is not a safety certification.', { exact: true })).toBeVisible();
     const inspected = await api(reviewer, 'POST', 'release-requests/inspection/', {
       resource_id: id, kind: 'skill', candidate_version_id: candidate.version.id, label: 'production',
@@ -159,7 +159,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await page.screenshot({ path: `${output}/shots/05-stale-policy-refused.png` });
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(page.getByText('Approval no longer applies. Review the change and renew the request.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approval no longer applies. See what changed and renew the request.', { exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/review-stale.png` });
     const renewalContext = await scopeActors.openContext(browser, author);
     const renewalPage = await renewalContext.newPage();
@@ -171,7 +171,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
       await renewalPage.getByRole('button', { name, exact: true }).click();
       await renewalPage.getByRole('button', { name: 'Revise request', exact: true }).click();
       await expect(renewalPage.getByRole('heading', { name: 'Renew release review', exact: true })).toBeVisible();
-      await renewalPage.getByLabel('Published candidate').click();
+      await renewalPage.getByLabel('Version to release').click();
       await renewalPage.getByRole('option', { name: /^v2/ }).click();
       await renewalPage.getByLabel('Assigned reviewer').click();
       await renewalPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();

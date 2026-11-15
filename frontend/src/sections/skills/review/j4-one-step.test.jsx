@@ -79,18 +79,19 @@ it('carries the published candidate forward, preselects the only target and shar
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
   expect(screen.getByLabelText('Name')).toHaveValue('Refund policy');
-  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
+  expect(screen.getByLabelText('Version to release')).toHaveValue('v2');
   expect(screen.getByLabelText('Type')).toHaveAttribute('aria-disabled', 'true');
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
   expect(screen.getAllByRole('checkbox', { name: /^Attach Answer check/ })).toHaveLength(2);
   screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  // The confirmation names every record it shares by title with a Private badge; IDs sit under Details.
-  expect(within(screen.getByRole('dialog')).getAllByText('Private', { exact: true })).toHaveLength(2);
-  expect(screen.queryByTitle('run-a')).not.toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Details' }));
-  expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
-  expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
+  // The confirmation names every record it shares by title with a Private badge; each full ID is one hover away and never printed.
+  const confirmation = within(screen.getByRole('dialog'));
+  expect(confirmation.getAllByText('Private', { exact: true })).toHaveLength(2);
+  expect(confirmation.queryByText('run-a')).not.toBeInTheDocument();
+  expect(confirmation.queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
+  expect(confirmation.getAllByTitle('run-a').length).toBeGreaterThan(0);
+  expect(confirmation.getAllByTitle('run-b').length).toBeGreaterThan(0);
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
   expect(share).not.toHaveBeenCalled();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
@@ -194,7 +195,7 @@ it('blocks a same-version release, including the batch-share prepare path', asyn
   usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
-  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2 (in production)');
+  expect(screen.getByLabelText('Version to release')).toHaveValue('v2 (in production)');
   expect(screen.getAllByText('v2 is already in production. Choose another version to release.').length).toBeGreaterThan(0);
   expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Next versions' })).not.toBeInTheDocument();
@@ -205,7 +206,7 @@ it('blocks a same-version release, including the batch-share prepare path', asyn
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole('button', { name: 'Choose another version' }));
   expect(screen.getByLabelText('Name')).toHaveAttribute('readonly');
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Published candidate' }));
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Version to release' }));
   expect(screen.getByRole('option', { name: 'v2 (in production)' })).toBeVisible();
 });
 
@@ -292,6 +293,20 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
   expect(await screen.findByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
   expect(submit).not.toHaveBeenCalled();
+  // Step 2 is titled for what it does; step 1 kept "Request release review".
+  expect(screen.getByRole('heading', { name: 'Confirm release request' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Request release review' })).not.toBeInTheDocument();
+  // One footer layout: the acknowledgment on the left; Edit request, Cancel, the reason, then the primary, all in one row.
+  const before = (a, b) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const ack = screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' });
+  const edit = screen.getByRole('button', { name: 'Edit request' });
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  const reason = screen.getByText('Tick the acknowledgment to send');
+  const send = screen.getByRole('button', { name: 'Send review request' });
+  [[ack, edit], [edit, cancel], [cancel, reason], [reason, send]].forEach(([a, b]) => before(a, b));
+  expect(edit).toHaveClass('MuiButton-outlined');
+  expect(send).toHaveAccessibleDescription('Tick the acknowledgment to send');
+  expect(document.querySelector('[data-sticky-footer]').contains(send)).toBe(true);
 });
 
 // ---- UX iteration 3, REV2 and REV5 ----
@@ -312,6 +327,9 @@ it('marks and lists the carried private run first, never ticks it, and warns bes
   screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((box) => expect(box).not.toBeChecked());
   expect(screen.getByText("2 passing results aren't attached. The reviewer will see no test evidence.")).toBeVisible();
   expect(screen.getByRole('button', { name: 'Attach results' })).toBeVisible();
+  // The caution is a warning Alert with its action, not helper text; the footer stays one row.
+  expect(screen.getByText("2 passing results aren't attached. The reviewer will see no test evidence.").closest('.MuiAlert-root')).toHaveClass('MuiAlert-standardWarning');
+  expect(screen.getByRole('button', { name: 'Attach results' }).closest('.MuiAlert-root')).not.toBeNull();
   // Prepare stays one click.
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
@@ -329,11 +347,31 @@ it('shows two numbered steps with the current one marked, and plain headings', (
   expect(steps).toHaveLength(2);
   expect(steps[0]).toHaveAttribute('aria-current', 'step');
   expect(steps[1]).not.toHaveAttribute('aria-current');
-  expect(screen.getByText('Version to release')).toBeVisible();
+  expect(screen.getByText('Release details')).toBeVisible();
   expect(screen.queryByText('Release candidate')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Published candidate')).toBeVisible();
+  expect(screen.queryByText('Published candidate')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Version to release')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Run tests' })).toBeVisible();
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Application target' }));
   expect(screen.getByRole('option', { name: 'Application target · refund_agent' })).toBeVisible();
   expect(screen.queryByText(/Configuration date not reported/)).not.toBeInTheDocument();
+});
+
+it('titles a released request by its outcome with no badge, and names only the resource in the breadcrumb', () => {
+  const transition = { label: 'production', expectedVersion: 1, version: 2 };
+  const packet = { subjectId: 'context', subjectKind: 'agent_context', candidateVersionId: 'v2', candidateDigest: 'sha256:candidate', evidence: [], target: null, transition };
+  useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', name: 'support-agent', authorId: 'author', revision: 3, status: 'released' }, preview: { packet, fingerprint: 'fp', current: true }, receipt: { requestId: 'request', postMoveState: { label: 'production', version: 2 } } }, refetch: vi.fn() });
+  const View = vi.fn(() => null);
+  const { rerender } = render(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={View} /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: 'Production moved from v1 to v2' })).toBeVisible();
+  expect(screen.queryByText('Released', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /^Move production/ })).not.toBeInTheDocument();
+  const crumbs = within(screen.getByLabelText('Breadcrumb'));
+  expect(crumbs.getByText('support-agent')).toBeVisible();
+  expect(crumbs.queryByText('support-agent v2')).not.toBeInTheDocument();
+  // Until it is released the title names the move being asked for, with its status.
+  useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', name: 'support-agent', authorId: 'author', revision: 1, status: 'pending' }, preview: { packet, fingerprint: 'fp', current: true } }, refetch: vi.fn() });
+  rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={View} /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: 'Move production from v1 to v2' })).toBeVisible();
+  expect(screen.getByText('In review')).toBeVisible();
 });

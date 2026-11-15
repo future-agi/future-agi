@@ -34,7 +34,7 @@ import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 // Intent: an assigned reviewer sees exactly what changed after a race and
 // creates the next immutable packet revision. Nothing is refreshed silently;
 // the renewed revision starts pending and needs a new decision.
-// One-step path: "Approve renewed revision" creates the next revision bound to
+// One-step path: "Approve again" creates the next revision bound to
 // the inspected fingerprint and records this reviewer's approval of exactly
 // that revision. Both writes are server-checked; if anything moved after the
 // inspection, the server refuses and the revision stays pending.
@@ -44,8 +44,8 @@ const setting = (path) => {
   if (path.endsWith('expected_security_revision')) return 'Security policy revision';
   if (path.endsWith('expected_release_revision')) return 'Release revision';
   if (path === 'transition.expected_impact_fingerprint') return 'Affected applications';
-  if (path === 'target') return 'Application configuration';
-  if (path.startsWith('target')) return 'Application configuration';
+  if (path === 'target') return 'App configuration';
+  if (path.startsWith('target')) return 'App configuration';
   if (path.startsWith('evidence')) return `Evidence ${path.split('.').slice(1).join(' ').replaceAll('_', ' ')}`;
   return path.replace(/^transition\./, '').replaceAll('_', ' ');
 };
@@ -137,7 +137,7 @@ export default function ReleaseRenewalDialog({
     <ClosableDialog open={open} onClose={busy ? undefined : close} disableEscapeKeyDown={busy} fullWidth maxWidth="md" PaperProps={{ sx: { maxWidth: 720 } }}>
       <DialogTitle component="div"><Typography variant="m3" component="h2">Renew release review</Typography></DialogTitle>
       <DialogContent>
-      <Typography variant="s1" component="p" color="text.secondary" sx={{ mb: 2 }}>{value?.changes.some((row) => row.item.endsWith('expected_security_revision')) ? "The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again." : "This request changed after it was reviewed, so the approval no longer applies. Review the changes and approve again."}</Typography>
+      <Typography variant="s1" component="p" color="text.secondary" sx={{ mb: 2 }}>{value?.changes.some((row) => row.item.endsWith('expected_security_revision')) ? "The security policy changed after this request was made, so the approval no longer applies. See what changed and approve again." : "This request changed after it was reviewed, so the approval no longer applies. See what changed and approve again."}</Typography>
       <Stack spacing={1.5} sx={{ minWidth: 0 }}>
         {preview.isLoading && (
           <ContentSkeleton label="Loading changes" rows={3} />
@@ -190,13 +190,18 @@ export default function ReleaseRenewalDialog({
                 <Typography variant="s3" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed request.</Typography>
               </Stack>)}
               <Typography variant="s3">{value.packet.evidence.length ? `The renewed request keeps ${value.packet.evidence.length} ${value.packet.evidence.length === 1 ? 'result' : 'results'} for the same candidate and target.` : 'The renewed request keeps no evidence.'}</Typography>
-              <EvidenceSummary items={value.packet.evidence.map((ref) => ({ ...ref, id: ref.sourceId, title: evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion), expiresAt: ref.payloadExpiresAt }))} renderAction={(item) => <IdentityChip inline kind="id" label="Kept" value={item.id} />} emptyText="" />
+              <EvidenceSummary items={value.packet.evidence.map((ref) => ({ ...ref, id: ref.sourceId, title: evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion), expiresAt: ref.payloadExpiresAt }))} renderAction={() => <Typography variant="s3" color="text.secondary">Kept the same result</Typography>} emptyText="" />
+              {(value.packet.evidence.length > 0 || value.packet.target) && <TechnicalDetails title="Technical details">
+                <Stack spacing={1}>
+                  {value.packet.target && <Typography variant="s3">App configuration r{value.packet.target.revision}</Typography>}
+                  {value.packet.evidence.map((ref) => <IdentityChip key={`${ref.source}:${ref.sourceId}`} kind="id" label={`Kept ${evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)}`} value={ref.sourceId} />)}
+                </Stack>
+              </TechnicalDetails>}
             </Stack>
             <TechnicalDetails title="Changed values">
               {value.changes.map((row) => <Typography key={row.item} variant="s3" component="code" display="block" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.item}</Typography>)}
               <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
             </TechnicalDetails>
-            <Typography variant="s3">Approving records a new approval for this request.</Typography>
             <FormControlLabel
               control={
                 <Checkbox
@@ -212,7 +217,7 @@ export default function ReleaseRenewalDialog({
           </>
         )}
         <OperationFeedback operation={operation} />
-        <Typography variant="s3" color="text.secondary">Renewing without approving creates a pending revision if you need more time to decide.</Typography>
+        <Typography variant="s3" color="text.secondary">Approving again records a new approval. Renew and decide later keeps the request open.</Typography>
       </Stack>
       </DialogContent>
       <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap' }}>
@@ -220,8 +225,8 @@ export default function ReleaseRenewalDialog({
         <Button variant="outlined" disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
           const result = await operation.run(renew.mutateAsync, renewInput);
           if (result) close();
-        }}>Renew without approving</Button>
-        <Button variant="contained" color="primary" disabled={!acknowledged || busy || uncertain || done} onClick={approve}>Approve renewed revision</Button>
+        }}>Renew and decide later</Button>
+        <Button variant="contained" color="primary" disabled={!acknowledged || busy || uncertain || done} onClick={approve}>Approve again</Button>
       </DialogActions>
     </ClosableDialog>
   );

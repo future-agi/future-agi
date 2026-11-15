@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
@@ -89,7 +89,7 @@ it('keeps publication actions in place while confirming the CAS-bound review', a
   const value = { ...draftReview, headAcknowledged: false };
   const { rerender } = render(<MemoryRouter><ContextReleaseReview {...props} draftReview={value} /></MemoryRouter>);
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Confirm the review first');
+  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Tick the review box to publish.');
   expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeVisible();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.' }));
   fireEvent.click(screen.getByRole('button', { name: 'Confirm review' }));
@@ -102,7 +102,7 @@ it('keeps publication actions in place while confirming the CAS-bound review', a
   expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeVisible();
 });
 
-it('shows one action row and one reason line above it, with no anchor tabs, no repeated sentences and no Version note heading', () => {
+it('shows one footer row with the reason beside the publish actions, and Confirm review inside the acknowledgment group', () => {
   const props = { scopeKey: 'scope', state: 'ready', canPublish: true, onAcknowledgeHead: vi.fn(), onPublish: vi.fn(), onPublishAndRequest: vi.fn(), onRefresh: vi.fn() };
   render(<MemoryRouter><ContextReleaseReview {...props} draftReview={{ ...draftReview, headAcknowledged: false }} /></MemoryRouter>);
   expect(screen.queryByRole('navigation', { name: 'Review sections' })).not.toBeInTheDocument();
@@ -111,15 +111,39 @@ it('shows one action row and one reason line above it, with no anchor tabs, no r
   expect(screen.getByRole('textbox', { name: 'Version note' })).toBeVisible();
   expect(screen.queryByText(/without requesting release/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Publishing doesn.t attach or share test results/)).not.toBeInTheDocument();
-  // One reason, above the row, keeping its id.
-  const reason = screen.getByText('Confirm the review first');
-  expect(screen.getAllByText('Confirm the review first')).toHaveLength(1);
+  // Confirm review sits with the checkboxes it confirms, with its one-line why.
+  const group = screen.getByRole('group', { name: 'Review acknowledgments' });
+  expect(within(group).getByRole('checkbox', { name: 'I reviewed these changes against the current published version.' })).toBeInTheDocument();
+  expect(within(group).getByRole('button', { name: 'Confirm review' })).toBeVisible();
+  expect(within(group).getByText("Locks this review to the current draft, so later edits can't be published by mistake.")).toBeVisible();
+  // The footer is one row of three buttons; one reason sits between Reload draft and the publish actions, keeping its id.
+  const reason = screen.getByText('Tick the review box to publish.');
+  expect(screen.getAllByText('Tick the review box to publish.')).toHaveLength(1);
   expect(reason).toHaveAttribute('id', 'publish-review-reason');
-  const row = ['Reload draft', 'Confirm review', 'Publish version', 'Publish and request review'].map((name) => screen.getByRole('button', { name }));
-  expect(row[0].parentElement.parentElement).toBe(row[3].parentElement.parentElement.parentElement);
+  const row = ['Reload draft', 'Publish version', 'Publish and request review'].map((name) => screen.getByRole('button', { name }));
+  expect(screen.queryAllByRole('button', { name: 'Confirm review' }).filter((button) => !group.contains(button))).toHaveLength(0);
+  expect(row[0].parentElement).toBe(row[2].parentElement.parentElement);
   row.forEach((button, index) => {
     if (index) expect(row[index - 1].compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
-  expect(reason.compareDocumentPosition(row[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Reload draft' })).toHaveClass('MuiButton-text');
+  expect(row[0].compareDocumentPosition(reason) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(reason.compareDocumentPosition(row[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(row[0]).toHaveClass('MuiButton-text');
+  expect(row[1]).toHaveClass('MuiButton-outlined');
+  expect(row[2]).toHaveClass('MuiButton-contained');
+  // After the box is ticked the reason changes to the publish-only hint.
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.' }));
+  expect(screen.getByText('Confirm the review above to publish only.')).toHaveAttribute('id', 'publish-review-reason');
+  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Confirm the review above to publish only.');
+});
+
+it('leads with one line (the version it creates, what changes, where production stays) and renames the engineer sections', () => {
+  const props = { scopeKey: 'scope', state: 'ready', canPublish: true, onAcknowledgeHead: vi.fn(), onPublish: vi.fn(), onPublishAndRequest: vi.fn(), onRefresh: vi.fn() };
+  render(<MemoryRouter><ContextReleaseReview {...props} name="support-agent" draftReview={{ ...draftReview, headAcknowledged: false }} /></MemoryRouter>);
+  const lead = screen.getByRole('status');
+  expect(lead).toHaveTextContent(/^v7 (changes|has) .*AGENTS\.md.*\. Production stays on v4 until it is reviewed and released\.$/);
+  expect(lead).not.toHaveTextContent(/Publishing creates/);
+  expect(screen.getByText('What publishing creates')).toBeVisible();
+  ['Technical details', 'Linked skill versions', 'Permission changes'].forEach((name) => expect(screen.getByRole('button', { name })).toBeVisible());
+  ['Exact identities', 'Locked versions', 'Permissions comparison', /^Raw /].forEach((name) => expect(screen.queryByRole('button', { name })).not.toBeInTheDocument());
 });

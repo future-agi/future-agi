@@ -255,6 +255,18 @@ function PacketActions({
         </Stack>
       </Stack>}
       {!request && onEdit && <Stack direction="row" spacing={1} alignItems="center"><Typography variant="s3">Reviewer: {reviewPersonName(recipients.find((person) => person.id === recipientId)?.name)}</Typography><Button size="small" disabled={locked} onClick={onEdit}>Change</Button></Stack>}
+      {/* The paused notice lives in the page, under the status line; the sticky bar below stays one row. */}
+      {!closed && !current && <Alert severity="warning">
+        <AlertTitle>{renewalReason || (staleCode === 'evidence_expired' ? 'Attached evidence expired after this request was made.' : 'This request changed after it was reviewed.')}</AlertTitle>
+        <Typography variant="s1" component="p">{request ? 'Approval no longer applies. See what changed and renew the request.' : 'Refresh the review before sending the request.'}</Typography>
+        {onRenew && request && permissions.canDecide && <Button variant="contained" color="primary" disabled={locked} sx={{ mt: 1 }} onClick={() => { setConfirm(false); onRenew(); }}>Renew review</Button>}
+        {(reasons.length > 0 || refresh) && <TechnicalDetails title="Why this review is paused">
+          <Stack spacing={0.5} alignItems="flex-start">
+            {Array.from(new Set(reasons)).map((reason) => <Typography key={reason} variant="s3">{reason}</Typography>)}
+            {refresh && <Button size="small" disabled={locked} onClick={refresh}>Refresh</Button>}
+          </Stack>
+        </TechnicalDetails>}
+      </Alert>}
       {!finalReceipt && <Box sx={{ pb: { xs: 2, sm: 'calc(var(--skills-sticky-footer-height, 0px) + 16px)' } }}>
         <ReleaseReviewBody {...review} packet={packet} availableEvidence={availableEvidence} onRetryDependencies={refresh} />
       </Box>}
@@ -263,23 +275,12 @@ function PacketActions({
         <Button sx={{ display: { xs: 'block', sm: 'none' }, position: 'sticky', bottom: 0, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', zIndex: 2 }} onClick={() => decisionPanel.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>Review decision ↓</Button>
         <Box ref={decisionPanel} data-sticky-footer sx={{ position: { xs: 'static', sm: 'sticky' }, bottom: 0, zIndex: 2, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', minHeight: 64, py: 1, px: 1.5 }}>
           <Stack spacing={1.5}>
-            {!current && <Alert severity="warning">
-              <AlertTitle>{renewalReason || (staleCode === 'evidence_expired' ? 'Attached evidence expired after this request was made.' : 'This request changed after it was reviewed.')}</AlertTitle>
-              <Typography variant="s1" component="p">{request ? 'Approval no longer applies. Review the change and renew the request.' : 'Refresh the review before sending the request.'}</Typography>
-              {onRenew && request && permissions.canDecide && <Button variant="contained" color="primary" disabled={locked} sx={{ mt: 1 }} onClick={() => { setConfirm(false); onRenew(); }}>Renew review</Button>}
-              {(reasons.length > 0 || refresh) && <TechnicalDetails title="Why this review is paused">
-                <Stack spacing={0.5} alignItems="flex-start">
-                  {Array.from(new Set(reasons)).map((reason) => <Typography key={reason} variant="s3">{reason}</Typography>)}
-                  {refresh && <Button size="small" disabled={locked} onClick={refresh}>Refresh</Button>}
-                </Stack>
-              </TechnicalDetails>}
-            </Alert>}
             {!request && !onEdit && <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
                 onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
                 helperText="An independent reviewer must approve before production can move." />}
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
-            {!request && onEdit && <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}><Button variant="outlined" disabled={locked} onClick={onEdit}>Edit request</Button><Button disabled={locked} onClick={onCancel}>Cancel</Button></Stack>}
-            <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: 1, minWidth: { md: 240 } }}
+            {/* One footer layout: the acknowledgment on the left; secondary actions, then the reason, then the primary on the right, all centred. */}
+            <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap gap={1.5} flexWrap={{ sm: 'wrap' }} alignItems={{ xs: 'stretch', sm: 'center' }}>
+            <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: { sm: '1 1 280px' }, minWidth: 0, mr: 0 }}
               control={
                 <Checkbox
                   checked={reviewed}
@@ -289,8 +290,26 @@ function PacketActions({
               }
               label="I reviewed this exact candidate, target, evidence and release consequence."
             />
-            <Stack spacing={0} sx={{ minWidth: 0, flexShrink: 0 }}>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ minWidth: 0, ml: { sm: 'auto' } }}>
+              {!request && onEdit && <><Button variant="outlined" disabled={locked} onClick={onEdit}>Edit request</Button><Button disabled={locked} onClick={onCancel}>Cancel</Button></>}
+              {request && <>
+                {request.status !== 'approved' && !commentFocused && !comment && <Button size="small" sx={{ ml: { sm: -1 } }} disabled={locked || !canRequestChanges} onClick={() => setCommentFocused(true)}>Add comment</Button>}
+                {request.status !== "approved" && <Button
+                  variant="outlined"
+                  disabled={
+                    !onDecide ||
+                    !canRequestChanges ||
+                    locked
+                  }
+                  onClick={() => {
+                    if (!comment.trim()) { setCommentFocused(true); return; }
+                    operation.run(onDecide, { ...actionInput, decision: "request_changes", comment });
+                  }}
+                >
+                  Request changes
+                </Button>}
+              </>}
+              <ActionReason id="decision-reason" reason={decisionReason} sx={{ textAlign: { sm: 'right' } }} />
               {!request && (
                 <Button
                   variant="contained" color="primary" {...reasonProps('decision-reason', decisionReason)}
@@ -314,47 +333,28 @@ function PacketActions({
                   Send review request
                 </Button>
               )}
-              {request && (
-                <>
-                  {request.status !== 'approved' && !commentFocused && !comment && <Button size="small" sx={{ ml: -1 }} disabled={locked || !canRequestChanges} onClick={() => setCommentFocused(true)}>Add comment</Button>}
-                  {request.status !== "approved" && <Button
-                    variant="outlined"
-                    disabled={
-                      !onDecide ||
-                      !canRequestChanges ||
-                      locked
-                    }
-                    onClick={() => {
-                      if (!comment.trim()) { setCommentFocused(true); return; }
-                      operation.run(onDecide, { ...actionInput, decision: "request_changes", comment });
-                    }}
-                  >
-                    Request changes
-                  </Button>}
-                  {request.status === "pending" && <Button {...reasonProps('decision-reason', decisionReason)}
-                    variant="contained" color="primary"
-                    disabled={!onDecide || !canDecide || !reviewed || locked}
-                    onClick={() =>
-                      operation.run(onDecide, {
-                        ...actionInput,
-                        decision: "approve",
-                        comment,
-                      })
-                    }
-                  >
-                    Approve release
-                  </Button>}
-                  {(request.status === "approved" || !current) && <Button {...reasonProps('decision-reason', decisionReason)}
-                    variant="contained" color="primary"
-                    disabled={!onExecute || !canExecute || !reviewed || locked}
-                    onClick={() => setConfirm(true)}
-                  >
-                    Release to production
-                  </Button>}
-                </>
-              )}
-              </Stack>
-              <ActionReason id="decision-reason" reason={decisionReason} sx={{ textAlign: { sm: 'right' } }} />
+              {request && <>
+                {request.status === "pending" && <Button {...reasonProps('decision-reason', decisionReason)}
+                  variant="contained" color="primary"
+                  disabled={!onDecide || !canDecide || !reviewed || locked}
+                  onClick={() =>
+                    operation.run(onDecide, {
+                      ...actionInput,
+                      decision: "approve",
+                      comment,
+                    })
+                  }
+                >
+                  Approve release
+                </Button>}
+                {(request.status === "approved" || !current) && <Button {...reasonProps('decision-reason', decisionReason)}
+                  variant="contained" color="primary"
+                  disabled={!onExecute || !canExecute || !reviewed || locked}
+                  onClick={() => setConfirm(true)}
+                >
+                  Release to production
+                </Button>}
+              </>}
             </Stack>
             </Stack>
             {request && request.status !== 'approved' && (commentFocused || comment) && <TextField inputRef={commentInput} autoFocus multiline minRows={3} size="small" label="Review comment" value={comment} onChange={(event) => setComment(event.target.value)} inputProps={{ maxLength: 2000 }} disabled={locked || !canRequestChanges} helperText="A comment is required to request changes." />}

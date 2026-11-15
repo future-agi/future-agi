@@ -39,7 +39,7 @@ it('shows every changed precondition and removed evidence before creating the ne
   expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
   expect(screen.getByText(/is removed from the renewed request/)).toBeVisible();
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
-  const create = screen.getByRole('button', { name: 'Approve renewed revision' });
+  const create = screen.getByRole('button', { name: 'Approve again' });
   expect(create).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
   fireEvent.click(create);
@@ -51,7 +51,7 @@ it('creates nothing when the reviewed packet is still current', () => {
   useRenewalPreview.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: { code: 'review_current' } });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
   expect(screen.getByText('This revision is still current. Nothing needs renewal.')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Approve again' })).toBeDisabled();
   expect(mutateAsync).not.toHaveBeenCalled();
 });
 
@@ -59,7 +59,7 @@ it('offers explicit renewal only to the assigned reviewer of a stale packet', ()
   const props = { scopeKey: 'org:ws:reviewer', state: 'ready', preview: { packet, fingerprint: 'old', current: false }, staleCode: 'release_conflict',
     request: { id: 'request', revision: 2, status: 'approved' }, review: { complete: false }, onRenew: vi.fn(), onRefresh: vi.fn() };
   const { rerender } = render(<ReleaseRequestPanel {...props} permissions={{ canDecide: true, canExecute: true }} />);
-  expect(screen.getByText('Approval no longer applies. Review the change and renew the request.')).toBeVisible();
+  expect(screen.getByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
   // One title, one sentence, one action: Refresh lives inside "Why this review is paused".
   expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
@@ -77,7 +77,7 @@ it('approves exactly the renewed revision it created, bound to the inspected fin
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
   expect(screen.getByText(/renewed request keeps no evidence/)).toBeVisible();
-  const approve = screen.getByRole('button', { name: 'Approve renewed revision' });
+  const approve = screen.getByRole('button', { name: 'Approve again' });
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
   fireEvent.click(approve);
@@ -95,7 +95,7 @@ it('never approves when the server renews to an unexpected revision', async () =
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} onApproved={onApproved} />);
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Approve renewed revision' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   expect(await screen.findByText(/couldn't confirm whether this went through/)).toBeVisible();
   expect(decideAsync).not.toHaveBeenCalled();
   expect(onApproved).not.toHaveBeenCalled();
@@ -119,7 +119,7 @@ it('clears a refusal from the previous revision when the renewed revision is app
   const { rerender } = render(<ReleaseRequestPanel {...props} request={{ id: 'request', revision: 2, status: 'approved' }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production' }));
-  expect(await screen.findByText('Approval no longer applies. Review the change and renew the request.')).toBeVisible();
+  expect(await screen.findByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
   // The confirmation is still closing; wait until the page is interactive again.
   expect(await screen.findByRole('button', { name: 'Renew review' })).toBeVisible();
   rerender(<ReleaseRequestPanel {...props} preview={{ packet, fingerprint: 'fp2', current: true }} request={{ id: 'request', revision: 3, status: 'approved' }} reviewedIdentity={null} onReviewedChange={vi.fn()} />);
@@ -133,7 +133,7 @@ it('lets the same mounted dialog renew a later revision after an earlier renewal
   const onApproved = vi.fn();
   const { rerender } = render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Approve renewed revision' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   rerender(<ReleaseRenewalDialog open={false} requestId="request" onClose={onClose} onApproved={onApproved} />);
   // A later race: revision 3 now needs renewal to revision 4.
@@ -141,7 +141,7 @@ it('lets the same mounted dialog renew a later revision after an earlier renewal
   mutateAsync.mockResolvedValue({ id: 'request', revision: 4, status: 'pending' });
   decideAsync.mockResolvedValue({ id: 'request', revision: 4, status: 'approved' });
   rerender(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
-  const approve = screen.getByRole('button', { name: 'Approve renewed revision' });
+  const approve = screen.getByRole('button', { name: 'Approve again' });
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
   expect(approve).toBeEnabled();
@@ -153,17 +153,17 @@ it('blocks a second submit for the revision it already renewed', async () => {
   useRenewalPreview.mockReturnValue({ data: preview, isLoading: false, isError: false });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Approve renewed revision' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled());
-  expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Approve again' })).toBeDisabled());
+  expect(screen.getByRole('button', { name: 'Approve again' })).toBeDisabled();
 });
 
 it('renews without approval only after acknowledgment and retains the fingerprint', async () => {
   useRenewalPreview.mockReturnValue({ data: { ...preview, changes: [{ item: 'transition.expected_security_revision', before: 0, after: 2 }] } });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
-  expect(screen.getByText('The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again.')).toBeVisible();
-  const renewOnly = screen.getByRole('button', { name: 'Renew without approving' });
+  expect(screen.getByText('The security policy changed after this request was made, so the approval no longer applies. See what changed and approve again.')).toBeVisible();
+  const renewOnly = screen.getByRole('button', { name: 'Renew and decide later' });
   expect(renewOnly).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
   fireEvent.click(renewOnly);
@@ -182,7 +182,7 @@ it('explains a restored policy only when its values and moved revision are repor
   rerender(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
   expect(screen.getByText('Any policy edit after approval requires a new approval.')).toBeVisible();
   expect(screen.queryByText(/earlier approval can't be reused/)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Renew without approving' }).closest('.MuiDialogActions-root')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Renew and decide later' }).closest('.MuiDialogActions-root')).not.toBeNull();
   expect(screen.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Close', exact: true })).toBeVisible();
 });

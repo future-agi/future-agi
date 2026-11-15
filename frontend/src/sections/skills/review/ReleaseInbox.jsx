@@ -26,7 +26,7 @@ import { visuallyHidden } from '@mui/utils';
 import CapabilityNotice from '../components/CapabilityNotice';
 import { CustomTabs } from 'src/components/tabs/tabs';
 import When from '../components/When';
-import { releaseTitle, counted } from './reviewPresentation';
+import { releaseTitle } from './reviewPresentation';
 import { reviewPersonName } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
@@ -59,13 +59,14 @@ function InboxRows({
     && (!item.recipients?.length || !currentUserId || item.recipients.some((person) => person.id === currentUserId));
   const action = (item) => canReview(item)
     ? <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>
-    : <Button size="small" onClick={() => onOpen(item)}>Open</Button>;
+    : <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Open</Button>;
   const settled = (item) => item.status !== 'pending';
   return (
     <Stack spacing={1}>
-      <Typography variant="s1" role="status">
-        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : data.pendingCount == null ? 'Assigned requests. Open a request to inspect its status and decision.' : `${counted(data.pendingCount, 'request')} waiting for your decision`}
-      </Typography>
+      {/* The tab label already carries the waiting count, so no count line repeats it. */}
+      {(authored || data.pendingCount == null) && <Typography variant="s1" role="status">
+        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : 'Assigned requests. Open a request to inspect its status and decision.'}
+      </Typography>}
       <ListToolbar>
         <TextField
           select
@@ -99,18 +100,20 @@ function InboxRows({
         />
       ) : (
         <>
-          {mobile ? <Stack aria-label="Assigned release reviews">{rows.map((item) => <Stack key={item.id} direction="row" gap={1} alignItems="center" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-            <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start', borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 } }}>
+          {mobile ? <Stack aria-label="Assigned release reviews">{rows.map((item) => <Box key={item.id} sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider' }}>
+            {/* One stacked card, and the whole card opens the request: name and status, the request title, then who and when. */}
+            <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ display: 'block', width: 1, textAlign: 'left', py: 1.5, pr: 5, borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-                <Stack direction="row" gap={1} alignItems="center">{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                <Stack direction="row" gap={1} alignItems="center" justifyContent="space-between" sx={{ minWidth: 0 }}>
+                  <Stack direction="row" alignItems="center" sx={{ minWidth: 0 }}>{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                  <Box sx={{ flexShrink: 0 }}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} label={item.status === 'changes_requested' ? 'Changes requested' : undefined} /></Box>
+                </Stack>
                 {item.transition && <Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined}>{releaseTitle(item.transition)}</Typography>}
-                {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
-                <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
+                <Typography variant="s3" color="text.secondary">{reviewPersonName(item.authorName)} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
               </Stack>
             </ButtonBase>
-            {action(item)}
-            <Stack alignItems="flex-end" spacing={0.5}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} /><IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton></Stack>
-          </Stack>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>
+            <IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })} sx={{ position: 'absolute', top: 10, right: 0 }}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton>
+          </Box>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>
             <Table size="small" aria-label="Assigned release reviews">
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
