@@ -73,6 +73,9 @@ type RequestContext struct {
 	GuardrailRequest  *ChatCompletionRequest
 	GuardrailResponse *ChatCompletionResponse
 
+	// Inspection is typed, request-local policy evidence, never caller metadata.
+	Inspection *InspectionState `json:"-"`
+
 	// GuardrailInspectionOnly marks a Request projection that is not the body
 	// forwarded by the selected route (native legacy completions). Keeping Request
 	// available to other plugins does not make its remediation wire-backed.
@@ -192,6 +195,7 @@ func (rc *RequestContext) Release() {
 	rc.Response = nil
 	rc.GuardrailRequest = nil
 	rc.GuardrailResponse = nil
+	rc.Inspection = nil
 	rc.GuardrailInspectionOnly = false
 	rc.GuardrailInputUnsupported = ""
 	rc.GuardrailOutputUnsupported = ""

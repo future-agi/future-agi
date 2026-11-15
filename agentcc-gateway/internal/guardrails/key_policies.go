@@ -2,6 +2,7 @@ package guardrails
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -22,12 +23,18 @@ import (
 // or change any response, including when a check fails closed. Streaming requests
 // with selected-key Enforce Block post checks are refused during admission.
 func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.RequestContext, orgID string, cfg *tenant.GuardrailConfig, stage Stage) pipeline.PluginResult {
-	keyID := rc.Metadata["auth_key_id"]
+	_, keyID := selectedPrincipal(rc)
 	if keyID == "" {
 		return pipeline.ResultContinue()
 	}
 	resolved := p.keyPoliciesForInvocation(ctx, orgID, keyID, cfg)
 	cfg = resolved.config
+	rc.Inspection.SetPolicyRevision(inspectionStage(stage), selectedPolicyRevision(resolved))
+	if rc.Inspection.IsDecided(inspectionStage(stage), inspectionPayload(rc, stage)) {
+		return pipeline.ResultContinue()
+	}
+	wasComplete := rc.Inspection.IsComplete(inspectionStage(stage), inspectionPayload(rc, stage))
+	ranChecks := false
 	timeout := p.defaultTimeout
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
@@ -37,10 +44,16 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		monitor := strings.EqualFold(pol.Mode, "monitor")
 		checks := make([]orgCheck, 0, len(entry.checks))
 		for _, c := range entry.checks {
-			c = keyPolicyRouteCheck(rc, c)
-			if c.g.Stage() != stage {
+			if selectedCheckStage(rc, c.g) != stage {
 				continue
 			}
+			if !monitor && parseAction(c.check.Action) == ActionBlock {
+				rc.Inspection.Require(inspectionStage(stage))
+			}
+			if notApplicable, _, _ := inspectionCapability(rc, stage, true); notApplicable {
+				continue
+			}
+			c = keyPolicyRouteCheck(rc, c)
 			if unsupported, ok := c.g.(unsupportedRouteCheck); ok && !monitor && parseAction(c.check.Action) == ActionBlock {
 				return p.refuseKeyPolicyRoute(rc, pol, c, unsupported)
 			}
@@ -49,6 +62,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		if len(checks) == 0 {
 			continue
 		}
+		ranChecks = true
 		input := checkInput(rc, stage == StagePost)
 		var outcomes []*CheckResult
 		blockIdx := -1
@@ -96,8 +110,33 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		if len(result.Triggered) > 0 {
 			p.addKeyPolicyMetadata(rc, result)
 		}
+		refreshInspection(rc, stage, wasComplete)
+	}
+	if ranChecks && wasComplete {
+		rc.Inspection.Decide(inspectionStage(stage), inspectionPayload(rc, stage))
 	}
 	return pipeline.ResultContinue()
+}
+
+// selectedPolicyRevision keeps repeated-seam decisions tied to the resolved
+// current policy, including Monitor/Enforce and fail-open transitions. It stores
+// only a digest, never private checker config, in the request-local receipt.
+func selectedPolicyRevision(resolved *resolvedKeyPolicies) string {
+	policies := make([]*tenant.KeyGuardrailPolicy, 0, len(resolved.policies))
+	for _, entry := range resolved.policies {
+		policies = append(policies, entry.policy)
+	}
+	body, err := json.Marshal(struct {
+		Policies     []*tenant.KeyGuardrailPolicy
+		FailOpen     bool
+		PipelineMode string
+		TimeoutMs    int
+	}{policies, resolved.config.FailOpen, resolved.config.PipelineMode, resolved.config.TimeoutMs})
+	if err != nil {
+		return "" // unencodable policy cannot reuse a previous decision
+	}
+	digest := sha256.Sum256(body)
+	return string(digest[:])
 }
 
 // addKeyPolicyMetadata records an enforce policy's non-blocking triggers on
@@ -239,6 +278,11 @@ const passThroughNote = " (client's body was forwarded unchanged on this pass-th
 // the static registry only for checks the factory can't build.
 func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, check *tenant.GuardrailCheck) (resolved Guardrail) {
 	defer func() { resolved = selectedThresholdReady(resolved, check) }()
+	// Realtime adapters also call this resolver directly, without the HTTP
+	// resolveKeyPolicies envelope. Invalid transport must not become defaults.
+	if check != nil && check.ConfigurationError != "" {
+		return unavailableKeyPolicyCheck{name: name}
+	}
 	if p.dynamicFactory != nil {
 		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 			return validateKeyPolicyCheck(name, g)

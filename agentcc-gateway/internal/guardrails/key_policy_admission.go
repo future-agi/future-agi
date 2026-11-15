@@ -27,15 +27,11 @@ type resolvedKeyPoliciesContextKey struct{}
 // The context belongs to this plugin invocation, not the pooled RequestContext;
 // no state survives the request or changes speech/realtime policy binding.
 func (p *GuardrailPlugin) withResolvedKeyPolicies(ctx context.Context, rc *models.RequestContext) context.Context {
-	if p.tenantStore == nil || rc.Metadata["org_id"] == "" || rc.Metadata["auth_key_id"] == "" {
+	orgID, keyID, cfg := p.selectedConfig(rc)
+	if cfg == nil || keyPolicyResolutionFromContext(ctx, orgID, keyID) != nil {
 		return ctx
 	}
-	orgID, keyID := rc.Metadata["org_id"], rc.Metadata["auth_key_id"]
-	org := p.tenantStore.Get(orgID)
-	if org == nil || org.Guardrails == nil {
-		return ctx
-	}
-	resolved := p.resolveKeyPolicies(orgID, keyID, org.Guardrails)
+	resolved := p.resolveKeyPolicies(orgID, keyID, cfg)
 	return context.WithValue(ctx, resolvedKeyPoliciesContextKey{}, resolved)
 }
 
@@ -55,7 +51,8 @@ func (p *GuardrailPlugin) keyPoliciesForInvocation(ctx context.Context, orgID, k
 
 // resolveKeyPolicies resolves every enabled check, including failures, before
 // filtering by stage. An unknown implementation has no trustworthy stage, so it
-// becomes a PRE-stage execution failure rather than disappearing from enforcement.
+// defaults to a PRE-stage execution failure. selectedCheckStage moves that
+// conservative default to output for exact input-N/A content reads.
 func (p *GuardrailPlugin) resolveKeyPolicies(orgID, keyID string, cfg *tenant.GuardrailConfig) *resolvedKeyPolicies {
 	resolved := &resolvedKeyPolicies{orgID: orgID, keyID: keyID, config: cfg}
 	if cfg == nil || orgID == "" || keyID == "" {
@@ -87,10 +84,14 @@ func (p *GuardrailPlugin) resolveKeyPolicies(orgID, keyID string, cfg *tenant.Gu
 // These failures use the normal execution envelope, so effective org fail_open
 // applies to Enforce Block while Monitor remains observation-only. Neither the
 // policy config nor any request/provider content is included in the error.
-type unavailableKeyPolicyCheck struct{ name string }
+type unavailableKeyPolicyCheck struct {
+	name       string
+	stage      Stage
+	stageKnown bool
+}
 
 func (g unavailableKeyPolicyCheck) Name() string { return g.name }
-func (unavailableKeyPolicyCheck) Stage() Stage   { return StagePre }
+func (g unavailableKeyPolicyCheck) Stage() Stage { return g.stage }
 func (unavailableKeyPolicyCheck) Check(context.Context, *CheckInput) *CheckResult {
 	return &CheckResult{Err: errors.New("configured guardrail implementation is unavailable")}
 }
@@ -104,6 +105,9 @@ func validateKeyPolicyCheck(name string, g Guardrail) Guardrail {
 	case "keyword-blocklist", "pii-detection", "content-moderation", "secret-detection",
 		"language-detection", "topic-restriction", "input-validation":
 		if validator, ok := g.(interface{ ValidateConfig() error }); ok && validator.ValidateConfig() != nil {
+			if stage := g.Stage(); stage == StagePre || stage == StagePost {
+				return unavailableKeyPolicyCheck{name: name, stage: stage, stageKnown: true}
+			}
 			return unavailableKeyPolicyCheck{name: name}
 		}
 	}
@@ -115,23 +119,20 @@ func validateKeyPolicyCheck(name string, g Guardrail) Guardrail {
 // admission, independently of fail_open, rather than admitting uninspected data.
 type unsupportedRouteCheck struct {
 	name, code, reason string
+	stage              Stage
 }
 
 func (g unsupportedRouteCheck) Name() string { return g.name }
-func (unsupportedRouteCheck) Stage() Stage   { return StagePre }
+func (g unsupportedRouteCheck) Stage() Stage { return g.stage }
 func (g unsupportedRouteCheck) Check(context.Context, *CheckInput) *CheckResult {
 	return &CheckResult{Err: errors.New(g.code + ": " + g.reason)}
 }
 
 func keyPolicyRouteCheck(rc *models.RequestContext, c orgCheck) orgCheck {
-	code, reason := "", ""
-	if c.g.Stage() == StagePre && rc.GuardrailInputUnsupported != "" {
-		code, reason = "input_guardrail_unsupported", rc.GuardrailInputUnsupported
-	} else if c.g.Stage() == StagePost && rc.GuardrailOutputUnsupported != "" {
-		code, reason = "output_guardrail_unsupported", rc.GuardrailOutputUnsupported
-	}
+	stage := selectedCheckStage(rc, c.g)
+	_, code, reason := inspectionCapability(rc, stage, true)
 	if reason != "" {
-		c.g = unsupportedRouteCheck{name: c.name, code: code, reason: reason}
+		c.g = unsupportedRouteCheck{name: c.name, code: code, reason: reason, stage: stage}
 	}
 	return c
 }
@@ -156,7 +157,7 @@ func (p *GuardrailPlugin) checkKeyPolicyStreamAdmission(ctx context.Context, rc 
 	if !rc.IsStream || rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" || p.tenantStore == nil {
 		return pipeline.ResultContinue()
 	}
-	orgID, keyID := rc.Metadata["org_id"], rc.Metadata["auth_key_id"]
+	orgID, keyID := selectedPrincipal(rc)
 	if orgID == "" || keyID == "" {
 		return pipeline.ResultContinue()
 	}
@@ -173,7 +174,7 @@ func (p *GuardrailPlugin) checkKeyPolicyStreamAdmission(ctx context.Context, rc 
 			continue
 		}
 		for _, c := range entry.checks {
-			if c.g.Stage() != StagePost || parseAction(c.check.Action) != ActionBlock {
+			if selectedCheckStage(rc, c.g) != StagePost || parseAction(c.check.Action) != ActionBlock {
 				continue
 			}
 			const message = "stream_guardrail_unsupported: selected-key blocking output checks require a non-streaming request"

@@ -152,10 +152,8 @@ func TestKeyPolicyRuntimePostAdmissionHTTP(t *testing.T) {
 					w := runtimePolicySend(srv, rt, stream, "a")
 					wantCalls := 1
 					code := "content_blocked"
-					if rt.name == "genai native" {
-						// GenAI maps gateway error codes to its numeric/status envelope.
-						code = "synthetic output violation"
-					}
+					// Native envelopes retain the safe gateway code, not arbitrary
+					// evaluator text that could itself contain rejected content.
 					if stream {
 						wantCalls, code = 0, "stream_guardrail_unsupported"
 					}

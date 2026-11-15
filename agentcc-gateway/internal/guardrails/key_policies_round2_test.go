@@ -68,6 +68,7 @@ func TestKeyPolicyInstanceFollowsCheckConfig(t *testing.T) {
 		defer rc.Release()
 		content, _ := json.Marshal(text)
 		rc.Request.Messages[0].Content = content
+		completeKeyTestContext(rc)
 		return p.ProcessRequest(context.Background(), rc)
 	}
 	if r := send("say alpha"); r.Action != pipeline.ShortCircuit {

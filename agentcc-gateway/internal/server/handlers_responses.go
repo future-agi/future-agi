@@ -12,6 +12,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // CreateResponse handles POST /v1/responses.
@@ -55,6 +56,9 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 	rc.GuardrailRequest = responsesGuardrailRequest(&req)
+	if !completeResponsesInput(&req) {
+		rc.GuardrailInputUnsupported = "Responses input contains content without a complete text projection"
+	}
 
 	// Extract client IP.
 	rc.Metadata["client_ip"] = h.clientIP(r)
@@ -172,10 +176,11 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 		respBody = body
 		applyResponsesUsage(callRC, body)
 		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
+		setNativeOutputProjection(callRC, "responses", body)
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "responses.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -231,7 +236,7 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "responses.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -494,19 +499,16 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractOrgID extracts the org ID from auth metadata.
+// extractOrgID binds storage ownership to the current credential, independently
+// of provider routing. Internal keys can intentionally bypass org providers, but
+// that must not turn a known storage owner into the store's empty-scope wildcard.
 func extractOrgID(r *http.Request, h *Handlers) string {
+	if orgID, _ := models.InspectionFromContext(r.Context()).Principal(); orgID != "" {
+		return orgID
+	}
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-
 	setAuthMetadataFromRequest(rc, r)
-
 	h.peekKeyOrgID(rc)
-	_, orgCfg := h.resolveOrgConfig(rc)
-	if orgCfg != nil {
-		if v, ok := rc.Metadata["org_id"]; ok {
-			return v
-		}
-	}
-	return ""
+	return rc.Metadata[tenant.MetadataKeyOrgID]
 }

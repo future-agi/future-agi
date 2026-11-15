@@ -111,6 +111,7 @@ func TestR2ValidationHookLeavesCustomNamesAndOrgChecksAlone(t *testing.T) {
 			defer rc.Release()
 			if scope == "unselected" {
 				rc.Metadata["auth_key_id"] = "key-b"
+				completeKeyTestContext(rc)
 			}
 			if got := p.ProcessRequest(context.Background(), rc); got.Action != pipeline.Continue {
 				t.Fatalf("legacy control changed: %+v", got)

@@ -55,9 +55,9 @@ func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatComplet
 	}
 	var input string
 	if json.Unmarshal(req.Input, &input) == nil {
-		if input != "" {
-			out.Messages = append(out.Messages, textMessage("user", input))
-		}
+		// Empty strings are still an inspectable text shape. Shape evidence is
+		// validated separately; do not mistake an empty prompt for no projection.
+		out.Messages = append(out.Messages, textMessage("user", input))
 		return out
 	}
 	var items []struct {
@@ -81,7 +81,7 @@ func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatComplet
 		if role == "" {
 			role = "user"
 		}
-		if text != "" {
+		if text != "" || item.Type == "" || item.Type == "message" {
 			out.Messages = append(out.Messages, textMessage(role, text))
 		}
 	}

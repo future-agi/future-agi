@@ -140,7 +140,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processInputInspection(ctx, rc, "audio.speech", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -623,7 +623,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = true
 	var audioStream io.ReadCloser
 	var contentType string
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processInputInspection(ctx, rc, "audio.speech.stream", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		audioStream, contentType, callErr = sp.CreateSpeech(ctx, rc.SpeechRequest)
 		return callErr

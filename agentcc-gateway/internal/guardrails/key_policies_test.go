@@ -43,8 +43,22 @@ func keyTestContext(key string) *models.RequestContext {
 	rc.Metadata["org_id"] = "org"
 	rc.Metadata["auth_key_id"] = key
 	rc.Request = &models.ChatCompletionRequest{Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"secret"`)}}}
+	completeKeyTestContext(rc)
 	return rc
 }
+
+// Test-only stand-in for the authenticated adapter and complete projection.
+// Tests that change fixture identity/payload before admission call it again;
+// production must never bind identity from mutable metadata.
+func completeKeyTestContext(rc *models.RequestContext) {
+	rc.Inspection = models.NewInspectionState(models.InspectionContract{Operation: "test.complete-chat", Input: models.InspectionSupported, Output: models.InspectionSupported})
+	rc.Inspection.BindPrincipal(rc.Metadata["org_id"], rc.Metadata["auth_key_id"])
+	rc.Inspection.Complete(models.InspectionInput, inspectionPayload(rc, StagePre))
+	if rc.Response != nil || rc.GuardrailResponse != nil {
+		rc.Inspection.Complete(models.InspectionOutput, inspectionPayload(rc, StagePost))
+	}
+}
+
 func keyTestPolicy(id, mode, action string, mutate bool) *tenant.KeyGuardrailPolicy {
 	name := "secret"
 	if mutate {

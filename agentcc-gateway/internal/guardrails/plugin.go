@@ -62,6 +62,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 		return pipeline.ResultContinue()
 	}
 	ctx = p.withResolvedKeyPolicies(ctx, rc)
+	wasComplete := rc.Inspection.IsComplete(models.InspectionInput, inspectionPayload(rc, StagePre))
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -82,9 +83,11 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	if result := p.runOrgGuardrails(ctx, rc, StagePre); result.Action != pipeline.Continue {
 		return result
 	}
-	// Post-stage key Block checks cannot safely inspect the existing relays
-	// before output is released. Refuse those streams before calling upstream.
-	return p.checkKeyPolicyStreamAdmission(ctx, rc)
+	refreshInspection(rc, StagePre, wasComplete)
+	if err := p.AdmitSelectedRequest(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
 }
 
 // ProcessResponse runs post-stage guardrails.
@@ -92,6 +95,7 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	wasComplete := rc.Inspection.IsComplete(models.InspectionOutput, inspectionPayload(rc, StagePost))
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -133,7 +137,14 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePost)
+	if result := p.runOrgGuardrails(ctx, rc, StagePost); result.Action != pipeline.Continue {
+		return result
+	}
+	refreshInspection(rc, StagePost, wasComplete)
+	if err := p.AdmitSelectedOutput(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
 }
 
 // orgCheck is one enabled org check resolved to its implementation.
@@ -171,7 +182,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 
 	checks := p.collectOrgChecks(orgID, gcfg, stage)
 	if len(checks) == 0 {
-		return p.runKeyPolicies(ctx, rc, orgID, gcfg, stage)
+		return pipeline.ResultContinue()
 	}
 
 	timeout := p.defaultTimeout
@@ -231,7 +242,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		p.applyMetadata(rc, result)
 	}
 
-	return p.runKeyPolicies(ctx, rc, orgID, gcfg, stage)
+	return pipeline.ResultContinue()
 }
 
 // collectOrgChecks returns the org's enabled checks for this stage, sorted by
@@ -389,8 +400,8 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // remain unchanged across checks, or a later Block would inspect different
 // content from the bytes the handler actually sends.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
-	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.GuardrailInspectionOnly || rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
-	if input.Request == nil {
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.GuardrailInspectionOnly || rc.GuardrailRequest != nil || rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
+	if rc.GuardrailRequest != nil {
 		input.Request = rc.GuardrailRequest
 	}
 	if withResponse {

@@ -17,8 +17,9 @@ import (
 )
 
 // Characterize the known observation gap, not a complete streaming-monitoring
-// guarantee. Production enables this capture only for configured body sinks.
-// Turning it on here isolates the cause without enabling persistent logging.
+// guarantee. Body-sink capture truncates and loses nontext/multiple-choice data;
+// neither setting can certify a complete output inspection. Monitor must remain
+// nonblocking and report unavailable rather than manufacture a passed check.
 func TestKeyPolicyIntegrationMonitorStreamObservationCaptureBound(t *testing.T) {
 	parts := []string{"I made that up. This information is fabricated. ", "A fictional study. According to my training data. I should note that I may have hallucinated."}
 	for _, capture := range []bool{false, true} {
@@ -71,16 +72,13 @@ func TestKeyPolicyIntegrationMonitorStreamObservationCaptureBound(t *testing.T) 
 			if usage == nil || usage.TotalTokens != 8 {
 				t.Fatal("Monitor lost stream accounting")
 			}
-			if !capture {
-				if len(results) != 0 {
-					t.Fatalf("capture-off characterization changed: got %d observations", len(results))
-				}
-				return
-			}
-			if len(results) != 1 || results[0].Mode != "monitor" || results[0].Outcome != "would_block" || results[0].Action != "log" {
-				t.Fatalf("capture-on must observe one nonblocking violation: %+v", results)
+			if len(results) != 1 || results[0].Mode != "monitor" || results[0].Outcome != "logged" || results[0].Action != "log" || results[0].WouldAction != "block" {
+				t.Fatalf("incomplete capture must report one nonblocking unavailable observation: %+v", results)
 			}
 			encoded, _ := json.Marshal(results)
+			if !strings.Contains(string(encoded), "guardrail_unavailable") {
+				t.Fatalf("incomplete capture was reported as evaluated: %s", encoded)
+			}
 			if strings.Contains(string(encoded), parts[0]) || strings.Contains(string(encoded), parts[1]) {
 				t.Fatal("observation leaked provider text")
 			}

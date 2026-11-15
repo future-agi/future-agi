@@ -66,6 +66,9 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.Request = chatReq
+	if _, inspectable := textInputMessages(req.Prompt); !inspectable {
+		rc.GuardrailInputUnsupported = "completion prompt is not inspectable text"
+	}
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
@@ -222,8 +225,8 @@ func isLegacyCompletionModel(model string) bool {
 // equivalent ChatCompletionResponse so downstream post-plugins
 // (cost/credits/logging/prometheus) that key off rc.Response.Usage and
 // rc.Response.Model keep working uniformly — they don't need to branch on
-// completion vs chat format. The assistant message content mirrors the first
-// choice's text so logs remain human-readable.
+// completion vs chat format. Every returned choice is projected; inspecting
+// only the first choice would leave batched prompts and n>1 output unchecked.
 func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider nativeTextCompletionProvider, req *models.CompletionRequest) {
 	var nativeResp *models.CompletionResponse
 
@@ -235,25 +238,19 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 			return err
 		}
 		nativeResp = resp
-		text := ""
-		if len(resp.Choices) > 0 {
-			text = resp.Choices[0].Text
-		}
-		contentJSON, _ := json.Marshal(text)
-		finish := ""
-		if len(resp.Choices) > 0 {
-			finish = resp.Choices[0].FinishReason
+		choices := make([]models.Choice, 0, len(resp.Choices))
+		for _, choice := range resp.Choices {
+			choices = append(choices, models.Choice{
+				Index: choice.Index, Message: textMessage("assistant", choice.Text),
+				FinishReason: choice.FinishReason, Logprobs: choice.Logprobs,
+			})
 		}
 		rc.Response = &models.ChatCompletionResponse{
-			ID:      resp.ID,
-			Object:  "chat.completion",
-			Created: resp.Created,
-			Model:   resp.Model,
-			Choices: []models.Choice{{
-				Index:        0,
-				Message:      models.Message{Role: "assistant", Content: contentJSON},
-				FinishReason: finish,
-			}},
+			ID:                resp.ID,
+			Object:            "chat.completion",
+			Created:           resp.Created,
+			Model:             resp.Model,
+			Choices:           choices,
 			Usage:             resp.Usage,
 			SystemFingerprint: resp.SystemFingerprint,
 		}
@@ -261,7 +258,7 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -288,7 +285,7 @@ func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.Respons
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -331,7 +328,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		// A pre-plugin's refusal — auth, rate limit, budget — keeps its status.
 		models.WriteErrorFromError(w, err)
 		return

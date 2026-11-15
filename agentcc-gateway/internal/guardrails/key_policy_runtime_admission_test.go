@@ -217,6 +217,7 @@ func TestKeyPolicyRuntimeResolutionSkipsDisabledAndUnselected(t *testing.T) {
 			case "other-org":
 				rc.Metadata["org_id"] = "other"
 			}
+			completeKeyTestContext(rc)
 			if res := p.ProcessRequest(context.Background(), rc); res.Action != pipeline.Continue || len(rc.GuardrailResults) != 0 {
 				t.Fatalf("inapplicable check affected request: %+v", res)
 			}

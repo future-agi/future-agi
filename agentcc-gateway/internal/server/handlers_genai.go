@@ -174,6 +174,10 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !completeNativeInput("google", body) {
+		rc.GuardrailInputUnsupported = "GenAI input contains content without a complete text projection"
+	}
+
 	// Fast path: provider natively speaks GenAI.
 	if gp, ok := provider.(providers.GenAINativeProvider); ok {
 		rc.GuardrailRequest = guardrailRequest("google", body)
@@ -195,7 +199,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 
 	canonicalReq, drops, err := translator.RequestToCanonical(body)
 	if err != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadRequest,
 			Type:    models.ErrTypeInvalidRequest,
 			Message: err.Error(),
@@ -228,7 +232,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 	var respBody []byte
 	var statusCode int
 
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = gp.GenerateContent(ctx, model, reqBody, headers)
 		if callErr != nil {
@@ -237,6 +241,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(genaiResponseText(respBody))
+			setNativeOutputProjection(rc, "google", respBody)
 		}
 		return nil
 	})
@@ -271,7 +276,7 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	var statusCode int
 
 	// Post-plugins wait for the closing chunk, where the counts arrive.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, reqBody, headers)
 		return callErr
@@ -533,7 +538,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	rc.Request = canonicalReq
 
 	var canonicalResp *models.ChatCompletionResponse
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -545,14 +550,14 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	if err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
-			status, body, ct := translator.ErrorFromCanonical(apiErr)
+			status, body, ct := inspectionErrorFromCanonical(w, translator, apiErr)
 			h.setAgentccHeaders(w, rc)
 			w.Header().Set("Content-Type", ct)
 			w.WriteHeader(status)
 			w.Write(body)
 			return
 		}
-		status, body, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, body, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadGateway,
 			Type:    models.ErrTypeServer,
 			Message: err.Error(),
@@ -569,7 +574,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 		canonicalResp = rc.Response
 	}
 	if canonicalResp == nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "no response from provider",
@@ -596,7 +601,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 
 	respBody, marshalErr := translator.ResponseFromCanonical(canonicalResp)
 	if marshalErr != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "failed to format response: " + marshalErr.Error(),
@@ -630,7 +635,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var rawChunkCh <-chan models.StreamChunk
 	var errCh <-chan error
 
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		return nil
 	}); err != nil {
