@@ -64,7 +64,9 @@ def expire_run(run, *, now=None):
         DerivedMetricRun.objects.filter(pk=run.pk, deleted_at__isnull=True).update(
             deleted_at=now, cleanup_status="pending"
         )
-        MetricGenerationPin.objects.filter(pk=run.pin_id).update(
+        MetricGenerationPin.objects.filter(
+            pk=run.pin_id, invalidated_at__isnull=True
+        ).update(
             invalidated_at=now, invalidation_reason="retention_expired"
         )
         _intent(

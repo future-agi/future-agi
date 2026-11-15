@@ -261,3 +261,29 @@ def test_expiry_uses_current_snapshot_namespace_under_project_lock(
     source_retention.expire_run(run)
     request = MetricErasureRequest.objects.get(deletion_key=f"run:{run.pk}")
     assert request.snapshot_key == new_snapshot
+
+
+def test_expiry_preserves_an_earlier_pin_revocation(workspace, observe_project):
+    from tracer.services.derived_metrics.deletion_protocol import capture_pin
+
+    now = timezone.now()
+    version = _version(_metric(workspace, observe_project), now)
+    _commit(observe_project, now)
+    pin = capture_pin(
+        observe_project.pk, consumer_kind="snapshot", ttl=timedelta(minutes=5)
+    )
+    revoked = now - timedelta(minutes=1)
+    type(pin).objects.filter(pk=pin.pk).update(
+        invalidated_at=revoked, invalidation_reason="erased"
+    )
+    run = DerivedMetricRun.objects.create(
+        definition=version,
+        window_start=now - timedelta(days=60),
+        window_end=now - timedelta(days=59),
+        as_of=now,
+        fingerprint=uuid4().hex,
+        pin=pin,
+    )
+    source_retention.expire_run(run)
+    pin.refresh_from_db()
+    assert pin.invalidated_at == revoked and pin.invalidation_reason == "erased"
