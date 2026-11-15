@@ -229,6 +229,45 @@ def test_authenticated_edit_reaches_live_sampling_without_telemetry_write(
     assert telemetry_rows(project) == before
 
 
+@pytest.mark.parametrize("terminal", ["errored", "skipped"])
+@pytest.mark.parametrize("changed", ["telemetry", "config"])
+def test_assignment_sweeps_do_not_retry_unchanged_terminal_rows(
+    project, custom_eval_config, ch_seed, terminal, changed
+):
+    from tracer.models.observation_span import EvalEntryStatus
+
+    spans = old_spans(project)
+    root_assignment(project, spans[0])
+    task = live_task(project, custom_eval_config)
+    reconcile(task)
+    entries = EvalLogger.objects.filter(eval_task_id=str(task.pk))
+    entry = entries.get()
+    terminal_at = timezone.now() - timedelta(minutes=20)
+    entries.update(status=terminal, updated_at=terminal_at)
+    before = telemetry_rows(project)
+    for _ in range(3):
+        result = reconcile(task)
+        entry.refresh_from_db()
+        task.refresh_from_db()
+        assert task.continuous_cursor > terminal_at
+        assert result.requeued == 0, "an assignment revisit is not a telemetry change"
+        assert entry.status == terminal
+        assert entry.updated_at == terminal_at
+    assert telemetry_rows(project) == before
+
+    # Withholding telemetry proof from assignment-only pages must not disable
+    # either genuine arrival-delta retries or stale-config retries.
+    if changed == "telemetry":
+        spans[0].span_attributes = {"retry-input": "changed"}
+        seed_ch_spans([spans[0]])
+    else:
+        entries.update(config_hash="stale-config")
+    result = reconcile(task)
+    entry.refresh_from_db()
+    assert result.requeued == 1
+    assert entry.status == EvalEntryStatus.PENDING
+
+
 def test_negative_filter_discovers_removal_from_old_root(
     project, custom_eval_config, ch_seed
 ):

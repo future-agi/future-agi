@@ -354,7 +354,8 @@ def _live_row_blocks(
     windows: list[dict],
     *,
     assignment_trace_ids: tuple[str, ...] = (),
-) -> Iterator[list[tuple]]:
+) -> Iterator[tuple[list[tuple], bool]]:
+    """Yield rows and whether they are assignment-only, not arrival-delta proof."""
     for window in windows:
         query = SamplingQuery(task, policy, version, now, scan_window=window)
         statement = (
@@ -366,19 +367,21 @@ def _live_row_blocks(
             if task.row_type == "sessions":
                 # Daily rows are only discovery witnesses. Their user/custom
                 # unit can differ from the session's canonical earliest root.
-                yield from stream_query(
+                for rows in stream_query(
                     *SamplingQuery(task, policy, version, now).live_session_rows(
                         [str(row[0]) for row in block]
                     )
-                )
+                ):
+                    yield rows, False
             else:
-                yield block
+                yield block, False
     if assignment_trace_ids:
-        yield from stream_query(
+        for block in stream_query(
             *SamplingQuery(task, policy, version, now).live_assignment_rows(
                 list(assignment_trace_ids)
             )
-        )
+        ):
+            yield block, True
 
 
 def prepare_live_members(
@@ -404,7 +407,7 @@ def prepare_live_members(
     from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
 
     windows = list(live_scan_windows(task, policy, now, floor))
-    for block in _live_row_blocks(
+    for block, _assignment_replay in _live_row_blocks(
         task,
         policy,
         version,
@@ -480,7 +483,8 @@ def iter_selected_row_blocks(
     *,
     live_windows: list[dict] | None = None,
     assignment_trace_ids: tuple[str, ...] = (),
-) -> Iterator[list[tuple]]:
+) -> Iterator[tuple[list[tuple], bool]]:
+    """Keep discovery provenance until terminal-retry decisions are made."""
     if policy["mode"] == "live":
         yield from _live_row_blocks(
             task,
@@ -496,11 +500,12 @@ def iter_selected_row_blocks(
     # and push each page's unit IDs into the physical read so a page never
     # rescans the whole window.
     for batch in _selected_member_pages(cohort):
-        yield from stream_query(
+        for block in stream_query(
             *SamplingQuery(task, policy, version, now).rows(
                 arrival_floor=floor, unit_ids=batch
             )
-        )
+        ):
+            yield block, False
 
 
 def _await_closed_settle(task: EvalTask) -> datetime:
@@ -697,7 +702,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             if policy["mode"] == "live"
             else None
         )
-        for block in iter_selected_row_blocks(
+        for block, assignment_replay in iter_selected_row_blocks(
             task,
             policy,
             version,
@@ -739,7 +744,15 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                     )
                 requeued, dropped = _requeue_and_drop(
                     locked,
-                    resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),
+                    # A periodic assignment revisit proves current eligibility,
+                    # not a telemetry change after a terminal evaluation. Treat
+                    # it as full state within this bounded candidate page so it
+                    # cannot repeatedly retry unchanged ERRORED/SKIPPED rows.
+                    # Stale-config retries and genuine arrival deltas retain
+                    # their normal behavior.
+                    resolved=ResolvedRowSet(
+                        tuple(candidates), tuple(metadata), full or assignment_replay
+                    ),
                     scope_to_candidates=True,
                 )
             result.requeued += requeued
