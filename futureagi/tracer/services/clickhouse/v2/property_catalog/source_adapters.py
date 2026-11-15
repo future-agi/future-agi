@@ -220,6 +220,7 @@ _SYSTEM_PROPERTY_SPECS += (
     ("spans", "cost", "Total Cost", "number", "$", ""),
     ("spans", "model", "Model", "string", "", "dimension"),
     ("spans", "start_time", "Timestamp", "datetime", "", "dimension"),
+    ("spans", "tags", "Tags", "array", "", "dimension"),
     ("spans", "span_id", "Span Id", "string", "", "dimension"),
     ("spans", "trace_id", "Trace Id", "string", "", "dimension"),
     ("spans", "prompt_tokens", "Prompt Tokens", "number", "tokens", ""),

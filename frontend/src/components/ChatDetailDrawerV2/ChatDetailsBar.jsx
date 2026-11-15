@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import useSaveEntityTags, {
   useLatestEntityTags,
+  canEditEntityTags,
   isSourceTag,
   tagUpdateErrorMessage,
 } from "src/components/traceDetail/useSaveEntityTags";
@@ -124,10 +125,10 @@ const InlineTagsRow = ({ tags = [], entity }) => {
   const queryClient = useQueryClient();
 
   // Until the refetch lands, the tags are the last acknowledged save.
-  const latest = useLatestEntityTags(entity, tags);
+  const latest = useLatestEntityTags(entity, tags, "trace");
   const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
-  // tag_target: null is a row the backend can show but not save from.
-  const locked = entity?.tag_target === null;
+  // Linked simulation calls can have display tags but no editing metadata.
+  const locked = !canEditEntityTags(entity);
 
   const { mutate, isPending } = useMutation({
     mutationFn: ({ tags: newTags, entity: savedEntity, base }) =>

@@ -40,6 +40,7 @@ import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import useSaveEntityTags, {
   useLatestEntityTags,
+  canEditEntityTags,
   isSourceTag,
   tagUpdateErrorMessage,
 } from "src/components/traceDetail/useSaveEntityTags";
@@ -1174,6 +1175,7 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
   // The span's tags until its refetch lands are the last acknowledged save:
   // the next edit builds on them, at their revision.
   const latest = useLatestEntityTags(entity, tags);
+  const locked = readOnly || !canEditEntityTags(entity);
 
   const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
 
@@ -1222,7 +1224,7 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
           name={tag.name}
           color={tag.color}
           size="small"
-          readOnly={readOnly || isPending || isSourceTag(entity, tag.name)}
+          readOnly={locked || isPending || isSourceTag(entity, tag.name)}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -1238,7 +1240,7 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
         />
       ))}
 
-      {!readOnly &&
+      {!locked &&
         (isAdding ? (
           <Box
             sx={{ minWidth: 130 }}

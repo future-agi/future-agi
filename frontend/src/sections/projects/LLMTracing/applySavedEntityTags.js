@@ -1,4 +1,9 @@
 import { withLiveGridApi } from "src/utils/gridApi";
+import {
+  effectiveEntityTags,
+  hasTagMetadata,
+} from "src/components/traceDetail/entityTagState";
+import { boundObserveListRow } from "./observeListPayload";
 
 const PHYSICAL_FIELDS = [
   "project_id",
@@ -35,24 +40,6 @@ const assignmentKey = (target, traceAssignment) => {
     : JSON.stringify(["span", physicalKey(target)]);
 };
 
-// Effective tags of a row that shares the saved assignment but is another
-// physical span (another root of the same trace): its own source tags plus the
-// saved manual tags, merged by name as the backend's effective_tags does.
-const effectiveTagsFor = (row, manualTags) => {
-  const sourceNames = new Set(row.source_tag_names || []);
-  const tags = new Map();
-  (row.tags || []).forEach((tag) => {
-    if (tag?.name && sourceNames.has(tag.name)) tags.set(tag.name, { ...tag });
-  });
-  sourceNames.forEach((name) => {
-    if (!tags.has(name)) tags.set(name, { name });
-  });
-  (manualTags || []).forEach((tag) => {
-    tags.set(tag.name, { ...(tags.get(tag.name) || {}), ...tag });
-  });
-  return [...tags.values()];
-};
-
 /**
  * Apply an acknowledged tag save to the loaded grid rows of that assignment,
  * without reading the list again.
@@ -78,7 +65,7 @@ export default function applySavedEntityTags(
   api,
   { result, entity, type, gridKind } = {},
 ) {
-  if (!result || !Number.isSafeInteger(result.tag_revision)) return 0;
+  if (!hasTagMetadata(result)) return 0;
   const target = entity?.tag_target;
   const savedKey = assignmentKey(
     target,
@@ -104,14 +91,26 @@ export default function applySavedEntityTags(
         return;
       }
       const samePhysicalSpan = physicalKey(rowTarget) === savedPhysical;
-      row.tags = samePhysicalSpan
-        ? result.tags
-        : effectiveTagsFor(row, result.manual_tags);
-      if (samePhysicalSpan && result.source_tag_names !== undefined) {
-        row.source_tag_names = result.source_tag_names;
-      }
-      row.manual_tags = result.manual_tags;
-      row.tag_revision = result.tag_revision;
+      const state = {
+        ...row,
+        source_tag_names: samePhysicalSpan
+          ? result.source_tag_names
+          : row.source_tag_names,
+        manual_tags: result.manual_tags,
+        tag_revision: result.tag_revision,
+      };
+      // A bounded sibling may lack complete source metadata. Leave it locked
+      // until a detail read supplies that metadata; never copy the saved root.
+      if (!hasTagMetadata(state)) return;
+      Object.assign(
+        row,
+        boundObserveListRow({
+          tags: effectiveEntityTags(state),
+          source_tag_names: state.source_tag_names,
+          manual_tags: state.manual_tags,
+          tag_revision: state.tag_revision,
+        }),
+      );
       updated.push(node);
     });
     if (updated.length > 0) {

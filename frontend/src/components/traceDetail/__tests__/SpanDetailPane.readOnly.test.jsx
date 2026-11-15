@@ -31,6 +31,19 @@ const entry = {
     trace: "trace-1",
     name: "llm call",
     tags: [{ name: "billing", color: "#2563EB" }],
+    source_tag_names: [],
+    manual_tags: [{ name: "billing", color: "#2563EB" }],
+    tag_revision: 0,
+    tag_target: {
+      project_id: "project-1",
+      trace_id: "trace-1",
+      span_id: "span-1",
+      start_hour: "2026-11-08T10:00:00+00:00",
+      observation_type: "span",
+      service_name: "svc",
+      expected_start_time: "2026-11-08T10:15:20.123456+00:00",
+      expected_version: "1",
+    },
   },
 };
 
@@ -80,6 +93,21 @@ describe("SpanDetailPane read-only", () => {
       screen.queryByRole("button", { name: "tag" }),
     ).not.toBeInTheDocument();
   });
+
+  it.each(["tag_target", "tag_revision", "manual_tags", "source_tag_names"])(
+    "disables span tag editing when %s is absent",
+    (field) => {
+      renderPane({
+        entry: {
+          observation_span: { ...entry.observation_span, [field]: undefined },
+        },
+      });
+      expect(screen.getByText("billing")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "tag" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("offers Fix with AI in the Evals tab only when it can act", async () => {
     const user = userEvent.setup();
