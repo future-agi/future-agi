@@ -919,6 +919,43 @@ class TestErrorLocalizerGateE2E:
         mock_refund.assert_called_once_with(mock_cost.return_value)
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.refund_cost_for_api_call")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_missing_ffmpeg_is_named_in_the_failure(
+        self,
+        mock_cost,
+        mock_localizer,
+        mock_refund,
+        _mock_close,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+        from tfc.utils.media_tools import MediaToolUnavailable
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = self._make_task(organization, workspace, template, eval_result="Failed")
+        mock_cost.return_value.status = APICallStatusChoices.PROCESSING.value
+        mock_localizer.return_value.localize_errors.side_effect = MediaToolUnavailable(
+            "splitting call audio for error localization"
+        )
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.FAILED
+        assert task.error_message.startswith(
+            "Error localization failed (ffmpeg_unavailable). ffmpeg is not "
+            "installed in this backend image, so splitting call audio for "
+            "error localization is unavailable."
+        )
+        mock_refund.assert_called_once_with(mock_cost.return_value)
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
     @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
     def test_empty_segments_completes_with_friendly_message(
