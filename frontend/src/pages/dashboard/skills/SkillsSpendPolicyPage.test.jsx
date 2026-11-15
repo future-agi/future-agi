@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { paths } from 'src/routes/paths';
 import SkillsWorkspaceLayout from 'src/sections/skills/components/SkillsWorkspaceLayout';
-import SkillsSpendPolicyPage from './SkillsSpendPolicyPage';
+import SkillsSpendPolicyPage, { safeReturnTo } from './SkillsSpendPolicyPage';
 
 const api = vi.hoisted(() => ({ scope: {}, org: {}, workspace: {}, query: {}, save: vi.fn(), ready: true }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => api.scope }));
@@ -14,10 +14,11 @@ vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => api.
 vi.mock('src/contexts/WorkspaceContext', () => ({ useWorkspace: () => api.workspace }));
 vi.mock('src/sections/falcon-ai/components/FalconAIFab', () => ({ useOpenFalconAI: () => () => undefined, FalconIcon: () => null }));
 const policy = { revision: 0, enabled: false, periodLimitUsd: null, startsAt: '2026-11-01', endsAt: '2026-12-01', knownEstimateUsd: '0', committedUsd: '0', remainingUsd: null, unknownReservedUsd: '0', priorPeriodUnknownUsd: '0' };
-const mount = () => render(<HelmetProvider><MemoryRouter initialEntries={[paths.dashboard.skills.root]}><Routes>
+const mount = (path = paths.dashboard.skills.root) => render(<HelmetProvider><MemoryRouter initialEntries={[path]}><Routes>
   <Route path="/dashboard/skills" element={<SkillsWorkspaceLayout />}>
     <Route index element={<div>Library</div>} />
     <Route path="allowance" element={<SkillsSpendPolicyPage />} />
+    <Route path="contexts/:id" element={<div>Context tests</div>} />
   </Route>
 </Routes></MemoryRouter></HelmetProvider>);
 beforeEach(() => {
@@ -59,7 +60,9 @@ it('reads a saved allowance in dollars and states the conclusion first', () => {
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
-  expect(screen.getByRole('status')).toHaveTextContent('Paid test runs are allowed up to $20.00 this period. $0.00 used.');
+  // One line: limit, use, what's left and the period, then the caveat once (UX iteration 4, SH7).
+  expect(screen.getByRole('status')).toHaveTextContent(/^\$20\.00 limit · \$0\.00 used · \$20\.00 left · Nov 1–30 \(UTC\)\. Estimates, not invoices\.$/);
+  expect(screen.queryByText(/allowed up to/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Period allowance (USD)')).toHaveValue('20.00');
   expect(screen.getByText('$')).toBeVisible();
   expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
@@ -67,7 +70,7 @@ it('reads a saved allowance in dollars and states the conclusion first', () => {
   expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Save', exact: true })).toHaveAccessibleDescription('Nothing changed yet.');
   fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '' } });
-  expect(screen.getByText('Monthly limit in USD. To block paid runs, untick the box below.')).toBeVisible();
+  expect(screen.getByText('Monthly limit in USD.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Save', exact: true })).toHaveAccessibleDescription('Enter an amount.');
 });
 it('names the page once, under a Skills breadcrumb, with one disclosure for how usage is counted', () => {
@@ -84,13 +87,41 @@ it('names the page once, under a Skills breadcrumb, with one disclosure for how 
   // Two controls stay: an amount saved with paid runs off is its own server state. Nothing starts ticked.
   expect(screen.getByLabelText('Allow paid test runs up to this amount')).not.toBeChecked();
 });
-it('explains an empty field only where leaving it empty keeps paid runs off', () => {
+it('keeps one "off" control: the box, never pre-ticked; the field hint only describes the amount', () => {
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
   expect(screen.getByRole('status')).toHaveTextContent('Paid test runs are off for this workspace.');
-  expect(screen.getByText('Monthly limit in USD. Leave empty to block paid runs.')).toBeVisible();
+  expect(screen.getByText('Monthly limit in USD.')).toBeVisible();
+  expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
   expect(screen.queryByText(/No amount is filled in/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Allow paid test runs up to this amount')).not.toBeChecked();
+});
+it('leads back to the blocked test after a save, only for a Skills return path', async () => {
+  mount(`${paths.dashboard.skills.allowance}?returnTo=${encodeURIComponent('/dashboard/skills/contexts/c1?tab=tests')}`);
+  expect(screen.queryByRole('link', { name: 'Back to tests' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '20' } });
+  fireEvent.click(screen.getByLabelText('Allow paid test runs up to this amount'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowance' }));
+  const back = await screen.findByRole('link', { name: 'Back to tests' });
+  expect(screen.getByText(/^Allowance saved\./)).toBeVisible();
+
+  expect(back).toHaveAttribute('href', '/dashboard/skills/contexts/c1?tab=tests');
+  expect(back).toHaveClass('MuiButton-outlined');
+  fireEvent.click(back);
+  expect(await screen.findByText('Context tests')).toBeVisible();
+});
+it('ignores a return path outside Skills', async () => {
+  mount(`${paths.dashboard.skills.allowance}?returnTo=${encodeURIComponent('https://example.invalid/dashboard/skills/x')}`);
+  fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '20' } });
+  fireEvent.click(screen.getByLabelText('Allow paid test runs up to this amount'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowance' }));
+  expect(await screen.findByText(/^Allowance saved\./)).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Back to tests' })).not.toBeInTheDocument();
+  for (const value of [null, '', '/dashboard/skills', '//evil.example/dashboard/skills/', '/dashboard/skills/../settings', '/dashboard/skills/\\evil', '/dashboard/settings']) expect(safeReturnTo(value)).toBeNull();
+  expect(safeReturnTo('/dashboard/skills/contexts/c1?tab=tests')).toBe('/dashboard/skills/contexts/c1?tab=tests');
 });
 it('uses its own load failure, never the release review wording', () => {
   const refetch = vi.fn();

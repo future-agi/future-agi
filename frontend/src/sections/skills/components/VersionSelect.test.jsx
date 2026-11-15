@@ -60,7 +60,8 @@ it('annotates each version once with its labels and latest, keeping numeric valu
   const change = vi.fn();
   render(<VersionSelect skillId="id" value={2} includeLabels={false} annotate ariaLabel="Viewed version" onChange={change} />);
   const combo = screen.getByRole('combobox', { name: 'Viewed version' });
-  expect(combo).toHaveTextContent('v2 · latest');
+  // The closed field shows only the version; the identity row beside it names the roles (UX iteration 4, SH9).
+  expect(combo).toHaveTextContent(/^v2$/);
   fireEvent.mouseDown(combo);
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['v2 · latest', 'v1 · production']);
   expect(screen.queryByRole('option', { name: 'Latest version' })).not.toBeInTheDocument();

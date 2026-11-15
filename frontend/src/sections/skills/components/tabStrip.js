@@ -15,6 +15,8 @@ import { useEffect } from 'react';
 //   right, under the fade. Measured at 390 before this: the mask was applied,
 //   but centring left 25-30px of a neighbour's label crisp on both sides.
 const FADE = 24;
+// Ramp between a fully shown tab and a fully hidden cut fragment.
+export const TAB_FADE_RAMP = 8;
 // Width of one scroll arrow (below). Disabled arrows take no space.
 const BUTTON = 32;
 export const scrollTabsSx = {
@@ -41,10 +43,10 @@ export const scrollTabsSx = {
 export const scrollTabsProps = { variant: 'scrollable', scrollButtons: 'auto', allowScrollButtonsMobile: true };
 
 /**
- * Marks which edges of an overflowing scroller have hidden tabs, and sizes
- * each fade to the label cut at that edge: the whole fragment sits under the
- * fade (never a crisp half word), and an edge that falls exactly on a tab
- * boundary gets no fade over the whole tab beside it (its arrow is the cue).
+ * Marks which edges of an overflowing scroller have hidden tabs, and hides
+ * the label cut at that edge: the whole fragment is transparent (never a
+ * readable half word) after an 8px ramp, and an edge that falls exactly on a
+ * tab boundary gets no fade over the whole tab beside it (its arrow is the cue).
  * The stylesheet's FADE px gradient is only the fallback before this runs.
  */
 export function markTabFade(scroller) {
@@ -66,12 +68,13 @@ export function markTabFade(scroller) {
     if (r.left < edge.left - 0.5 && r.right > edge.left + 0.5) head = Math.max(head, r.right - edge.left);
     if (r.left < right - 0.5 && r.right > right + 0.5) tail = Math.max(tail, right - r.left);
   });
-  // Fragment widths, rounded; the inner 40% of a fragment eases out, the rest is nearly gone.
-  const stops = (width) => [Math.round(width), Math.round(width * 0.6)];
-  const [hw, hm] = stops(head);
-  const [tw, tm] = stops(tail);
-  const from = !start ? 'black 0px' : hw > 0 ? `transparent 0px, rgba(0, 0, 0, 0.35) ${hm}px, black ${hw}px` : 'black 0px';
-  const to = !end ? 'black 100%' : tw > 0 ? `black calc(100% - ${tw}px), rgba(0, 0, 0, 0.35) calc(100% - ${tm}px), transparent 100%` : 'black 100%';
+  // The whole cut fragment is transparent, with an 8px ramp on the visible
+  // side (UX iteration 4, SH2). The earlier ramp kept the fragment's outer
+  // part opaque, so "Con" or "Us" stayed readable beside the arrow.
+  const hw = Math.round(head);
+  const tw = Math.round(tail);
+  const from = start && hw > 0 ? `transparent 0px, transparent ${hw}px, black ${hw + TAB_FADE_RAMP}px` : 'black 0px';
+  const to = end && tw > 0 ? `black calc(100% - ${tw + TAB_FADE_RAMP}px), transparent calc(100% - ${tw}px), transparent 100%` : 'black 100%';
   scroller.style.setProperty('--tab-fade', `linear-gradient(to right, ${from}, ${to})`);
 }
 
@@ -144,8 +147,18 @@ export function useActiveTabInView(ref, value) {
     run();
     document.fonts?.ready?.then(run).catch(() => undefined);
     const scroller = root.querySelector('.MuiTabs-scroller');
-    const fade = () => scroller && markTabFade(scroller);
+    // Re-mark on every scroll, on scrollend, and once more after scrolling has
+    // been quiet for a moment: scroll-snap can settle after the last scroll
+    // event in some browsers, and arrows appearing change the visible width.
+    let settle = 0;
+    const fade = () => {
+      if (!scroller) return;
+      markTabFade(scroller);
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => { if (alive) markTabFade(scroller); }, 150);
+    };
     scroller?.addEventListener('scroll', fade, { passive: true });
+    scroller?.addEventListener('scrollend', fade, { passive: true });
     let observer;
     if (scroller && typeof ResizeObserver !== 'undefined') {
       // Re-align only when a width changes. Watch the whole strip (scroller
@@ -171,7 +184,9 @@ export function useActiveTabInView(ref, value) {
     return () => {
       alive = false;
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
       scroller?.removeEventListener('scroll', fade);
+      scroller?.removeEventListener('scrollend', fade);
       observer?.disconnect();
     };
   }, [ref, value]);

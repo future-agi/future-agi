@@ -94,8 +94,8 @@ describe("typed release evidence", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Text comparison · v7 vs v4")).toBeVisible();
-    expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Answer check · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Application test · v7 vs v4")).toBeVisible();
     // The evidence row itself names grading completeness; Inspect adds the full record.
     expect(
       screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
@@ -673,7 +673,7 @@ describe("publication and explicit spending", () => {
   });
   it("starts with no spending default and submits exact decimal text only after confirmation", async () => {
     const save = vi.fn().mockResolvedValue({ revision: 3 });
-    render(
+    const { rerender } = render(
       <SpendPolicyPanel
         scopeKey="scope"
         state="ready"
@@ -690,7 +690,12 @@ describe("publication and explicit spending", () => {
     ).toBeDisabled();
     // The lead says what is true now, in currency, not accounting fields.
     expect(screen.getByText("Paid test runs are off for this workspace.")).toBeVisible();
-    expect(screen.getByText(/Period Nov 1–30 \(UTC\) · \$2\.12 used/)).toBeVisible();
+    // One summary line under it, with the caveat once (UX iteration 4, SH7).
+    expect(screen.getByText("$2.12 used · Nov 1–30 (UTC). Estimates, not invoices.")).toBeVisible();
+    // The box below is the only "off" control; the field hint only describes the amount.
+    expect(screen.getByText("Monthly limit in USD.")).toBeVisible();
+    expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Allow paid test runs up to this amount" })).not.toBeChecked();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
       { target: { value: "12.00000001" } },
@@ -704,6 +709,14 @@ describe("publication and explicit spending", () => {
       periodLimitUsd: "12.00000001",
       enabled: false,
     });
+    // The refetch after our own save carries the revision it produced: no false
+    // "changed while you were editing" beside "Allowance saved."
+    expect(await screen.findByText(/^Allowance saved\./)).toBeVisible();
+    rerender(<SpendPolicyPanel scopeKey="scope" state="ready" policy={{ ...policy, revision: 3, periodLimitUsd: "12.00000001" }} canManage onSave={save} />);
+    expect(screen.queryByText(/changed while you were editing/)).not.toBeInTheDocument();
+    // Someone else's later change still blocks.
+    rerender(<SpendPolicyPanel scopeKey="scope" state="ready" policy={{ ...policy, revision: 4, periodLimitUsd: "12.00000001" }} canManage onSave={save} />);
+    expect(screen.getByText(/changed while you were editing/)).toBeVisible();
   });
   it("keeps uncertain prior-period reservations visible and blocks stale budget updates", () => {
     const { rerender } = render(

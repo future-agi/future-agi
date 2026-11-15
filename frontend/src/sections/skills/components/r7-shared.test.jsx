@@ -20,6 +20,8 @@ import CapabilityNotice from './CapabilityNotice';
 import ActionReason, { reasonProps } from './ActionReason';
 import { ScrollTable, stackedTableSx } from './responsiveTable';
 import When from './When';
+import { markTabFade } from './tabStrip';
+import CodeBlock from 'src/components/code-block/CodeBlock';
 import { createTheme } from '@mui/material/styles';
 import { coverageText, evidenceCoverage, evidenceOutcome, outcomeBadge, outcomeLabel } from '../utils/review-display';
 
@@ -329,9 +331,9 @@ describe('When', () => {
 });
 
 describe('evidence vocabulary', () => {
-  it('reads an established pass on examples as "Passed on examples"', () => {
-    expect(outcomeLabel('works_on_examples')).toBe('Passed on examples');
-    expect(outcomeBadge('works_on_examples')).toEqual({ status: 'passed', label: 'Passed on examples' });
+  it('reads an established pass on the saved test cases as "Passed on test cases"', () => {
+    expect(outcomeLabel('works_on_examples')).toBe('Passed on test cases');
+    expect(outcomeBadge('works_on_examples')).toEqual({ status: 'passed', label: 'Passed on test cases' });
     expect(outcomeBadge('failed')).toEqual({ status: 'failed' });
   });
   it('states coverage once, always in runs, never inferring missing counts', () => {
@@ -342,13 +344,13 @@ describe('evidence vocabulary', () => {
   it('shows the result as a single badge per row, with one coverage string', () => {
     render(<EvidenceSummary items={[{ id: 'run-3', source: 'skills_text', title: 'Text checks', outcome: 'works_on_examples', counts: { graded: 2, planned: 2, regressed: 0, disagreements: 0 }, visibility: 'workspace' }]} />);
     const row = screen.getAllByRole('row')[1];
-    expect(within(row).getByText('Passed on examples')).toBeVisible();
+    expect(within(row).getByText('Passed on test cases')).toBeVisible();
     expect(within(row).queryByText(/Works on examples/)).not.toBeInTheDocument();
     expect(within(row).getAllByText(/runs graded/)).toHaveLength(1);
     expect(within(row).queryByText(/attempts/)).not.toBeInTheDocument();
   });
   it('maps every native outcome and text decision state to one badge, and never reads an unknown value as a pass', () => {
-    const states = { works_on_examples: ['passed', 'Passed on examples'], needs_changes: ['failed', 'Needs changes'], inconclusive: ['incomplete', 'Inconclusive'],
+    const states = { works_on_examples: ['passed', 'Passed on test cases'], needs_changes: ['failed', 'Needs changes'], inconclusive: ['incomplete', 'Inconclusive'],
       diagnostic: ['diagnostic', 'Diagnostic only'], routing_only: ['routing_only', 'Routing only'] };
     for (const source of ['simulation_native', 'skills_text']) {
       for (const [value, [status, label]] of Object.entries(states)) expect(evidenceOutcome({ source, outcome: value })).toMatchObject({ status, label });
@@ -373,12 +375,14 @@ describe('evidence vocabulary', () => {
     expect(evidenceCoverage({ graded: 2, planned: 2, regressed: 0, disagreements: 0 })).toBe('2 of 2 runs graded · 0 regressions · 0 human disagreements');
     expect(evidenceCoverage(null)).toBe('Not reported');
   });
-  it('says "Not loaded" for a result the review could not recheck, separate from "Not recorded"', () => {
+  it('says "Not checked yet" for a result the review could not recheck, separate from "Not recorded"', () => {
     render(<EvidenceSummary items={[{ id: 'run-4', source: 'skills_text', title: 'Text checks', status: 'completed', outcome: 'works_on_examples', resultState: 'not_loaded', visibility: 'workspace' }, { id: 'run-5', source: 'skills_text', title: 'Older text checks', status: 'completed', visibility: 'workspace' }]} />);
     const [, loaded, recorded] = screen.getAllByRole('row');
-    expect(within(loaded).getByText('Not loaded')).toBeVisible();
-    expect(within(loaded).getByText('Renew the review to recheck this result.')).toBeVisible();
-    expect(within(loaded).queryByText('Passed on examples')).not.toBeInTheDocument();
+    expect(within(loaded).getByText('Not checked yet')).toBeVisible();
+    expect(within(loaded).getByText('Rechecked when you renew.')).toBeVisible();
+    // The old wording pointed into the renewal dialog the user is already in.
+    expect(within(loaded).queryByText('Renew the review to recheck this result.')).not.toBeInTheDocument();
+    expect(within(loaded).queryByText('Passed on test cases')).not.toBeInTheDocument();
     expect(within(loaded).queryByText('Not recorded')).not.toBeInTheDocument();
     expect(within(recorded).getByText('Not recorded')).toBeVisible();
   });
@@ -393,6 +397,141 @@ describe('evidence vocabulary', () => {
   });
 });
 
+// jsdom has no layout: give a component's own box a width and run its ResizeObserver.
+function withBoxWidth(width, run) {
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 40, top: 0, left: 0, right: width, bottom: 40, x: 0, y: 0, toJSON() {} }));
+  const original = window.ResizeObserver;
+  window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  try { return run(); } finally { rect.mockRestore(); window.ResizeObserver = original; }
+}
+
+describe('evidence rows in a narrow container', () => {
+  const items = [
+    { id: 'run-7', source: 'skills_text', kind: 'text_comparison', outcome: 'works_on_examples', counts: { graded: 2, planned: 2, regressed: 0, disagreements: 0 }, visibility: 'workspace', expiresAt: '2026-11-21T00:00:00Z' },
+    { id: 'run-8', source: 'simulation_native', kind: 'application_verification', resultState: 'not_loaded', visibility: 'private' },
+  ];
+  it('names kinds like Tests: "Answer check" and "Application test"', () => {
+    render(<EvidenceSummary items={items} selectable onToggle={vi.fn()} onInspect={vi.fn()} />);
+    expect(screen.getByRole('checkbox', { name: 'Attach Answer check' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Attach Application test' })).toBeDisabled();
+    expect(screen.queryByText(/Text comparison|Application verification/)).not.toBeInTheDocument();
+  });
+  it('stacks rows under 720px: title and result, coverage, then visibility and expiry with an outlined Inspect', () => {
+    withBoxWidth(390, () => {
+      const inspect = vi.fn();
+      render(<EvidenceSummary items={items} selectable onToggle={vi.fn()} onInspect={inspect} />);
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      const list = screen.getByRole('list', { name: 'Test evidence' });
+      const [first, second] = within(list).getAllByRole('listitem');
+      expect(within(first).getByText('Answer check')).toBeVisible();
+      expect(within(first).getByText('Passed on test cases')).toBeVisible();
+      expect(within(first).getByText('2 of 2 runs graded · 0 regressions · 0 human disagreements')).toBeVisible();
+      // Separators sit only between parts: no line starts with " · ".
+      for (const node of list.querySelectorAll('p, span')) expect(node.textContent.trimStart().startsWith('·')).toBe(false);
+      expect(first).toHaveTextContent(/Workspace · Expire[sd] /);
+      const button = within(first).getByRole('button', { name: 'Inspect' });
+      expect(button).toHaveClass('MuiButton-outlined');
+      fireEvent.click(button);
+      expect(inspect).toHaveBeenCalledWith(items[0]);
+      // Same controls and names as the table, including the share rule.
+      expect(within(first).getByRole('checkbox', { name: 'Attach Answer check' })).toBeEnabled();
+      expect(within(second).getByRole('checkbox', { name: 'Attach Application test' })).toBeDisabled();
+      expect(within(second).getByText('Not checked yet')).toBeVisible();
+      expect(within(second).getByText('Rechecked when you renew.')).toBeVisible();
+      expect(second).toHaveTextContent(/Private · Expiry not reported/);
+      expect(within(second).getByText('Coverage not reported')).toBeVisible();
+    });
+  });
+  it('keeps the table from 720px, with Inspect outlined there too', () => {
+    withBoxWidth(900, () => {
+      render(<EvidenceSummary items={items} onInspect={vi.fn()} />);
+      expect(screen.getByRole('table', { name: 'Test evidence' })).toBeVisible();
+      expect(screen.getAllByRole('button', { name: 'Inspect' })[0]).toHaveClass('MuiButton-outlined');
+    });
+  });
+});
+
+describe('tab strip fade', () => {
+  // Alpha of a "linear-gradient(to right, …)" mask at x (px) in a strip `width` px wide.
+  function alphaAt(gradient, x, width) {
+    const body = gradient.replace(/^linear-gradient\(to right, /, '').replace(/\)$/, '');
+    const stops = body.split(/,\s*(?![^(]*\))/).map((stop) => {
+      const [, color, position] = stop.trim().match(/^(black|transparent)\s+(.+)$/);
+      const calc = position.match(/^calc\(100% - (\d+)px\)$/);
+      const at = calc ? width - Number(calc[1]) : position.endsWith('%') ? (width * parseFloat(position)) / 100 : parseFloat(position);
+      return { at, alpha: color === 'black' ? 1 : 0 };
+    });
+    const after = stops.findIndex((stop) => stop.at >= x);
+    if (after <= 0) return stops[Math.max(after, 0)].alpha;
+    const a = stops[after - 1]; const b = stops[after];
+    return b.at === a.at ? b.alpha : a.alpha + ((b.alpha - a.alpha) * (x - a.at)) / (b.at - a.at);
+  }
+  function strip(scrollLeft) {
+    const scroller = document.createElement('div');
+    const widths = [100, 90, 60, 80, 90, 80];
+    let x = 0;
+    for (const w of widths) {
+      const tab = document.createElement('button'); tab.setAttribute('role', 'tab');
+      const left = x; tab.getBoundingClientRect = () => ({ left: left - scrollLeft, right: left + w - scrollLeft, width: w });
+      scroller.appendChild(tab); x += w;
+    }
+    Object.defineProperty(scroller, 'scrollLeft', { value: scrollLeft });
+    Object.defineProperty(scroller, 'scrollWidth', { value: x });
+    Object.defineProperty(scroller, 'clientWidth', { value: 300 });
+    scroller.getBoundingClientRect = () => ({ left: 0, right: 300 });
+    return scroller;
+  }
+  it('makes the whole cut fragment transparent at the end edge, after an 8px ramp', () => {
+    const scroller = strip(190); // tabs 420-500 cut: 70px of it show at 230-300.
+    markTabFade(scroller);
+    const fade = scroller.style.getPropertyValue('--tab-fade');
+    for (let x = 230; x <= 300; x += 5) expect(alphaAt(fade, x, 300)).toBe(0);
+    expect(alphaAt(fade, 221, 300)).toBe(1);
+  });
+  it('mirrors it at the start edge and keeps no fade on a tab boundary', () => {
+    const scroller = strip(130); // tab 100-190 is cut at the start: 60px of it show at 0-60.
+    markTabFade(scroller);
+    const fade = scroller.style.getPropertyValue('--tab-fade');
+    for (let x = 0; x <= 60; x += 5) expect(alphaAt(fade, x, 300)).toBe(0);
+    expect(alphaAt(fade, 69, 300)).toBe(1);
+    const aligned = strip(100); // starts on a boundary (100) and ends inside 330-420 at 400.
+    markTabFade(aligned);
+    expect(aligned.style.getPropertyValue('--tab-fade')).toMatch(/^linear-gradient\(to right, black 0px, /);
+  });
+});
+
+describe('CodeBlock in a narrow container', () => {
+  it('puts Copy in a header row above the code, with the label as a caption and no reserved padding', () => {
+    withBoxWidth(358, () => {
+      render(<CodeBlock label="Context apply command" code={`python -m fi.context apply --plan '${'c'.repeat(80)}'`} copyLabel="Copy" ariaLabel="Copy apply command" />);
+      const code = screen.getByLabelText('Context apply command');
+      const root = code.parentElement;
+      expect(root).toHaveAttribute('data-code-layout', 'header');
+      const header = root.querySelector('[data-code-header]');
+      expect(header.compareDocumentPosition(code) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(header).getByRole('button', { name: 'Copy apply command' })).toBeVisible();
+      expect(within(header).getByText('Context apply command')).toBeVisible();
+      expect(code).toHaveStyle({ paddingRight: '12px', overflowX: 'auto' });
+    });
+  });
+  it('keeps a caller action in the header row with its own accessible name', () => {
+    withBoxWidth(358, () => {
+      render(<CodeBlock label="Context install plan command" code="claude --plan x" action={<button type="button" aria-label="Copy plan command">Copy</button>} />);
+      const root = screen.getByLabelText('Context install plan command').parentElement;
+      expect(within(root.querySelector('[data-code-header]')).getByRole('button', { name: 'Copy plan command' })).toBeVisible();
+    });
+  });
+  it('floats the control from 600px, as before', () => {
+    withBoxWidth(800, () => {
+      render(<CodeBlock label="Command" code="echo hi" />);
+      const root = screen.getByLabelText('Command').parentElement;
+      expect(root).toHaveAttribute('data-code-layout', 'floating');
+      expect(root.querySelector('[data-code-header]')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Copy code' })).toBeVisible();
+    });
+  });
+});
+
 describe('header identity', () => {
   it('puts the picker first as "Viewing [select]" and still names every role', () => {
     render(<VersionIdentityRow picker={<select aria-label="Viewed version"><option>v2</option></select>} viewing={{ number: 2, digest }} latest={{ number: 2 }} production={{ number: 1 }} draft={{ baseNumber: 2 }} />);
@@ -401,6 +540,10 @@ describe('header identity', () => {
     expect(screen.getAllByText(/Viewing/)).toHaveLength(1);
     expect(screen.getByText('Production v1')).toBeVisible();
     expect(screen.getByText('Latest v2')).toBeVisible();
+    // Production and latest wrap as one group (UX iteration 4, SH9).
+    const group = screen.getByText('Latest v2').parentElement;
+    expect(group).toContainElement(screen.getByText('Production v1'));
+    expect(group).toHaveStyle({ flexWrap: 'nowrap' });
     expect(screen.getByText('Your draft (from v2)')).toBeVisible();
     // UX iteration 3 (SH3): no raw digest in the row; the viewed version's full digest is one keystroke away.
     expect(screen.queryByText(/abababab/)).not.toBeInTheDocument();

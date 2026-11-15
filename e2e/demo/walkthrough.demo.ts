@@ -392,7 +392,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await scrollTo(result, 400);
       await caption('v2 refunds the $25 item price and passes; the v1 reference adds shipping and fails.');
 
-      // Application verification
+      // Application test
       await settle();
       const verify = page.getByRole('radio', { name: /^Verify on the application/ });
       await quick(async () => { await scrollTo(verify, 300); await click(verify, 500); });

@@ -86,14 +86,14 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   const evidencePacket = { ...packet, evidence: [ref] };
   useReviewOptions.mockReturnValue({ data: { targets: [], recipients: [], evidence: [ref] } });
   const composer = render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ kind: 'skill', subjectId: 'skill', candidate: { id: 'version', digest: 'digest', number: 2 }, evidence: ['skills_text:5cae58ed'] }} /></MemoryRouter>);
-  expect(screen.getByText('Passed on examples')).toBeVisible();
+  expect(screen.getByText('Passed on test cases')).toBeVisible();
   expect(screen.getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
   expect(screen.getByText('From your test')).toBeVisible();
   composer.unmount();
 
   const consent = render(<ShareAllEvidence packet={packet} evidence={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 result' }));
-  expect(within(screen.getByRole('dialog')).getByText('Passed on examples')).toBeVisible();
+  expect(within(screen.getByRole('dialog')).getByText('Passed on test cases')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
   // The record is named by title with a Private badge; its ID sits under Details.
   expect(within(screen.getByRole('dialog')).getByText('Private', { exact: true })).toBeVisible();
@@ -103,20 +103,20 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   consent.unmount();
 
   const review = render(<ReleaseReviewBody packet={evidencePacket} evidence={[ref]} />);
-  expect(screen.getByText('Passed on examples')).toBeVisible();
+  expect(screen.getByText('Passed on test cases')).toBeVisible();
   expect(screen.getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
   const unloaded = { ...ref, resultState: 'not_loaded' };
   review.rerender(<ReleaseReviewBody packet={evidencePacket} evidence={[unloaded]} />);
-  expect(screen.getByText('Not loaded')).toBeVisible();
-  expect(screen.getByText('Renew the review to recheck this result.')).toBeVisible();
-  expect(screen.queryByText('Passed on examples')).not.toBeInTheDocument();
+  expect(screen.getByText('Not checked yet')).toBeVisible();
+  expect(screen.getByText('Rechecked when you renew.')).toBeVisible();
+  expect(screen.queryByText('Passed on test cases')).not.toBeInTheDocument();
   expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
   review.unmount();
 
   useRenewalPreview.mockReturnValue({ data: { revision: 2, fingerprint: 'renewed', packet: { ...evidencePacket, evidence: [unloaded] }, changes: [], removedEvidence: [] } });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
-  expect(screen.getByText('Not loaded')).toBeVisible();
-  expect(screen.getByText('Renew the review to recheck this result.')).toBeVisible();
+  expect(screen.getByText('Not checked yet')).toBeVisible();
+  expect(screen.getByText('Rechecked when you renew.')).toBeVisible();
   expect(screen.getByTitle('5cae58ed')).toBeVisible();
   expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
 });
