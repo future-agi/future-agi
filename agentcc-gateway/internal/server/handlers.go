@@ -2265,6 +2265,9 @@ func isBlockedMetadataKey(key string) bool {
 	switch lower {
 	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey, metadataErrorKey:
 		return true
+	case "provider_locked", "provider_lock_target":
+		// Lock results belong to the server; provider_lock remains a caller request.
+		return true
 	}
 	return false
 }
