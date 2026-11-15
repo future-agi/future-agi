@@ -524,19 +524,49 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 	return h.failover.Load()
 }
 
+// providerAllowedByLock compares canonical routing IDs, not org adapter IDs.
+// These result fields are server-owned: caller metadata cannot establish a lock.
+func providerAllowedByLock(rc *models.RequestContext, id string) bool {
+	return rc.Metadata["provider_locked"] != "true" ||
+		(rc.Metadata["provider_lock_target"] != "" && id == rc.Metadata["provider_lock_target"])
+}
+
 func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, model string, excluded map[string]bool) (providers.Provider, string, string, bool) {
 	if ctx.Err() != nil {
 		return nil, "", model, false
 	}
-	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil {
+	if rc.Metadata["provider_locked"] == "true" {
+		// Restrict candidates before selection so a competing mapping cannot hide
+		// an eligible same-provider fallback. Preserve the caller's exclusions
+		// and the registry's model-map, routing, alias and prefix semantics.
+		lockedExcluded := make(map[string]bool, len(excluded))
+		for id, skip := range excluded {
+			lockedExcluded[id] = skip
+		}
+		for _, id := range h.registry.ProviderIDs() {
+			if !providerAllowedByLock(rc, id) {
+				lockedExcluded[id] = true
+			}
+		}
+		if orgCfg != nil {
+			for id := range orgCfg.Providers {
+				if !providerAllowedByLock(rc, id) {
+					lockedExcluded[id] = true
+				}
+			}
+		}
+		excluded = lockedExcluded
+	}
+	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil && providerAllowedByLock(rc, id) {
 		return p, id, upstream, true
 	}
-	// Keep the credential eligibility already established for an explicit lock.
+	// Keep the credential eligibility already established for an explicit lock,
+	// but only for that accepted provider, never any other operator candidate.
 	if (h.orgProvidersOnly(ctx, rc) && rc.Metadata["provider_locked"] != "true") || ctx.Err() != nil {
 		return nil, "", model, false
 	}
 	result, err := h.registry.ResolveExcluding(model, excluded)
-	if err != nil {
+	if err != nil || !providerAllowedByLock(rc, result.Provider.ID()) {
 		return nil, "", model, false
 	}
 	p := result.Provider

@@ -15,6 +15,11 @@ func (h *Handlers) admitProvider(ctx context.Context, registry *routing.CircuitB
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Enforce the accepted identity at dispatch as well as during selection,
+	// before acquiring a breaker lease or contacting either credential scope.
+	if !providerAllowedByLock(rc, id) {
+		return nil, routing.ProvidersUnavailableError("provider does not match the accepted provider lock")
+	}
 	var cb *routing.CircuitBreaker
 	if registry.IsEnabled() {
 		if global, ok := h.registry.GetProvider(id); ok && global == p {

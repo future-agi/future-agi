@@ -21,6 +21,11 @@ func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.Reque
 		if err := callCtx.Err(); err != nil {
 			return nil, err
 		}
+		// A refused target must not consume an attempt or build org credentials;
+		// continue selection until the accepted provider can be considered.
+		if !providerAllowedByLock(rc, id) {
+			return nil, routing.ExcludeTarget(routing.ProvidersUnavailableError("provider does not match the accepted provider lock"))
+		}
 		p, ok := h.registry.GetProvider(id)
 		if !ok {
 			return nil, models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", id))
