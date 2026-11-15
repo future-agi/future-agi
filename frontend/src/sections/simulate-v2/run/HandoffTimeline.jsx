@@ -245,7 +245,7 @@ Leg.propTypes = {
 };
 
 /* Hand-offs (Nosang, 12 Nov): a short numbered list, one row per time work
-   was handed on, with the same numbers on the graph's arrows; each row
+   was handed on, with the same numbers on the graph's hand-off arrows; each row
    shows the way out and the way back (Chintan, 13 Nov). Hovering a
    row lights up its arrows and boxes; clicking it shows who got the work in
    the tree, as a box does. */
@@ -420,7 +420,7 @@ function EdgeKey({ edges }) {
     edges.some((e) => !e._return && !e._control && !e._ghost) &&
       "Solid: handed work",
     edges.some((e) => e._return && !e._missing) &&
-      "Dotted: answer back, same number",
+      "Dotted: answer back",
     edges.some((e) => e._missing) && "Red: no answer",
     dashedKey(edges),
   ].filter(Boolean);

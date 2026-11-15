@@ -884,10 +884,11 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         },
         style: {
           stroke: edgeColor,
-          strokeWidth: edge._stepLabel ? 1.2 : 1,
-          strokeDasharray: edge._stepLabel ? "2 3" : "1 3",
+          strokeWidth: edge._stepLabel || edge._answer ? 1.2 : 1,
+          strokeDasharray: edge._stepLabel || edge._answer ? "2 3" : "1 3",
         },
-        // Numbered like the hand-off it answers, so 1 → reads back as ← 1.
+        // An answer (edge._answer) is unnumbered: its step is the one on the
+        // hand-off arrow it answers.
         ...(edge._stepLabel && {
           label: edge._stepLabel,
           labelStyle: {
@@ -905,6 +906,7 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
           labelBgBorderRadius: 4,
         }),
         ...(!edge._stepLabel &&
+          !edge._answer &&
           count > 1 && {
             label: edge._countLabel || `×${count}`,
             labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },

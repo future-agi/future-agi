@@ -338,15 +338,9 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
     }),
   );
 
-  /* Chintan, 13 Nov: both directions. The answer that came back carries
-     the same number as the hand-off it answers (1 → and ← 1). */
-  const backOf = {};
-  lines.forEach((ln) =>
-    ln.to.forEach((id, i) => {
-      if (ln.outcomes[i] !== "answered") return;
-      (backOf[`${id}->${ln.from}`] ||= []).push(ln.n);
-    }),
-  );
+  /* Chintan, 13 Nov: both directions — the answer is drawn coming back.
+     Chintan, 14 Nov: one step is one step, so its number sits only on the
+     hand-off arrow; the dotted answer and the red no-answer carry none. */
 
   const graph = buildTraceGraph(spans);
   graph.edges = graph.edges.map((e) => {
@@ -415,12 +409,13 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
       trace_count: 1,
       is_self_loop: false,
       _return: true,
-      ...(backOf[k] && { _stepLabel: backOf[k].join(", ") }),
+      _answer: true,
     });
   });
 
-  /* The answer that never came back is drawn too, in red with its number
-     crossed (13 Nov) — the list's red ← line, on the graph. */
+  /* The answer that never came back is drawn too, in red (13 Nov) — the
+     list's red ← line, on the graph. No number: the step is numbered once,
+     on its hand-off arrow (Chintan, 14 Nov). */
   lines.forEach((ln) =>
     ln.to.forEach((id, i) => {
       const o = ln.outcomes[i];
@@ -438,7 +433,6 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
         is_self_loop: false,
         _return: true,
         _missing: true,
-        _stepLabel: `${ln.n} ✕`,
       });
     }),
   );
