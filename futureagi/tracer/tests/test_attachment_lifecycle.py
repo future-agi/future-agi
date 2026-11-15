@@ -1,6 +1,6 @@
 """Lifecycle: outbox consumers, schedules, sweeps, deletion hooks, schema decisions.
 
-Real PostgreSQL with the 0133 fences. Storage and the ClickHouse span read are
+Real PostgreSQL with the 0137 fences. Storage and the ClickHouse span read are
 explicit doubles, and ``probe`` stands in for the bubblewrap sandbox (the
 sandbox itself is qualified by test_attachment_sandbox.py), so these prove the
 drain/sweep wiring and the database rules, not S3 or ClickHouse.
