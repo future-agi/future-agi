@@ -379,11 +379,11 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // own body, Request is nil and Response holds usage only; the handler puts the
 // text in GuardrailRequest and GuardrailResponse instead.
 //
-// A guardrail that rewrites content, as PII redaction does, rewrites Request,
-// which is what the gateway sends upstream. On those routes it rewrites a
-// copy, so it finds and reports what it would remove but cannot remove it.
+// Remediation is supported only for wire-backed content. Projections must
+// remain unchanged across checks, or a later Block would inspect different
+// content from the bytes the handler actually sends.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
-	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
 	if input.Request == nil {
 		input.Request = rc.GuardrailRequest
 	}
