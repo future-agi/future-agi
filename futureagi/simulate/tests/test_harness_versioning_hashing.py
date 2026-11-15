@@ -30,6 +30,11 @@ ALK_SCENARIOS_DIGEST = (
 STRING_SORTED_DIGEST = (
     "sha256:f4f9a24da3f46c767effd60c20fefe2acac44e358d33bee706ae82365efa089b"
 )
+# ALK ``_artifact_digest`` of ``scenarios/`` for TREE without its checks; ALK's scenario set
+# hash reads only that folder, so a ``dropped.json`` beside it never changes it.
+ALK_SUITE_DIGEST = (
+    "sha256:221a97fe98dec0d0d6d7800d42f38a3341c5aa81aabee4da11132b38e9390026"
+)
 # Computed with ALK ``outbound.canonical_bytes``.
 CANONICAL_VALUE = {"z": [1, 2.5, {"b": "é", "a": None}], "a": True, "名": "値"}
 ALK_CANONICAL_DIGEST = (
@@ -490,3 +495,33 @@ class TestAgentHashes:
         assert key != hashing.assembly_key("sha256:a", "sha256:e2", "sha256:s")
         assert key != hashing.assembly_key("sha256:a2", "sha256:e", "sha256:s")
         assert key != hashing.assembly_key("sha256:a", "sha256:e", "sha256:s2")
+
+
+class TestSuiteHashDrops:
+    SUITE = {k: v for k, v in TREE.items() if "/checks/" not in k}
+
+    @pytest.mark.parametrize(
+        "dropped",
+        [None, b"", b'{"format": 1, "scenarios": {}}', b'{"format": 1}'],
+    )
+    def test_a_suite_without_drops_hashes_as_alk_and_as_before(self, dropped):
+        files = dict(self.SUITE)
+        if dropped is not None:
+            files["dropped.json"] = dropped
+
+        assert hashing.suite_hash(files) == ALK_SUITE_DIGEST
+        assert hashing.suite_hash(
+            {**files, **{k: v for k, v in TREE.items() if "/checks/" in k}}
+        ) == (ALK_SUITE_DIGEST)
+
+    def test_drops_join_the_hash_but_not_the_scenario_digest(self):
+        drop = {"format": 1, "scenarios": {"cancel": {"reason": "r"}}}
+        files = {**self.SUITE, "dropped.json": json.dumps(drop).encode()}
+
+        assert hashing.tree_digest(hashing.scenario_files(files)) == ALK_SUITE_DIGEST
+        assert hashing.suite_hash(files) == (
+            "sha256:"
+            + hashlib.sha256(
+                f"{ALK_SUITE_DIGEST}\n{canonical_digest(drop)}".encode()
+            ).hexdigest()
+        )

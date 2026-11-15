@@ -308,6 +308,34 @@ class TestDropAndRestore:
 
         assert refused.value.code == "scenario_key_retired"
 
+    def test_a_suite_saved_before_drops_existed_keeps_its_version(
+        self, user, workspace, storage
+    ):
+        """A version hashed before dropped.json existed is the one a save without drops lands on."""
+        from simulate.services.harness_versioning import hashing
+
+        environment = _versioned(user, workspace, "drop-old-hash", storage)
+        two = [_scenario(NAMES[0]), _scenario(NAMES[2])]
+        record_authoring(environment, _suite_archive(two), origin="chat")
+        environment.refresh_from_db()
+        old = environment.suite_version
+        suite = archives.split_authoring(
+            archives.read_archive(_suite_archive(two))
+        ).suite
+        assert old.hash == hashing.tree_digest(
+            hashing.scenario_files(suite), exclude=hashing._suite_unhashed
+        )
+        count = HarnessSuiteVersion._base_manager.filter(job=environment).count()
+
+        record_authoring(environment, _suite_archive(two), origin="chat")
+        record_authoring(environment, _with_drops(two, []), origin="nudge")
+        environment.refresh_from_db()
+
+        assert environment.suite_version_id == old.id
+        assert (
+            HarnessSuiteVersion._base_manager.filter(job=environment).count() == count
+        )
+
     def test_a_version_with_the_same_scenarios_but_other_drops_is_not_reused(
         self, user, workspace, storage
     ):
