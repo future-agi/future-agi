@@ -6,7 +6,20 @@ import {
   tagTargetKey,
 } from "../entityTagState";
 
-const root = (span, sdk, manual = [], revision = 0) => ({
+import type {
+  EditableTagEntity,
+  EntityTag,
+  TagStateCache,
+} from "../entityTagState";
+
+type RootEntity = EditableTagEntity & { tags: EntityTag[] };
+
+const root = (
+  span: string,
+  sdk: string,
+  manual: string[] = [],
+  revision = 0,
+): RootEntity => ({
   parent_span_id: "",
   tag_target: {
     project_id: "project-1",
@@ -26,7 +39,7 @@ const root = (span, sdk, manual = [], revision = 0) => ({
 
 describe("entity tag assignment cache", () => {
   it("stores only shared manual tags and revision, not physical response metadata", () => {
-    const cache = new Map();
+    const cache: TagStateCache = new Map();
     const a = root("root-a", "sdk-a");
     const saved = root("root-a", "sdk-a", ["reviewed"], 1);
     expect(rememberTagState(cache, a, "span", saved)).toBe(true);
@@ -42,7 +55,7 @@ describe("entity tag assignment cache", () => {
   });
 
   it("keeps the newest manual watermark while using each root's latest SDK metadata", () => {
-    const cache = new Map();
+    const cache: TagStateCache = new Map();
     const a = root("root-a", "sdk-a");
     const b = root("root-b", "sdk-b", ["newer"], 4);
     rememberTagState(cache, b, "span");
@@ -60,7 +73,7 @@ describe("entity tag assignment cache", () => {
   });
 
   it("does not treat missing or truncated source metadata as an empty source set", () => {
-    const cache = new Map();
+    const cache: TagStateCache = new Map();
     const a = root("root-a", "sdk-a");
     rememberTagState(
       cache,
@@ -82,7 +95,7 @@ describe("entity tag assignment cache", () => {
   });
 
   it("separates child physical identities, projects, and unknown parentage", () => {
-    const cache = new Map();
+    const cache: TagStateCache = new Map();
     const a = root("root-a", "sdk-a");
     rememberTagState(
       cache,

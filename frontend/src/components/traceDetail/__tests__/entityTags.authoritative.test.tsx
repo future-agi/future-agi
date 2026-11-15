@@ -11,9 +11,32 @@ import SpanDetailPane from "../SpanDetailPane";
 import useSaveEntityTags, { useLatestEntityTags } from "../useSaveEntityTags";
 import ChatDetailsBar from "../../ChatDetailDrawerV2/ChatDetailsBar";
 import CallDetailsBar from "../../VoiceDetailDrawerV2/CallDetailsBar";
+import type {
+  EditableTagEntity,
+  EntityTag,
+  EntityTagInput,
+  ManualTagState,
+  TagTarget,
+} from "../entityTagState";
+
+interface TestRow extends EditableTagEntity {
+  id: string;
+  name: string;
+  trace_id: string;
+  tags: EntityTag[];
+}
+
+type SaveBody = TagTarget & {
+  expected_tag_revision: number;
+  tags: EntityTag[];
+};
+type SaveResponse = { data: { result: TestRow } };
+type SaveRequest = (url: string, body: SaveBody) => Promise<SaveResponse>;
+const patch = vi.mocked<SaveRequest>(axios.patch);
+const post = vi.mocked<SaveRequest>(axios.post);
 
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof import("src/utils/axios")>();
   return {
     ...original,
     default: { ...original.default, patch: vi.fn(), post: vi.fn() },
@@ -25,14 +48,28 @@ vi.mock("src/api/project/trace-detail", () => ({
 }));
 const nextTag = vi.hoisted(() => ({ name: "new" }));
 vi.mock("../TagInput", () => ({
-  default: ({ onAdd, disabled }) => (
+  default: ({
+    onAdd,
+    disabled,
+  }: {
+    onAdd: (tag: EntityTag) => void;
+    disabled?: boolean;
+  }) => (
     <button disabled={disabled} onClick={() => onAdd({ name: nextTag.name })}>
       Add test tag
     </button>
   ),
 }));
 vi.mock("../TagChip", () => ({
-  default: ({ name, onRemove, readOnly }) => (
+  default: ({
+    name,
+    onRemove,
+    readOnly,
+  }: {
+    name: string;
+    onRemove?: React.MouseEventHandler<HTMLButtonElement>;
+    readOnly?: boolean;
+  }) => (
     <button disabled={readOnly} onClick={onRemove}>
       {name}
     </button>
@@ -49,7 +86,13 @@ const target = (span = "root-a", trace = "trace-1") => ({
   expected_start_time: "2026-11-08T10:15:20.123456+00:00",
   expected_version: "18446744073709551614",
 });
-const row = (span, sources, manual = [], revision = 0, trace = "trace-1") => ({
+const row = (
+  span: string,
+  sources: string[],
+  manual: string[] = [],
+  revision = 0,
+  trace = "trace-1",
+): TestRow => ({
   id: span,
   name: span,
   trace_id: trace,
@@ -60,20 +103,25 @@ const row = (span, sources, manual = [], revision = 0, trace = "trace-1") => ({
   manual_tags: manual.map((name) => ({ name })),
   tags: [...sources, ...manual].map((name) => ({ name })),
 });
-const names = (tags) => tags.map((tag) => tag.name);
+const names = (tags: EntityTag[]) => tags.map((tag) => tag.name);
+
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("Expected test fixture value");
+  return value;
+}
 
 // A replacement/CAS server, not an echo-only API mock: reads are reconstructed
 // from the stored assignment plus the requested physical root's SDK tags.
-function serverFor(rows) {
-  const stored = new Map();
+function serverFor(rows: TestRow[]) {
+  const stored = new Map<string, ManualTagState>();
   rows.forEach((entity) =>
     stored.set(entity.trace_id, {
       manual_tags: entity.manual_tags,
       tag_revision: entity.tag_revision,
     }),
   );
-  const read = (entity) => {
-    const assignment = stored.get(entity.trace_id);
+  const read = (entity: TestRow): TestRow => {
+    const assignment = required(stored.get(entity.trace_id));
     return {
       ...entity,
       ...assignment,
@@ -83,11 +131,11 @@ function serverFor(rows) {
       ],
     };
   };
-  const save = async (_url, body) => {
-    const entity = rows.find(
-      (item) => item.tag_target.span_id === body.span_id,
+  const save: SaveRequest = async (_url, body) => {
+    const entity = required(
+      rows.find((item) => item.tag_target.span_id === body.span_id),
     );
-    const previous = stored.get(entity.trace_id);
+    const previous = required(stored.get(entity.trace_id));
     if (body.expected_tag_revision !== previous.tag_revision)
       throw { statusCode: 409 };
     stored.set(entity.trace_id, {
@@ -96,8 +144,8 @@ function serverFor(rows) {
     });
     return { data: { result: read(entity) } };
   };
-  axios.patch.mockImplementation(save);
-  axios.post.mockImplementation(save);
+  patch.mockImplementation(save);
+  post.mockImplementation(save);
   return { stored, read, save };
 }
 
@@ -105,12 +153,15 @@ function editor(kind = "popover") {
   const client = new QueryClient({
     defaultOptions: { mutations: { retry: false } },
   });
-  const view = (entity, extra = {}) => (
+  const view = (
+    entity: EntityTagInput,
+    extra: Partial<React.ComponentProps<typeof AddTagsPopover>> = {},
+  ) => (
     <QueryClientProvider client={client}>
       {kind === "pane" ? (
         <SpanDetailPane
           entry={{ observation_span: entity }}
-          projectId={entity.tag_target.project_id}
+          projectId={required(entity.tag_target).project_id as string}
           onClose={vi.fn()}
         />
       ) : (
@@ -125,7 +176,7 @@ function editor(kind = "popover") {
       )}
     </QueryClientProvider>
   );
-  const add = (name) => {
+  const add = (name: string) => {
     nextTag.name = name;
     if (kind === "pane")
       fireEvent.click(screen.getByRole("button", { name: "tag" }));
@@ -157,13 +208,12 @@ describe("authoritative tag state independent of list previews", () => {
       const { view, add } = editor();
       render(view(bounded, type === "span" ? { spanId: original.id } : {}));
       add("new");
-      const method = type === "span" ? axios.post : axios.patch;
+      const method = type === "span" ? post : patch;
       await waitFor(() => expect(method).toHaveBeenCalledTimes(1));
       expect(names(method.mock.calls[0][1].tags)).toEqual(["reviewed", "new"]);
-      expect(names(server.stored.get("trace-1").manual_tags)).toEqual([
-        "reviewed",
-        "new",
-      ]);
+      expect(names(required(server.stored.get("trace-1")).manual_tags)).toEqual(
+        ["reviewed", "new"],
+      );
       expect(names(server.read(original).manual_tags)).toEqual([
         "reviewed",
         "new",
@@ -191,9 +241,9 @@ describe("authoritative tag state independent of list previews", () => {
       }),
     );
     add("new");
-    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(
-      axios.post.mock.calls.map(([, body]) => ({
+      post.mock.calls.map(([, body]) => ({
         span: body.span_id,
         revision: body.expected_tag_revision,
         tags: names(body.tags),
@@ -225,15 +275,15 @@ describe("shared manual assignment with physical-root source tags", () => {
       expect(screen.getByText("sdk-b")).toBeDisabled();
       expect(screen.getByText("reviewed")).toBeInTheDocument();
       add("new");
-      const method = kind === "pane" ? axios.post : axios.patch;
+      const method = kind === "pane" ? post : patch;
       await waitFor(() =>
         expect(names(server.read(b).manual_tags)).toEqual(["reviewed", "new"]),
       );
-      expect(method.mock.calls.at(-1)[1]).toMatchObject({
+      expect(required(method.mock.calls.at(-1))[1]).toMatchObject({
         span_id: "root-b",
         expected_tag_revision: 1,
       });
-      expect(names(method.mock.calls.at(-1)[1].tags)).toEqual([
+      expect(names(required(method.mock.calls.at(-1))[1].tags)).toEqual([
         "reviewed",
         "new",
       ]);
@@ -258,6 +308,7 @@ describe("shared manual assignment with physical-root source tags", () => {
     await act(async () => {
       const saved = await result.current.save({
         entity: a,
+        base: undefined,
         tags: [{ name: "reviewed" }],
         type: "span",
       });
@@ -272,7 +323,7 @@ describe("shared manual assignment with physical-root source tags", () => {
         tags: [...result.current.latest.tags, { name: "sdk-b" }],
       }),
     );
-    expect(names(axios.post.mock.calls[1][1].tags)).toEqual(["reviewed"]);
+    expect(names(post.mock.calls[1][1].tags)).toEqual(["reviewed"]);
     expect(names(server.read(b).manual_tags)).toEqual(["reviewed"]);
   });
 });
@@ -284,11 +335,11 @@ describe("response/refetch ordering and deletions", () => {
       const a = row("root-a", ["sdk-a"]);
       const b = row("root-b", ["sdk-b"]);
       const server = serverFor([a, b]);
-      const method = kind === "pane" ? axios.post : axios.patch;
-      let acknowledge;
+      const method = kind === "pane" ? post : patch;
+      let acknowledge: (() => void) | undefined;
       method.mockImplementationOnce(async (...args) => {
         const response = await server.save(...args);
-        return new Promise((resolve) => {
+        return new Promise<SaveResponse>((resolve) => {
           acknowledge = () => resolve(response);
         });
       });
@@ -297,7 +348,7 @@ describe("response/refetch ordering and deletions", () => {
       add("reviewed");
       await waitFor(() => expect(acknowledge).toBeTypeOf("function"));
       rerender(view(b));
-      await act(async () => acknowledge());
+      await act(async () => required(acknowledge)());
       await waitFor(() =>
         expect(screen.getByText("reviewed")).not.toBeDisabled(),
       );
@@ -320,11 +371,11 @@ describe("response/refetch ordering and deletions", () => {
       const a = row("root-a", ["sdk-a"]);
       const b = row("root-b", ["sdk-b"]);
       const server = serverFor([a, b]);
-      const method = kind === "pane" ? axios.post : axios.patch;
-      let acknowledge;
+      const method = kind === "pane" ? post : patch;
+      let acknowledge: (() => void) | undefined;
       method.mockImplementationOnce(async (...args) => {
         const response = await server.save(...args);
-        return new Promise((resolve) => {
+        return new Promise<SaveResponse>((resolve) => {
           acknowledge = () => resolve(response);
         });
       });
@@ -339,7 +390,7 @@ describe("response/refetch ordering and deletions", () => {
       });
       rerender(view(server.read(b)));
       expect(screen.getByText("remote")).toBeInTheDocument();
-      await act(async () => acknowledge());
+      await act(async () => required(acknowledge)());
       expect(screen.queryByText("reviewed")).not.toBeInTheDocument();
       expect(screen.queryByText("sdk-a")).not.toBeInTheDocument();
       expect(screen.getByText("sdk-b")).toBeDisabled();
@@ -360,7 +411,7 @@ describe("response/refetch ordering and deletions", () => {
       const a = row("root-a", ["sdk-a"], ["reviewed"], 1);
       const b = row("root-b", ["sdk-b"], ["reviewed"], 1);
       const server = serverFor([a, b]);
-      const method = kind === "pane" ? axios.post : axios.patch;
+      const method = kind === "pane" ? post : patch;
       const { view, add, client } = editor(kind);
       const invalidate = vi.spyOn(client, "invalidateQueries");
       const { rerender } = render(view(a));
@@ -402,7 +453,7 @@ describe("response/refetch ordering and deletions", () => {
 });
 
 describe("incomplete editing metadata fails closed", () => {
-  const incomplete = [
+  const incomplete: [string, EntityTagInput][] = [
     ["absent target", { tag_target: undefined }],
     ["null target", { tag_target: null }],
     ["absent revision", { tag_revision: undefined }],
@@ -427,9 +478,9 @@ describe("incomplete editing metadata fails closed", () => {
       ).toBeInTheDocument();
       const { result } = renderHook(() => useSaveEntityTags());
       await expect(
-        result.current({ entity, tags: [{ name: "new" }] }),
+        result.current({ entity, base: undefined, tags: [{ name: "new" }] }),
       ).rejects.toMatchObject({ code: "tag_scope_required" });
-      expect(axios.patch).not.toHaveBeenCalled();
+      expect(patch).not.toHaveBeenCalled();
       expect(names(server.read(original).manual_tags)).toEqual(["reviewed"]);
     },
   );
@@ -448,7 +499,7 @@ describe("incomplete editing metadata fails closed", () => {
     expect(screen.getByText("Add test tag")).toBeDisabled();
     rerender(view(manualBounded));
     expect(screen.getByText("Add test tag")).toBeDisabled();
-    expect(axios.patch).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
   });
 
   it("reseeds when complete metadata arrives without a display-tag change", async () => {
@@ -472,7 +523,7 @@ describe("incomplete editing metadata fails closed", () => {
         "new",
       ]),
     );
-    expect(axios.patch.mock.calls[0][1].expected_tag_revision).toBe(0);
+    expect(patch.mock.calls[0][1].expected_tag_revision).toBe(0);
   });
 
   it("does not partially write a bulk selection with incomplete metadata", () => {
@@ -490,7 +541,7 @@ describe("incomplete editing metadata fails closed", () => {
     );
     expect(screen.getByText("Add test tag")).toBeDisabled();
     add("new");
-    expect(axios.post).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
   });
 });
 
@@ -515,7 +566,7 @@ it.each([
     expect(
       screen.queryByRole("button", { name: "tag" }),
     ).not.toBeInTheDocument();
-    expect(axios.patch).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
     expect(enqueueSnackbar).not.toHaveBeenCalled();
   },
 );

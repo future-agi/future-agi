@@ -7,50 +7,98 @@ export const TAG_TARGET_FIELDS = [
   "service_name",
   "expected_start_time",
   "expected_version",
-];
+] as const;
 
-const hasRevision = (state) =>
-  Number.isSafeInteger(state?.tag_revision) && state.tag_revision >= 0;
+export type TagTarget = Record<(typeof TAG_TARGET_FIELDS)[number], string>;
 
-export const hasTagTarget = (entity) =>
+export interface EntityTag {
+  name: string;
+  // Preserve payload fields (including colour) without granting them authority.
+  [field: string]: unknown;
+}
+
+export interface ManualTagState {
+  manual_tags: EntityTag[];
+  tag_revision: number;
+}
+
+// List previews and incomplete responses are deliberately not trusted metadata.
+export interface EntityTagInput {
+  tag_target?: Partial<Record<keyof TagTarget, unknown>> | null;
+  parent_span_id?: unknown;
+  tag_revision?: unknown;
+  manual_tags?: unknown;
+  source_tag_names?: unknown;
+  tags?: unknown;
+}
+
+export interface TagMetadata extends EntityTagInput {
+  manual_tags: EntityTag[];
+  tag_revision: number;
+  source_tag_names: string[];
+}
+
+export type EditableTagEntity = TagMetadata & { tag_target: TagTarget };
+export type TagStateCache = Map<string | null, ManualTagState>;
+type MaybeEntity = EntityTagInput | null | undefined;
+
+const hasRevision = (
+  state: MaybeEntity,
+): state is EntityTagInput & { tag_revision: number } =>
+  typeof state?.tag_revision === "number" &&
+  Number.isSafeInteger(state.tag_revision) &&
+  state.tag_revision >= 0;
+
+export const hasTagTarget = (
+  entity: MaybeEntity,
+): entity is EntityTagInput & { tag_target: TagTarget; tag_revision: number } =>
   TAG_TARGET_FIELDS.every(
     (field) => typeof entity?.tag_target?.[field] === "string",
   ) && hasRevision(entity);
 
-const hasManualTags = (state) =>
-  Array.isArray(state?.manual_tags) &&
-  state.manual_tags.every(
-    (tag) => tag && typeof tag.name === "string" && tag.name.length > 0,
-  );
+const hasTagName = (tag: unknown): tag is EntityTag => {
+  const name = (tag as { name?: unknown } | null | undefined)?.name;
+  return typeof name === "string" && name.length > 0;
+};
 
-export const hasTagMetadata = (state) =>
+const hasManualTags = (
+  state: MaybeEntity,
+): state is EntityTagInput & { manual_tags: EntityTag[] } =>
+  state != null &&
+  Array.isArray(state.manual_tags) &&
+  state.manual_tags.every(hasTagName);
+
+export const hasTagMetadata = (state: MaybeEntity): state is TagMetadata =>
   hasRevision(state) &&
   hasManualTags(state) &&
   Array.isArray(state?.source_tag_names) &&
   state.source_tag_names.every(
-    (name) => typeof name === "string" && name.length > 0,
+    (name: unknown) => typeof name === "string" && name.length > 0,
   );
 
 // Display previews (including `tags`) are not replacement-write authority.
 // Missing or bounded/truncated metadata must never be interpreted as empty.
-export const canEditEntityTags = (entity) =>
+export const canEditEntityTags = (
+  entity: MaybeEntity,
+): entity is EditableTagEntity =>
   hasTagTarget(entity) && hasTagMetadata(entity);
 
-export const isSourceTag = (entity, name) =>
-  Array.isArray(entity?.source_tag_names) &&
+export const isSourceTag = (entity: MaybeEntity, name: string) =>
+  entity != null &&
+  Array.isArray(entity.source_tag_names) &&
   entity.source_tag_names.includes(name);
 
-export const tagPhysicalKey = (entity) =>
+export const tagPhysicalKey = (entity: MaybeEntity) =>
   JSON.stringify(TAG_TARGET_FIELDS.map((field) => entity?.tag_target?.[field]));
 
 // A trace row and every root span share only a manual assignment. Non-root
 // assignments belong to their physical identity, not just the span id.
-export const tagTargetKey = (entity, type) => {
+export const tagTargetKey = (entity: MaybeEntity, type?: string) => {
   const target = entity?.tag_target;
   if (!target || typeof target !== "object") return null;
   const isRoot =
     Object.prototype.hasOwnProperty.call(entity, "parent_span_id") &&
-    (entity.parent_span_id == null || entity.parent_span_id === "");
+    (entity?.parent_span_id == null || entity.parent_span_id === "");
   if (type === "trace" || isRoot) {
     return JSON.stringify(["trace", target.project_id, target.trace_id]);
   }
@@ -66,14 +114,14 @@ export const tagTargetKey = (entity, type) => {
 // membership from complete source/manual metadata, never from a preview.
 // Shared by editors and sibling-root grid updates.
 export const effectiveEntityTags = (
-  entity,
-  manualTags = entity?.manual_tags,
-) => {
+  entity: TagMetadata,
+  manualTags: EntityTag[] = entity?.manual_tags,
+): EntityTag[] => {
   const sourceNames = new Set(entity.source_tag_names);
-  const tags = new Map();
+  const tags = new Map<string, EntityTag>();
   if (Array.isArray(entity.tags)) {
-    entity.tags.forEach((tag) => {
-      if (tag?.name && sourceNames.has(tag.name))
+    entity.tags.forEach((tag: unknown) => {
+      if (hasTagName(tag) && sourceNames.has(tag.name))
         tags.set(tag.name, { ...tag });
     });
   }
@@ -89,7 +137,12 @@ export const effectiveEntityTags = (
 // Store only assignment-wide state. SDK tags and physical target identity
 // must always come from the selected row, even when a sibling's save arrives.
 // Refetches also advance this watermark; delayed responses cannot undo them.
-export const rememberTagState = (cache, entity, type, state = entity) => {
+export const rememberTagState = (
+  cache: TagStateCache,
+  entity: MaybeEntity,
+  type?: string,
+  state: MaybeEntity = entity,
+) => {
   const key = tagTargetKey(entity, type);
   if (key === null || !hasRevision(state) || !hasManualTags(state))
     return false;
@@ -102,7 +155,11 @@ export const rememberTagState = (cache, entity, type, state = entity) => {
   return true;
 };
 
-export const latestTagState = (entity, acknowledged, type) => {
+export const latestTagState = <T extends MaybeEntity>(
+  entity: T,
+  acknowledged?: TagStateCache,
+  type?: string,
+) => {
   if (!hasTagMetadata(entity)) return entity;
   const result = acknowledged?.get(tagTargetKey(entity, type));
   const shared =
