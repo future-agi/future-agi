@@ -856,6 +856,14 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
             # a head-sized rewrite never share one pass's deadline.
             writer.collect_garbage()
             return
+        # A pre-upgrade range checkpoint may have lost its private receipts
+        # before durable counts existed. Refuse fresh growth on unknown size;
+        # explicit maintenance can rebuild the count from verified native rows.
+        # Privacy work above remains independent of this capacity guard.
+        if state.head_manifest_id is not None and size_cap.pause_if_too_large(
+            lease.project_id, size_cap.head_rows(state.head_manifest), now=lease.clock()
+        ):
+            return
         if state.head_manifest_id is None and size_cap.pause_at_enrollment(
             lease, analytics, retention_days=policy(scope.organization)
         ):
