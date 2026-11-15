@@ -152,12 +152,12 @@ def _burst_sweep(calls, pages=1):
 
 
 def _dated(at, seen=None):
-    """arrival_start_floor returning ``at``, recording what it was asked."""
+    """arrival_window returning ``at``, recording what it was asked."""
 
     def date_arrivals(analytics, **kwargs):
         if seen is not None:
             seen.append(kwargs)
-        return at
+        return changes.ArrivalWindow(at, None)
 
     return date_arrivals
 
@@ -204,7 +204,6 @@ def test_size_limit_boundary_exact_limit_backfills_and_one_more_starts_forward(
 
 def test_default_limit_is_150000_and_invalid_setting_fails_closed(settings):
     from django.core.exceptions import ImproperlyConfigured
-
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
@@ -237,11 +236,11 @@ def test_compaction_and_burst_settings_load_bounded_from_the_environment(
     settings, name, accessor, default, maximum
 ):
     from django.core.exceptions import ImproperlyConfigured
-
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
     )
+
     from tracer.services.derived_metrics import refresh
 
     module = refresh if accessor == "deltas_before_compaction" else backfill
@@ -325,7 +324,6 @@ def test_pass_and_expiry_settings_load_bounded(
     from importlib import import_module
 
     from django.core.exceptions import ImproperlyConfigured
-
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
@@ -356,11 +354,11 @@ def test_pass_and_expiry_settings_load_bounded(
 
 def test_server_side_compaction_switch_fails_closed(settings):
     from django.core.exceptions import ImproperlyConfigured
-
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
     )
+
     from tracer.services.derived_metrics import refresh
 
     name = "METRICS_SERVER_SIDE_COMPACTION"
@@ -586,9 +584,7 @@ def test_forward_overflow_sweeps_only_the_burst_never_since_enrollment(
     )
     burst = NOW - timedelta(minutes=10)
     asked, calls, starts = [], [], []
-    monkeypatch.setattr(
-        changes, "arrival_start_floor", _dated(burst, asked), raising=False
-    )
+    monkeypatch.setattr(changes, "arrival_window", _dated(burst, asked), raising=False)
     monkeypatch.setattr(changes, "reconcile_page", _burst_sweep(calls, pages=2))
     publish = runner.writer.refresh
 
@@ -672,7 +668,7 @@ def test_forward_overflow_replaces_a_pending_full_sweep_keeping_its_last_pass(
     )
     burst = NOW - timedelta(minutes=10)
     calls = []
-    monkeypatch.setattr(changes, "arrival_start_floor", _dated(burst), raising=False)
+    monkeypatch.setattr(changes, "arrival_window", _dated(burst), raising=False)
     monkeypatch.setattr(changes, "reconcile_page", _burst_sweep(calls))
     clock[0] = NOW + timedelta(minutes=1)
     if lane == "incremental":
@@ -741,7 +737,7 @@ def test_forward_overflow_that_cannot_be_dated_keeps_todays_full_sweep(
         planned.append((checkpoint, floor))
         return _two_page_sweep([])(analytics, checkpoint=checkpoint, **kwargs)
 
-    monkeypatch.setattr(changes, "arrival_start_floor", too_many, raising=False)
+    monkeypatch.setattr(changes, "arrival_window", too_many, raising=False)
     monkeypatch.setattr(changes, "reconcile_page", reconcile)
     clock[0] = NOW + timedelta(minutes=1)
     state = MetricProjectRefresh.for_project(observe_project.id)
@@ -812,7 +808,7 @@ def test_memory_limited_discovery_makes_one_durable_repair_page_per_pass(
     calls = []
     monkeypatch.setattr(backfill, "incremental_changes", real_incremental_changes)
     monkeypatch.setattr(changes, "discover_changes", discover)
-    monkeypatch.setattr(changes, "arrival_start_floor", _dated(None), raising=False)
+    monkeypatch.setattr(changes, "arrival_window", _dated(None), raising=False)
     monkeypatch.setattr(changes, "reconcile_page", _burst_sweep(calls, pages=2))
     clock[0] = NOW + timedelta(seconds=30)
     started = clock[0]
@@ -1309,7 +1305,7 @@ def test_a_pass_sweeps_burst_pages_until_done_within_its_budget(
     calls, heads = [], []
     monkeypatch.setattr(
         changes,
-        "arrival_start_floor",
+        "arrival_window",
         _dated(NOW - timedelta(minutes=10)),
         raising=False,
     )

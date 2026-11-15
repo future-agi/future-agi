@@ -685,7 +685,19 @@ def discover_changes(
     )
 
 
-def arrival_start_floor(
+@dataclass(frozen=True)
+class ArrivalWindow:
+    start_floor: datetime | None
+    # None when eval/remap changes need spans whose versions predate the window.
+    source_floor_ns: int | None
+
+
+def arrival_start_floor(analytics, **kwargs) -> datetime | None:
+    """Compatibility reader for the earliest event-time touched by arrivals."""
+    return arrival_window(analytics, **kwargs).start_floor
+
+
+def arrival_window(
     analytics,
     *,
     org_id: str,
@@ -697,8 +709,8 @@ def arrival_start_floor(
     ceiling: datetime,
     eval_config_ids: Sequence[str] = (),
     budget: MetricReadBudget | None = None,
-) -> datetime | None:
-    """Earliest span start any arrival of discovery's own windows can touch.
+) -> ArrivalWindow:
+    """Event-time floor and optional source-version floor of an arrival window.
 
     The same three arrival windows discover_changes proves, each from its
     cursor minus the overlap up to ``ceiling``. Span arrivals are reduced to
@@ -707,7 +719,7 @@ def arrival_start_floor(
     by discovery's own reads and dated by their latest physical and committed
     start. A source sweep visiting every physical span from the returned
     instant onward therefore nominates every key discovery would have, so it
-    can consume the same windows. None: nothing arrived. Raises
+    can consume the same windows. A None start_floor means nothing arrived. Raises
     ContinuousCandidateOverflow when the eval/remap keys exceed discovery's cap
     or a nominated key has no physical span row (only a full sweep visits it).
     """
@@ -753,7 +765,14 @@ def arrival_start_floor(
             )
         committed = _dependencies(analytics, keys, params, budget)
         starts.extend(d.unit_start for d in (*physical.values(), *committed.values()))
-    return min(starts) if starts else None
+    # Source-only overflow can read just the frozen version interval. A late
+    # old-start span must not force the next burst to rescan all older source
+    # rows after that start. Relation changes intentionally keep the broader
+    # event-time sweep: their source spans need not have a new _version.
+    return ArrivalWindow(
+        min(starts) if starts else None,
+        ns(_arrival_floor(watermark_ns)) if not keys else None,
+    )
 
 
 PHASES = ("sources", "dependencies", "units", "complete")
@@ -791,12 +810,17 @@ class ReconciliationCheckpoint:
     last_day: date | None = None
     covered_through: datetime | None = None
     floor: datetime | None = None
+    arrival_floor_ns: int | None = None
 
     def __post_init__(self):
         if self.phase not in PHASES or self.scanned < 0:
             raise ValueError("invalid metric reconciliation checkpoint")
         if self.floor is not None and self.phase != "sources":
             raise ValueError("a burst sweep has only a source phase")
+        if self.arrival_floor_ns is not None and (
+            self.floor is None or not 0 <= self.arrival_floor_ns <= ns(self.started_at)
+        ):
+            raise ValueError("invalid burst arrival window")
         width = {"sources": 5, "dependencies": 2, "units": 2}.get(self.phase)
         if self.after is not None and len(self.after) != width:
             raise ValueError("invalid reconciliation keyset")
@@ -823,6 +847,11 @@ class ReconciliationCheckpoint:
             "covered_through": iso(self.covered_through and utc(self.covered_through)),
             # Only a burst sweep has the key: every other cursor is unchanged.
             **({"floor": iso(utc(self.floor))} if self.floor is not None else {}),
+            **(
+                {"arrival_floor_ns": self.arrival_floor_ns}
+                if self.arrival_floor_ns is not None
+                else {}
+            ),
         }
 
     @classmethod
@@ -846,6 +875,7 @@ class ReconciliationCheckpoint:
             last_day=day("last_day"),
             covered_through=moment("covered_through"),
             floor=moment("floor"),
+            arrival_floor_ns=value.get("arrival_floor_ns"),
         )
 
     def coverage_status(self, now: datetime):
@@ -875,7 +905,15 @@ def _floor_value(floor):
     return utc(floor).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-def _source_days(analytics, params, budget, floor=None):
+def _source_days(
+    analytics,
+    params,
+    budget,
+    floor=None,
+    *,
+    arrival_ceiling=None,
+    arrival_floor_ns=None,
+):
     # A floor prunes whole start_time partitions: a forward-only sweep never
     # reads the days before its coverage start.
     bound = (
@@ -883,12 +921,21 @@ def _source_days(analytics, params, budget, floor=None):
         if floor is None
         else "AND start_time >= toDateTime64(%(source_floor)s, 6, 'UTC')"
     )
+    query_params = dict(params)
+    if floor is not None:
+        query_params["source_floor"] = _floor_value(floor)
+    if arrival_ceiling is not None:
+        bound += " AND _version < %(source_arrival_ceiling)s"
+        query_params["source_arrival_ceiling"] = ns(arrival_ceiling)
+    if arrival_floor_ns is not None:
+        bound += " AND _version >= %(source_arrival_floor)s"
+        query_params["source_arrival_floor"] = arrival_floor_ns
     rows = read(
         analytics,
         f"""SELECT toString(toDate(min(start_time))) AS first_day,
             toString(toDate(max(start_time))) AS last_day, count() AS source_rows
         FROM spans PREWHERE project_id = toUUID(%(project_id)s) {bound}""",
-        params if floor is None else {**params, "source_floor": _floor_value(floor)},
+        query_params,
         budget,
     )
     if not rows or not int(rows[0]["source_rows"]):
@@ -931,6 +978,18 @@ def _source_page(analytics, params, budget, cp, page_size, floor=None):
             "day_end": (start + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
             "page_limit": remaining,
         }
+        # Freeze the burst's ARRIVAL window, not its event-time window. A
+        # start_time ceiling would miss late-arriving old-start spans; without
+        # any ceiling, sustained arrivals ahead of the keyset prevent completion.
+        # Revisions merged away during the sweep are covered by the next
+        # arrival window (and ordinary full reconciliation remains unchanged).
+        arrival_bound = ""
+        if cp.floor is not None:
+            arrival_bound = "AND _version < %(source_arrival_ceiling)s"
+            query_params["source_arrival_ceiling"] = ns(cp.started_at)
+        if cp.arrival_floor_ns is not None:
+            arrival_bound += " AND _version >= %(source_arrival_floor)s"
+            query_params["source_arrival_floor"] = cp.arrival_floor_ns
         keyset = ""
         if after is not None:
             clause, keyset_params = keyset_after(SOURCE_ORDER, after, "source_after")
@@ -948,6 +1007,7 @@ def _source_page(analytics, params, budget, cp, page_size, floor=None):
             PREWHERE project_id = toUUID(%(project_id)s)
                 AND start_time >= toDateTime64(%(day_start)s, 6, 'UTC')
                 AND start_time < toDateTime64(%(day_end)s, 6, 'UTC')
+                {arrival_bound}
             {keyset}
             ORDER BY {", ".join(SOURCE_ORDER)}
             LIMIT %(page_limit)s""",
@@ -1015,13 +1075,13 @@ def reconcile_page(
 
     Recompute every nominated unit even if membership/version is unchanged:
     this is what repairs eval arrivals delayed beyond the overlap. New keys
-    appearing behind a keyset are visited on the next complete pass. No
-    retention/date cutoff, source version minimum or sampling is applied.
-    ``floor`` bounds the source sweep to start_time >= floor: a forward-only
-    project's coverage start (no version owns an earlier unit), or the bounded
-    history window of an initial history sweep. Committed dependency/lifecycle
-    phases are unchanged. A burst checkpoint (its own ``floor``) sweeps only
-    its sources, from the later of both floors, and then completes.
+    appearing behind a keyset are visited on the next complete pass. Full
+    passes apply no source-version minimum or sampling. ``floor`` bounds the
+    source sweep to a coverage/history start; committed phases are unchanged.
+    Bursts sweep only sources below their frozen arrival ceiling. Source-only
+    bursts also use an arrival minimum and their own event-time floor, even
+    before coverage, to nominate backdated corrections. Eligibility remains a
+    publication decision. Relation bursts keep the later of both event floors.
     """
     if not 1 <= page_size <= MAX_KEYS:
         raise ValueError("invalid metric reconciliation page size")
@@ -1038,14 +1098,27 @@ def reconcile_page(
         )
     burst = cp.floor is not None
     if burst:
-        floor = cp.floor if floor is None else max(utc(floor), utc(cp.floor))
+        # Version-bounded arrivals may move an existing key before coverage.
+        # Nominate that key too; the writer, not discovery, owns eligibility.
+        floor = (
+            cp.floor
+            if floor is None or cp.arrival_floor_ns is not None
+            else max(utc(floor), utc(cp.floor))
+        )
     phase, after, day, last_day = cp.phase, cp.after, cp.day, cp.last_day
     source_keys: tuple[SourceKey, ...] = ()
     extra_units: tuple[UnitKey, ...] = ()
     scanned = 0
     divergent_only = False
     if phase == "sources" and day is None:
-        days = _source_days(analytics, params, budget, floor)
+        days = _source_days(
+            analytics,
+            params,
+            budget,
+            floor,
+            arrival_ceiling=cp.started_at if burst else None,
+            arrival_floor_ns=cp.arrival_floor_ns,
+        )
         if days is None:
             phase = "dependencies"
         else:
@@ -1096,6 +1169,7 @@ def reconcile_page(
         last_day=last_day if phase == "sources" else None,
         covered_through=cp.started_at if full else cp.covered_through,
         floor=None if complete else cp.floor,
+        arrival_floor_ns=None if complete else cp.arrival_floor_ns,
     )
     changes = _batch(
         analytics,

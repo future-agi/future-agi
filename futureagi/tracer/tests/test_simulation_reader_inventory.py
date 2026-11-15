@@ -1982,7 +1982,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
-        "arrival_start_floor": filed(
+        "arrival_window": filed(
             ROW_DRIVEN,
             why=(
                 "a forward-only overflow dates its refresh-row project's span "

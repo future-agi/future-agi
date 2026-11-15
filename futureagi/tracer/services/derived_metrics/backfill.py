@@ -1481,7 +1481,7 @@ def _burst_floor(analytics, writer, head, definitions, state, *, now):
     if coverage is None:
         return None
     try:
-        first = changes.arrival_start_floor(
+        window = changes.arrival_window(
             analytics,
             org_id=writer.org_id,
             project_id=writer.lease.project_id,
@@ -1499,8 +1499,15 @@ def _burst_floor(analytics, writer, head, definitions, state, *, now):
         # limit, a timeout or an exhausted budget: the burst cannot be dated,
         # and the full sweep (with its committed phases) still covers it.
         return None
-    # Nothing arrived: the sweep has only the arrivals after it started to see.
-    return max(coverage, changes.utc(now) if first is None else first)
+    # Nothing arrived: an empty frozen window completes without visiting history.
+    first = changes.utc(now) if window.start_floor is None else window.start_floor
+    return changes.ArrivalWindow(
+        # A newly changed key can move BEFORE coverage and must still retract
+        # its previously eligible value. Version-bounded nomination is safe
+        # there: capture/publication still applies coverage and retention.
+        first if window.source_floor_ns is not None else max(coverage, first),
+        window.source_floor_ns,
+    )
 
 
 def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
@@ -1510,9 +1517,11 @@ def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
     its start, and later arrivals are discovered afterwards. With none pending,
     a project with any history version queues today's full sweep. A project
     whose every working version is forward-only sweeps only the burst instead:
-    from the earliest start its unconsumed arrivals touch (never before its
-    coverage start), source phase only, so the work follows the burst and not
-    the time since enrollment. A pending full sweep (a routine repair, which
+    from the earliest start its unconsumed arrivals touch, source phase only.
+    A source-only burst is also version-bounded and may nominate backdated
+    corrections before coverage; publication still enforces eligibility. A
+    relation-driven burst keeps the coverage floor and older source versions.
+    A pending full sweep (a routine repair, which
     is due again after every burst, or an invalidation) is replaced by the
     burst: watermarks have not moved past its arrivals, so the burst covers
     them too, and the burst keeps the last complete pass, so the routine repair
@@ -1535,10 +1544,10 @@ def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
     )
     if bursting:
         return
-    floor = _burst_floor(analytics, writer, head, definitions, state, now=now)
+    window = _burst_floor(analytics, writer, head, definitions, state, now=now)
     with transaction.atomic():
         locked = MetricProjectRefresh._locked(project_id, **writer.lease.check())
-        if floor is None:
+        if window is None:
             if not locked.pending_repair:
                 queue_bulk_change(project_id, now=now)
             return
@@ -1551,7 +1560,8 @@ def queue_overflow_sweep(analytics, writer, head, definitions, *, now):
                 completed_at=current.completed_at if current else None,
                 completed_passes=current.completed_passes if current else 0,
                 covered_through=current.covered_through if current else None,
-                floor=floor,
+                floor=window.start_floor,
+                arrival_floor_ns=window.source_floor_ns,
             ),
         )
 
@@ -1581,6 +1591,10 @@ def _retained_repair_checkpoint(cp, *, cutoff):
     if cp.day >= first:
         return cp
     if cp.last_day < first:
+        if cp.floor is not None:
+            # A burst has no committed phases. Visit the now-empty retained
+            # day so reconcile_page publishes its normal completion/cursors.
+            return replace(cp, day=first, last_day=first, after=None)
         return replace(cp, phase="dependencies", after=None, day=None, last_day=None)
     return replace(cp, day=first, after=None)
 
@@ -2077,6 +2091,16 @@ class BackfillRunner:
         allowance = pass_unit_allowance(definitions, state)
 
         def plan(size):
+            checkpoint = (
+                changes.ReconciliationCheckpoint.from_dict(state.reconciliation_cursor)
+                if state.reconciliation_cursor
+                else None
+            )
+            nomination_floor = (
+                None
+                if checkpoint and checkpoint.arrival_floor_ns is not None
+                else floor
+            )
             return changes.reconcile_page(
                 self.analytics,
                 org_id=writer.org_id,
@@ -2084,13 +2108,9 @@ class BackfillRunner:
                 committed_attempts=committed,
                 now=now,
                 checkpoint=_retained_repair_checkpoint(
-                    changes.ReconciliationCheckpoint.from_dict(
-                        state.reconciliation_cursor
-                    )
-                    if state.reconciliation_cursor
-                    else None,
-                    cutoff=max(v for v in (cutoff, floor) if v is not None)
-                    if cutoff or floor
+                    checkpoint,
+                    cutoff=max(v for v in (cutoff, nomination_floor) if v is not None)
+                    if cutoff or nomination_floor
                     else None,
                 ),
                 page_size=size,

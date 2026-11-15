@@ -330,8 +330,40 @@ def source_identity_relation(store, pairs):
         yield relation
 
 
+@contextmanager
+def unit_identity_relation(store, ids):
+    """One bounded candidate page, reused by every field's capture SQL.
+
+    A CTE is expanded at every reference by ClickHouse. Inlining 500 UUIDs in
+    that CTE repeated the list several times, even after source pairs moved to
+    a session table. Keep at most MAX_UNIT_IDS UUIDs in this scoped relation.
+    """
+    from tracer.services.derived_metrics.frozen_relations import SessionCapture
+
+    ids = _ids(ids)
+    with SessionCapture(
+        store,
+        schema=(("requested_id", "UUID"),),
+        sources=lambda: iter(
+            [
+                (
+                    "SELECT toUUID(arrayJoin(%(candidate_ids)s)) AS requested_id",
+                    {"candidate_ids": list(ids)},
+                )
+            ]
+        ),
+        role="source",
+    ) as relation:
+        yield relation
+
+
 def _source_plan(
-    scope: Scope, ids: tuple[str, ...], manifest, source_identities, start_floor=None
+    scope: Scope,
+    ids: tuple[str, ...],
+    manifest,
+    source_identities,
+    start_floor=None,
+    unit_identities=None,
 ) -> tuple[tuple[str, ...], str, dict]:
     """``start_floor`` (RefreshWriter._unit_source_floor) bounds every spans read.
 
@@ -341,7 +373,12 @@ def _source_plan(
     project (start_time is not a leading sort-key column and IN sets this large
     defeat the Bloom indexes).
     """
-    params = {"unit_read_ids": list(ids)}
+    params = {} if unit_identities is not None else {"unit_read_ids": list(ids)}
+    requested = (
+        unit_identities.select
+        if unit_identities is not None
+        else "SELECT toUUID(arrayJoin(%(unit_read_ids)s)) AS requested_id"
+    )
     bound = ""
     if start_floor is not None:
         params["unit_read_floor"] = utc_timestamp(start_floor)
@@ -351,7 +388,7 @@ def _source_plan(
     ctes = [
         f"""unit_read_requests AS (
         SELECT toString(r.requested_id) AS raw_id, toString({canonical}) AS unit_id FROM (
-            SELECT toUUID(arrayJoin(%(unit_read_ids)s)) AS requested_id
+            {requested}
         ) r {remap_left_join("r.requested_id", "trace_session_id_remap", "rm")}
     )""",
         "requested_units AS (SELECT DISTINCT unit_id FROM unit_read_requests)",
@@ -535,6 +572,7 @@ def unit_values_select(
     manifest=None,
     source_identities=(),
     start_floor=None,
+    unit_identities=None,
 ) -> tuple[str, dict]:
     """One typed, fully evidenced row per canonical requested conversation.
 
@@ -568,7 +606,7 @@ def unit_values_select(
     ids = _ids(unit_ids)
     recipe = field_recipe(definition)
     ctes, predicate, source_params = _source_plan(
-        scope, ids, manifest, source_identities, start_floor
+        scope, ids, manifest, source_identities, start_floor, unit_identities
     )
     ctes = (*ctes, *_authority_ctes(predicate))
     source, params = snapshot_select(

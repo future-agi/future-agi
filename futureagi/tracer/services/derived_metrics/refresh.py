@@ -11,7 +11,7 @@ M2/T16 still require representative scale measurements before deployment.
 """
 
 import json
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -81,6 +81,7 @@ from tracer.services.derived_metrics.storage import (
 from tracer.services.derived_metrics.unit_reads import (
     source_identity_relation,
     unit_first_created_select,
+    unit_identity_relation,
     unit_source_floor_select,
     unit_source_guard_select,
     unit_source_version_select,
@@ -1126,9 +1127,15 @@ class RefreshWriter:
         with transaction.atomic():
             fence = self.lease.check()
             MetricRefreshAttempt.abort(attempt.id, reason=PASS_YIELD, **fence)
+            state = MetricProjectRefresh.for_project(self.lease.project_id)
+            # Counted work can exceed the plan after a recovery handoff (or
+            # several published burst pages). Never learn a larger budget from
+            # that overrun: min(configured, learned) would otherwise keep the
+            # next failed plan identical forever.
+            next_budget = max(1, min(capture_budget(state), done) // 2)
             MetricProjectRefresh.objects.filter(
                 MetricProjectRefresh.lease_q(**fence), project_id=self.lease.project_id
-            ).update(pass_capture_budget=max(1, done // 2))
+            ).update(pass_capture_budget=next_budget)
         raise MetricPassYield()
 
     def _publish_compaction(self, attempt, *, deadline):
@@ -1808,14 +1815,22 @@ class RefreshWriter:
                     ids |= owners
         # Every capture statement names the pass's source identities in a
         # session table instead of inlining them (bug 7: ~1 MB statements).
-        with source_identity_relation(self.store, source_ids) as source_relation:
-            floors = {}
+        with ExitStack() as capture_relations:
+            source_relation = capture_relations.enter_context(
+                source_identity_relation(self.store, source_ids)
+            )
+            floors, candidate_relations = {}, {}
             for definition in definitions:
                 if definition.level == "span":
                     continue
                 for offset in range(0, len(ids), MAX_BATCH_ROWS):
                     candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
                     if candidates not in floors:
+                        candidate_relations[candidates] = (
+                            capture_relations.enter_context(
+                                unit_identity_relation(self.store, candidates)
+                            )
+                        )
                         floors[candidates] = self._unit_source_floor(
                             scope, candidates, head
                         )
@@ -1888,6 +1903,7 @@ class RefreshWriter:
                         manifest=head,
                         source_identities=source_relation,
                         start_floor=floors[candidates],
+                        unit_identities=candidate_relations[candidates],
                     )
                     self.yield_if_late(attempt)
                     captured = capture_source_output(
