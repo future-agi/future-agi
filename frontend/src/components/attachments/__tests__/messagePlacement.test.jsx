@@ -6,6 +6,13 @@ import SmartPreview from "src/components/traceDetail/SmartPreview";
 import SpanAttachments, { SpanAttachmentsProvider } from "../SpanAttachments";
 import { resolveAttachments } from "../client";
 import { projectId, readyGrant, spanImage } from "./fixtures";
+import {
+  openaiImageAttachments,
+  openaiImageAttributes,
+  openaiImageInput,
+  openaiImageOutput,
+  openaiImageSpanId,
+} from "src/components/traceDetailDrawer/DrawerRightRenderer/__tests__/openaiMultimodalSpan";
 
 vi.mock("../client", () => ({ resolveAttachments: vi.fn() }));
 
@@ -172,5 +179,92 @@ describe("images at their message position (U01)", () => {
     expect(screen.queryByRole("img")).toBeNull();
     expect(resolveAttachments).not.toHaveBeenCalled();
     expect(list()).toBeNull();
+  });
+});
+
+describe("unit: actual OpenAI SDK image message keeps its text (TH-2379)", () => {
+  const value = {
+    id: openaiImageSpanId,
+    trace: traceId,
+    name: "ChatCompletion",
+    observation_type: "llm",
+    start_time: "2026-11-15T10:24:07Z",
+    attachments: openaiImageAttachments,
+  };
+  function SdkView({ attributes }) {
+    return (
+      <SpanAttachmentsProvider projectId={projectId} span={value}>
+        <SmartPreview
+          span={value}
+          input={openaiImageInput}
+          output={openaiImageOutput}
+          attributes={attributes}
+          viewMode="markdown"
+          ContentCard={EmptyCard}
+          AttributesCard={EmptyCard}
+          JsonPreviewBlock={EmptyCard}
+        />
+        <SpanAttachments projectId={projectId} span={value} allSpans={[]} />
+      </SpanAttachmentsProvider>
+    );
+  }
+  SdkView.propTypes = { attributes: PropTypes.object.isRequired };
+
+  it("shows the question and its image in the same User message", async () => {
+    render(<SdkView attributes={openaiImageAttributes} />);
+    // The same locator chain as the real-SDK browser driver.
+    const images = await screen.findByLabelText("Message images");
+    const card = images.parentElement;
+    expect(within(card).getByText("user", { exact: true })).toBeVisible();
+    const question = within(card).getByText("What colour is this square?", {
+      exact: true,
+    });
+    expect(question).toBeVisible();
+    expect(
+      within(images).getByRole("img", {
+        name: "Input · message 2 · part 2 image",
+      }),
+    ).toBeInTheDocument();
+    // Text first, then the message's image.
+    expect(
+      question.compareDocumentPosition(images) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // No empty-object blocks; the image part stays visible as its own JSON
+    // (fields in attribute order), the way the raw-input path shows a
+    // non-text part.
+    expect(within(card).queryByText("{}")).toBeNull();
+    expect(
+      within(card).getByText(
+        '{"image":"fi-attachment:5f3f1b6d-d148-4cc6-bce5-1221374ca520","type":"image"}',
+        { exact: true },
+      ),
+    ).toBeInTheDocument();
+    // The neighbouring plain messages are unchanged.
+    expect(
+      screen.getByText("Describe the image the user sends.", { exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("A teal square with a darker diagonal band.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    // Placed inline, so it is not listed again.
+    expect(screen.queryByText("Attachments")).toBeNull();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(resolveAttachments).toHaveBeenCalledTimes(1);
+  });
+
+  it("never turns markup in a text part into an element", async () => {
+    const attributes = {
+      ...openaiImageAttributes,
+      "gen_ai.input.messages.1.message.contents.0.message_content.text":
+        'What colour is <img src="x" alt="injected"> this square?',
+    };
+    render(<SdkView attributes={attributes} />);
+    const images = await screen.findByLabelText("Message images");
+    expect(images.parentElement.textContent).toContain("What colour is");
+    expect(screen.queryByAltText("injected")).toBeNull();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
   });
 });
