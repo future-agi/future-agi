@@ -20,6 +20,7 @@ export interface EntityTag {
 export interface ManualTagState {
   manual_tags: EntityTag[];
   tag_revision: number;
+  tag_assignment_exists: true;
 }
 
 // List previews and incomplete responses are deliberately not trusted metadata.
@@ -27,15 +28,18 @@ export interface EntityTagInput {
   tag_target?: Partial<Record<keyof TagTarget, unknown>> | null;
   parent_span_id?: unknown;
   tag_revision?: unknown;
+  tag_assignment_exists?: unknown;
   manual_tags?: unknown;
   source_tag_names?: unknown;
   tags?: unknown;
 }
 
 export interface TagMetadata extends EntityTagInput {
+  // Complete replacement set: saved assignment, or validated legacy labels.
   manual_tags: EntityTag[];
   tag_revision: number;
   source_tag_names: string[];
+  tag_assignment_exists: boolean;
 }
 
 export type EditableTagEntity = TagMetadata & { tag_target: TagTarget };
@@ -70,6 +74,7 @@ const hasManualTags = (
 
 export const hasTagMetadata = (state: MaybeEntity): state is TagMetadata =>
   hasRevision(state) &&
+  typeof state.tag_assignment_exists === "boolean" &&
   hasManualTags(state) &&
   Array.isArray(state?.source_tag_names) &&
   state.source_tag_names.every(
@@ -144,13 +149,19 @@ export const rememberTagState = (
   state: MaybeEntity = entity,
 ) => {
   const key = tagTargetKey(entity, type);
-  if (key === null || !hasRevision(state) || !hasManualTags(state))
+  if (
+    key === null ||
+    !hasRevision(state) ||
+    !hasManualTags(state) ||
+    state.tag_assignment_exists !== true
+  )
     return false;
   const previous = cache.get(key);
   if (previous && previous.tag_revision >= state.tag_revision) return false;
   cache.set(key, {
     manual_tags: state.manual_tags.map((tag) => ({ ...tag })),
     tag_revision: state.tag_revision,
+    tag_assignment_exists: true,
   });
   return true;
 };
@@ -168,6 +179,7 @@ export const latestTagState = <T extends MaybeEntity>(
     ...entity,
     manual_tags: shared.manual_tags,
     tag_revision: shared.tag_revision,
+    tag_assignment_exists: shared.tag_assignment_exists,
     tags: effectiveEntityTags(entity, shared.manual_tags),
   };
 };

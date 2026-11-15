@@ -2,6 +2,7 @@ import { withLiveGridApi } from "src/utils/gridApi";
 import {
   effectiveEntityTags,
   hasTagMetadata,
+  TAG_TARGET_FIELDS,
 } from "src/components/traceDetail/entityTagState";
 import { boundObserveListRow } from "./observeListPayload";
 
@@ -72,7 +73,6 @@ export default function applySavedEntityTags(
     type === "trace" || isRootSpan(entity),
   );
   if (savedKey === null) return 0;
-  const savedPhysical = physicalKey(target);
   const updated = [];
   withLiveGridApi(api, (liveApi) => {
     liveApi.forEachNode((node) => {
@@ -90,14 +90,26 @@ export default function applySavedEntityTags(
       ) {
         return;
       }
-      const samePhysicalSpan = physicalKey(rowTarget) === savedPhysical;
+      // Assignment revisions can advance across source versions. Source tags
+      // cannot: even the same physical span may have been refreshed meanwhile.
+      // Missing fields on both references are not evidence of equality.
+      const sameSourceReference = TAG_TARGET_FIELDS.every(
+        (field) =>
+          typeof target?.[field] === "string" &&
+          // Only these two coordinates may be blank in a valid write target.
+          (target[field].length > 0 ||
+            field === "observation_type" ||
+            field === "service_name") &&
+          rowTarget?.[field] === target[field],
+      );
       const state = {
         ...row,
-        source_tag_names: samePhysicalSpan
+        source_tag_names: sameSourceReference
           ? result.source_tag_names
           : row.source_tag_names,
         manual_tags: result.manual_tags,
         tag_revision: result.tag_revision,
+        tag_assignment_exists: result.tag_assignment_exists,
       };
       // A bounded sibling may lack complete source metadata. Leave it locked
       // until a detail read supplies that metadata; never copy the saved root.
@@ -109,6 +121,7 @@ export default function applySavedEntityTags(
           source_tag_names: state.source_tag_names,
           manual_tags: state.manual_tags,
           tag_revision: state.tag_revision,
+          tag_assignment_exists: state.tag_assignment_exists,
         }),
       );
       updated.push(node);

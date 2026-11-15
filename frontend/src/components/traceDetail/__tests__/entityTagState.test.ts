@@ -35,9 +35,23 @@ const root = (
   manual_tags: manual.map((name) => ({ name })),
   tags: [sdk, ...manual].map((name) => ({ name })),
   tag_revision: revision,
+  tag_assignment_exists: revision > 0,
 });
 
 describe("entity tag assignment cache", () => {
+  it("does not turn a revision-zero legacy read into an assignment cache entry", () => {
+    const cache: TagStateCache = new Map();
+    const entity = {
+      ...root("root-a", "sdk-a", ["legacy-A", "legacy-B"]),
+      tag_assignment_exists: false,
+    };
+    expect(rememberTagState(cache, entity, "span")).toBe(false);
+    expect(cache.size).toBe(0);
+    expect(latestTagState(entity).manual_tags).toEqual([
+      { name: "legacy-A" }, { name: "legacy-B" },
+    ]);
+  });
+
   it("stores only shared manual tags and revision, not physical response metadata", () => {
     const cache: TagStateCache = new Map();
     const a = root("root-a", "sdk-a");
@@ -46,6 +60,7 @@ describe("entity tag assignment cache", () => {
     expect(cache.get(tagTargetKey(a, "span"))).toEqual({
       manual_tags: [{ name: "reviewed" }],
       tag_revision: 1,
+      tag_assignment_exists: true,
     });
     // A later in-place row update cannot mutate the assignment snapshot.
     saved.manual_tags[0].name = "changed";

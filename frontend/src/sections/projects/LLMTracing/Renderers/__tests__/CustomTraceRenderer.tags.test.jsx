@@ -34,6 +34,7 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
                 manual_tags: [{ name: "reviewed" }],
                 source_tag_names: ["sdk"],
                 tag_revision: 4,
+                tag_assignment_exists: true,
               },
               { entity, type: spanId ? "span" : "trace" },
             )
@@ -54,6 +55,7 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
               manual_tags: [{ name: "late" }],
               source_tag_names: ["sdk"],
               tag_revision: 4,
+              tag_assignment_exists: true,
             },
             { entity, type: spanId ? "span" : "trace" },
           )
@@ -91,6 +93,7 @@ describe("CustomTraceRenderer — tags column", () => {
         service_name: "",
       },
       tag_revision: 3,
+      tag_assignment_exists: true,
       source_tag_names: ["sdk"],
       manual_tags: [{ name: "reviewed" }],
     };
@@ -165,6 +168,7 @@ describe("CustomTraceRenderer — tags column", () => {
       manual_tags: [],
       source_tag_names: ["sdk"],
       tag_revision: 3,
+      tag_assignment_exists: true,
       tag_target: {
         project_id: "project-1",
         trace_id: "trace-1",
@@ -172,6 +176,8 @@ describe("CustomTraceRenderer — tags column", () => {
         start_hour: "2026-11-08T10:00:00+00:00",
         observation_type: "span",
         service_name: "svc",
+        expected_start_time: "2026-11-08T10:15:20.123456+00:00",
+        expected_version: "1",
       },
     };
     const refreshCells = vi.fn();
@@ -208,6 +214,7 @@ describe("CustomTraceRenderer — tags column", () => {
       manual_tags: [],
       source_tag_names: ["sdk"],
       tag_revision: 3,
+      tag_assignment_exists: true,
       tag_target: {
         project_id: "project-1",
         trace_id: "trace-1",
@@ -215,6 +222,8 @@ describe("CustomTraceRenderer — tags column", () => {
         start_hour: "2026-11-08T10:00:00+00:00",
         observation_type: "span",
         service_name: "svc",
+        expected_start_time: "2026-11-08T10:15:20.123456+00:00",
+        expected_version: "1",
       },
     };
     const refreshCells = vi.fn();

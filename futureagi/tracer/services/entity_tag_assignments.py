@@ -208,6 +208,7 @@ def update_entity_tags(
             **effective,
             "manual_tags": data["tags"],
             "tag_revision": revision,
+            "tag_assignment_exists": True,
         }
     except (DatabaseError, ReadDeadlineExceeded, TagReadUnavailable) as exc:
         # Never put DB diagnostics or customer tags into logs/public responses.

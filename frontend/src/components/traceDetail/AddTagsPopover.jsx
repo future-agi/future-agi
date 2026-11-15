@@ -117,6 +117,7 @@ const AddTagsPopover = ({
     selectedKey,
     selectedPhysical,
     selectedEntity?.tag_revision,
+    selectedEntity?.tag_assignment_exists,
     selectedEntity?.manual_tags,
     selectedEntity?.source_tag_names,
     isBulk,

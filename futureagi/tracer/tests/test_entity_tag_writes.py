@@ -178,6 +178,7 @@ def test_ch_only_action_accepts_rich_payload_and_returns_effective_tags(
             "manual_tags": [{"name": "ui", "color": "#123456"}],
             "source_tag_names": ["sdk"],
             "tag_revision": 1,
+            "tag_assignment_exists": True,
         },
     }
     serializer = EntityTagsResponseSerializer(data=response.data)
