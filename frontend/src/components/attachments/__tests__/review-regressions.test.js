@@ -2,20 +2,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import axios from "src/utils/axios";
 import { listAttachments, resolveAttachments } from "../client";
 import { resolveResultSchema } from "../contract";
+import { resetMediaSessions } from "../mediaSession";
 import StreamingPlayback from "../StreamingPlayback";
-import { grant, occurrence, occurrenceId, parent, projectId } from "./fixtures";
+import {
+  authDefaults,
+  exchangeResponse,
+  gatewayPath,
+  grant,
+  mediaSessionId,
+  occurrence,
+  occurrenceId,
+  parent,
+  projectId,
+} from "./fixtures";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), defaults: {} },
 }));
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  Object.assign(axios.defaults, authDefaults());
+  resetMediaSessions();
+});
 const items = [
   { occurrence_id: occurrenceId, parent, representation: "playable" },
 ];
 function respond(result) {
   axios.post.mockImplementation(async (path) =>
     path.endsWith("attachment-media-sessions")
-      ? { status: 204 }
+      ? exchangeResponse()
       : { data: { items: [result] } },
   );
 }
@@ -47,19 +62,35 @@ describe("backend wire regression fixtures", () => {
       "Attachment unavailable",
     );
   });
-  it.each([
+  // Each case is a well-formed three-identity path with exactly one bad
+  // identity, so it fails on that identity rather than on the route shape.
+  const badIds = [
     projectId,
     "00000000-0000-0000-0000-000000000000",
     "f".repeat(36),
     "-".repeat(36),
+    mediaSessionId.toUpperCase(),
+  ];
+  it.each([
+    ...badIds.map((id) => ["occurrence", id, gatewayPath(id, "synthetic")]),
+    ...badIds
+      .filter((id) => id !== projectId)
+      .map((id) => ["session", id, gatewayPath(occurrenceId, "synthetic", id)]),
+    [
+      "session",
+      "another live session",
+      gatewayPath(
+        occurrenceId,
+        "synthetic",
+        "e0000000-0000-0000-0000-0000000000b2",
+      ),
+    ],
   ])(
-    "rejects gateway identity %s before handing a path to media",
-    async (id) => {
-      const result = {
-        ...grant,
-        gateway_path: `/tracer/v1/attachment-media/${id}/synthetic`,
-      };
-      expect(resolveResultSchema.safeParse(result).success).toBe(false);
+    "rejects gateway %s identity %s before handing a path to media",
+    async (position, _, gateway_path) => {
+      const result = { ...grant, gateway_path };
+      if (position === "occurrence" || _.length === 36)
+        expect(resolveResultSchema.safeParse(result).success).toBe(false);
       respond(result);
       await expect(resolveAttachments(projectId, items)).rejects.toThrow(
         "Attachment unavailable",
@@ -67,6 +98,11 @@ describe("backend wire regression fixtures", () => {
       expect(axios.get).not.toHaveBeenCalled();
     },
   );
+  it("accepts the same path shape when every identity is the bound one", async () => {
+    respond(grant);
+    expect(resolveResultSchema.safeParse(grant).success).toBe(true);
+    expect(await resolveAttachments(projectId, items)).toEqual([grant]);
+  });
 });
 
 function media(readyState = 4) {

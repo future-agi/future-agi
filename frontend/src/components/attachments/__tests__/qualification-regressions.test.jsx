@@ -15,7 +15,10 @@ import { validateContractedRequestConfig } from "src/api/contracts/openapi-contr
 import SpanAttachments from "../SpanAttachments";
 import useAttachmentGrants from "../useAttachmentGrants";
 import { AttachmentUnavailable, resolveAttachments } from "../client";
+import { resetMediaSessions } from "../mediaSession";
 import {
+  authDefaults,
+  exchangeResponse,
   grant,
   occurrenceId,
   parent,
@@ -25,7 +28,7 @@ import {
 } from "./fixtures";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), defaults: {} },
 }));
 vi.mock("../client", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -50,9 +53,11 @@ afterEach(() => {
 
 describe("media-session exchange request contract", () => {
   it("sends a body the generated request contract accepts for every call", async () => {
+    Object.assign(axios.defaults, authDefaults());
+    resetMediaSessions();
     axios.post.mockImplementation(async (path) =>
       path.endsWith("attachment-media-sessions")
-        ? { status: 204 }
+        ? exchangeResponse()
         : { data: { items: [grant] } },
     );
     const actual = await vi.importActual("../client");

@@ -23,12 +23,16 @@ const PLAYABLE = {
  * fetched until the viewer asks; then the element streams Range requests from
  * the same-origin gateway (preload="metadata", never a whole-file download).
  * A renewed grant swaps the source in place and keeps position and play state.
+ * A grant withdrawn by an auth context change (token refresh, logout,
+ * organization switch) drops its source at once; the replacement resumes
+ * where the viewer was.
  */
 export default function AttachmentMedia({ projectId, request, item, label }) {
   const { modality, mime_type: mimeType } = item.reference;
   const [requested, setRequested] = useState(false);
   const [failed, setFailed] = useState(false);
   const elementRef = useRef(null);
+  const withdrawn = useRef(null);
   const { status, results, retry } = useAttachmentGrants(projectId, [request], {
     enabled: requested,
     renew: true,
@@ -41,9 +45,24 @@ export default function AttachmentMedia({ projectId, request, item, label }) {
 
   useEffect(() => {
     const element = elementRef.current;
-    if (!element || !path) return undefined;
-    const position = element.currentTime || 0;
-    const resume = element.src && !element.paused;
+    if (!element) return undefined;
+    if (!path) {
+      // Never keep streaming on a grant the hook no longer holds.
+      if (element.getAttribute("src")) {
+        withdrawn.current = {
+          position: element.currentTime || 0,
+          resume: !element.paused,
+        };
+        element.pause();
+        element.removeAttribute("src");
+        element.load();
+      }
+      return undefined;
+    }
+    const kept = withdrawn.current;
+    withdrawn.current = null;
+    const position = kept ? kept.position : element.currentTime || 0;
+    const resume = kept ? kept.resume : element.src && !element.paused;
     const restore = () => {
       if (position) element.currentTime = position;
       if (resume) void element.play()?.catch?.(() => {});

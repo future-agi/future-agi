@@ -124,18 +124,31 @@ export const resolveItemSchema = z
   .refine(
     (v) => (v.representation === "channel") === (v.channel !== undefined),
   );
+// F01 MediaSessionHandle: the non-secret media-session UUID an exchange
+// returns. It selects a session; the credential stays in an HttpOnly cookie.
+export const mediaSessionHandleSchema = uuid;
+// F01 MediaGatewayPath (traceAI #675 f0d52e7a): session, occurrence, grant.
+// The legacy two-identity path is not part of the amended API.
+export const MEDIA_GATEWAY_PATH_MAX = 230;
+const gatewayUuid =
+  "(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const gatewayPath = z
+  .string()
+  .max(MEDIA_GATEWAY_PATH_MAX)
+  .regex(
+    new RegExp(
+      `^/tracer/v1/attachment-media/${gatewayUuid}/${gatewayUuid}/[a-zA-Z0-9_-]{1,128}$`,
+    ),
+  );
+/** The media-session segment of a validated gateway path. */
+export const gatewaySessionId = (path) => path.split("/")[4];
 export const resolveResultSchema = z
   .discriminatedUnion("status", [
     z
       .object({
         occurrence_id: uuid,
         status: z.literal("ready"),
-        gateway_path: z
-          .string()
-          .regex(
-            /^\/tracer\/v1\/attachment-media\/(?!00000000-0000-0000-0000-000000000000\/)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\/[a-zA-Z0-9_-]{1,128}$/,
-          )
-          .max(194),
+        gateway_path: gatewayPath,
         expires_at: timestampSchema,
       })
       .strict(),
@@ -147,7 +160,7 @@ export const resolveResultSchema = z
     (item) =>
       item.status !== "ready" ||
       ("gateway_path" in item &&
-        item.gateway_path.split("/")[4] === item.occurrence_id),
+        item.gateway_path.split("/")[5] === item.occurrence_id),
     { message: "Gateway occurrence mismatch" },
   );
 export const resolveResponseSchema = z

@@ -90,11 +90,12 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
         element,
         current.parts,
         duration,
-        async (part, signal) => {
+        async (part, signal, options) => {
           const [result] = await resolveAttachments(
             projectId,
             [part.request],
             signal,
+            options,
           );
           return result;
         },
@@ -148,7 +149,7 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
       setPlaying(false);
       setStatus(next);
     };
-    const refresh = async () => {
+    const refresh = async ({ fresh = false } = {}) => {
       if (stopped || refreshing) return;
       refreshing = true;
       clearTimeout(renewal);
@@ -157,6 +158,7 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
           projectId,
           current.requests,
           controller.signal,
+          { fresh },
         );
         if (stopped) return;
         // Do not play an allowed half of a denied mix, or reconstruct directions.
@@ -179,14 +181,15 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
           player.on("intent", setPlaying);
           player.on("buffering", setBuffering);
           player.on("error", () => {
-            // One bounded reauthorization attempt, never a provider URL retry.
+            // One bounded reauthorization attempt, never a provider URL retry,
+            // on a new media session in case the refused one lost its cookie.
             if (recoveryUsed) {
               setRetryable(true);
               stop("not_found");
               return;
             }
             recoveryUsed = true;
-            void refresh();
+            void refresh({ fresh: true });
           });
           player.replaceSources(results.map((item) => item.gateway_path));
           onInstance?.({ multitrack: player, wavesurfers: [player] });

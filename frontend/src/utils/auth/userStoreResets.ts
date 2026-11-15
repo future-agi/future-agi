@@ -1,4 +1,4 @@
-type UserStoreName = "agent-playground" | "graph-builder";
+type UserStoreName = "agent-playground" | "graph-builder" | "attachment-media";
 
 const resets = new Map<UserStoreName, () => void>();
 

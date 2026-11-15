@@ -6,6 +6,7 @@ import {
   segmentGrant,
   threeSegmentProjection,
 } from "./pipecatRecording";
+import { gatewayPath } from "./fixtures";
 
 const [first, second] = pipecatProjection.manifest.segments.map(
   (segment) => segment.occurrence_id,
@@ -42,7 +43,7 @@ function grants(override = () => undefined) {
     if (denied) return denied;
     return {
       ...segmentGrant(part.occurrence_id),
-      gateway_path: `/tracer/v1/attachment-media/${part.occurrence_id}/grant-${issued}`,
+      gateway_path: gatewayPath(part.occurrence_id, `grant-${issued}`),
       expires_at: new Date(Date.now() + 60000).toISOString(),
     };
   });
@@ -91,7 +92,7 @@ describe("unit: sequential recording segments (TH-2379)", () => {
     // Availability is known, but no byte is requested before Play.
     expect(element.src).toBe("");
     void player.play();
-    expect(element.src).toBe(`/tracer/v1/attachment-media/${first}/grant-1`);
+    expect(element.src).toBe(gatewayPath(first, "grant-1"));
     await playing(element, player);
     element.currentTime = 29.98;
     fire(element, "timeupdate");
@@ -102,7 +103,7 @@ describe("unit: sequential recording segments (TH-2379)", () => {
     fire(element, "ended");
     expect(player.getCurrentTime()).toBe(30);
     await vi.waitFor(() =>
-      expect(element.src).toBe(`/tracer/v1/attachment-media/${second}/grant-2`),
+      expect(element.src).toBe(gatewayPath(second, "grant-2")),
     );
     expect(authorized(authorize)).toEqual([first, second]);
     await playing(element, player);
@@ -298,6 +299,31 @@ describe("unit: sequential recording segments (TH-2379)", () => {
       retryable: true,
     });
     expect(authorize).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for a new media session only for its one recovery, keeping the position", async () => {
+    const { element, player, authorize } = build(pipecatProjection);
+    player.prepare();
+    void player.play();
+    await playing(element, player);
+    element.currentTime = 7;
+    fire(element, "timeupdate");
+    // e.g. the session's path-scoped cookie was evicted: the gateway refuses.
+    fire(element, "error");
+    await vi.waitFor(() => expect(element.src).toContain("grant-2"));
+    void player.play();
+    element.currentTime = 0;
+    await playing(element, player);
+    expect(element.currentTime).toBe(7);
+    expect(player.getCurrentTime()).toBe(7);
+    expect(authorize.mock.calls.map(([, , options]) => options)).toEqual([
+      { fresh: false },
+      { fresh: true },
+    ]);
+    fire(element, "ended");
+    await vi.waitFor(() => expect(element.src).toContain(second));
+    expect(authorize.mock.calls[2][2]).toEqual({ fresh: false });
+    player.destroy();
   });
 
   it("authorizes one segment at a time and the latest seek target wins", async () => {

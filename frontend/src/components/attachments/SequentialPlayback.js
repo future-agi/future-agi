@@ -10,12 +10,13 @@ const GAP_TICK_MS = 250;
  * Plays the distinct segment occurrences of one logical recording in timeline
  * order on ONE media element, behind one global clock and duration.
  *
- * Every media-session exchange replaces the browser's single media cookie,
- * and a grant only works under the session that issued it. So exactly one
- * segment is ever live: the next one is authorized when it is needed (at its
- * boundary, on a seek, or when the live grant would lapse), one request at a
- * time, and its bytes are never fetched ahead. Nothing is joined or decoded.
- * Gaps stay silent time on the clock; a denial anywhere stops everything.
+ * A grant only works under the media session that issued it. Each session's
+ * cookie has its own path, so another image, segment or tab exchanging a new
+ * session never orphans the live grant. Exactly one segment is ever live: the
+ * next one is authorized when it is needed (at its boundary, on a seek, or
+ * when the live grant would lapse), one request at a time, and its bytes are
+ * never fetched ahead. Nothing is joined or decoded. Gaps stay silent time on
+ * the clock; a denial anywhere stops everything.
  *
  * Events: timeupdate, intent, buffering, play, pause, ended, ready (first
  * grant), unavailable ({status, retryable}).
@@ -37,6 +38,7 @@ export default class SequentialPlayback {
     this.prepared = false;
     this.authorizing = false;
     this.recoveryUsed = false;
+    this.freshSession = false;
     this.quiet = false;
     this.grant = null;
     this.loadedIndex = -1;
@@ -180,8 +182,8 @@ export default class SequentialPlayback {
       (part, index) => index > this.index && part.kind === "segment",
     );
   }
-  // Single flight, latest target wins: overlapping exchanges could leave the
-  // cookie and the grant on different media sessions.
+  // Single flight, latest target wins: one request at a time keeps exactly one
+  // live grant and never authorizes a segment the clock already left.
   async requestGrant() {
     if (this.authorizing || this.disposed) return;
     this.authorizing = true;
@@ -191,8 +193,12 @@ export default class SequentialPlayback {
         if (index < 0) return;
         const part = this.parts[index];
         let result;
+        const fresh = this.freshSession;
+        this.freshSession = false;
         try {
-          result = await this.authorize(part, this.controller.signal);
+          result = await this.authorize(part, this.controller.signal, {
+            fresh,
+          });
         } catch {
           if (!this.disposed) this.fail("not_found", true);
           return;
@@ -307,13 +313,15 @@ export default class SequentialPlayback {
     this.gapTimer = undefined;
   }
   // One bounded reauthorization, never a provider URL retry. Like the single
-  // file player, a media error pauses; Play resumes on the renewed grant.
+  // file player, a media error pauses; Play resumes on the renewed grant. The
+  // refused session may have lost its cookie, so ask for a new session.
   recover() {
     if (this.recoveryUsed) {
       this.fail("not_found", true);
       return;
     }
     this.recoveryUsed = true;
+    this.freshSession = true;
     this.pause();
     this.grant = null;
     void this.requestGrant();

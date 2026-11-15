@@ -2,6 +2,47 @@
 // Synthetic fixtures checked against the runtime schemas; no live credentials.
 export const projectId = "10000000-0000-0000-0000-000000000001";
 export const occurrenceId = "20000000-0000-0000-0000-000000000002";
+// Non-secret media-session handle an exchange returns (F01 MediaSessionHandle).
+export const mediaSessionId = "e0000000-0000-0000-0000-00000000000e";
+/**
+ * Gateway path as playback.issue() builds it: session, occurrence, grant.
+ * @param {string} occurrence
+ * @param {string} token
+ * @param {string} [session]
+ */
+export const gatewayPath = (occurrence, token, session = mediaSessionId) =>
+  `/tracer/v1/attachment-media/${session}/${occurrence}/${token}`;
+/**
+ * The bodiless 204 exchange as Axios hands it over: lowercase header names,
+ * Python isoformat() expiry. The secret is only in Set-Cookie, never here.
+ * @param {string} [session]
+ * @param {number} [lifetimeMs]
+ */
+export const exchangeResponse = (
+  session = mediaSessionId,
+  lifetimeMs = 300000,
+) => ({
+  status: 204,
+  data: "",
+  headers: {
+    "x-attachment-media-session": session,
+    "x-attachment-media-expires-at": new Date(Date.now() + lifetimeMs)
+      .toISOString()
+      .replace("Z", "+00:00"),
+  },
+});
+/** The tab's axios defaults as setSession/OrganizationProvider leave them. */
+export const authDefaults = (
+  token = "synthetic-access-a",
+  organization = "50000000-0000-0000-0000-000000000005",
+) => ({
+  headers: {
+    common: {
+      Authorization: `Bearer ${token}`,
+      ...(organization ? { "X-Organization-Id": organization } : {}),
+    },
+  },
+});
 export const parent = {
   trace_id: "30000000-0000-0000-0000-000000000003",
   span_id: "4000000000000004",
@@ -132,7 +173,7 @@ export const occurrence = {
 export const grant = {
   occurrence_id: occurrenceId,
   status: "ready",
-  gateway_path: `/tracer/v1/attachment-media/${occurrenceId}/synthetic-grant`,
+  gateway_path: gatewayPath(occurrenceId, "synthetic-grant"),
   // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
   expires_at: "2099-01-01T00:00:00+00:00",
 };
@@ -171,6 +212,6 @@ export function spanImage(index, { reference = {}, ...rest } = {}) {
 export const readyGrant = (occurrence_id) => ({
   occurrence_id,
   status: "ready",
-  gateway_path: `/tracer/v1/attachment-media/${occurrence_id}/grant-${occurrence_id.slice(-4)}`,
+  gateway_path: gatewayPath(occurrence_id, `grant-${occurrence_id.slice(-4)}`),
   expires_at: "2099-01-01T00:00:00+00:00",
 });

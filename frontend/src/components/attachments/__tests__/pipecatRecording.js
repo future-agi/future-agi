@@ -1,4 +1,5 @@
 // @ts-check
+import { gatewayPath } from "./fixtures";
 // The `recording_attachment` projection of the actual Pipecat 1.15 call that
 // TH-2379 acceptance recorded (synthetic staging data, no credentials): the
 // stored manifest of trace 0b0af9fe… as PR #3941's enrich_voice_detail
@@ -83,6 +84,9 @@ export const segmentGrant = (
 ) => ({
   occurrence_id,
   status: "ready",
-  gateway_path: `/tracer/v1/attachment-media/${occurrence_id}/grant-${occurrence_id.slice(0, 8)}`,
+  gateway_path: gatewayPath(
+    occurrence_id,
+    `grant-${occurrence_id.slice(0, 8)}`,
+  ),
   expires_at,
 });

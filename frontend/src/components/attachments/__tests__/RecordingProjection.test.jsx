@@ -2,7 +2,13 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RecordingAttachmentPlayer from "../RecordingAttachmentPlayer";
 import { resolveAttachments } from "../client";
-import { mixedManifest, occurrenceId, parent, projectId } from "./fixtures";
+import {
+  gatewayPath,
+  mixedManifest,
+  occurrenceId,
+  parent,
+  projectId,
+} from "./fixtures";
 
 vi.mock("../client", () => ({ resolveAttachments: vi.fn() }));
 afterEach(() => {
@@ -72,7 +78,7 @@ describe("I04 recording_attachment states", () => {
       {
         occurrence_id: occurrenceId,
         status: "ready",
-        gateway_path: `/tracer/v1/attachment-media/${occurrenceId}/g`,
+        gateway_path: gatewayPath(occurrenceId, "g"),
         expires_at: "2099-01-01T00:00:00+00:00",
       },
     ]);
