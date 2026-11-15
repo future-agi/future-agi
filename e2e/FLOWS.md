@@ -3000,3 +3000,30 @@
 
 - the Workers card lists each worker with its channel, and allowed tools only where narrower than its code holds
 - the stopped call says the refund worker was stopped when its deadline passed
+
+### SIM-E2E-020 — a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error
+
+**Goal:** A developer stops a Run mid-call and sees the stopped call counted as Cancelled, never as an error, while a case the harness skipped still reads Error
+
+**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a running hosted Run with one call under way and one case the harness skipped
+2. open the Run and click Stop simulation, then Stop run
+3. reload the Run once it has stopped
+4. read the status chips
+5. open Analytics and click the donut legend entry for Cancelled calls
+
+**Backend state verified:**
+
+- the calls API serves the stopped call as cancelled and the skipped case as error, with status counts Cancelled 1 and Error 1
+- the runs list serves the Run as Cancelled with one cancelled outcome, no errored one and the skipped case as skipped
+
+**Browser observations:**
+
+- after the stop the Run offers no Stop control
+- the Cancelled chip counts 1 and the Error chip counts 1
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
