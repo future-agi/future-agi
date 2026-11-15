@@ -47,6 +47,9 @@ from simulate.utils.transcript_parse import (
 from tracer.models.project import Project
 from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
 
+# The environment's record of recent adds, keyed by request key, beside Save's own.
+EVIDENCE_ADDS = "evidence_adds"
+
 
 def create_evidence_import(
     *,
@@ -457,7 +460,9 @@ def add_to_suite(
     the person saw; any edit since refuses. When they saw none, the suite is saved
     as well, so no open draft is left to block Fix my agent; beside other edits it
     joins the draft only, since nobody else's changes are made live for them. A
-    refused save leaves everything as it was. Returns whether it was saved."""
+    refused save leaves everything as it was. The same ``idempotency_key`` repeats
+    the first answer, so a retry after a lost response is not refused. Returns
+    whether it was saved."""
     wanted = {str(case_id) for case_id in case_ids}
     with transaction.atomic():
         locked = (
@@ -465,6 +470,9 @@ def add_to_suite(
             .select_related("environment_version", "suite_version")
             .get(id=evidence_import.environment_id)
         )
+        earlier = _earlier_add(locked, evidence_import, wanted, idempotency_key)
+        if earlier is not None:
+            return earlier
         seen = {
             piece: expected.get(piece, drafts.NO_DRAFT) for piece in drafts.DRAFT_PIECES
         }
@@ -539,8 +547,65 @@ def add_to_suite(
                 idempotency_key=idempotency_key,
                 user=user,
             )
+        _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
         transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
     return saved
+
+
+def _earlier_add(
+    environment: HostedHarnessJob,
+    evidence_import: EvidenceImport,
+    wanted: set[str],
+    idempotency_key: str,
+) -> bool | None:
+    """What an earlier add under ``idempotency_key`` answered, or None for a new
+    key. The key cannot repeat an add of other cases."""
+    metadata = (environment.payload or {}).get("metadata") or {}
+    earlier = (metadata.get(EVIDENCE_ADDS) or {}).get(idempotency_key)
+    if not isinstance(earlier, dict):
+        return None
+    if (
+        earlier.get("import") != str(evidence_import.id)
+        or set(earlier.get("cases") or ()) != wanted
+    ):
+        raise HostedHarnessError(
+            "idempotency_key_reused",
+            "This request key was already used to add other cases; add again",
+            status_code=409,
+        )
+    return bool(earlier.get("saved"))
+
+
+def _record_add(
+    environment_id,
+    evidence_import: EvidenceImport,
+    wanted: set[str],
+    saved: bool,
+    idempotency_key: str,
+) -> None:
+    """Keep the answer under ``idempotency_key`` with the newest adds, as Save
+    keeps its own. Read again first: Save may have written the payload since."""
+    locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+        id=environment_id
+    )
+    payload = dict(locked.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    adds = {
+        key: entry
+        for key, entry in (metadata.get(EVIDENCE_ADDS) or {}).items()
+        if isinstance(entry, dict)
+    }
+    adds[idempotency_key] = {
+        "import": str(evidence_import.id),
+        "cases": sorted(wanted),
+        "saved": saved,
+        "at": timezone.now().isoformat(),
+    }
+    newest = sorted(adds.items(), key=lambda item: str(item[1].get("at") or ""))
+    metadata[EVIDENCE_ADDS] = dict(newest[-drafts.DRAFT_SAVES_KEPT :])
+    payload["metadata"] = metadata
+    locked.payload = payload
+    locked.save(update_fields=["payload", "updated_at"])
 
 
 def _with_cases(

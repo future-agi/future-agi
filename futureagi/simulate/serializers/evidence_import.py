@@ -186,9 +186,9 @@ class EvidenceToolCallsSerializer(EvidencePartSerializer):
 class EvidenceLabelSerializer(serializers.Serializer):
     name = serializers.CharField()
     kind = serializers.CharField()
-    value = JsonValueField(
-        help_text="As the annotator recorded it: input evidence, not a verdict."
-    )
+    # As the annotator recorded it (a score, a text, a choice list): input
+    # evidence, not a verdict.
+    value = JsonValueField(allow_null=True)
     notes = serializers.CharField(allow_blank=True)
     target = serializers.ChoiceField(
         choices=("session", "trace", "span", "row"),
@@ -290,7 +290,7 @@ class EvidenceRedactionFindingSerializer(serializers.Serializer):
     )
     index = serializers.IntegerField(min_value=0)
     field = serializers.ChoiceField(
-        choices=("text", "input", "output", "error", "notes", "value")
+        choices=("text", "input", "output", "error", "notes", "value", "name")
     )
     entity = serializers.CharField()
     start = serializers.IntegerField(min_value=0)

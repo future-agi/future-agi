@@ -21,7 +21,6 @@ import {
   EVIDENCE_COPY,
   IMPORT_PARAM,
   OBSERVE_KINDS,
-  caseShowsDefault,
   errorText,
 } from "./evidence.constants";
 import {
@@ -130,7 +129,7 @@ export default function EvidenceReviewDrawer({
       caseIds: waiting.map((one) => one.id),
       shows: Object.fromEntries(
         waiting
-          .map((one) => [one.id, shows[one.id] ?? caseShowsDefault(one, kind)])
+          .map((one) => [one.id, shows[one.id]])
           .filter(([, value]) => value),
       ),
     });

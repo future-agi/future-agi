@@ -74,8 +74,11 @@ class TestObserve:
 
         [case] = again["cases"]
         assert case["status"] == "duplicate"
-        assert case["duplicate_of"]["import_id"] == first["id"]
-        assert case["duplicate_of"]["case_id"] == first["cases"][0]["id"]
+        assert case["duplicate_of"] == {
+            "import_id": first["id"],
+            "case_id": first["cases"][0]["id"],
+            "scenario_name": "",
+        }
         # Nothing of it is left to draft: only the first import is listed.
         assert [one["id"] for one in _list(client, environment)] == [first["id"]]
         [original] = _review(client, environment, first, found)["cases"]

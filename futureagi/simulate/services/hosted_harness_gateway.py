@@ -54,6 +54,7 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
     scope_dispatch_to_rerun,
+    validate_cancellation_reason,
 )
 from simulate.services.hosted_harness_conversation import (
     _unacked_commands,
@@ -4243,6 +4244,7 @@ class HostedHarnessGateway:
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
+        validate_cancellation_reason(reason)
         settled = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job,
             attempt_number=job.current_attempt_number,
@@ -5156,7 +5158,7 @@ def _provider_import_authoring_material(
 
 
 # Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
-_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves", "evidence_adds")
 
 
 def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:

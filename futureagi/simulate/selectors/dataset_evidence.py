@@ -32,7 +32,7 @@ from tracer.selectors.observe_evidence import (
     head_and_tail,
     recorded_turn,
 )
-from tracer.utils.pii_scrubber import find_pii, find_pii_basic
+from tracer.utils.pii_scrubber import STRADDLE_CHARS, cut_clear
 
 # Columns whose cells hold media, not text: a row whose conversation is only
 # audio is out of scope.
@@ -46,9 +46,6 @@ MEDIA_TYPES = frozenset(
 )
 # Label columns one import reads.
 MAX_LABEL_COLUMNS = 10
-# Characters read past a turn's cut, so a value the cut would split is seen whole:
-# longer than an address, a card or a key redaction replaces.
-STRADDLE_CHARS = 256
 
 
 def text_evidence(source_id: str, parsed: ParsedTranscript) -> SourceEvidence:
@@ -114,6 +111,7 @@ def dataset_evidence(
                     column_id=columns.conversation,
                     then=Left("value", MAX_TRANSCRIPT_CHARS),
                 ),
+                # Past the cut, so cut_clear sees a value the cut would split.
                 default=Left("value", TURN_CHARS + STRADDLE_CHARS),
                 output_field=TextField(),
             ),
@@ -147,32 +145,17 @@ def dataset_evidence(
                 Label(
                     name=column.name,
                     kind=column.data_type,
-                    value=_cut_clear(head),
+                    value=cut_clear(head, TURN_CHARS),
                     notes="",
                     target="row",
                 )
                 for column, (head, _) in picked
             ),
             labels_truncated=any(size > TURN_CHARS for _, (_, size) in picked),
-            expected=None if outcome is None else _cut_clear(outcome[0]),
+            expected=None if outcome is None else cut_clear(outcome[0], TURN_CHARS),
             expected_truncated=outcome is not None and outcome[1] > TURN_CHARS,
         )
     return found
-
-
-def _cut_clear(text: str) -> str:
-    """``text`` cut to a turn before any value redaction replaces that the cut would
-    split, so no part of one is kept: part of an address or a card number is too
-    short for redaction to recognise. The cell is read STRADDLE_CHARS past the cut
-    for that."""
-    if len(text) <= TURN_CHARS:
-        return text
-    found = find_pii([text])
-    hits = (found if found is not None else find_pii_basic([text]))[0]
-    end = min(
-        [TURN_CHARS, *(hit.start for hit in hits if hit.start < TURN_CHARS < hit.end)]
-    )
-    return text[:end] if end == TURN_CHARS else text[:end].rstrip()
 
 
 def _conversation(row_id: str, cell: tuple[str, int] | None) -> SourceEvidence:

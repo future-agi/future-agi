@@ -248,17 +248,32 @@ describe("EvidenceReviewDrawer", () => {
     ).toBeInTheDocument();
   });
 
-  it("drafts the waiting cases with what each record shows", async () => {
+  it("makes no choice from an annotation alone, so the draft sends none", async () => {
+    const good = {
+      name: "Quality",
+      kind: "text",
+      value: "good",
+      notes: "",
+      target: "session",
+    };
+    evidence = bundle({
+      cases: [item({ labels: { ...part("present"), labels: [good] } })],
+    });
     axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
     renderDrawer();
-    const button = await screen.findByRole("button", {
-      name: "Draft 1 scenario",
+    const choice = await screen.findByRole("combobox", {
+      name: /^What should this case's scenario be\?/,
     });
-    await userEvent.click(button);
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 1 scenario" }),
+    );
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
         case_ids: ["c1"],
-        shows: { c1: "failure" },
+        shows: {},
       }),
     );
   });
@@ -278,7 +293,7 @@ describe("EvidenceReviewDrawer", () => {
       "Not set: the builder judges from the evidence",
     );
     expect(
-      screen.getByText(/^Nothing here records how it ended/),
+      screen.getByText(/^You haven't said how it ended/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Draft 1 scenario" }),
@@ -298,7 +313,13 @@ describe("EvidenceReviewDrawer", () => {
       name: /^What should this case's scenario be\?/,
     });
     expect(choice).toHaveTextContent(
-      "Reproduce the failure as a regression test",
+      "Not set: the builder judges from the evidence",
+    );
+    await userEvent.click(choice);
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Reproduce the failure as a regression test",
+      }),
     );
     expect(
       screen.getByText(/^Keeps: the situation, what the user said/),
@@ -345,7 +366,9 @@ describe("EvidenceReviewDrawer", () => {
     const [choice] = screen.getAllByRole("combobox", {
       name: /^What should this case's scenario be\?/,
     });
-    expect(choice).toHaveTextContent("Reproduce the failure as a test");
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
     await userEvent.click(choice);
     const options = screen
       .getAllByRole("option")
@@ -392,11 +415,16 @@ describe("EvidenceReviewDrawer", () => {
       screen.getByText(/^A transcript doesn't hold the seed records/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/^Observe doesn't record/)).toBeNull();
+    const choice = screen.getByRole("combobox", {
+      name: /^What should this case's scenario be\?/,
+    });
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
+    await userEvent.click(choice);
     expect(
-      screen.getByRole("combobox", {
-        name: /^What should this case's scenario be\?/,
-      }),
-    ).toHaveTextContent("Reproduce the failure as a test");
+      screen.getByRole("option", { name: "Reproduce the failure as a test" }),
+    ).toBeInTheDocument();
   });
 
   it("reviews dataset rows as the person's, with each row's expected outcome", async () => {
@@ -511,11 +539,16 @@ describe("EvidenceReviewDrawer", () => {
     expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
       "They are yours, not Observe's.",
     );
-    expect(
+    await userEvent.click(
       screen.getByRole("combobox", {
         name: /^What should this case's scenario be\?/,
       }),
-    ).toHaveTextContent("Reproduce the failure as a regression test");
+    );
+    expect(
+      screen.getByRole("option", {
+        name: "Reproduce the failure as a regression test",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("while drafting: says so, takes no draft or add, and locks the record choice", async () => {

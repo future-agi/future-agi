@@ -9543,7 +9543,10 @@ export const ApiDeploymentInfoListResponse = zod.object({
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -9553,7 +9556,17 @@ No authentication required (intended for infrastructure monitoring).
 export const ApiHealthClickhouseListResponse = zod.object({
   status: zod.enum(["healthy", "degraded", "unhealthy", "disabled"]),
   clickhouse_connected: zod.boolean(),
-  cdc_lag: zod.record(zod.string(), zod.number()),
+  cdc_lag: zod
+    .record(zod.string(), zod.number())
+    .describe(
+      "Per-table lag in seconds; -1 means unverified, including empty tables.",
+    ),
+  cdc_lag_verified: zod
+    .record(zod.string(), zod.boolean())
+    .optional()
+    .describe(
+      "True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.",
+    ),
   routing: zod.record(zod.string(), zod.object({}).passthrough()),
   error: zod.string().min(1).optional(),
 });
@@ -40317,12 +40330,13 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   project_id: zod
     .string()
     .uuid()
+    .nullable()
     .describe("The Observe project; null for evidence from outside Observe."),
   dataset_id: zod
     .string()
     .uuid()
     .describe("A dataset import's dataset; null otherwise."),
-  agent_version_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid().nullable(),
   source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
   created_at: zod.string().datetime({ offset: true }),
   simulated: zod
@@ -40386,6 +40400,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         ),
       changed_since_import: zod
         .boolean()
+        .nullable()
         .describe(
           "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
         ),
@@ -40412,8 +40427,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
         ),
       trace_ids: zod.array(zod.string().min(1)),
-      started_at: zod.string().datetime({ offset: true }),
-      ended_at: zod.string().datetime({ offset: true }),
+      started_at: zod.string().datetime({ offset: true }).nullable(),
+      ended_at: zod.string().datetime({ offset: true }).nullable(),
       transcript: zod.object({
         status: zod.enum([
           "present",
@@ -40431,7 +40446,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             trace_id: zod
               .string()
               .describe("Blank for a turn no trace recorded."),
-            at: zod.string().datetime({ offset: true }),
+            at: zod.string().datetime({ offset: true }).nullable(),
           }),
         ),
       }),
@@ -40508,10 +40523,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           zod.object({
             name: zod.string().min(1),
             kind: zod.string().min(1),
-            value: zod
-              .object({})
-              .passthrough()
-              .describe("Any valid JSON value."),
+            value: jsonValueSchema.describe("Any valid JSON value."),
             notes: zod.string(),
             target: zod
               .enum(["session", "trace", "span", "row"])
@@ -40557,7 +40569,15 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           .min(
             simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin,
           ),
-        field: zod.enum(["text", "input", "output", "error", "notes", "value"]),
+        field: zod.enum([
+          "text",
+          "input",
+          "output",
+          "error",
+          "notes",
+          "value",
+          "name",
+        ]),
         entity: zod.string().min(1),
         start: zod
           .number()
@@ -40671,6 +40691,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       project_id: zod
         .string()
         .uuid()
+        .nullable()
         .describe(
           "The Observe project; null for evidence from outside Observe.",
         ),
@@ -40678,7 +40699,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         .string()
         .uuid()
         .describe("A dataset import's dataset; null otherwise."),
-      agent_version_id: zod.string().uuid(),
+      agent_version_id: zod.string().uuid().nullable(),
       source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
       created_at: zod.string().datetime({ offset: true }),
       simulated: zod
@@ -40742,6 +40763,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
             ),
           changed_since_import: zod
             .boolean()
+            .nullable()
             .describe(
               "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
             ),
@@ -40768,8 +40790,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
               "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
             ),
           trace_ids: zod.array(zod.string().min(1)),
-          started_at: zod.string().datetime({ offset: true }),
-          ended_at: zod.string().datetime({ offset: true }),
+          started_at: zod.string().datetime({ offset: true }).nullable(),
+          ended_at: zod.string().datetime({ offset: true }).nullable(),
           transcript: zod.object({
             status: zod.enum([
               "present",
@@ -40787,7 +40809,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 trace_id: zod
                   .string()
                   .describe("Blank for a turn no trace recorded."),
-                at: zod.string().datetime({ offset: true }),
+                at: zod.string().datetime({ offset: true }).nullable(),
               }),
             ),
           }),
@@ -40864,10 +40886,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
               zod.object({
                 name: zod.string().min(1),
                 kind: zod.string().min(1),
-                value: zod
-                  .object({})
-                  .passthrough()
-                  .describe("Any valid JSON value."),
+                value: jsonValueSchema.describe("Any valid JSON value."),
                 notes: zod.string(),
                 target: zod
                   .enum(["session", "trace", "span", "row"])
@@ -40920,6 +40939,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
               "error",
               "notes",
               "value",
+              "name",
             ]),
             entity: zod.string().min(1),
             start: zod

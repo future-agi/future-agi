@@ -25,6 +25,7 @@ from tracer.selectors.observe_evidence import (
     TURN_CHARS,
     observe_evidence,
 )
+from tracer.utils.pii_scrubber import STRADDLE_CHARS
 
 T0 = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
 
@@ -301,6 +302,29 @@ class TestToolCalls:
         assert evidence.tool_calls[0].input_truncated is True
         assert evidence.tool_calls[0].output_truncated is False
         assert evidence.tool_calls_truncated is True
+
+
+@pytest.mark.django_db
+def test_a_cut_never_keeps_part_of_a_personal_value(project):
+    session, trace = _id(), _id()
+    email = "jane.doe@example.com"
+    # The turn's cut and the tool field's cut each fall inside the address.
+    words = ("word " * 1000)[: TURN_CHARS - 5]
+    turn = words + " " + email + " and more"
+    field = words + " " + email + " tail"
+    roots = [_root(trace, session=session, input=turn, output="ok")]
+    activity = [_step(trace, "search", input=field)]
+
+    found, reader = _read(project, "session", [session], roots, activity)
+
+    evidence = found[session]
+    assert evidence.turns[0].text == words.rstrip()
+    assert evidence.turns[0].truncated is True
+    assert evidence.tool_calls[0].input == words.rstrip()
+    assert evidence.tool_calls[0].input_truncated is True
+    # A tool field is read past its cut, so a value the cut splits is seen whole.
+    read = reader.activity_by_trace_ids.call_args.kwargs
+    assert read["field_chars"] == TOOL_FIELD_CHARS + STRADDLE_CHARS
 
 
 @pytest.mark.django_db

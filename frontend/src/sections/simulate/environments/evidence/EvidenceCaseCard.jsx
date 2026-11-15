@@ -15,7 +15,6 @@ import {
   EVIDENCE_COPY,
   OBSERVE_KINDS,
   PART_LABELS,
-  caseShowsDefault,
   cutAtWord,
   partGroups,
 } from "./evidence.constants";
@@ -158,7 +157,9 @@ export default function EvidenceCaseCard({
   const parts = partsOf(kind);
   const held = parts.filter((part) => HELD.has(item[part]?.status));
   const missing = parts.filter((part) => !HELD.has(item[part]?.status));
-  const choice = shows ?? caseShowsDefault(item, kind);
+  // A label is what an annotator said, not how the source ended: the person
+  // chooses, or the builder judges from the evidence.
+  const choice = shows ?? "";
   // What the builder makes follows the row's expected outcome when it has one.
   const details = HELD.has(item.expected_outcome?.status)
     ? EVIDENCE_COPY.showsDetailExpected

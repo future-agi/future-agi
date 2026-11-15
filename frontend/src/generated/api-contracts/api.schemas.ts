@@ -4069,7 +4069,17 @@ export const ClickHouseHealthResponseApiStatus = {
   disabled: "disabled",
 } as const;
 
+/**
+ * Per-table lag in seconds; -1 means unverified, including empty tables.
+ */
 export type ClickHouseHealthResponseApiCdcLag = { [key: string]: number };
+
+/**
+ * True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.
+ */
+export type ClickHouseHealthResponseApiCdcLagVerified = {
+  [key: string]: boolean;
+};
 
 export type ClickHouseHealthResponseApiRouting = {
   [key: string]: { [key: string]: unknown };
@@ -4078,7 +4088,10 @@ export type ClickHouseHealthResponseApiRouting = {
 export interface ClickHouseHealthResponseApi {
   status: ClickHouseHealthResponseApiStatus;
   clickhouse_connected: boolean;
+  /** Per-table lag in seconds; -1 means unverified, including empty tables. */
   cdc_lag: ClickHouseHealthResponseApiCdcLag;
+  /** True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health. */
+  cdc_lag_verified?: ClickHouseHealthResponseApiCdcLagVerified;
   routing: ClickHouseHealthResponseApiRouting;
   /** @minLength 1 */
   error?: string;
@@ -4119,6 +4132,10 @@ export const ClickHouseHealthErrorResponseApiHealthStatus = {
 
 export type ClickHouseHealthErrorResponseApiCdcLag = { [key: string]: number };
 
+export type ClickHouseHealthErrorResponseApiCdcLagVerified = {
+  [key: string]: boolean;
+};
+
 export type ClickHouseHealthErrorResponseApiRouting = {
   [key: string]: { [key: string]: unknown };
 };
@@ -4138,6 +4155,7 @@ export interface ClickHouseHealthErrorResponseApi {
   health_status?: ClickHouseHealthErrorResponseApiHealthStatus;
   clickhouse_connected?: boolean;
   cdc_lag?: ClickHouseHealthErrorResponseApiCdcLag;
+  cdc_lag_verified?: ClickHouseHealthErrorResponseApiCdcLagVerified;
   routing?: ClickHouseHealthErrorResponseApiRouting;
 }
 
@@ -20196,7 +20214,7 @@ export interface EvidenceTurnApi {
   truncated: boolean;
   /** Blank for a turn no trace recorded. */
   trace_id: string;
-  at: string;
+  at: string | null;
 }
 
 export interface EvidenceTranscriptApi {
@@ -20283,7 +20301,7 @@ export const EvidenceLabelApiTarget = {
 /**
  * Any valid JSON value.
  */
-export type EvidenceLabelApiValue = { [key: string]: unknown };
+export type EvidenceLabelApiValue = JsonValueApi;
 
 export interface EvidenceLabelApi {
   /** @minLength 1 */
@@ -20340,7 +20358,7 @@ export interface EvidenceImportCaseApi {
   /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
   new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
-  changed_since_import: boolean;
+  changed_since_import: boolean | null;
   /**
    * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
    * @minimum 0
@@ -20348,8 +20366,8 @@ export interface EvidenceImportCaseApi {
   also_from: number;
   duplicate_of: EvidenceDuplicateOfApi;
   trace_ids: string[];
-  started_at: string;
-  ended_at: string;
+  started_at: string | null;
+  ended_at: string | null;
   transcript: EvidenceTranscriptApi;
   tool_calls: EvidenceToolCallsApi;
   tool_inputs: EvidencePartApi;
@@ -20390,6 +20408,7 @@ export const EvidenceRedactionFindingApiField = {
   error: "error",
   notes: "notes",
   value: "value",
+  name: "name",
 } as const;
 
 export interface EvidenceRedactionFindingApi {
@@ -20426,10 +20445,10 @@ export interface EvidenceImportApi {
   id: string;
   environment_id: string;
   /** The Observe project; null for evidence from outside Observe. */
-  project_id: string;
+  project_id: string | null;
   /** A dataset import's dataset; null otherwise. */
   dataset_id: string;
-  agent_version_id: string;
+  agent_version_id: string | null;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
   /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
@@ -20443,7 +20462,7 @@ export interface EvidenceImportApi {
 }
 
 export interface EvidenceDraftRefApi {
-  id: string;
+  id: string | null;
   /** @minimum 0 */
   revision: number;
 }

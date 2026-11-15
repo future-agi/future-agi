@@ -277,6 +277,34 @@ class TestCreate:
         assert "[expected outcome]: Mail <EMAIL_ADDRESS> that the second" in text
         assert EMAIL not in text
 
+    def test_a_label_column_name_is_redacted_like_its_cells(
+        self, client, environment, dataset, rows, columns
+    ):
+        # A label's name is its column's: the dataset's owner may name one after
+        # a customer.
+        named = _column(dataset, f"Callback for {EMAIL}")
+        Cell.objects.create(dataset=dataset, column=named, row=rows[0], value="yes")
+
+        made = _create(
+            client,
+            environment,
+            dataset,
+            rows[:1],
+            columns,
+            mapping=_mapping(columns, labels=[str(named.id)]),
+        ).json()
+
+        labels = {
+            (one["field"], one["replacement"])
+            for one in made["redaction"]["findings"]
+            if one["part"] == "labels"
+        }
+        assert labels == {("name", "<EMAIL_ADDRESS>")}
+        stored = EvidenceImport.no_workspace_objects.get(id=made["id"])
+        text = evidence_document(stored, [made["cases"][0]["id"]])
+        assert "[label 1] Callback for <EMAIL_ADDRESS> on the row: yes" in text
+        assert EMAIL not in text
+
 
 class TestLive:
     def test_an_edited_row_reads_as_changed(
@@ -435,7 +463,9 @@ class TestBounded:
     def test_long_label_and_expected_cells_are_cut_to_a_turn(
         self, client, environment, dataset, rows, columns
     ):
-        long = "y" * (TURN_CHARS * 3)
+        # Words, not one long run of a letter: name recognition reads part of such
+        # a run as a place, and a cut is moved back before what it finds.
+        long = "word " * (TURN_CHARS * 3 // 5)
         for name in ("intent", "expected"):
             Cell.objects.filter(row=rows[0], column=columns[name]).update(value=long)
 
@@ -450,9 +480,9 @@ class TestBounded:
 
         [case] = made["cases"]
         [label] = case["labels"]["labels"]
-        assert label["value"] == "y" * TURN_CHARS
+        assert label["value"] == long[:TURN_CHARS]
         assert case["labels"]["status"] == "truncated"
-        assert case["expected_outcome"]["text"] == "y" * TURN_CHARS
+        assert case["expected_outcome"]["text"] == long[:TURN_CHARS]
         assert case["expected_outcome"]["status"] == "truncated"
 
     def test_a_value_the_cut_would_split_is_left_out_whole(
