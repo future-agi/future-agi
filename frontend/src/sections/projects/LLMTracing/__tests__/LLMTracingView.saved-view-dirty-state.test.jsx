@@ -11,10 +11,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import LLMTracingView from "../LLMTracingView";
+import { serializeSavedViewConfig } from "src/api/project/saved-views";
+import { normalizeConfigKeys } from "../common";
+import {
+  getCanonicalColumnSnapshot,
+  mergeColumnsWithAuthoritativeConfig,
+} from "../defaultColumns";
 
 const harness = vi.hoisted(() => ({
   updateSavedView: vi.fn(),
   toolbarProps: null,
+  gridProps: {},
+  columnChooserProps: null,
   filterChipsProps: null,
   filterSetters: {},
   selectedTab: "trace",
@@ -132,12 +140,22 @@ vi.mock("../states", async () => {
 
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef((props, _ref) => {
+      harness.gridProps[`${props.compareType}-trace`] = props;
+      return null;
+    }),
+  };
 });
 
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef((props, _ref) => {
+      harness.gridProps[`${props.compareType}-spans`] = props;
+      return null;
+    }),
+  };
 });
 
 // Keep the real toolbar and date picker. Only unrelated expensive panels are stubbed.
@@ -251,7 +269,12 @@ vi.mock("src/components/traceDetailDrawer/AnnotateDrawer", () => ({
 }));
 vi.mock(
   "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown",
-  () => ({ default: () => null }),
+  () => ({
+    default: (props) => {
+      harness.columnChooserProps = props;
+      return null;
+    },
+  }),
 );
 
 const originalRange = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
@@ -292,6 +315,8 @@ beforeEach(() => {
   harness.observeHeader.setActiveViewConfig.mockReset();
   harness.updateSavedView.mockReset();
   harness.filterSetters = {};
+  harness.gridProps = {};
+  harness.columnChooserProps = null;
   harness.filterChipsProps = null;
   harness.selectedTab = "trace";
 });
@@ -304,19 +329,22 @@ async function mountView() {
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const tree = () => (
+    <QueryClientProvider client={queryClient}>
+      <React.Suspense fallback={<div>Loading</div>}>
+        <LLMTracingView />
+      </React.Suspense>
+    </QueryClientProvider>
+  );
+  let mounted;
   await act(async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <React.Suspense fallback={<div>Loading</div>}>
-          <LLMTracingView />
-        </React.Suspense>
-      </QueryClientProvider>,
-    );
+    mounted = render(tree());
   });
   await waitFor(() => expect(screen.queryByText("Loading")).toBeNull());
   await waitFor(() =>
     expect(harness.observeHeader.registerGetViewConfig).toHaveBeenCalled(),
   );
+  return () => mounted.rerender(tree());
 }
 
 // The latest config getter the view registered with the Observe header.
@@ -345,6 +373,215 @@ async function editCustomRange() {
   );
 }
 
+// The saved-view API stores a flat customColumns array unchanged. Only list
+// config keys are normalized from snake_case. These are the old 17 span ids,
+// with the newly available Tags definition deliberately absent from saved state.
+const savedSpanIds = [
+  "cost",
+  "span_name",
+  "status",
+  "input",
+  "output",
+  "latency_ms",
+  "total_tokens",
+  "model",
+  "start_time",
+  "span_id",
+  "trace_id",
+  "prompt_tokens",
+  "completion_tokens",
+  "provider",
+  "user_id",
+  "user_id_type",
+  "user_id_hash",
+];
+const columnFixture = (tab, withCustom = true) => {
+  const nameId = tab === "spans" ? "span_name" : "trace_name";
+  const ids =
+    tab === "spans" ? savedSpanIds : ["cost", nameId, "status", "trace_id"];
+  const customColumns = withCustom
+    ? [
+        {
+          id: "custom.visible",
+          name: "custom.visible",
+          isVisible: true,
+          groupBy: "Custom Columns",
+        },
+        {
+          id: "custom.hidden",
+          name: "custom.hidden",
+          isVisible: false,
+          groupBy: "Custom Columns",
+        },
+      ]
+    : [];
+  const order = withCustom
+    ? [ids[0], "custom.visible", ...ids.slice(1), "custom.hidden"]
+    : ids;
+  const config = serializeSavedViewConfig(
+    savedView({
+      display: {
+        dateFilter: { dateOption: "Custom", dateFilter: originalRange },
+        columnState: order.map((colId) => ({
+          colId,
+          hide: !["cost", nameId, "custom.visible"].includes(colId),
+        })),
+        customColumns,
+      },
+    }),
+  );
+  const authoritative = normalizeConfigKeys([
+    ...[nameId, ...ids.filter((id) => id !== nameId)].map((id) => ({
+      id,
+      name: id,
+      is_visible: true,
+      group_by: null,
+    })),
+    // Trace Tags already default visible; only span Tags are newly hidden.
+    { id: "tags", name: "Tags", is_visible: tab === "trace", group_by: null },
+  ]);
+  return { config, authoritative };
+};
+
+// Exercise the public grid-to-parent config boundary with the same production
+// snapshot/merge helpers as TraceGrid and SpanGrid; no AG Grid internals mocked.
+async function receiveColumnConfig(slot, authoritative) {
+  await act(async () => {
+    const props = harness.gridProps[slot];
+    const canonical = getCanonicalColumnSnapshot(authoritative);
+    props.canonicalColumnsRef.current = canonical.columns;
+    props.canonicalOrderRef.current = canonical.order;
+    const pending = props.pendingCustomColumnsRef.current;
+    props.pendingCustomColumnsRef.current = [];
+    props.setColumns(
+      mergeColumnsWithAuthoritativeConfig(
+        props.columns,
+        authoritative,
+        pending,
+      ),
+    );
+  });
+}
+
+const columnPreferences = (slot) =>
+  harness.gridProps[slot].columns.map((c) => ({
+    colId: c.id,
+    hide: c.isVisible === false,
+  }));
+
+describe("saved column hydration and authoritative config", () => {
+  it.each(["trace", "spans"])(
+    "keeps %s customs when the saved response precedes the list response",
+    async (tab) => {
+      harness.selectedTab = tab;
+      const { config, authoritative } = columnFixture(tab);
+      const persisted = JSON.stringify(config);
+      harness.observeHeader.activeViewConfig = config;
+      await mountView();
+      const slot = `primary-${tab}`;
+      // A non-empty fallback slot must hydrate customs before any list response.
+      expect(
+        harness.gridProps[slot].columns.filter(
+          (c) => c.groupBy === "Custom Columns",
+        ),
+      ).toEqual(config.display.customColumns);
+      await receiveColumnConfig(slot, authoritative);
+      expect(columnPreferences(slot)).toEqual([
+        ...config.display.columnState,
+        { colId: "tags", hide: tab === "spans" },
+      ]);
+      expect(viewConfig().display.customColumns).toEqual(
+        config.display.customColumns,
+      );
+      expect(JSON.stringify(config)).toBe(persisted);
+      expect(harness.updateSavedView).not.toHaveBeenCalled();
+      expect(saveViewButton()).toBeNull();
+    },
+  );
+
+  it.each(["trace", "spans"])(
+    "hydrates a late %s saved response and retains edits on subsequent schema updates",
+    async (tab) => {
+      harness.selectedTab = tab;
+      harness.observeHeader.activeViewConfig = null;
+      const { config, authoritative } = columnFixture(tab);
+      const slot = `primary-${tab}`;
+      const rerender = await mountView();
+      await receiveColumnConfig(slot, authoritative);
+      harness.observeHeader.activeViewConfig = config;
+      await act(async () => rerender());
+      expect(columnPreferences(slot)).toEqual([
+        ...config.display.columnState,
+        { colId: "tags", hide: tab === "spans" },
+      ]);
+      // A same-id authoritative merge must not segregate customs from base ids.
+      await receiveColumnConfig(slot, authoritative);
+      expect(columnPreferences(slot)).toEqual([
+        ...config.display.columnState,
+        { colId: "tags", hide: tab === "spans" },
+      ]);
+      // Public chooser callbacks model a user toggle and reorder after hydration.
+      await act(async () => {
+        harness.columnChooserProps.onColumnVisibilityChange({
+          ...Object.fromEntries(
+            harness.gridProps[slot].columns.map((c) => [c.id, c.isVisible]),
+          ),
+          cost: false,
+        });
+      });
+      await act(async () => {
+        harness.columnChooserProps.setColumns(
+          [...harness.gridProps[slot].columns].reverse(),
+        );
+      });
+      const edited = columnPreferences(slot);
+      await receiveColumnConfig(slot, [
+        ...authoritative,
+        { id: "new.metric", name: "New metric", isVisible: false },
+      ]);
+      expect(columnPreferences(slot)).toEqual([
+        ...edited,
+        { colId: "new.metric", hide: true },
+      ]);
+      expect(harness.updateSavedView).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not expire hydration on fallbacks before the first list config", async () => {
+    harness.selectedTab = "spans";
+    harness.observeHeader.activeViewConfig = null;
+    const { config, authoritative } = columnFixture("spans");
+    const rerender = await mountView();
+    vi.useFakeTimers();
+    try {
+      harness.observeHeader.activeViewConfig = config;
+      await act(async () => rerender());
+      // Exercise the existing 2500ms fail-safe, not a new timing matrix.
+      await act(async () => vi.advanceTimersByTimeAsync(2501));
+      await receiveColumnConfig("primary-spans", authoritative);
+      expect(columnPreferences("primary-spans")).toEqual([
+        ...config.display.columnState,
+        { colId: "tags", hide: true },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves an old17-only saved view and exposes new Tags hidden", async () => {
+    harness.selectedTab = "spans";
+    const { config, authoritative } = columnFixture("spans", false);
+    harness.observeHeader.activeViewConfig = config;
+    await mountView();
+    await receiveColumnConfig("primary-spans", authoritative);
+    expect(columnPreferences("primary-spans")).toEqual([
+      ...config.display.columnState,
+      { colId: "tags", hide: true },
+    ]);
+    expect(harness.updateSavedView).not.toHaveBeenCalled();
+  });
+});
+
 describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("keeps Save view hidden for an untouched hydrated custom range", async () => {
     await mountView();
@@ -357,7 +594,9 @@ describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Custom range" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Custom range" }),
+    );
     expect(screen.getByLabelText("Start Date")).toHaveValue("2026-09-01");
     expect(screen.getByLabelText("End Date")).toHaveValue("2026-09-09");
     fireEvent.click(screen.getByRole("button", { name: "Done" }));

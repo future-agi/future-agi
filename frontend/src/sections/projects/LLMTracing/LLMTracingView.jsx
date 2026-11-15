@@ -165,6 +165,7 @@ import {
   applySavedColumns,
   restampColumns,
   columnStateToHideMap,
+  columnStateToOrder,
   reorderColumns,
   isColumnVisibilityDirty,
   isColumnOrderDirty,
@@ -2435,31 +2436,37 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         // Once hydrated the user owns the order — only restamp visibility, so a
         // manual drag isn't reverted when the id-set changes (add/remove a
         // custom column). userToggledColsRef guards visibility; this guards order.
-        const next = isHydratingView
-          ? applySavedColumns(
-              columns,
-              pendingSavedColsRef.current,
-              userToggledColsRef.current,
-            )
-          : restampColumns(
-              columns,
-              columnStateToHideMap(pendingSavedColsRef.current),
-              userToggledColsRef.current,
-            );
-        if (next !== columns) setColumns(next);
+        const savedColumnState = pendingSavedColsRef.current;
+        const userToggled = userToggledColsRef.current;
+        // The saved-view load effect may already have queued custom hydration
+        // and ordering in this render. Reconcile the latest state rather than
+        // replacing those updates with this render's pre-hydration columns.
+        setColumns((prev) =>
+          isHydratingView
+            ? applySavedColumns(prev, savedColumnState, userToggled)
+            : restampColumns(
+                prev,
+                columnStateToHideMap(savedColumnState),
+                userToggled,
+              ),
+        );
       }
-      // Hydration done once all the view's custom columns have merged in.
+      // Fallbacks can contain all customs but still lack saved API columns.
+      // Keep hydration active until those ids can receive their saved positions
+      // too (the existing timeout handles definitions that no longer exist).
       const savedCustomIds = Array.isArray(
         activeViewConfig?.display?.customColumns,
       )
         ? activeViewConfig.display.customColumns.map((c) => c?.id)
         : [];
-      const curCustomIds = new Set(
-        (columns[slotKey] || [])
-          .filter((c) => c?.groupBy === "Custom Columns")
-          .map((c) => c?.id),
+      const savedIds = [
+        ...columnStateToOrder(pendingSavedColsRef.current),
+        ...savedCustomIds,
+      ];
+      const currentIds = new Set(
+        (columns[slotKey] || []).map((c) => c?.id),
       );
-      if (savedCustomIds.every((id) => curCustomIds.has(id))) {
+      if (savedIds.every((id) => currentIds.has(id))) {
         setIsHydratingView(false);
       }
     }
@@ -2483,16 +2490,21 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Fallback: release the gate even if a saved custom col never loads, so the
   // Save-view button can't get stuck hidden (the merge check above clears sooner).
-  // Armed only once the view's slot has columns and re-armed on every columns
-  // change — on a cold load the first fetch can outlast the timer, and releasing
-  // before columns exist skips the order-applying branch above for good.
+  // Arm only after authoritative definitions arrive, not on fallback columns:
+  // a slow first fetch must still position saved ids missing from the fallback.
+  // Re-arm on column changes; truly removed definitions then release the gate.
   useEffect(() => {
     if (!isHydratingView) return undefined;
     const slotKey = slotKeyFromColumnState(
       pendingSavedColsRef.current,
       selectedTab === "trace" ? "primary-trace" : "primary-spans",
     );
-    if ((columns[slotKey] || []).length === 0) return undefined;
+    const canonicalOrder =
+      slotKey === "primary-trace"
+        ? canonicalTraceOrderRef.current
+        : canonicalSpanOrderRef.current;
+    if (!canonicalOrder || (columns[slotKey] || []).length === 0)
+      return undefined;
     const t = setTimeout(() => setIsHydratingView(false), 2500);
     return () => clearTimeout(t);
   }, [isHydratingView, columns, selectedTab]);
