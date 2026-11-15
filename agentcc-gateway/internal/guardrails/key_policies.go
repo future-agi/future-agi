@@ -237,7 +237,8 @@ const passThroughNote = " (client's body was forwarded unchanged on this pass-th
 // config, even an empty one, so it never runs the gateway's static instance,
 // which config.yaml may have configured for every request. It falls back to
 // the static registry only for checks the factory can't build.
-func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, check *tenant.GuardrailCheck) Guardrail {
+func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, check *tenant.GuardrailCheck) (resolved Guardrail) {
+	defer func() { resolved = selectedThresholdReady(resolved, check) }()
 	if p.dynamicFactory != nil {
 		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 			return validateKeyPolicyCheck(name, g)
