@@ -3396,8 +3396,12 @@ def test_a_result_that_lands_before_cleanup_is_not_run_again(organization):
         details={"provider": "test"},
     )
 
-    assert job.state == HostedHarnessJob.State.FAILED
-    assert job.failure["code"] == "sandbox_unreachable"
+    # Nothing is left to run, and the failure was the platform's, not the guest's: the Run is
+    # kept, not relaunched and not failed.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_reason == "terminal_event_lost"
 
 
 def _retried_after_a_loss(organization, monkeypatch, name: str, code: str):
