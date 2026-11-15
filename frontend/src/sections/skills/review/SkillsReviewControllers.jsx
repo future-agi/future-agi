@@ -52,7 +52,13 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const revise = () => navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`);
   const transition = query.data?.preview?.packet.transition;
   const resourceName = request?.name || query.data?.receipt?.name || 'Release review';
-  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} badge={paused ? <StatusBadge status="stale" label="Paused" /> : request?.status ? <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status} /> : undefined} title={transition ? releaseTitle(transition) : resourceName} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+  // Once released, the title states the outcome and no badge repeats it; until then it names the move being asked for.
+  const released = request?.status === 'released' || Boolean(display.receipt);
+  const movedFrom = display.receipt?.previousVersion ?? request?.previousVersion ?? transition?.expectedVersion;
+  const movedLabel = display.receipt?.postMoveState?.label || transition?.label;
+  const movedTo = display.receipt?.postMoveState?.version ?? transition?.version;
+  const movedTitle = released && movedLabel && movedTo != null ? `${movedLabel.charAt(0).toUpperCase()}${movedLabel.slice(1)} moved ${movedFrom != null ? `from v${movedFrom} ` : ''}to v${movedTo}` : null;
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: resourceName }]} badge={released ? undefined : paused ? <StatusBadge status="stale" label="Paused" /> : request?.status ? <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status} /> : undefined} title={movedTitle || (transition ? releaseTitle(transition) : resourceName)} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
 
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps

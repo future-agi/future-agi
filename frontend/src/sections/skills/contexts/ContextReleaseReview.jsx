@@ -17,6 +17,17 @@ import TechnicalDetails from "../components/TechnicalDetails";
 import { mountName, publishSentence } from "../utils/conclusions";
 
 const DESCRIPTOR_FILE = ".futureagi/context.json";
+
+// "v2 changes refund-policy v1 → v2; AGENTS.md is unchanged." The section title already says what
+// publishing creates, so the sentence leads with the version it creates.
+function publishLead(name, review) {
+  const next = (review.expectedHeadVersion ?? 0) + 1;
+  const sentence = publishSentence(name, review);
+  const prefix = `Publishing creates ${name || "this context"} v${next}: `;
+  if (!sentence.startsWith(prefix)) return sentence;
+  const rest = sentence.slice(prefix.length);
+  return `v${next} ${rest.startsWith("no ") ? "has" : "changes"} ${rest}`;
+}
 import { paths } from "src/routes/paths";
 import Section from "src/components/section";
 import ChecksList from "../components/ChecksList";
@@ -97,6 +108,10 @@ function DraftPublication({
     reviewed &&
     (!draftReview.checks.summary.warnings || warnings) &&
     !locked;
+  // One quiet reason beside the actions while one of them waits: the acknowledgments first, then the confirmation.
+  const warningsPending = draftReview.checks?.summary.warnings > 0 && !warnings;
+  const acknowledgmentReason = !reviewed ? "Tick the review box to publish." : warningsPending ? "Tick the warnings box to publish." : null;
+  const publishReason = acknowledgmentReason || (!draftReview.headAcknowledged ? "Confirm the review above to publish only." : null);
   const fields = {
     revision: draftReview.revision,
     expectedDigest: draftReview.candidateDigest,
@@ -104,21 +119,19 @@ function DraftPublication({
     reviewFingerprint: draftReview.reviewFingerprint,
   };
   return (
-    <Stack spacing={3}>
+    <Stack spacing={3} sx={{ mt: 3 }}>
       <Section title="What publishing creates">
         <Stack spacing={1}>
-          {/* Conclusion first: the version this creates and what changes in it, in words. */}
-          <Typography variant="m3" role="status">{publishSentence(name, draftReview)}</Typography>
-          <Typography variant="s1">
-            Based on {draftReview.baseVersion === null ? "a new context" : `v${draftReview.baseVersion}`}.
-            Production stays {draftReview.productionVersion ? `on v${draftReview.productionVersion}` : "unassigned"} until a separate review releases it.
+          {/* Conclusion first, in one line: the version this creates, what changes in it, and where production stays. */}
+          <Typography variant="m3" role="status">
+            {publishLead(name, draftReview)} Production stays {draftReview.productionVersion ? `on v${draftReview.productionVersion}` : "unassigned"} until it is reviewed and released.
           </Typography>
           {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
             <Alert severity="warning">
               This repair starts from v{draftReview.baseVersion}, not the latest v{draftReview.expectedHeadVersion}. Publishing makes it the new latest without the other changes in v{draftReview.expectedHeadVersion}.
             </Alert>
           )}
-          <TechnicalDetails title="Exact identities">
+          <TechnicalDetails title="Technical details">
             <Stack spacing={1}>
               <IdentityValue label="Saved draft" value={draftReview.candidateDigest} />
               <IdentityValue label="Latest published version" value={draftReview.headDigest ?? "Unpublished"} />
@@ -138,7 +151,7 @@ function DraftPublication({
             </Box>
           ))}
           {draftReview.changes.filter((file) => file.path === DESCRIPTOR_FILE).map((file) => (
-            <TechnicalDetails key={file.path} title={`Raw ${file.path} change`}>
+            <TechnicalDetails key={file.path} title="Settings file change">
               <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
             </TechnicalDetails>
           ))}
@@ -174,7 +187,7 @@ function DraftPublication({
           <Typography variant="s3" color="text.secondary">
             Each linked skill is locked to the version shown. A newer upstream version never replaces it without your review.
           </Typography>
-          <TechnicalDetails title="Locked versions">
+          <TechnicalDetails title="Linked skill versions">
             <Stack spacing={1}>
               {draftReview.acceptedLock?.links.map((link) => (
                 <Stack key={link.skillId} spacing={0.5}>
@@ -187,7 +200,7 @@ function DraftPublication({
           </TechnicalDetails>
         </Stack>
       </Section>
-      <TechnicalDetails title="Permissions comparison"><CapabilityChanges changes={draftReview.capabilities} summary /></TechnicalDetails>
+      <TechnicalDetails title="Permission changes"><CapabilityChanges changes={draftReview.capabilities} summary /></TechnicalDetails>
       <Section id="review-checks" title="Checks">
         {draftReview.checks ? (
           <ChecksList checks={draftReview.checks} />
@@ -210,36 +223,77 @@ function DraftPublication({
             inputProps={{ maxLength: 2000 }}
             helperText="Optional"
           />
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={reviewed}
-                disabled={locked}
-                onChange={(_, checked) =>
-                  setAckFingerprint(
-                    checked ? draftReview.reviewFingerprint : null,
-                  )
-                }
-              />
-            }
-            label="I reviewed these changes against the current published version."
-          />
-          {draftReview.checks?.summary.warnings > 0 && (
+          {/* The acknowledgments and the step that locks them to this draft read as one group. */}
+          <Stack spacing={1} role="group" aria-label="Review acknowledgments">
             <FormControlLabel
               control={
                 <Checkbox
-                  checked={warnings && reviewed}
-                  disabled={locked || !reviewed}
+                  checked={reviewed}
+                  disabled={locked}
                   onChange={(_, checked) =>
-                    setWarningFingerprint(
+                    setAckFingerprint(
                       checked ? draftReview.reviewFingerprint : null,
                     )
                   }
                 />
               }
-              label="I acknowledge the static warnings for this exact candidate."
+              label="I reviewed these changes against the current published version."
             />
-          )}
+            {draftReview.checks?.summary.warnings > 0 && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={warnings && reviewed}
+                    disabled={locked || !reviewed}
+                    onChange={(_, checked) =>
+                      setWarningFingerprint(
+                        checked ? draftReview.reviewFingerprint : null,
+                      )
+                    }
+                  />
+                }
+                label="I acknowledge the static warnings for this exact candidate."
+              />
+            )}
+            {draftReview.headAcknowledged ? (
+              <Typography variant="s3" role="status" sx={{ fontWeight: 500 }}>Review confirmed</Typography>
+            ) : (
+              <Stack spacing={0.5} alignItems="flex-start">
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  size="small"
+                  disabled={
+                    !ready ||
+                    !onAcknowledgeHead ||
+                    (draftReview.baseVersion !==
+                      draftReview.expectedHeadVersion &&
+                      !draftReview.headChanges)
+                  }
+                  onClick={() =>
+                    operation.run(async (input) => {
+                      const acknowledged = await onAcknowledgeHead(input);
+                      // Recorded before the review reloads and remounts for the same candidate.
+                      onCarry({
+                        reviewed,
+                        note,
+                        warned: warnings,
+                        candidateDigest: draftReview.candidateDigest,
+                        baseVersion: draftReview.baseVersion,
+                        expectedHeadVersion: draftReview.expectedHeadVersion,
+                        headDigest: draftReview.headDigest,
+                        warnings: draftReview.checks?.summary.warnings ?? null,
+                      });
+                      return acknowledged;
+                    }, fields)
+                  }
+                >
+                  Confirm review
+                </Button>
+                <Typography variant="s3" color="text.secondary">Locks this review to the current draft, so later edits can&apos;t be published by mistake.</Typography>
+              </Stack>
+            )}
+          </Stack>
           <OperationFeedback operation={operation} />
           {oneStep !== operation && <OperationFeedback operation={oneStep} />}
           {operation.result && (
@@ -249,78 +303,45 @@ function DraftPublication({
               moved.
             </Alert>
           )}
-          <Box>
-            {/* One reason, above the row, while the publish actions wait for the review confirmation. */}
-            <ActionReason id="publish-review-reason" reason={!draftReview.headAcknowledged && 'Confirm the review first'} sx={{ display: 'block', mb: 1 }} />
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
-              {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ ml: { sm: -1 }, alignSelf: { xs: 'flex-start', sm: 'center' } }}>Reload draft</Button>}
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ ml: { sm: 'auto' } }}>
-                {draftReview.headAcknowledged ? <Typography variant="s3" role="status" sx={{ px: { sm: 1 } }}>Review confirmed</Typography> : (
-                  <Button
-                    variant="outlined"
-                    color="primary"
-                    disabled={
-                      !ready ||
-                      !onAcknowledgeHead ||
-                      (draftReview.baseVersion !==
-                        draftReview.expectedHeadVersion &&
-                        !draftReview.headChanges)
-                    }
-                    onClick={() =>
-                      operation.run(async (input) => {
-                        const acknowledged = await onAcknowledgeHead(input);
-                        // Recorded before the review reloads and remounts for the same candidate.
-                        onCarry({
-                          reviewed,
-                          note,
-                          warned: warnings,
-                          candidateDigest: draftReview.candidateDigest,
-                          baseVersion: draftReview.baseVersion,
-                          expectedHeadVersion: draftReview.expectedHeadVersion,
-                          headDigest: draftReview.headDigest,
-                          warnings: draftReview.checks?.summary.warnings ?? null,
-                        });
-                        return acknowledged;
-                      }, fields)
-                    }
-                  >
-                    Confirm review
-                  </Button>
-                )}
-                <Button variant="outlined" {...reasonProps('publish-review-reason', !draftReview.headAcknowledged && 'Confirm the review first')} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
-                  onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
-                  Publish version
+          {/* One footer row: Reload draft on the left; on the right the reason sits on the same baseline as the two publish actions. */}
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
+            {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ ml: { sm: -1 }, alignSelf: { xs: 'flex-start', sm: 'center' } }}>Reload draft</Button>}
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ ml: { sm: 'auto' }, minWidth: 0 }}>
+              <ActionReason id="publish-review-reason" reason={publishReason} sx={{ textAlign: { sm: 'right' } }} />
+              <Button variant="outlined" {...reasonProps('publish-review-reason', publishReason)} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
+                onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
+                Publish version
+              </Button>
+              {/* J4 one-step path: the same reviewed identity acknowledges the
+                  head when needed, publishes the immutable candidate and opens
+                  the release-review request with it carried forward. Production
+                  is not moved; sharing and submission stay explicit. */}
+              {onPublishAndRequest && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  {...reasonProps('publish-review-reason', acknowledgmentReason)}
+                  disabled={
+                    !ready ||
+                    (draftReview.baseVersion !==
+                      draftReview.expectedHeadVersion &&
+                      !draftReview.headChanges)
+                  }
+                  onClick={() =>
+                    oneStep.run(onPublishAndRequest, {
+                      ...fields,
+                      headAcknowledged: draftReview.headAcknowledged === true,
+                      baseVersion: draftReview.baseVersion,
+                      note,
+                      acknowledgeWarnings: warnings,
+                    })
+                  }
+                >
+                  Publish and request review
                 </Button>
-                {/* J4 one-step path: the same reviewed identity acknowledges the
-                    head when needed, publishes the immutable candidate and opens
-                    the release-review request with it carried forward. Production
-                    is not moved; sharing and submission stay explicit. */}
-                {onPublishAndRequest && (
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    disabled={
-                      !ready ||
-                      (draftReview.baseVersion !==
-                        draftReview.expectedHeadVersion &&
-                        !draftReview.headChanges)
-                    }
-                    onClick={() =>
-                      oneStep.run(onPublishAndRequest, {
-                        ...fields,
-                        headAcknowledged: draftReview.headAcknowledged === true,
-                        baseVersion: draftReview.baseVersion,
-                        note,
-                        acknowledgeWarnings: warnings,
-                      })
-                    }
-                  >
-                    Publish and request review
-                  </Button>
-                )}
-              </Stack>
+              )}
             </Stack>
-          </Box>
+          </Stack>
         </Stack>
       </Box>
     </Stack>

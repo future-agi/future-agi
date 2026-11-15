@@ -124,12 +124,22 @@ export async function createDriver({ jobId, runId, registration }) {
         if (!(await ack(reviewer).isChecked())) await operator.click(ack(reviewer), name);
         await expect(ack(reviewer)).toBeChecked();
       };
-      // (UX iteration 3, REV7) The permission fingerprints sit under "Compared content" and the share confirmation's record IDs under
-      // "Details". The same visibility assertions run once the disclosure is open; the disclosure is read inside the inspection body,
+      // (UX iteration 3, REV7; iteration 4, REV4/REV9) The permission fingerprints sit under "What was compared"; the renewal's kept-result IDs under
+      // "Technical details"; an evidence ID and its exact grading counts under that row's Inspect; the share confirmation's record IDs are one hover away. The same visibility assertions run once the disclosure is open; the disclosure is read inside the inspection body,
       // not counted as an operator primitive, so the measured action counts do not rise. The target configuration digest stays one hover away.
       const reveal = async (scope, name) => {
         const toggle = scope.getByRole('button', { name, exact: true }).first();
         if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+      };
+      // Opens the Inspect view of the result row whose evidence ID is `id` (the row itself shows its outcome once; the ID
+      // and the exact grading counts are read in Inspect). Not an operator primitive, like `reveal`.
+      const inspectResult = async (scope, id) => {
+        const inspectors = scope.getByRole('button', { name: 'Inspect', exact: true });
+        const total = await inspectors.count();
+        for (let index = 0; index < total; index += 1) {
+          if (await scope.getByTitle(id, { exact: true }).first().isVisible().catch(() => false)) return;
+          await inspectors.nth(index).click();
+        }
       };
       const attempt = async (reviewer, operator, name) => {
         await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
@@ -158,12 +168,13 @@ export async function createDriver({ jobId, runId, registration }) {
           for (const item of items) await expect(dialog.locator(`tr[data-field="${item}"]`)).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed request`))).toBeVisible();
           await expect(dialog.getByText(kept.length ? new RegExp(`renewed request keeps ${kept.length} results? for the same candidate`) : /renewed request keeps no evidence/)).toBeVisible();
+          if (kept.length) await reveal(dialog, 'Technical details');
           for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
         const renewed = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
         const decided = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
-        await operator.approve(`${name}-renewed-approve`, ['release-packet'], () => dialog.getByRole('button', { name: 'Approve renewed revision', exact: true }).click(), decision);
+        await operator.approve(`${name}-renewed-approve`, ['release-packet'], () => dialog.getByRole('button', { name: 'Approve again', exact: true }).click(), decision);
         requireValue([200, 201].includes((await renewed).status()) && (await decided).ok(), 'Renewal or renewed approval rejected');
         await expect(dialog).toHaveCount(0);
         detail = await read(`release-requests/${submitted.id}/`, signal);
@@ -277,7 +288,6 @@ export async function createDriver({ jobId, runId, registration }) {
           await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
           await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
-          await reveal(confirmShare, 'Details');
           for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();
           await expect(confirmShare.getByText('Private', { exact: true })).toHaveCount(input.evidenceIds.length);
           const prepared = responseFor(author, '/release-requests/preview/');
@@ -338,6 +348,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const outcomes = inspection.summaries.map((row) => ({ id: row.source_id, planned: row.planned, graded: row.graded, incomplete: row.incomplete, regressions: row.regressions, disagreements: row.disagreements }));
           await op.review('inspect-evidence-outcomes', outcomes.map((_, i) => `evidence-${i}`), [], async () => {
             for (const row of outcomes) {
+              await inspectResult(reviewer, row.id);
               await expect(reviewer.getByTitle(row.id, { exact: true }).first()).toBeVisible();
               await expect(reviewer.getByText(`${row.graded}/${row.planned} attempts graded · ${row.incomplete} incomplete · ${row.regressions} regressions`, { exact: true }).first()).toBeVisible();
             }
@@ -345,7 +356,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const correct = outcomes.every((row) => row.graded === row.planned && row.planned > 0 && row.incomplete === 0 && row.regressions === 0 && row.disagreements === 0);
           requireValue(correct, 'Fixture evidence does not support approval; the correct decision would be request changes');
           await op.review('inspect-capabilities-and-impact', ['capabilities', 'impact'], [], async () => {
-            await reveal(reviewer, 'Compared content');
+            await reveal(reviewer, 'What was compared');
             await expect(reviewer.getByTitle(inspection.capabilities.before_digest, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByTitle(inspection.capabilities.after_digest, { exact: true }).first()).toBeVisible();
           }, decision);
@@ -429,6 +440,7 @@ export async function createDriver({ jobId, runId, registration }) {
             'Remaining evidence does not support approval of the renewed packet');
           await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
+            await inspectResult(reviewer, remaining.source_id);
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();

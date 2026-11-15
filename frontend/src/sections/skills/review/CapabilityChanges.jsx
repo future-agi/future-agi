@@ -6,7 +6,7 @@ import TechnicalDetails from '../components/TechnicalDetails';
 
 // Permissions detail. The headline ("No permission changes found" or a count) lives in the review
 // summary table, so this renders only what that sentence cannot say: each changed declaration, and
-// the compared fingerprints inside "Compared content", which bind what the reviewer saw to this pair.
+// the compared fingerprints inside "What was compared", which bind what the reviewer saw to this pair.
 export default function CapabilityChanges({ changes, onOpenFile, summary = false }) {
   if (!changes) return <CapabilityNotice title="Permission comparison unavailable" description="Review the file changes before deciding." />;
   return (
@@ -30,7 +30,7 @@ export default function CapabilityChanges({ changes, onOpenFile, summary = false
           )}
         </Box>
       ))}
-      <TechnicalDetails title="Compared content">
+      <TechnicalDetails title="What was compared">
         <Stack spacing={1}>
           <Typography variant="s3">{changes.changes.length ? "Only recognized static declarations are compared. This is not a safety certification." : "No changes in recognized static declarations. This is not a safety certification."}</Typography>
           <Stack direction="row" flexWrap="wrap" gap={1}>

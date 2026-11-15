@@ -1,5 +1,5 @@
 import { MemoryRouter } from "react-router-dom";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import ReleaseReviewBody from "./ReleaseReviewBody";
 import { capability, changes, nativeEvidence, packet } from "../__tests__/r3_l09/fixtures";
@@ -41,7 +41,11 @@ describe("review packet evidence", () => {
     const headline = screen.getByText("Repair verified: v7 passed 1 of 1 cases; the recorded failure reproduced on v4.");
     expect(headline).toBeVisible();
     expect(screen.getByText("Blender refund refunded shipping: v7 passed every check · v4 failed business tool")).toBeVisible();
+    // The row states the outcome once; exact grading counts and the evidence ID are read in Inspect.
+    expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
     expect(screen.getByText(/2\/2 attempts graded · 0 incomplete · 0 regressions/)).toBeVisible();
+    expect(screen.getByText("Evidence ID")).toBeVisible();
     // Only the text comparison (no summary supplied here) keeps the unknown-result notice.
     expect(within(headline.closest("tr")).queryByText(/Result not recorded/)).not.toBeInTheDocument();
     expect(within(headline.closest("tr")).getAllByText("Passed")).toHaveLength(4);
@@ -49,6 +53,7 @@ describe("review packet evidence", () => {
   it("keeps an unavailable native result unknown", () => {
     render(<MemoryRouter><ReleaseReviewBody packet={packet} changes={changes} capabilities={capability} summaries={[{ ...repair, result: null, cases: [], graded: null, availability: "unavailable", answer: "Not observed", selection: "Not observed", delivery: "Not observed", tools: "Not observed" }]} /></MemoryRouter>);
     expect(screen.queryByText(/Repair verified/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
     expect(screen.getByText(/Unknown\/2 attempts graded/)).toBeVisible();
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Autocomplete, Box, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Autocomplete, Box, Button, MenuItem, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import ObjectHeader from '../components/ObjectHeader';
 import EmptyState from 'src/components/empty-state';
@@ -14,7 +14,7 @@ import ReleaseRequestPanel from './ReleaseRequestPanel';
 import { ConfirmDialog } from 'src/components/custom-dialog';
 import { ReviewState, TypedEvidenceList, evidenceKey, evidenceProblems, evidenceSelection } from './ReleaseReviewBody';
 import PeoplePicker from '../components/PeoplePicker';
-import IdentityChip from '../components/IdentityChip';
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import StatusBadge from 'src/components/status-badge';
 import { evidenceTitle, evidenceCoverage, evidenceOutcome } from '../utils/review-display';
 import EvidenceSummary from '../components/EvidenceSummary';
@@ -60,14 +60,11 @@ export function ShareAllEvidence({ packet, evidence, selected = [], onShare, onS
       content={<Stack spacing={1}>
         <Typography variant="s1">Workspace members will be able to see {shareable.length === 1 ? 'this test result' : `these ${shareable.length} test results`}, including the inputs, model answers and files used. Sharing doesn&apos;t extend their 30-day expiry. You&apos;ll review the request before it&apos;s sent.</Typography>
         {/* Every record this decision shares or attaches is named here by title with its visibility, so the
-            author confirms the exact set without reading identifiers; the IDs sit under Details. */}
+            author confirms the exact set without reading identifiers; each full ID is one hover or focus away. */}
         {all.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} data-evidence-id={ref.sourceId} spacing={0.5} sx={{ minWidth: 0 }}>
-          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}</Typography>{ref.visibility === 'private' ? <StatusBadge status="private" /> : <Typography variant="s3" color="text.secondary">Already shared</Typography>}</Stack>
+          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Tooltip title={ref.sourceId} describeChild><Typography variant="s1" tabIndex={0} sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}</Typography></Tooltip>{ref.visibility === 'private' ? <StatusBadge status="private" /> : <Typography variant="s3" color="text.secondary">Already shared</Typography>}</Stack>
           <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><StatusBadge {...(evidenceOutcome(ref) || { status: 'not_recorded', label: 'Not recorded', role: 'neutral' })} /><Typography variant="s3" color="text.secondary">{evidenceCoverage(ref.counts)}</Typography></Stack>
         </Stack>)}
-        <TechnicalDetails title="Details">
-          <Stack spacing={0.5}>{all.map((ref) => <IdentityChip key={`${ref.source}:${ref.sourceId}`} label={evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)} value={ref.sourceId} kind="id" />)}</Stack>
-        </TechnicalDetails>
       </Stack>}
       action={<Button variant="contained" color="primary" disabled={busy} onClick={async () => {
         setBusy(true);
@@ -186,9 +183,11 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         externalPipeline: pipelineUrl ? { trust: 'operator_recorded_unimported', url: pipelineUrl, configuration_identity: pipelineConfig, decision: pipelineDecision, recorded_by: access.scope.userId } : null }));
     } catch { setError('Could not prepare the review. Reload the available records and inspect any changed selections. Nothing was submitted.'); }
   };
-  const header = <ObjectHeader crumbs={prefill?.kind === 'agent_context' ? [{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: prefill.name || 'Agent context', to: paths.dashboard.skills.contextDetail(prefill.subjectId) }, { label: 'Request release review' }] : [{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: 'New request' }]} title={renewal ? 'Renew release review' : 'Request release review'} purpose="Choose a reviewer and inspect the changes. Production stays unchanged until approval and release." />;
+  const header = <ObjectHeader crumbs={prefill?.kind === 'agent_context' ? [{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: prefill.name || 'Agent context', to: paths.dashboard.skills.contextDetail(prefill.subjectId) }, { label: 'Request release review' }] : [{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: 'New request' }]} title={renewal ? 'Renew release review' : prepared ? 'Confirm release request' : 'Request release review'} purpose="Choose a reviewer and inspect the changes. Production stays unchanged until approval and release." />;
   const formState = state && state !== 'ready' ? state : failed ? 'error' : subjects.isLoading ? 'loading' : resourceId && !carried && versions.data?.results.length === 0 ? 'empty' : null;
   if (formState) return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1 }}>{header}{formState === 'loading' ? <ContentSkeleton variant="panel" label="Loading request form" rows={4} /> : formState === 'error' ? <ErrorState title="Couldn't load the request form." onRetry={refresh} /> : formState === 'empty' ? <EmptyState title="No published versions yet" description="Publish a version before requesting a review." secondaryAction={<Button variant="contained" color="primary" href={paths.dashboard.skills.root}>Go to Skills</Button>} /> : <ReviewState state={formState} onRetry={refresh} />}</Stack>;
+  const prepareReady = !(alreadyCurrent || busy || failed || options.isFetching || !candidate || (Boolean(targetId) && !target) || !options.data || !pipelineComplete || !labelValid);
+  const prepareReason = alreadyCurrent ? currentReason : !candidate ? 'Choose a published version to continue.' : !pipelineComplete ? 'Complete all three pipeline fields or leave them empty.' : '';
   const testsUrl = resourceId ? `${kind === 'agent_context' ? paths.dashboard.skills.contextDetail(resourceId) : paths.dashboard.skills.detail(resourceId)}?version=${candidate?.number}&tab=tests` : paths.dashboard.skills.root;
   return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1, ...responsiveEvidenceSx }}>
     {header}
@@ -205,7 +204,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
       }} /> : <>
       {failed && <ReviewState state="error" onRetry={refresh} />}
       {error && <Alert severity="error">{error}</Alert>}
-      <Section title="Version to release"><Stack spacing={1.5}>
+      <Section title="Release details"><Stack spacing={1.5}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr)' }, gap: 1.5 }}>
           <TextField select size="small" label="Type" value={kind} disabled={busy || Boolean(renewal) || Boolean(prefill)} onChange={(event) => { setKind(event.target.value); changeResource(''); setSubjectPage(1); }}>
             <MenuItem value="skill">Skill</MenuItem><MenuItem value="agent_context">Agent context</MenuItem>
@@ -216,10 +215,10 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         {!prefill && !renewal && subjects.data?.total_pages > 1 && <PageButtons query={subjects} page={subjectPage} setPage={(value) => { setSubjectPage(value); changeResource(''); }} label="matches" />}
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 1.5, alignItems: 'start' }}>
           {carried ? <Stack spacing={0.5}>
-            <TextField size="small" label="Published candidate" value={`v${prefill.candidate.number}${alreadyCurrent ? ` (in ${label})` : ''}`} InputProps={{ readOnly: true }} helperText="The version you just published." />
+            <TextField size="small" label="Version to release" value={`v${prefill.candidate.number}${alreadyCurrent ? ` (in ${label})` : ''}`} InputProps={{ readOnly: true }} helperText="The version you just published." />
             <Button size="small" sx={{ alignSelf: 'flex-start' }} disabled={busy} onClick={() => changeCandidate('')}>Choose another version</Button>
           </Stack> : resourceId && <Stack spacing={0.5}>
-            <TextField select size="small" label="Published candidate" value={candidateId} disabled={busy || versions.isFetching} onChange={(event) => changeCandidate(event.target.value)}>
+            <TextField select size="small" label="Version to release" value={candidateId} disabled={busy || versions.isFetching} onChange={(event) => changeCandidate(event.target.value)}>
               <MenuItem value="">Choose a published version</MenuItem>
               {versions.data?.results.map((item) => <MenuItem key={item.id} value={item.id}>v{item.number}{item.number === previousVersion ? ` (in ${label})` : ''}{item.note ? ` — ${item.note}` : ''}</MenuItem>)}
             </TextField>
@@ -232,7 +231,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         </Box>
         {options.isFetching && !options.data && <ReviewState state="loading" />}
         {/* The release this request asks for, in one visible line: what moves, from which version, and where it was verified. */}
-        {carried && <Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{prefill.name || 'Published candidate'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application verification on ${targetOption?.name || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack>}
+        {carried && <Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{prefill.name || 'Version to release'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application test on ${targetOption?.name || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack>}
         {alreadyCurrent && <Typography variant="s1" role="status">{currentReason}</Typography>}
       </Stack></Section>
       {candidate && <PeoplePicker label="Assigned reviewer" people={options.data?.recipients || []} value={recipientId} onChange={setRecipientId} loading={options.isFetching} error={options.error} onRetry={options.refetch} disabled={busy} helperText="An independent reviewer approves this release." />}
@@ -282,16 +281,15 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         <TextField size="small" label="Pipeline configuration identity" value={pipelineConfig} onChange={(event) => setPipelineConfig(event.target.value)} disabled={busy} inputProps={{ maxLength: 255 }} />
         <TextField size="small" label="Recorded pipeline decision" value={pipelineDecision} onChange={(event) => setPipelineDecision(event.target.value)} disabled={busy} inputProps={{ maxLength: 2000 }} />
       </Stack></TechnicalDetails>
-      <ComposerActions><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between">
+      <ComposerActions><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
+      {/* Left: the one thing to know before continuing. Right: secondary action, the reason the primary waits, then the primary. */}
       {passingUnattached.length > 0 && selected.length === 0 && !alreadyCurrent && candidate && pipelineComplete
-        ? <Stack direction="row" alignItems="center" flexWrap="wrap" columnGap={1} role="status" sx={{ minWidth: 0 }}>
-          <Typography variant="s3" sx={{ color: 'warning.dark' }}>{counted(passingUnattached.length, 'passing result')} {passingUnattached.length === 1 ? "isn't" : "aren't"} attached. The reviewer will see no test evidence.</Typography>
-          <Button size="small" onClick={attachResults}>Attach results</Button>
-        </Stack>
-        : <Typography variant="s3" color="text.secondary">{alreadyCurrent ? currentReason : !candidate ? 'Choose a published version to continue.' : !pipelineComplete ? 'Complete all three pipeline fields or leave them empty.' : 'Next, inspect the changes and confirm before sending.'}</Typography>}
-      <Stack direction="row" spacing={1}>
+        ? <Alert severity="warning" role="status" action={<Button size="small" color="inherit" onClick={attachResults}>Attach results</Button>} sx={{ minWidth: 0, flex: 1 }}>{counted(passingUnattached.length, 'passing result')} {passingUnattached.length === 1 ? "isn't" : "aren't"} attached. The reviewer will see no test evidence.</Alert>
+        : <Typography variant="s3" color="text.secondary" sx={{ flex: 1, minWidth: 0 }}>{prepareReady ? 'Next, inspect the changes and confirm before sending.' : ''}</Typography>}
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ flexShrink: 0 }}>
         <Button variant="outlined" disabled={busy} onClick={() => navigate(paths.dashboard.skills.reviews)}>Cancel</Button>
-        <Button variant="contained" color="primary" disabled={alreadyCurrent || busy || failed || options.isFetching || !candidate || (Boolean(targetId) && !target) || !options.data || !pipelineComplete || !labelValid} onClick={() => preparePacket()}>Prepare review</Button>
+        <ActionReason id="prepare-review-reason" reason={prepareReason} sx={{ textAlign: { sm: 'right' }, flexShrink: { sm: 0 } }} />
+        <Button variant="contained" color="primary" {...reasonProps('prepare-review-reason', prepareReason)} disabled={!prepareReady} onClick={() => preparePacket()}>Prepare review</Button>
       </Stack></Stack></ComposerActions>
     </>}
   </Stack>;
