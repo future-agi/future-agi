@@ -819,3 +819,35 @@ it('stacks each phone card as name and status, request title, then who and when,
   fireEvent.click(card);
   expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'pending' }));
 });
+
+it('says "Waiting for your approval" to the assigned reviewer and names the reviewer to everyone else, and names the compose button for what it does', () => {
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
+  const props = { scopeKey: 'scope', state: 'ready', data: { ...inbox, pendingCount: 1, results: [pending] }, onStatusChange: vi.fn(), onPageChange: vi.fn(), onOpen: vi.fn(), onCompose: vi.fn() };
+  const { rerender } = render(<ReleaseInbox {...props} currentUserId="reviewer" />);
+  expect(screen.getByText('Waiting for your approval')).toBeVisible();
+  expect(screen.queryByText(/Waiting on/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Request release review' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Request review', exact: true })).not.toBeInTheDocument();
+  rerender(<ReleaseInbox {...props} currentUserId="someone-else" />);
+  expect(screen.getByText('Waiting on Maya Chen')).toBeVisible();
+});
+
+it('keeps one weight for the context name on a phone card, so the dot alone marks what is unread', () => {
+  media.narrow = true;
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', unread: true, authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
+  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1, results: [pending] }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={vi.fn()} />);
+  expect(screen.getByText('Unread')).toBeInTheDocument();
+  expect(getComputedStyle(screen.getByText('Pending review')).fontWeight).not.toBe('600');
+});
+
+it('lets someone denied Reviews copy a request for an admin', async () => {
+  const writeText = vi.fn().mockResolvedValue();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<ReleaseInbox scopeKey="scope" state="denied" />);
+  expect(screen.getByText("You don't have access to reviews.")).toBeVisible();
+  const copy = screen.getByRole('button', { name: 'Copy request for admin' });
+  expect(copy).toHaveClass('MuiButton-outlined');
+  fireEvent.click(copy);
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^Please give me reviewer access to Skills reviews: https?:\/\//)));
+  expect(await screen.findByText('Copied the request for an admin.')).toBeVisible();
+});

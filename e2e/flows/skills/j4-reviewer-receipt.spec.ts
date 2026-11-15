@@ -66,7 +66,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
   try {
     await authorPage.goto('/dashboard/skills');
     await authorPage.getByRole('tab', { name: 'Reviews', exact: true }).click();
-    await authorPage.getByRole('button', { name: 'Request review', exact: true }).click();
+    await authorPage.getByRole('button', { name: 'Request release review', exact: true }).click();
     await authorPage.getByLabel('Name', { exact: true }).click();
     await authorPage.getByRole('option', { name, exact: true }).click();
     await authorPage.getByLabel('Version to release').click();
@@ -88,7 +88,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await expect(authorPage.getByRole('button', { name, exact: true })).toBeVisible();
     await authorPage.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await authorPage.reload();
-    await authorPage.getByRole('button', { name: 'Request review', exact: true }).click();
+    await authorPage.getByRole('button', { name: 'Request release review', exact: true }).click();
     await expect(authorPage.getByLabel('Name', { exact: true })).toBeVisible();
     await authorPage.screenshot({ path: `${output}/shots/06-author-composer-dark.png` });
   } finally {

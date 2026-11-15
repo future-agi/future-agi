@@ -67,7 +67,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   return <Stack spacing={1.5} sx={skillsRouteSx}>
     {header}
     <View scopeKey={scopeKey} state={state} {...query.data} renewalReason={renewalReason} staleCode={query.data?.staleCode || query.data?.renewalRequired || (paused ? 'review_stale' : undefined)} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={async () => { const result = await query.refetch(); if (!result?.isError && result?.data?.preview?.current) setRefusedRevision(null); return result; }} onRenew={() => setRenewing(true)}
-      renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
+      renewalOpen={renewing} currentUserId={access.scope?.userId} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
       onDecide={async (input, options) => {
         try { return await decide.mutateAsync({ ...input, ...options }); }
         catch (error) { if (isStaleReview(error)) setRefusedRevision(revisionKey); throw error; }

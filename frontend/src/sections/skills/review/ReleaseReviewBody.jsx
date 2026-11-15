@@ -31,6 +31,9 @@ import SummaryTable from "./SummaryTable";
 import VersionLabel from "../components/VersionLabel";
 import { counted, responsiveEvidenceSx } from "./reviewPresentation";
 
+// Said once above a list of results, never on every row (UX iteration 5, REV3).
+export const PRIVATE_RESULTS_NOTE = 'Private results are visible only to you. Share them with the workspace so the reviewer can see them.';
+
 const TERMINAL = new Set([
   "completed",
   "failed",
@@ -171,6 +174,7 @@ export function TypedEvidenceList({
   onShare,
   onInspect,
   summaries = [],
+  showPrivateNote = true,
 }) {
   const now = useReviewClock();
   const [sharing, setSharing] = useState(null);
@@ -208,6 +212,7 @@ export function TypedEvidenceList({
           No evidence selected. Not tested is not a pass.
         </Typography>
       )}
+      {showPrivateNote && evidence.some((ref) => evidenceProblems(ref, packet, now).some((reason) => reason.startsWith('Private'))) && <Typography variant="s3" color="text.secondary">{PRIVATE_RESULTS_NOTE}</Typography>}
       {evidence.map((ref) => {
         const choice = selected.find(
           (item) => evidenceKey(item) === evidenceKey(ref),
@@ -250,7 +255,7 @@ export function TypedEvidenceList({
               <Tooltip title={ref.payloadExpiresAt || ''}><Typography variant="s3" color="text.secondary">Expires {relativeReviewTime(ref.payloadExpiresAt) || 'at an unknown time'}</Typography></Tooltip>
               {summary ? (
                 <Stack spacing={0.5}>
-                  <NativeOutcomes summary={summary} />
+                  <NativeOutcomes summary={summary} defaultOpen />
                   <Typography variant="s1">
                     {summary.graded ?? "Unknown"}/{summary.planned ?? "Unknown"}{" "}
                     attempts graded · {summary.incomplete ?? "Unknown"}{" "}
@@ -288,7 +293,7 @@ export function TypedEvidenceList({
                 </Typography>
               </TechnicalDetails>
               {reasons.map((reason) => (
-                reason.startsWith('Private') ? <Typography variant="s3" color="text.secondary" key={reason}>Only you can see this result. Share it with the workspace to attach it.</Typography> : <Alert severity="warning" key={reason}>{reason}</Alert>
+                reason.startsWith('Private') ? null : <Alert severity="warning" key={reason}>{reason}</Alert>
               ))}
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 {onInspect && (
@@ -415,16 +420,36 @@ export function ExternalPipeline({ reference }) {
 }
 ExternalPipeline.propTypes = { reference: PropTypes.object };
 
-// A completed application run carried into the packet: its own headline and per-case outcomes.
-function NativeOutcomes({ summary }) {
+// A completed application run carried into the packet: its own headline, then the per-case outcomes one click away.
+function NativeOutcomes({ summary, defaultOpen = false }) {
   const conclusion = nativeSummaryConclusion(summary);
   if (!conclusion) return null;
+  const lines = nativeCaseLines(summary.cases);
   return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
     <Typography variant="s2">{conclusion}</Typography>
-    {nativeCaseLines(summary.cases).map((line) => <Typography key={line.caseId} variant="s3" color="text.secondary">{`${line.title}: ${line.text}`}</Typography>)}
+    {lines.length > 0 && <TechnicalDetails title={counted(lines.length, 'case')} defaultOpen={defaultOpen}>
+      <Stack spacing={0.25}>
+        {lines.map((line) => <Typography key={line.caseId} variant="s3" color="text.secondary">{`${line.title}: ${line.text}`}</Typography>)}
+      </Stack>
+    </TechnicalDetails>}
   </Stack>;
 }
-NativeOutcomes.propTypes = { summary: PropTypes.object };
+NativeOutcomes.propTypes = { summary: PropTypes.object, defaultOpen: PropTypes.bool };
+
+// One badge for a carried application run: "Passed 4 of 4" or "Failed 1 of 4". The four named checks are the disclosure's job.
+const NATIVE_CHECKS = ['selection', 'delivery', 'tools', 'answer'];
+function nativeBadge(summary) {
+  const cases = summary?.cases || [];
+  const ids = [...new Set(cases.map((cell) => cell.caseId))];
+  if (!ids.length) return undefined;
+  const candidate = cases.filter((cell) => cell.variant === 'candidate');
+  const passed = ids.filter((id) => {
+    const attempts = candidate.filter((cell) => cell.caseId === id);
+    return attempts.length > 0 && attempts.every((cell) => cell.status === 'completed' && NATIVE_CHECKS.every((key) => cell[key] === 'pass'));
+  }).length;
+  const ok = passed === ids.length;
+  return { status: ok ? 'passed' : 'failed', label: `${ok ? 'Passed' : 'Failed'} ${passed} of ${ids.length}` };
+}
 
 // Controlled presentation only. API mapping/caching and source authorization stay
 // in L7; this component never resolves a label or manufactures an evidence ref.
@@ -448,6 +473,7 @@ export default function ReleaseReviewBody({
   moreChanges = false,
   onLoadMore,
   availableEvidence,
+  onEditEvidence,
 }) {
   const [inspecting, setInspecting] = useState(null);
   const ordered = [...(changes || [])].sort((a, b) =>
@@ -463,7 +489,7 @@ export default function ReleaseReviewBody({
   const changedFiles = changes ? changes.filter((file) => file.status !== 'unchanged').length : null;
   // The summary table states each fact once; everything below it is detail the table cannot hold.
   const evidenceFact = evidence.length ? `${counted(evidence.length, 'test result')} attached`
-    : availableEvidence > 0 ? `No test results attached (${availableEvidence} available).`
+    : availableEvidence > 0 ? (onEditEvidence ? <>No test results attached · <Button variant="text" size="small" onClick={onEditEvidence}>Attach</Button></> : `No test results attached (${availableEvidence} available).`)
       : availableEvidence === 0 ? 'No matching test evidence. Not tested is not a pass.'
         : 'No test results attached. Not tested is not a pass.';
   const filesFact = changedFiles == null ? 'File changes not loaded'
@@ -487,7 +513,7 @@ export default function ReleaseReviewBody({
       {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
-          return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
+          return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: (ref.source === 'simulation_native' && nativeBadge(summary)) || ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
         })} renderAction={(item) => {
           // Each row states its outcome once (the Coverage cell carries the counts). The evidence ID and the
           // exact grading counts are one Inspect away, where the reviewer reads this result in full.
@@ -632,4 +658,5 @@ ReleaseReviewBody.propTypes = {
   moreChanges: PropTypes.bool,
   onLoadMore: PropTypes.func,
   availableEvidence: PropTypes.number,
+  onEditEvidence: PropTypes.func,
 };

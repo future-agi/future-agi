@@ -33,9 +33,10 @@ export default function ReleaseReceipt({ receipt, request }) {
       ]} />
       <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
       <Stack direction="row" flexWrap="wrap" alignItems="center" gap={1}>
-        <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
+        {/* The next job for an agent context is confirming apps picked the release up; a skill has no apps to check. */}
+        {kind === 'agent_context' && <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Check apps picked up v{after.version}</Button>}
+        <Button variant={kind === 'agent_context' ? 'outlined' : 'contained'} color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
         <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=versions` : undefined} disabled={!resourceUrl}>View release history</Button>
-        {kind === 'agent_context' && <Button href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Watch delivery</Button>}
         <Button onClick={async () => {
           try { await navigator.clipboard.writeText(new URL(receiptUrl, window.location.origin).href); setCopyError(false); enqueueSnackbar('Copied'); }
           catch { setCopyError(true); }
