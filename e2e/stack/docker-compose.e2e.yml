@@ -38,6 +38,8 @@ services:
     # and with the flag on, tracer/apps.py verifies the private storage first.
     environment:
       <<: *e2e-attachments-env
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
     depends_on:
       attachments-storage-bootstrap:
         condition: service_completed_successfully
@@ -272,10 +274,6 @@ services:
   # Literal values, not ${...} defaults: a value exported in the caller's shell
   # takes precedence over the env file, and these services must keep sending
   # telemetry registration to loopback. The services above set the same pair.
-  postgres-schema-bootstrap:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   clickhouse-native-bootstrap:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"

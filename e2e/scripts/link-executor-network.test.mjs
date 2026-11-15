@@ -20,6 +20,14 @@ test('every code-evaluation worker can reach the isolated executor without local
   });
   assert.equal(result.status, 0, result.stderr);
   const config = JSON.parse(result.stdout);
+  // A merge must retain both attachment schedule/storage readiness and dev's
+  // loopback-only telemetry in one bootstrap service, not duplicate YAML keys.
+  const bootstrap = config.services['postgres-schema-bootstrap'];
+  assert.equal(bootstrap.environment.FI_ATTACHMENTS_ENABLED, 'true');
+  assert.equal(bootstrap.environment.FUTURE_AGI_TELEMETRY_DISABLED, 'true');
+  assert.equal(bootstrap.environment.FUTURE_AGI_TELEMETRY_URL, 'http://127.0.0.1:9');
+  assert.equal(bootstrap.depends_on['attachments-storage-bootstrap'].condition,
+    'service_completed_successfully');
   const executorNetworks = Object.keys(config.services['code-executor'].networks);
   assert.deepEqual(executorNetworks.sort(), ['link-private', 'link-public']);
   for (const name of executorNetworks) assert.equal(config.networks[name].internal, true, name);
