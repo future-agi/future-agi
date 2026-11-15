@@ -4,6 +4,7 @@ import { test, expect } from '../../lib/fixtures';
 import type { TestActor } from '../../lib/provisioning';
 import { POLL, type StateProbe } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { observeCompareGrid } from '../../lib/compare-grid-probe';
 
 // UploadFileModal.jsx / CreateDatasetFromLocalFileRequestSerializer.
 const UPLOAD = '/model-hub/develops/create-dataset-from-local-file/';
@@ -431,8 +432,26 @@ async function openEarlierDrawer(page: Page, state: Awaited<ReturnType<typeof op
   await expect(drawer.getByText(cellValue(first.result.table[0], left.columns[1].id), { exact: true })).toBeVisible();
 }
 
-test('Compare lifecycle: later-block fresh ID retires the earlier drawer and delayed competing generation',
-  async ({ page, actor, probe }, info) => {
+test('DATA-E2E-006: Compare lifecycle: later-block fresh ID retires the earlier drawer and delayed competing generation', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'DATA-E2E-006', area: 'datasets',
+    userGoal: 'Keep comparison rows and detail on the adopted snapshot when concurrent later blocks rebuild an expired comparison',
+    steps: [
+      'upload two matching datasets, compare by input and open the first row detail',
+      'expire the stored comparison and scroll the real grid to pages two and three while delaying both real responses',
+      'release page two first, confirm the old drawer closes, then release the competing page three response',
+      'revisit rows thirty and thirty-one and open row thirty detail from the adopted snapshot',
+      'return to row zero and open its rebuilt detail',
+    ],
+    backendChecks: [
+      'synthetic uploaded rows and dataset scope match the authenticated actor in Postgres',
+      'the next browser comparison POST after adoption uses the winning compare_id and orphan cleanup returns 200',
+      'page three replay and rendered row IDs equal the adopted snapshot and exclude every delayed orphan row ID',
+      'row thirty and row zero detail requests use the adopted compare_id and return the adopted rows',
+    ],
+  }),
+}, async ({ page, actor, probe }, info) => {
     const state = await openLifecycleComparison({ page, actor, probe }, info);
     const { left, first, grid, drawer, responses } = state;
     const oldId = first.result.metadata.compare_id;
@@ -489,33 +508,136 @@ test('Compare lifecycle: later-block fresh ID retires the earlier drawer and del
       // must come from the adopted server snapshot, never the delayed orphan.
       const adoptedBlock = await actor.api.post<ComparePage>(comparePath(left.id), {
         dataset_ids: [state.right.id], base_column_name: 'input', page_size: PAGE_SIZE,
-        current_page_index: 2, compare_id: newId,
+        current_page_index: 3, compare_id: newId,
       });
       expect(adoptedBlock.result.metadata.compare_id).toBe(newId);
-      await scrollComparison(page, 20);
-      await expect(grid.locator('.ag-center-cols-container .ag-row[row-index="20"]'))
-        .toHaveAttribute('row-id', adoptedBlock.result.table[0].row_id as string);
+      expect(adoptedBlock.result.table).toHaveLength(2);
+      const orphanRowIds = loser.body.result.table.map(row => row.row_id);
+      for (const [offset, row] of adoptedBlock.result.table.entries()) {
+        expect(orphanRowIds).not.toContain(row.row_id);
+        await scrollComparison(page, 30 + offset);
+        const rendered = grid.locator(`.ag-center-cols-container .ag-row[row-index="${30 + offset}"]`);
+        await expect(rendered).toHaveAttribute('row-id', row.row_id as string);
+        const input = cellValue(row, left.columns[0].id);
+        const plantedLeft = left.rows.find(source => source.input === input)!;
+        const plantedRight = state.right.rows.find(source => source.input === input)!;
+        expect([cellValue(row, left.columns[1].id), cellValue(row, state.right.columns[1].id)])
+          .toEqual([plantedLeft.output, plantedRight.output]);
+        await expect(rendered.locator(`[col-id="${left.columns[0].id}"]`)).toHaveText(input);
+        await expect(rendered.locator(`[col-id="${left.columns[1].id}"]`)).toHaveText(plantedLeft.output);
+        await expect(rendered.locator(`[col-id="${state.right.columns[1].id}"]`)).toHaveText(plantedRight.output);
+      }
+      // This is the LOSING block's row, not the winner's row twenty or only row
+      // zero. Its click must resolve under the adopted ID after the late reply.
+      const adoptedRow = adoptedBlock.result.table[0];
+      const adoptedDetail = page.waitForResponse(response =>
+        new URL(response.url()).pathname === rowPath(newId, adoptedRow.row_id as string)
+          && response.request().method() === 'GET');
+      await scrollComparison(page, 30);
+      await grid.locator(`.ag-center-cols-container .ag-row[row-index="30"] [col-id="${left.columns[1].id}"]`).click();
+      const detailResponse = await adoptedDetail;
+      expect(detailResponse.status()).toBe(200);
+      const detailBody: RowDetail = await detailResponse.json();
+      expect(detailBody.result.table).toEqual([adoptedRow]);
+      await expect(drawer.getByText(cellValue(adoptedRow, left.columns[1].id), { exact: true })).toBeVisible();
+      await expect(drawer.getByText(cellValue(adoptedRow, state.right.columns[1].id), { exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(drawer).toHaveCount(0);
       await scrollComparison(page, 0);
       const row = rebuilt.result.table[0];
       await expect(grid.locator(`.ag-center-cols-container .ag-row[row-index="0"]`)).toHaveAttribute('row-id', row.row_id as string);
       const detail = page.waitForResponse(response => new URL(response.url()).pathname === rowPath(newId, row.row_id as string));
       await grid.locator(`.ag-center-cols-container .ag-row[row-index="0"] [col-id="${left.columns[1].id}"]`).click();
-      expect((await detail).status()).toBe(200);
+      const firstDetail = await detail;
+      expect(firstDetail.status()).toBe(200);
+      expect((await firstDetail.json()).result.table).toEqual([row]);
       await expect(drawer.getByText(cellValue(row, left.columns[1].id), { exact: true })).toBeVisible();
       await info.attach('real-rollover-and-competing-blocks', { contentType: 'application/json',
-        body: JSON.stringify({ oldId, winner: winner.body, loser: loser.body, rebuilt }) });
+        body: JSON.stringify({ oldId, winner: winner.body, loser: loser.body, rebuilt, adoptedBlock, detailBody }) });
     } finally {
       for (const entry of held.values()) if (!entry.released) await entry.route.fulfill({ response: entry.response });
       await page.unrouteAll({ behavior: 'wait' });
     }
   });
 
+async function assertSameIdEmptyRefresh(
+  page: Page, state: Awaited<ReturnType<typeof openLifecycleComparison>>,
+  compareId: string, purge: boolean, info: TestInfo,
+) {
+  const bridge = await observeCompareGrid(page);
+  const { grid, requests } = state;
+  const postsBefore = requests.length;
+  try {
+    const emptyStore = [{ route: [], rowCount: 0, lastRowIndexKnown: true }];
+    await expect.poll(() => bridge.evaluate(value => value.snapshot()), { timeout: UI_READY }).toEqual({
+      compareId, displayedRows: 0, stores: emptyStore, datasourceUnchanged: true,
+      requests: [], successes: [], refreshes: [], failures: 0,
+    });
+    const pending = await bridge.evaluate((value, shouldPurge) => value.refresh(shouldPurge), purge);
+    expect(pending.compareId).toBe(compareId);
+    expect(pending.refreshes).toEqual([{ purge, compareId }]);
+    // Both AG Grid 35 paths replace a known-empty cache with an unknown-size
+    // one-row placeholder. Sorting a zero-row store does NOT do this.
+    expect(pending.stores).toEqual([{ route: [], rowCount: 1, lastRowIndexKnown: false }]);
+    expect(pending.displayedRows).toBe(1);
+    const settled = {
+      compareId, displayedRows: 0, stores: emptyStore, datasourceUnchanged: true,
+      requests: [{ startRow: 0, endRow: PAGE_SIZE, compareId }],
+      successes: [{ rows: 0, rowCount: 0, compareId }],
+      refreshes: [{ purge, compareId }], failures: 0,
+    };
+    // Observe real LazyStore -> real datasource -> real success([], 0). Neither
+    // manually calling getRows nor a no-POST assertion alone proves this path.
+    await expect.poll(() => bridge.evaluate(value => value.snapshot()), { timeout: UI_READY }).toEqual(settled);
+    await expect(page.getByText('No Common rows', { exact: true })).toBeVisible();
+    await expect(grid.locator('.ag-center-cols-container .ag-row')).toHaveCount(0);
+    await expect(grid.locator('.ag-floating-bottom .ag-row')).toHaveCount(0);
+    await page.waitForTimeout(1_000); // Bounded observation for extra loads, purges or POSTs.
+    expect(await bridge.evaluate(value => value.snapshot())).toEqual(settled);
+    expect(requests).toHaveLength(postsBefore);
+    await info.attach(`same-id-empty-refresh-${purge ? 'purge' : 'non-purge'}`, {
+      contentType: 'application/json', body: JSON.stringify({ pending, settled, postsBefore, postsAfter: requests.length }),
+    });
+  } finally {
+    await bridge.evaluate(value => value.restore());
+    await bridge.dispose();
+  }
+}
+
 for (const initiallyEmpty of [false, true]) {
-  test(`Compare lifecycle: ${initiallyEmpty ? 'initial empty refresh' : 'nonempty to zero rollover'} is terminal in real AG Grid`,
-    async ({ page, actor, probe }, info) => {
+  const id = initiallyEmpty ? 'DATA-E2E-008' : 'DATA-E2E-007';
+  test(`${id}: Compare lifecycle: ${initiallyEmpty ? 'initial empty refresh' : 'nonempty to zero rollover'} is terminal in real AG Grid`, {
+    tag: ['@flow'],
+    annotation: flowAnnotation({
+      id, area: 'datasets',
+      userGoal: initiallyEmpty
+        ? 'Keep an initially empty comparison settled during same-ID grid refresh and explicit download recovery'
+        : 'Retire old comparison rows and detail when a later block rebuilds to zero, then keep same-ID refreshes settled',
+      steps: [
+        initiallyEmpty ? 'upload disjoint datasets and compare by input'
+          : 'upload matching datasets, compare by input, open detail, then make only the synthetic peer inputs disjoint and expire the comparison',
+        'observe a real zero-row comparison with no old detail or summary rows',
+        'call the existing real grid API for non-purge and purge refresh without clearing the comparison ID',
+        initiallyEmpty ? 'download the uncached empty comparison and observe one explicit fresh comparison build'
+          : 'sort the empty result and observe that it remains empty without another POST',
+      ],
+      backendChecks: [
+        'the real comparison endpoint returns a server-minted ID and zero row/page counts',
+        'each same-ID refresh completes locally with no additional comparison POSTs during a bounded observation window',
+        initiallyEmpty ? 'download returns the typed compare_not_found response and recovery builds once with a null request ID'
+          : 'the later-block rollover makes at most two comparison POSTs and adopts a new ID',
+      ],
+      browserChecks: [
+        'real AG Grid store state transitions from known zero to unknown one, then back to known zero in both refresh modes',
+        'each refresh invokes the real datasource once and succeeds with zero rows, without another purge or ID change',
+        'no common rows, no rendered data or summary rows, and no stale detail drawer remain',
+      ],
+    }),
+  }, async ({ page, actor, probe }, info) => {
       const state = await openLifecycleComparison({ page, actor, probe }, info, initiallyEmpty);
       const { left, right, first, grid, drawer, requests } = state;
       let requestsBeforeRollover = requests.length;
+      let terminalId = first.result.metadata.compare_id;
       if (!initiallyEmpty) {
         await openEarlierDrawer(page, state);
         // Mutate only this synthetic actor's input cells. The endpoint itself
@@ -535,12 +657,16 @@ for (const initiallyEmpty of [false, true]) {
         const empty: ComparePage = await response.json();
         expect(empty.result.metadata).toEqual({ compare_id: expect.any(String), total_rows: 0, total_pages: 0 });
         expect(empty.result.metadata.compare_id).not.toBe(first.result.metadata.compare_id);
+        terminalId = empty.result.metadata.compare_id;
         await info.attach('real-zero-rollover', { contentType: 'application/json', body: JSON.stringify(empty) });
       }
       await expect(drawer).toHaveCount(0);
       await expect(page.getByText('No Common rows', { exact: true })).toBeVisible();
       await expect(grid.locator('.ag-center-cols-container .ag-row')).toHaveCount(0);
       await expect(grid.locator('.ag-floating-bottom .ag-row')).toHaveCount(0);
+      for (const purge of [false, true]) {
+        await assertSameIdEmptyRefresh(page, state, terminalId, purge, info);
+      }
       if (initiallyEmpty) {
         // No column_config is returned for an initially empty join, hence no
         // sortable header. Exercise the real caller's explicit purge/reset via
@@ -558,8 +684,9 @@ for (const initiallyEmpty of [false, true]) {
         expect(empty.result.metadata.total_rows).toBe(0);
         expect(empty.result.metadata.compare_id).not.toBe(first.result.metadata.compare_id);
       } else {
-        // AG Grid's supported header keyboard sorting invalidates its SSRM
-        // store. This is a real refresh, not a manually called datasource mock.
+        // Retain the sorting control, but do not count it as refresh proof:
+        // refreshAfterSort preserves a known zero-row cache without a load.
+        // The same-ID API refresh/datasource paths were asserted above.
         const header = grid.locator('.ag-header-cell').first();
         await header.focus();
         await header.press('Enter');
@@ -580,8 +707,24 @@ for (const initiallyEmpty of [false, true]) {
     });
 }
 
-test('Compare lifecycle: real typed download miss rebuilds once and only the next explicit download uses the new ID',
-  async ({ page, actor, probe }, info) => {
+test('DATA-E2E-009: Compare lifecycle: real typed download miss rebuilds once and only the next explicit download uses the new ID', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'DATA-E2E-009', area: 'datasets',
+    userGoal: 'Recover a genuinely expired comparison download without rebuilding on an unrelated dataset error or automatically retrying CSV',
+    steps: [
+      'upload matching datasets and compare by input',
+      'request a download against a real missing peer and observe no comparison rebuild',
+      'expire the real comparison, download again and read the typed recovery message',
+      'wait for the rebuilt table, then explicitly download again using the adopted ID',
+    ],
+    backendChecks: [
+      'a real generic dataset 404 is distinct from the exact typed compare_not_found envelope',
+      'typed download failure preserves the submitted old ID and starts a fresh comparison request with a null ID',
+      'no automatic CSV retry occurs and the next explicit download uses the rebuilt ID and contains both planted datasets',
+    ],
+  }),
+}, async ({ page, actor, probe }, info) => {
     const state = await openLifecycleComparison({ page, actor, probe }, info);
     const { left, right, first, grid, requests } = state;
     const oldId = first.result.metadata.compare_id;

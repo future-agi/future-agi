@@ -1,9 +1,11 @@
 import contextlib
+import csv
 import json
 import shutil
 import time
 import uuid
 from datetime import datetime, timedelta
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
@@ -2249,19 +2251,42 @@ def test_compare_ordered_peer_swap_mints_fresh_id_and_preserves_download_order(
     _assert_compare_not_found(
         _download(auth_client, base, [peer_c, peer_b], compare_id=old_id)
     )
-    for compare_id, with_rows in ((new_id, False), (old_id, True)):
-        exported = _download(
-            auth_client,
-            base,
-            [peer_c, peer_b],
-            compare_id=compare_id,
-            with_rows=with_rows,
-        )
-        assert exported.status_code == status.HTTP_200_OK, _body(exported)
-        assert _body(exported).splitlines()[0].split(",") == [
+    # Stored metadata includes common_columns.union({base_column_name}), so
+    # cached exports also include each dataset's input. Pin the entire CSV,
+    # including values and peer order, rather than narrowing that contract.
+    assert set(
+        comparison_page_store[f"compare/{new_id}/metadata.json"]["common_column_names"]
+    ) == {"input", "judge"}
+    cached_export = _download(
+        auth_client, base, [peer_c, peer_b], compare_id=new_id
+    )
+    assert cached_export.status_code == status.HTTP_200_OK, _body(cached_export)
+    assert list(csv.reader(StringIO(_body(cached_export)))) == [
+        [
             "input",
-            *(f"judge-{ds.name}" for ds in (base, peer_c, peer_b)),
-        ]
+            "judge-Ordered base",
+            "input-Ordered base",
+            "judge-Ordered C",
+            "input-Ordered C",
+            "judge-Ordered B",
+            "input-Ordered B",
+        ],
+        [
+            "alpha", "Ordered base", "alpha", "Ordered C", "alpha", "Ordered B", "alpha"
+        ],
+    ]
+
+    # The rejected old ordering can only fall back to validated client rows.
+    # _download(with_rows=True) supplies common_column_names=["judge"], so this
+    # mode has a distinct, narrower projection, still ordered [base, C, B].
+    client_export = _download(
+        auth_client, base, [peer_c, peer_b], compare_id=old_id, with_rows=True
+    )
+    assert client_export.status_code == status.HTTP_200_OK, _body(client_export)
+    assert list(csv.reader(StringIO(_body(client_export)))) == [
+        ["input", "judge-Ordered base", "judge-Ordered C", "judge-Ordered B"],
+        ["alpha", "Ordered base", "Ordered C", "Ordered B"],
+    ]
     reused = compare([peer_c, peer_b], new_id)
     assert reused.status_code == status.HTTP_200_OK, reused.content
     assert reused.json()["result"]["metadata"]["compare_id"] == new_id
