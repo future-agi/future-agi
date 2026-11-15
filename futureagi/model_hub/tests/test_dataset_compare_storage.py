@@ -847,15 +847,18 @@ def test_scheduled_cleanup_removes_expired_comparisons_and_keeps_fresh_ones(
     for compare_id in (expired_id, fresh_id, stuck_id):
         (root / compare_id).mkdir(parents=True)
     hours_ago = time.time() - 3 * 60 * 60
-    real_getctime = os.path.getctime
-    monkeypatch.setattr(
-        "os.path.getctime",
-        lambda path: (
-            hours_ago
-            if os.path.basename(path) in (expired_id, stuck_id)
-            else real_getctime(path)
-        ),
-    )
+    real_stat = os.stat
+
+    def folder_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if (
+            os.path.basename(path) in (expired_id, stuck_id)
+            and kwargs.get("follow_symlinks") is False
+        ):
+            return SimpleNamespace(st_mode=result.st_mode, st_ctime=hours_ago)
+        return result
+
+    monkeypatch.setattr(os, "stat", folder_stat)
 
     delete_unused_compare_folder()
 
@@ -957,13 +960,13 @@ def test_a_deleted_comparison_is_not_served_before_its_cleanup_runs(
     # Another replica, without the local copy, answers as for an unknown id.
     _replica(monkeypatch, tmp_path, "replica-b")
     unknown = auth_client.get(ROW_URL.format(compare_id=uuid.uuid4(), row_id=row_id))
-    for response in (
-        auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=row_id)),
-        _post(auth_client, left.id, [right.id], 1, compare_id),
-        _download(auth_client, left.id, [right.id], compare_id),
-    ):
-        assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
-        assert response.json() == unknown.json()
+    detail = auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=row_id))
+    assert detail.status_code == status.HTTP_404_NOT_FOUND, detail.content[:500]
+    assert detail.json() == unknown.json()
+    rebuilt = _result(_post(auth_client, left.id, [right.id], 1, compare_id))
+    assert rebuilt["metadata"]["compare_id"] != compare_id
+    download = _download(auth_client, left.id, [right.id], compare_id)
+    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
     # The pages are left to the cleanup activity.
     found = _compare_objects(minio_storage, compare_id)
     assert sorted(found[minio_storage.compare_bucket]) == [

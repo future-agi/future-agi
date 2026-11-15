@@ -374,6 +374,19 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
+def _cached_comparison_matches_selection(
+    metadata, dataset_id, dataset_ids, base_column_name
+):
+    requested_ids = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
+    stored_ids = metadata.get("comparison_datasets")
+    return (
+        isinstance(stored_ids, list)
+        and str(metadata.get("base_dataset_id")) == str(dataset_id)
+        and [str(ds_id) for ds_id in stored_ids] == requested_ids
+        and metadata.get("base_column_name") == base_column_name
+    )
+
+
 def _request_dataset_queryset(request):
     return Dataset.objects.filter(
         _request_workspace_filter(request),
@@ -611,13 +624,8 @@ def _compare_metadata_matches_request(
     reused with the base dataset, compared datasets and base column it was
     created for.
     """
-    stored_datasets = metadata.get("comparison_datasets") or []
-    requested_datasets = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
-    return (
-        str(metadata.get("base_dataset_id")) == str(dataset_id)
-        and len(stored_datasets) == len(requested_datasets)
-        and {str(ds_id) for ds_id in stored_datasets} == set(requested_datasets)
-        and metadata.get("base_column_name") == base_column_name
+    return _cached_comparison_matches_selection(
+        metadata, dataset_id, dataset_ids, base_column_name
     )
 
 
@@ -12631,12 +12639,86 @@ class SingleRowEvaluationView(APIView):
             )
 
 
+def _run_dataset_evaluation_row(metric_id, row_id, runner_args):
+    """Keep initialization and all mutable runner state inside one row's future."""
+    close_old_connections()
+    try:
+        row_args = dict(runner_args)
+        row_args["source_configs"] = copy.deepcopy(row_args.get("source_configs") or {})
+        # The task owns the metric lifecycle. A queued row must not reset a
+        # stopped metric to RUNNING when its worker eventually starts.
+        runner = EvaluationRunner(
+            user_eval_metric_id=metric_id, update_metric_status=False, **row_args
+        )
+        runner.run_evaluation_for_row(row_id)
+    finally:
+        close_old_connections()
+
+
+def _refresh_task_connection(*, force=False):
+    """Replace the task thread's idle or broken connection before it writes.
+
+    The task thread waits while row futures run, so its pooled connection may
+    have been dropped, or a previous write may have broken it. ``force`` also
+    drops a connection that still looks usable, so a retry never reuses the
+    session a write just failed on. Never drop a connection that holds a
+    caller's transaction.
+    """
+    if connection.in_atomic_block:
+        return
+    if force:
+        connection.close()
+    else:
+        close_old_connections()
+
+
+def _finish_failed_rerun_rows(metric_id, row_ids, column_id):
+    """Best-effort terminal write for failed rows.
+
+    A failed write is retried once on a fresh connection: a dropped session or
+    a lock timeout would otherwise leave the rows RUNNING, with the previous
+    run's reason. One failed write must not stop the task from finishing other
+    rows or recording the status of other metrics, so errors are logged, not
+    raised. Callers count the rows failed before calling, so a write that
+    never lands still reports the metric FAILED.
+    """
+    from model_hub.utils.eval_cell_status import mark_rerun_cells_failed
+
+    log_context = {
+        "metric_id": str(metric_id),
+        "row_ids": [str(row_id) for row_id in row_ids],
+    }
+    _refresh_task_connection()
+    for attempt in (1, 2):
+        try:
+            mark_rerun_cells_failed(metric_id, row_ids, column_id=column_id)
+            return
+        except Exception:
+            if attempt == 1:
+                logger.warning(
+                    "dataset_rerun_failed_rows_mark_retry",
+                    **log_context,
+                    exc_info=True,
+                )
+            else:
+                logger.exception("dataset_rerun_failed_rows_not_marked", **log_context)
+            # The failed write may have broken the connection; the retry,
+            # later metrics and status updates in this task need a usable one.
+            _refresh_task_connection(force=True)
+
+
 @temporal_activity(time_limit=3600, queue="tasks_s")
 def run_evaluation_task(evaluation_data):
+    metric_ids = evaluation_data["metric_ids"]
+    row_ids = evaluation_data["row_ids"]
+    target_column_id = (
+        evaluation_data.get("column")
+        if evaluation_data.get("column_source")
+        == SourceChoices.OPTIMISATION_EVALUATION.value
+        else None
+    )
     try:
         logger.info("-----INSIDE run_evaluation_task -----")
-        metric_ids = evaluation_data["metric_ids"]
-        row_ids = evaluation_data["row_ids"]
 
         # Update status for all metrics. select_related avoids an N+1 when
         # version stamping resolves each metric's pinned/default version.
@@ -12681,56 +12763,67 @@ def run_evaluation_task(evaluation_data):
                 },
             }
 
-        futures = []
-        blocked_metric_ids = set()
+        futures = {}
+        failed_metric_ids = set()
+        success_counts = defaultdict(int)
+        reporting_inputs = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
-                metric = metric_map.get(metric_id)
-                if metric:
-                    try:
-                        from ee.usage.services.metering import check_usage
-                    except ImportError:
-                        check_usage = None
-
-                    if check_usage is not None:
-                        api_call_type = _get_api_call_type(
-                            metric.model or ModelChoices.TURING_LARGE.value
-                        )
-                        usage_check = check_usage(
-                            str(metric.organization.id), api_call_type
-                        )
-                        if not usage_check.allowed:
-                            from model_hub.tasks.user_evaluation import (
-                                _mark_cells_usage_limit_error,
-                            )
-
-                            UserEvalMetric.objects.filter(id=metric_id).update(
-                                status=StatusType.FAILED.value
-                            )
-                            blocked_metric_ids.add(str(metric_id))
-                            _mark_cells_usage_limit_error(metric, usage_check)
-                            logger.warning(
-                                "dataset_eval_rerun_usage_limit_exceeded",
-                                eval_id=str(metric_id),
-                                reason=usage_check.reason,
-                            )
-                            continue
-
-                    properties = get_mixpanel_properties(
-                        org=metric.organization,
-                        eval=metric,
-                        source=evaluation_data.get("source"),
-                        dataset=metric.dataset,
-                        count=len(row_ids),
-                    )
-                    track_mixpanel_event(
-                        MixpanelEvents.EVAL_RUN_STARTED.value, properties
-                    )
+                metric = metric_map.get(str(metric_id))
+                # All of this metric's setup, including the lazy organization and
+                # dataset loads, stays in this try. A database error there fails
+                # only this metric and finishes its cells instead of leaving the
+                # executor block, where the outer handler would relabel every
+                # metric FAILED and strand this metric's cells as RUNNING.
                 try:
-                    # Initialize the EvaluationRunner for each metric
-                    logger.info(
-                        " ----- INSIDE run_evaluation_task | Initializing the EvaluationRunner for each metric -----"
-                    )
+                    if metric:
+                        # Load what completion reporting needs before fan-out,
+                        # ahead of the usage-limited early exit. Read after
+                        # fan-out, a failed lazy load drops the metric's
+                        # completion event.
+                        organization, dataset = metric.organization, metric.dataset
+                        reporting_inputs[str(metric_id)] = (organization, dataset)
+                        try:
+                            from ee.usage.services.metering import check_usage
+                        except ImportError:
+                            check_usage = None
+
+                        if check_usage is not None:
+                            api_call_type = _get_api_call_type(
+                                metric.model or ModelChoices.TURING_LARGE.value
+                            )
+                            usage_check = check_usage(
+                                str(organization.id), api_call_type
+                            )
+                            if not usage_check.allowed:
+                                from model_hub.tasks.user_evaluation import (
+                                    _mark_cells_usage_limit_error,
+                                )
+
+                                UserEvalMetric.objects.filter(id=metric_id).update(
+                                    status=StatusType.FAILED.value
+                                )
+                                failed_metric_ids.add(str(metric_id))
+                                _mark_cells_usage_limit_error(metric, usage_check)
+                                logger.warning(
+                                    "dataset_eval_rerun_usage_limit_exceeded",
+                                    eval_id=str(metric_id),
+                                    reason=usage_check.reason,
+                                )
+                                continue
+
+                        properties = get_mixpanel_properties(
+                            org=organization,
+                            eval=metric,
+                            source=evaluation_data.get("source"),
+                            dataset=dataset,
+                            count=len(row_ids),
+                        )
+                        track_mixpanel_event(
+                            MixpanelEvents.EVAL_RUN_STARTED.value, properties
+                        )
+                    # Resolve execution version and metadata together, but never
+                    # share a mutable runner between concurrent rows.
                     runner_args = dict(args)
                     if not runner_args.get("source"):
                         runner_args["source"] = "dataset_evaluation"
@@ -12749,6 +12842,10 @@ def run_evaluation_task(evaluation_data):
                     try:
                         version = EvalTemplateVersion.objects.resolve_for_metric(metric)
                         if version:
+                            # Pin queued runners to the same immutable version we
+                            # stamp below. Re-resolving the default in each row's
+                            # constructor can execute a newly activated version.
+                            runner_args["version_number"] = version.version_number
                             runner_source_configs.setdefault(
                                 "version_id", str(version.id)
                             )
@@ -12764,64 +12861,87 @@ def run_evaluation_task(evaluation_data):
                         )
                     runner_args["source_configs"] = runner_source_configs
 
-                    evaluation_runner = EvaluationRunner(
-                        user_eval_metric_id=metric_id,
-                        **runner_args,
-                    )
-
-                    # Wrap function with OTel context propagation for thread safety
-                    wrapped_run_evaluation = wrap_for_thread(
-                        evaluation_runner.run_evaluation_for_row
-                    )
-
-                    # Process each row for this metric
                     for row_id in row_ids:
-                        futures.append(executor.submit(wrapped_run_evaluation, row_id))
+                        future = executor.submit(
+                            wrap_for_thread(_run_dataset_evaluation_row),
+                            metric_id,
+                            row_id,
+                            runner_args,
+                        )
+                        futures[future] = (metric_id, row_id)
 
-                except Exception as e:
-                    logger.error(
-                        f"Error initializing evaluation for metric {metric_id}: {str(e)}"
+                except Exception:
+                    logger.exception(
+                        "dataset_rerun_metric_setup_failed",
+                        metric_id=str(metric_id),
                     )
-                    UserEvalMetric.objects.filter(id=metric_id).update(
-                        status=StatusType.FAILED.value
-                    )
+                    failed_metric_ids.add(str(metric_id))
+                    _finish_failed_rerun_rows(metric_id, row_ids, target_column_id)
 
-            # Wait for all futures to complete
-            success = 0
+            # Keep row/metric identity so a failed row is finished on its own
+            # and never marks a sibling row's result as failed.
             for future in as_completed(futures):
+                metric_id, row_id = futures[future]
                 try:
                     future.result()
-                    success += 1
-                except Exception as e:
-                    logger.error(f"Error in evaluation: {str(e)}")
+                    success_counts[str(metric_id)] += 1
+                except Exception:
+                    logger.exception(
+                        "dataset_rerun_row_failed",
+                        metric_id=str(metric_id),
+                        row_id=str(row_id),
+                    )
+                    failed_metric_ids.add(str(metric_id))
+                    _finish_failed_rerun_rows(metric_id, [row_id], target_column_id)
+
+        # Record final statuses before reporting: every row has finished, so an
+        # analytics failure must not relabel completed metrics as FAILED.
+        _refresh_task_connection()
+        if failed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=failed_metric_ids).update(
+                status=StatusType.FAILED.value
+            )
+        completed_metric_ids = [
+            metric_id
+            for metric_id in metric_ids
+            if str(metric_id) not in failed_metric_ids
+        ]
+        if completed_metric_ids:
+            # This task set RUNNING when it started, so a FAILED seen now was
+            # written by a run that overlapped it, such as a concurrent rerun
+            # of other rows whose failed rows are still ERROR. Keep it: the
+            # condition is part of the UPDATE, so a racing FAILED still wins.
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).exclude(
+                status=StatusType.FAILED.value
+            ).update(status=StatusType.COMPLETED.value)
 
         for metric_id in metric_ids:
-            metric = metric_map.get(metric_id)
-            if metric:
+            metric = metric_map.get(str(metric_id))
+            if not metric:
+                continue
+            # Only what setup loaded: a metric whose setup failed before that
+            # reports without them rather than reading the database here.
+            organization, dataset = reporting_inputs.get(str(metric_id), (None, None))
+            try:
                 properties = get_mixpanel_properties(
                     eval=metric,
-                    org=metric.organization,
+                    org=organization,
                     source=evaluation_data.get("source"),
-                    dataset=metric.dataset,
-                    count=success,
-                    failed=len(row_ids) - success,
+                    dataset=dataset,
+                    count=success_counts[str(metric_id)],
+                    failed=len(row_ids) - success_counts[str(metric_id)],
                 )
                 track_mixpanel_event(
                     MixpanelEvents.EVAL_RUN_COMPLETED.value, properties
                 )
-
-        # Update status to completed for successful metrics
-        completed_metric_ids = [
-            metric_id
-            for metric_id in metric_ids
-            if str(metric_id) not in blocked_metric_ids
-        ]
-        if completed_metric_ids:
-            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
-                status=StatusType.COMPLETED.value
-            )
+            except Exception:
+                logger.exception(
+                    "dataset_rerun_completion_reporting_failed",
+                    metric_id=str(metric_id),
+                )
     except Exception as e:
         # Handle exceptions and log errors
+        _refresh_task_connection()
         UserEvalMetric.objects.filter(id__in=metric_ids).update(
             status=StatusType.FAILED.value
         )
@@ -14018,10 +14138,15 @@ class CompareDatasetsView(APIView):
         base_column_name,
         dynamic_sources,
         result,
+        *,
+        total_pages,
     ):
         time_start = time.time()
         result.setdefault("table", [])
-        page_range = range(start_page, end_page)
+        # The comparison has pages 1 to total_pages; a page after them is empty.
+        page_range = range(start_page, min(end_page, int(total_pages) + 1))
+        if not page_range:
+            return result
 
         # Dictionary to store future results keyed by page number
         results_by_page: dict[Any, Any] = {}
@@ -14251,6 +14376,12 @@ class CompareDatasetsView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
             # Pagination parameters
@@ -14258,12 +14389,22 @@ class CompareDatasetsView(APIView):
             page_size = validated_data["page_size"]
             current_page = validated_data["current_page_index"]
             base_column_name = validated_data["base_column_name"]
-            compare_id = (
+            requested_compare_id = (
                 str(validated_data["compare_id"])
                 if validated_data.get("compare_id")
                 else None
             )
 
+            # A supplied ID is read only. Missing, expired, out-of-scope or
+            # differently selected metadata is a cache miss, never a write key.
+            cached_metadata = None
+            if requested_compare_id:
+                metadata = _resolve_request_compare(request, requested_compare_id)
+                if metadata is not None and _compare_metadata_matches_request(
+                    metadata, dataset_id, validated_data["dataset_ids"], base_column_name
+                ):
+                    cached_metadata = metadata
+            compare_id = requested_compare_id if cached_metadata is not None else None
             start = current_page * page_size
             end = start + page_size
 
@@ -14282,38 +14423,14 @@ class CompareDatasetsView(APIView):
             start_page = math.ceil((start + 1) / 10)
             end_page = start_page + num_pages_to_fetch
 
-            # A supplied compare_id is only ever read, never rebuilt: rebuilding
-            # under it would replace the pages that other requests are reading.
-            if compare_id:
-                metadata = _resolve_request_compare(request, compare_id)
-                if metadata is None:
-                    return _compare_not_found_response(self._gm)
-                if not _compare_metadata_matches_request(
-                    metadata,
-                    dataset_id,
-                    validated_data["dataset_ids"],
-                    base_column_name,
-                ):
-                    return self._gm.bad_request(
-                        "compare_id does not belong to the requested datasets and base column."
-                    )
-                if metadata.get("total_pages") < num_pages_to_fetch:
-                    return self._gm.bad_request(
-                        get_error_message("FAILED_TO_COMPARE_DATASETS")
-                    )
-
-                result = {}
-                result["metadata"] = {
-                    "compare_id": compare_id,
-                    "total_rows": int(metadata.get("total_rows")),
-                    "total_pages": (int(metadata.get("total_rows")) + page_size - 1)
-                    // page_size,
-                }
-
+            if cached_metadata is not None:
+                metadata = cached_metadata
                 dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
                 if not dataset_ids:
                     return self._gm.bad_request("No dataset IDs provided.")
-                ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+                ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+                if len(set(ordered_ids)) != len(ordered_ids):
+                    return self._gm.bad_request("Invalid dataset IDs provided.")
 
                 # Create the Case/When expressions for ordering
                 preserved_order = Case(
@@ -14327,11 +14444,21 @@ class CompareDatasetsView(APIView):
                     .order_by(preserved_order)
                 )
                 if len(datasets) != len(dataset_ids) + 1:
-                    return self._gm.bad_request(
-                        get_error_message("INVALID_DATASET_IDS")
-                    )
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
                 comparison_datasets = list(datasets)
+                if metadata.get("total_pages") < num_pages_to_fetch:
+                    return self._gm.bad_request(
+                        get_error_message("FAILED_TO_COMPARE_DATASETS")
+                    )
+
+                result = {}
+                result["metadata"] = {
+                    "compare_id": compare_id,
+                    "total_rows": int(metadata.get("total_rows")),
+                    "total_pages": (int(metadata.get("total_rows")) + page_size - 1)
+                    // page_size,
+                }
                 columns_qs = (
                     Column.objects.filter(
                         dataset__in=comparison_datasets, deleted=False
@@ -14406,6 +14533,7 @@ class CompareDatasetsView(APIView):
                     base_column_name,
                     dynamic_sources,
                     result,
+                    total_pages=metadata.get("total_pages", 0),
                 )
 
                 return self._gm.success_response(result)
@@ -14437,7 +14565,9 @@ class CompareDatasetsView(APIView):
                     return self._gm.bad_request("No dataset IDs provided.")
 
             # list dataset ids in order main_datset id then other dataset ids
-            ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+            ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+            if len(set(ordered_ids)) != len(ordered_ids):
+                return self._gm.bad_request("Invalid dataset IDs provided.")
 
             # Create the Case/When expressions for ordering
             preserved_order = Case(
@@ -14451,15 +14581,10 @@ class CompareDatasetsView(APIView):
                 .filter(id__in=ordered_ids)
                 .order_by(preserved_order)
             )
+            if len(datasets) != len(dataset_ids) + 1:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
             for dst in datasets:
                 logger.info(f"Datasets: {dst.id}  {dst.name}")
-            requested_ids = {str(ds_id) for ds_id in ordered_ids}
-            if len(requested_ids) != len(ordered_ids):
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
-            # A dataset outside the caller's workspace is answered exactly like
-            # one that does not exist.
-            if len(datasets) != len(requested_ids):
-                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             comparison_datasets = list(datasets)
             columns_qs = (
@@ -14655,6 +14780,7 @@ class CompareDatasetsView(APIView):
                     base_column_name,
                     dynamic_sources,
                     compare_json,
+                    total_pages=metadata.get("total_pages", 0),
                 )
 
             compare_json.update(
@@ -14701,10 +14827,15 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
-            # Get main dataset and validate request data
+            # Validate request data before resolving the comparison datasets
             datasets_in_scope = _request_dataset_queryset(request)
-            get_object_or_404(datasets_in_scope, id=dataset_id)
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14715,18 +14846,6 @@ class DownloadComparisonDatasetView(APIView):
             dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
             dataset_info = validated_data.get("dataset_info", {})
             common_column_names = validated_data.get("common_column_names", [])
-            if compare_id:
-                metadata = _resolve_request_compare(request, compare_id)
-                if metadata is None:
-                    return _compare_not_found_response(self._gm)
-                if not _compare_metadata_matches_request(
-                    metadata, dataset_id, dataset_ids, base_column_name
-                ):
-                    return self._gm.bad_request(
-                        "compare_id does not belong to the requested datasets and base column."
-                    )
-                dataset_info = metadata.get("dataset_info")
-                common_column_names = metadata.get("common_column_names")
 
             if not base_column_name:
                 return self._gm.bad_request(
@@ -14734,11 +14853,30 @@ class DownloadComparisonDatasetView(APIView):
                 )
 
             # Ensure main dataset is included in comparison
+            dataset_ids = list(dict.fromkeys(dataset_ids))
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(datasets_in_scope, id=ds_id) for ds_id in dataset_ids
-            ]
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets_in_scope.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+                comparison_datasets.append(dataset)
+
+            # Only completed, in-scope metadata for this selection can supply
+            # rows. A cache miss uses the request's rows, never another ID's data.
+            cached_metadata = None
+            if compare_id:
+                metadata = _resolve_request_compare(request, compare_id)
+                if metadata is not None and _compare_metadata_matches_request(
+                    metadata,
+                    dataset_id,
+                    [ds_id for ds_id in dataset_ids if ds_id != str(dataset_id)],
+                    base_column_name,
+                ):
+                    cached_metadata = metadata
+                    dataset_info = metadata.get("dataset_info")
+                    common_column_names = metadata.get("common_column_names")
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
@@ -14746,7 +14884,7 @@ class DownloadComparisonDatasetView(APIView):
                 )
             # Rows named by the client must belong to the datasets they are
             # listed under; anything else is answered like an unknown dataset.
-            if not compare_id and not _client_rows_belong_to_datasets(
+            if cached_metadata is None and not _client_rows_belong_to_datasets(
                 dataset_info, comparison_datasets
             ):
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
@@ -14782,6 +14920,7 @@ class DownloadComparisonDatasetView(APIView):
                         cells = Cell.objects.filter(
                             dataset=ds,
                             row_id=row_id,
+                            row__dataset=ds,
                             column__name__in=common_column_names,
                             deleted=False,
                         ).select_related("column")

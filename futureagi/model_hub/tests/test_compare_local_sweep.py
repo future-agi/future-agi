@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,14 +49,17 @@ def test_a_process_sweeps_its_own_expired_comparisons(monkeypatch, storage):
         }
     )
     expired, fresh = _local_compare(expired_id), _local_compare(fresh_id)
-    real_getctime = os.path.getctime
-    monkeypatch.setattr(
-        compare_storage.os.path,
-        "getctime",
-        lambda path: (
-            time.time() - 3 * 60 * 60 if Path(path) == expired else real_getctime(path)
-        ),
-    )
+    real_stat = os.stat
+
+    def folder_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if Path(path) == expired and kwargs.get("follow_symlinks") is False:
+            return SimpleNamespace(
+                st_mode=result.st_mode, st_ctime=time.time() - 3 * 60 * 60
+            )
+        return result
+
+    monkeypatch.setattr(compare_storage.os, "stat", folder_stat)
     monkeypatch.setattr(compare_storage, "LOCAL_SWEEP_INTERVAL_SECONDS", 0.01)
     sweeper = compare_storage._LocalSweeper()
     sweeper.ensure_running()

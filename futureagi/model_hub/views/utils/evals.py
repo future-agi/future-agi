@@ -11,9 +11,13 @@ from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
-from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
@@ -644,8 +648,10 @@ def process_eval_for_single_row(
                 if base_col_id:
                     mapping_uids.append(base_col_id)
 
-        cols = Column.objects.filter(id__in=mapping_uids).values("id", "data_type")
-        col_map = {str(col["id"]): col["data_type"] for col in cols}
+        col_map = read_evaluation_column_types(mapping_uids)
+        # process_mapping reads the row's dataset and workspace. Load them
+        # inside the retry boundary first so those checks use the cache.
+        read_evaluation_workspace(row)
         required_field, mapping = process_mapping(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
@@ -757,6 +763,13 @@ def process_eval_for_single_row(
         #     return response
         # else:
         return output
+    except EvaluationMetadataUnavailable as error:
+        logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+        return {
+            "reason": str(error),
+            "output_type": "reason",
+            "error_code": error.code,
+        }
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value

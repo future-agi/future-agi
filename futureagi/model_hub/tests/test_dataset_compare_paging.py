@@ -169,7 +169,7 @@ def test_compare_blocks_return_each_joined_row_once(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_cached_compare_id_is_rejected_for_another_selection(
+def test_cached_compare_id_rebuilds_another_selection_under_a_fresh_id(
     auth_client, organization, workspace, page_store
 ):
     shared = [f"stale-{index:02d}" for index in range(3)]
@@ -189,11 +189,8 @@ def test_cached_compare_id_is_rejected_for_another_selection(
     # A different compared dataset or base column must not be served d0-vs-d1.
     for other_ids, base in (([d2.id], "input"), ([d1.id], "output")):
         response = _post(auth_client, d0.id, other_ids, 0, compare_a, base=base)
-        assert response.status_code == status.HTTP_400_BAD_REQUEST, (
-            other_ids,
-            base,
-            response.content[:500],
-        )
+        rebuilt = _result(response)
+        assert rebuilt["metadata"]["compare_id"] != compare_a
         assert str(d1_output.id) not in response.content.decode()
 
 
@@ -346,7 +343,7 @@ def test_compare_blocks_row_detail_and_download_work_on_any_replica(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_compare_id_for_another_selection_is_rejected_on_any_replica(
+def test_compare_id_for_another_selection_rebuilds_on_any_replica(
     auth_client, organization, workspace, page_store, monkeypatch, tmp_path
 ):
     shared = [f"selection-{index:02d}" for index in range(3)]
@@ -366,7 +363,10 @@ def test_compare_id_for_another_selection_is_rejected_on_any_replica(
 
     _replica(monkeypatch, tmp_path, "replica-b")
     response = _post(auth_client, d0.id, [d2.id], 0, compare_id)
-    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content[:500]
+    rebuilt = _result(response)
+    assert rebuilt["metadata"]["compare_id"] != compare_id
+    assert all(str(d2_output.id) in row for row in rebuilt["table"])
+    assert str(d1_output.id) not in response.content.decode()
     assert _stored(page_store, compare_id) == built
 
     _replica(monkeypatch, tmp_path, "replica-a")
@@ -404,10 +404,12 @@ def test_deleted_compare_is_gone_on_every_replica(
     _replica(monkeypatch, tmp_path, "replica-a")
     for response in (
         auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=row_id)),
-        _post(auth_client, left.id, [right.id], 0, compare_id),
         auth_client.delete(DELETE_URL.format(compare_id=compare_id)),
     ):
         assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
+    rebuilt = _result(_post(auth_client, left.id, [right.id], 0, compare_id))
+    assert rebuilt["metadata"]["compare_id"] != compare_id
+    assert _stored(page_store, compare_id) == {}
     assert len(worker) == 1
 
     # Exit on the replica that built a comparison also removes its local copy.
@@ -461,9 +463,6 @@ def test_compare_ids_are_scoped_to_the_requesting_workspace(
 
         for response in (
             client.get(ROW_URL.format(compare_id=compare_id, row_id=row_id)),
-            _post(client, own_left.id, [own_right.id], 0, compare_id),
-            _post(client, left.id, [right.id], 0, compare_id),
-            _download(client, own_left.id, [own_right.id], compare_id),
             client.delete(DELETE_URL.format(compare_id=compare_id)),
         ):
             # Indistinguishable from an id that does not exist.
@@ -472,6 +471,14 @@ def test_compare_ids_are_scoped_to_the_requesting_workspace(
             ]
             assert response.json() == unknown.json()
         assert unknown.status_code == status.HTTP_404_NOT_FOUND, unknown.content[:500]
+        refused = _post(client, left.id, [right.id], 0, compare_id)
+        assert refused.status_code == status.HTTP_404_NOT_FOUND, refused.content
+        rebuilt = _result(_post(client, own_left.id, [own_right.id], 0, compare_id))
+        assert rebuilt["metadata"]["compare_id"] != compare_id
+        assert all("own-" in str(row) for row in rebuilt["table"])
+        # With no client rows, download treats an unavailable selection as a cache miss.
+        download = _download(client, own_left.id, [own_right.id], compare_id)
+        assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
 
     assert worker == []
     assert _stored(page_store, compare_id) == built
@@ -492,8 +499,6 @@ def test_unknown_compare_id_is_not_found_without_server_details(
 
     for response in (
         auth_client.get(ROW_URL.format(compare_id=compare_id, row_id=uuid.uuid4())),
-        _post(auth_client, left.id, [right.id], 1, compare_id),
-        _download(auth_client, left.id, [right.id], compare_id),
         auth_client.delete(DELETE_URL.format(compare_id=compare_id)),
     ):
         assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
@@ -502,6 +507,12 @@ def test_unknown_compare_id_is_not_found_without_server_details(
         body = response.content.decode()
         for detail in ("metadata.json", "No such file", "media", compare_id):
             assert detail not in body
+
+    rebuilt = _result(_post(auth_client, left.id, [right.id], 1, compare_id))
+    assert rebuilt["metadata"]["compare_id"] != compare_id
+    assert rebuilt["table"] == []
+    download = _download(auth_client, left.id, [right.id], compare_id)
+    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
 
     # A dataset that is not found keeps the generic code.
     missing_dataset = _download(auth_client, uuid.uuid4(), [right.id], compare_id)
@@ -590,8 +601,9 @@ def test_build_with_another_organizations_dataset_is_not_found(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_download_without_compare_id_refuses_rows_of_another_organization(
-    auth_client, organization, workspace, other_org
+@pytest.mark.parametrize("unknown_compare_id", [False, True])
+def test_download_client_rows_refuse_another_organization(
+    auth_client, organization, workspace, other_org, page_store, unknown_compare_id
 ):
     _, other_organization, other_workspace = other_org
     shared = [f"foreign-rows-{index:02d}" for index in range(3)]
@@ -611,6 +623,7 @@ def test_download_without_compare_id_refuses_rows_of_another_organization(
                 "base_column_name": "input",
                 "dataset_info": dataset_info,
                 "common_column_names": ["input", "output"],
+                "compare_id": str(uuid.uuid4()) if unknown_compare_id else None,
             },
             format="json",
         )
@@ -664,22 +677,18 @@ def test_a_comparison_expires_two_hours_after_it_was_created(
     unknown = auth_client.get(
         ROW_URL.format(compare_id=uuid.uuid4(), row_id=uuid.uuid4())
     )
+    old_objects = _stored(page_store, old_id)
     for response in (
         auth_client.get(ROW_URL.format(compare_id=old_id, row_id=_row_ids(old)[0])),
-        _post(auth_client, left.id, [right.id], 0, old_id),
-        auth_client.post(
-            DOWNLOAD_URL.format(dataset_id=left.id),
-            {
-                "dataset_ids": [str(right.id)],
-                "base_column_name": "input",
-                "compare_id": old_id,
-            },
-            format="json",
-        ),
         auth_client.delete(DELETE_URL.format(compare_id=old_id)),
     ):
         assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
         assert response.json() == unknown.json()
+    rebuilt = _result(_post(auth_client, left.id, [right.id], 0, old_id))
+    assert rebuilt["metadata"]["compare_id"] not in (old_id, fresh_id)
+    download = _download(auth_client, left.id, [right.id], old_id)
+    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
+    assert _stored(page_store, old_id) == old_objects
 
     kept = auth_client.get(
         ROW_URL.format(compare_id=fresh_id, row_id=_row_ids(fresh)[0])

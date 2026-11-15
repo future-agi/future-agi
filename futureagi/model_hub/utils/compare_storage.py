@@ -16,6 +16,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import threading
 import time
 import uuid
@@ -234,11 +235,15 @@ def sweep_local_compare_root(now: float | None = None) -> None:
     for folder in folders:
         folder_path = os.path.join(compare_root, folder)
         try:
-            if not _is_compare_id(folder) or os.path.islink(folder_path):
+            if not _is_compare_id(folder):
                 continue
-            if not os.path.isdir(folder_path):
+            try:
+                folder_stat = os.stat(folder_path, follow_symlinks=False)
+            except FileNotFoundError:
                 continue
-            if now - os.path.getctime(folder_path) <= COMPARE_MAX_AGE_SECONDS:
+            if not stat.S_ISDIR(folder_stat.st_mode):
+                continue
+            if now - folder_stat.st_ctime <= COMPARE_MAX_AGE_SECONDS:
                 continue
             remove_compare(folder)
             logger.info("compare_folder_deleted", folder=folder)
