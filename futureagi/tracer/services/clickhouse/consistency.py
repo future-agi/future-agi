@@ -141,9 +141,9 @@ class ConsistencyChecker:
     # is enforced by what the probe chooses to read, never by settings.
     LAG_SAMPLE_MAX_ROWS = 10_000_000
     LAG_SAMPLE_MAX_PARTS = 64
-    # Without readable immutable part identities, table sizing only decides
-    # whether the existing actionable metadata failure degrades health. It is
-    # not a safe data-read plan: a table can grow immediately after sizing.
+    # Without readable immutable part identities, every table has an actionable
+    # metadata failure. Sizing is diagnostic only, never a safe data-read plan:
+    # a table can grow immediately after sizing.
     PART_COLUMNS = ("database", "table", "name", "rows", "active")
     # Seconds since the latest sync above which a CDC mirror reads lagging.
     LAG_THRESHOLD_SECONDS = 60
@@ -485,10 +485,10 @@ class ConsistencyChecker:
     ) -> None:
         """Preserve permission-related degradation without an unsafe fallback.
 
-        A previously small, readable table remains non-degraded but unverified.
-        Large/unknown sizes still require an actionable system.parts grant.
-        Neither case can safely scan data: total_rows is not a physical bound
-        on a later statement, and readonly=1 forbids compensating settings.
+        Every size requires an actionable system.parts grant, including small
+        or empty tables. Sizing is retained for diagnostics, not a data-read plan:
+        total_rows cannot bound a later scan, and readonly=1 forbids compensating
+        settings.
         """
         try:
             rows = self._read(
@@ -502,19 +502,14 @@ class ConsistencyChecker:
             if not is_access_denied(exc):
                 raise
             rows = []
-        sizes = dict(rows)
         for table in tables:
-            size = sizes.get(table.name)
-            checks[table.key] = (
-                "unverified"
-                if size is not None and 0 <= size <= self.LAG_SAMPLE_MAX_ROWS
-                else "unsampled"
-            )
+            checks[table.key] = "unsampled"
         if unsampled := [t.name for t in tables if checks[t.key] == "unsampled"]:
             logger.warning(
                 "CDC lag unknown",
                 connection=role,
                 tables=unsampled,
+                table_rows=dict(rows),
                 max_rows=self.LAG_SAMPLE_MAX_ROWS,
                 cause="no_part_metadata",
                 required_grant=f"SELECT({', '.join(self.PART_COLUMNS)}) ON system.parts",

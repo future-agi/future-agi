@@ -2,10 +2,10 @@
 
 Production CDC DDL is retained except for replication. Exact lag requires full
 immutable part coverage and a stable post-read inventory. Oversized/truncated
-inventories are healthy but explicitly unverified; metadata-denied large/unknown
-sizes retain their actionable degraded status. Small grantless tables are also
-unverified, without adding degradation. No physical bound relies on SQL LIMIT,
-part age, prefix granularity, or per-query settings in a readonly=1 profile.
+inventories are healthy but explicitly unverified; missing or denied metadata
+is actionable and degrades health regardless of table size. No physical bound
+relies on SQL LIMIT, part age, prefix granularity, or per-query settings in a
+readonly=1 profile.
 ClickHouse progress counters are the runtime oracle, including concurrent growth
 at the production ten-million-row budget and sparse lightweight-delete masks.
 """
@@ -333,8 +333,8 @@ def test_role_without_part_metadata_never_scans_a_large_mirror(
     The server refuses these users' whole-table scans, as a statement cap does
     on a mirror large enough. The probe used to send that scan for every mirror
     in one statement, so the refusal made all of them unavailable and the
-    endpoint unhealthy. Now the large mirror's lag is unknown (degraded), the
-    small mirrors remain non-degraded but unverified, and no statement is refused.
+    endpoint unhealthy. Now every mirror has unknown lag and an actionable
+    metadata failure (degraded), and no lag data statement is attempted.
     """
     admin, database, users = large_mirror
     (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
@@ -355,8 +355,8 @@ def test_role_without_part_metadata_never_scans_a_large_mirror(
     assert health.status == "degraded", detail
     assert health.details["checks"] == {
         "legacy.tracer_trace": "unsampled",
-        "legacy.trace_session": "unverified",
-        "legacy.tracer_eval_logger": "unverified",
+        "legacy.trace_session": "unsampled",
+        "legacy.tracer_eval_logger": "unsampled",
     }, detail
     assert health.cdc_lag == dict.fromkeys(CDC_TABLES, -1), detail
     assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, False), detail
@@ -416,14 +416,59 @@ def test_role_without_part_metadata_still_reports_a_missing_mirror(
     detail = {"health": health, "statements": statements}
     assert health.status == "unhealthy", detail
     assert health.details["checks"] == {
-        "legacy.tracer_trace": "unverified",
+        "legacy.tracer_trace": "unsampled",
         "legacy.trace_session": "missing_required_table",
-        "legacy.tracer_eval_logger": "unverified",
+        "legacy.tracer_eval_logger": "unsampled",
     }, detail
     assert health.cdc_lag["trace_session"] == -1, detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     assert health.cdc_lag_verified["tracer_trace"] is False, detail
     assert not [entry for entry in statements if entry["error"] is not None], detail
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "profile", ["no_parts_grant", "parts_columns_only", "server_readonly1"]
+)
+@pytest.mark.parametrize("synced_age_seconds", [0, 600], ids=["fresh", "stale"])
+def test_small_mirror_metadata_grants_control_lag_verification(
+    configure, statements, profile, synced_age_seconds
+):
+    """Even a 100-row stale mirror needs readable parts before any lag scan."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with ExitStack() as stack:
+        database = stack.enter_context(_ch_test_owned_database("test_health_small_"))
+        admin = stack.enter_context(_ch_test_native_client(database=database))
+        _create_mirrors(admin)
+        for table in CDC_TABLES:
+            _insert_part(admin, table, 100, synced_age_seconds=synced_age_seconds)
+            assert sum(part[2] for part in _active_parts(admin, table)) == 100
+        users = _probe_users(stack, admin, database)
+        client = _probe_client(admin, database, users[profile], server_readonly=True)
+        stack.callback(client.close)
+        health = configure(client).get_health_status()
+
+    detail = {"health": health, "statements": statements}
+    reads = [entry for entry in statements if "max(_peerdb_synced_at)" in entry["sql"]]
+    readable = profile == "server_readonly1"
+    assert health.clickhouse_connected is True, detail
+    assert health.status == (
+        "healthy" if readable and synced_age_seconds == 0 else "degraded"
+    ), detail
+    assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, readable), detail
+    if readable:
+        state = "lagging" if synced_age_seconds else "ready"
+        assert set(health.details["checks"].values()) == {state}, detail
+        if synced_age_seconds:
+            assert all(lag >= 590 for lag in health.cdc_lag.values()), detail
+        else:
+            assert all(0 <= lag < 60 for lag in health.cdc_lag.values()), detail
+        assert len(reads) == 1 and reads[0]["error"] is None, detail
+    else:
+        assert set(health.details["checks"].values()) == {"unsampled"}, detail
+        assert health.cdc_lag == dict.fromkeys(CDC_TABLES, -1), detail
+        assert not reads, detail
 
 
 @pytest.mark.integration
@@ -1110,8 +1155,9 @@ def test_production_budget_growth_readonly1_bounds_all_physical_lag_reads(
     assert all(entry["error"] is None for entry in reads), detail
     assert health.cdc_lag == {"tracer_trace": -1}, detail
     assert health.cdc_lag_verified == {"tracer_trace": False}, detail
-    assert health.status == (
-        "degraded" if metadata == "sizing_denied" else "healthy"
+    assert health.status == ("healthy" if metadata == "select" else "degraded"), detail
+    assert health.details["checks"]["legacy.tracer_trace"] == (
+        "unverified" if metadata == "select" else "unsampled"
     ), detail
     if metadata == "select":
         assert len(reads) == 1, detail

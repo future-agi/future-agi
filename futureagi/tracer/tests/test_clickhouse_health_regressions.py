@@ -36,6 +36,7 @@ def test_retirement_still_reports_required_legacy_outage(
                 if native_eval
                 else health_tests.CDC_COLUMNS
             ),
+            "system.parts": health_tests.PART_COLUMNS,
         },
         sample=(0, None),
     )
@@ -500,7 +501,14 @@ def test_lag_selects_immutable_names_and_rechecks_complete_inventory(configure):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("visible", [set(), {"name", "rows"}])
+@pytest.mark.parametrize(
+    "visible",
+    [pytest.param(set(), id="hidden"), pytest.param({"name", "rows"}, id="partial")]
+    + [
+        pytest.param(PART_COLUMNS - {column}, id=f"missing-{column}")
+        for column in sorted(PART_COLUMNS)
+    ],
+)
 def test_lag_needs_every_part_column_visible_without_unsafe_small_scan(
     configure, visible
 ):
@@ -509,10 +517,10 @@ def test_lag_needs_every_part_column_visible_without_unsafe_small_scan(
         inventory["system.parts"] = visible
     client = health_tests.fake_client(inventory)
     health = configure(client).get_health_status()
-    assert health.status == "healthy"
+    assert health.status == "degraded"
     assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
     assert health.cdc_lag_verified == dict.fromkeys(health_tests.CDC_TABLES, False)
-    assert set(health.details["checks"].values()) == {"unverified"}
+    assert set(health.details["checks"].values()) == {"unsampled"}
     assert not _lag_statements(client)
     assert not any(
         "FROM system.parts" in c.args[0] for c in client.execute_read.call_args_list
@@ -572,6 +580,30 @@ def _deny(client, needle):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("parts_access", ["columns_hidden", "read_denied"])
+def test_small_stale_mirror_without_part_metadata_degrades_without_data_scan(
+    configure, parts_access
+):
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    if parts_access == "read_denied":
+        inventory["system.parts"] = PART_COLUMNS
+    client = health_tests.fake_client(
+        inventory,
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+        table_rows=dict.fromkeys(health_tests.CDC_TABLES, 100),
+    )
+    if parts_access == "read_denied":
+        _deny(client, "FROM system.parts")
+    health = configure(client).get_health_status()
+    assert health.clickhouse_connected is True
+    assert health.status == "degraded"
+    assert set(health.details["checks"].values()) == {"unsampled"}
+    assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
+    assert health.cdc_lag_verified == dict.fromkeys(health_tests.CDC_TABLES, False)
+    assert not _lag_statements(client)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("parts_access", ["columns_hidden", "read_denied"])
 def test_role_without_part_metadata_never_aggregates_a_large_table(
     configure, monkeypatch, parts_access
 ):
@@ -617,13 +649,13 @@ def test_role_without_part_metadata_never_aggregates_a_large_table(
     )
     assert health.details["checks"] == {
         "legacy.tracer_trace": "unsampled",
-        "legacy.trace_session": "unverified",
-        "legacy.tracer_eval_logger": "unverified",
+        "legacy.trace_session": "unsampled",
+        "legacy.tracer_eval_logger": "unsampled",
     }
     # Size metadata cannot bound a later scan, even for the small mirrors.
     assert not _lag_statements(client)
     unknown = [e for e in events if e["event"] == "CDC lag unknown"]
-    assert unknown and unknown[0]["tables"] == ["tracer_trace"], events
+    assert unknown and unknown[0]["tables"] == list(health_tests.CDC_TABLES), events
     assert unknown[0]["cause"] == "no_part_metadata"
     assert "ON system.parts" in unknown[0]["required_grant"]
     assert not [e for e in events if e["event"] == "CDC lag check failed"], events
@@ -645,9 +677,9 @@ def test_unknown_lag_never_hides_a_missing_table(configure, monkeypatch):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("size", [None, 10_000_001])
+@pytest.mark.parametrize("size", [None, 0, 100, 10_000_000, 10_000_001])
 @pytest.mark.parametrize("denied", [False, True])
-def test_denied_or_unknown_sizing_preserves_actionable_degradation(
+def test_missing_part_metadata_degrades_regardless_of_table_size(
     configure, size, denied
 ):
     client = health_tests.fake_client(
@@ -659,6 +691,7 @@ def test_denied_or_unknown_sizing_preserves_actionable_degradation(
     health = configure(client).get_health_status()
     assert health.status == "degraded"
     assert set(health.details["checks"].values()) == {"unsampled"}
+    assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
     assert health.cdc_lag_verified == dict.fromkeys(health_tests.CDC_TABLES, False)
     assert not _lag_statements(client)
 
