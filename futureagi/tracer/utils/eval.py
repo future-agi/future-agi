@@ -1,6 +1,7 @@
 import json
 import traceback
 import uuid
+from contextlib import nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
@@ -1863,53 +1864,129 @@ def _execute_evaluation(
 
     # Persist EvalLogger result
     if logger_kwargs:
-        value = logger_kwargs.pop("value") if "value" in logger_kwargs else ""
-        log_id = logger_kwargs.pop("log_id") if "log_id" in logger_kwargs else None
-        from tracer.services.eval_tasks.entries import in_engine_write_mode
+        # An experiment can fail after its result write (for example while
+        # updating project fields). Roll back that partial result before the
+        # caller records the error, without enclosing the evaluator itself.
+        with transaction.atomic() if type == EXPERIMENT else nullcontext():
+            value = logger_kwargs.pop("value") if "value" in logger_kwargs else ""
+            log_id = logger_kwargs.pop("log_id") if "log_id" in logger_kwargs else None
+            from tracer.services.eval_tasks.entries import in_engine_write_mode
 
-        if in_engine_write_mode():
-            # Engine: land the result on the materialized entry. A PG get with
-            # ``select_related('observation_span')`` would inner-join a CH-only
-            # span (no PG row) and find nothing, so route through the entry.
-            eval_log = _persist_eval_logger(logger_kwargs)
-        else:
-            try:
-                # Primary: whether this result already has a row decides
-                # between updating it and creating one.
-                eval_log = (
-                    EvalLogger.objects.using("default")
-                    .select_related(
-                        "observation_span",
-                        "observation_span__project",
-                        "observation_span__project__organization",
-                        "observation_span__project__workspace",
+            if in_engine_write_mode():
+                # Engine: land the result on the materialized entry. A PG get with
+                # ``select_related('observation_span')`` would inner-join a CH-only
+                # span (no PG row) and find nothing, so route through the entry.
+                eval_log = _persist_eval_logger(logger_kwargs)
+            else:
+                try:
+                    # Primary: whether this result already has a row decides
+                    # between updating it and creating one.
+                    eval_log = (
+                        EvalLogger.objects.using("default")
+                        .select_related(
+                            "observation_span",
+                            "observation_span__project",
+                            "observation_span__project__organization",
+                            "observation_span__project__workspace",
+                        )
+                        .get(
+                            eval_task_id=eval_task_id,
+                            observation_span=observation_span,
+                            custom_eval_config=custom_eval_config,
+                        )
                     )
-                    .get(
-                        eval_task_id=eval_task_id,
-                        observation_span=observation_span,
-                        custom_eval_config=custom_eval_config,
+                    # Set each attribute from logger_kwargs
+                    for key, value in logger_kwargs.items():
+                        setattr(eval_log, key, value)
+                    # Save the changes
+                    eval_log.save()
+
+                except EvalLogger.DoesNotExist:
+                    eval_log = EvalLogger.objects.create(**logger_kwargs)
+                    # Primary: the row was written a moment ago.
+                    eval_log = (
+                        EvalLogger.objects.using("default")
+                        .select_related(
+                            "observation_span",
+                            "observation_span__project",
+                            "observation_span__project__organization",
+                            "observation_span__project__workspace",
+                        )
+                        .get(pk=eval_log.pk)
                     )
+
+            if type == EXPERIMENT:
+                # updating project version config
+                project = observation_span.project
+                project_version = observation_span.project_version
+                project_version_config = project_version.config
+                project_config = project.config
+
+                if not project_config:
+                    project_config = get_default_project_version_config()
+
+                if not project_version_config:
+                    project_version_config = get_default_trace_config()
+
+                choices = (
+                    custom_eval_config.eval_template.choices
+                    if custom_eval_config.eval_template.choices
+                    else None
                 )
-                # Set each attribute from logger_kwargs
-                for key, value in logger_kwargs.items():
-                    setattr(eval_log, key, value)
-                # Save the changes
-                eval_log.save()
-
-            except EvalLogger.DoesNotExist:
-                eval_log = EvalLogger.objects.create(**logger_kwargs)
-                # Primary: the row was written a moment ago.
-                eval_log = (
-                    EvalLogger.objects.using("default")
-                    .select_related(
-                        "observation_span",
-                        "observation_span__project",
-                        "observation_span__project__organization",
-                        "observation_span__project__workspace",
-                    )
-                    .get(pk=eval_log.pk)
+                eval_template_config = custom_eval_config.eval_template.config or {}
+                output_type = (
+                    eval_template_config.get("output", "score")
+                    if eval_template_config
+                    else "score"
                 )
 
+                eval_template_id = str(custom_eval_config.eval_template.id)
+
+                if choices and output_type == EvalOutputType.CHOICES.value:
+                    for choice in choices:
+                        present_config = FieldConfig(
+                            id=str(custom_eval_config.id) + "**" + choice,
+                            name=f"Avg. {choice} ({custom_eval_config.name})",
+                            group_by="Evaluation Metrics",
+                            output_type=output_type,
+                            is_visible=True,
+                            reverse_output=eval_template_config.get(
+                                "reverse_output", False
+                            ),
+                            eval_template_id=eval_template_id,
+                        )
+
+                        present_config = asdict(present_config)
+
+                        if present_config not in project_config:
+                            project_config.append(present_config)
+                        if present_config not in project_version_config:
+                            project_version_config.append(present_config)
+                else:
+                    present_config = FieldConfig(
+                        id=str(custom_eval_config.id),
+                        name=f"Avg. {custom_eval_config.name}",
+                        group_by="Evaluation Metrics",
+                        output_type=output_type,
+                        is_visible=True,
+                        reverse_output=eval_template_config.get(
+                            "reverse_output", False
+                        ),
+                        eval_template_id=eval_template_id,
+                    )
+                    present_config = asdict(present_config)
+                    if present_config not in project_config:
+                        project_config.append(present_config)
+                    if present_config not in project_version_config:
+                        project_version_config.append(present_config)
+
+                project.config = project_config
+                project_version.config = project_version_config
+                project.save()
+                project_version.save()
+
+        # Localization may inspect mapped media; keep that work outside the
+        # result/project savepoint and only run it for an accepted result.
         from model_hub.services.error_localizer_service import (
             error_localizer_enabled,
         )
@@ -1936,80 +2013,12 @@ def _execute_evaluation(
                     eval_config=getattr(custom_eval_config, "config", None),
                 )
 
-        if type == EXPERIMENT:
-            # updating project version config
-            project = observation_span.project
-            project_version = observation_span.project_version
-            project_version_config = project_version.config
-            project_config = project.config
-
-            if not project_config:
-                project_config = get_default_project_version_config()
-
-            if not project_version_config:
-                project_version_config = get_default_trace_config()
-
-            choices = (
-                custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template.choices
-                else None
-            )
-            eval_template_config = custom_eval_config.eval_template.config or {}
-            output_type = (
-                eval_template_config.get("output", "score")
-                if eval_template_config
-                else "score"
-            )
-
-            eval_template_id = str(custom_eval_config.eval_template.id)
-
-            if choices and output_type == EvalOutputType.CHOICES.value:
-                for choice in choices:
-                    present_config = FieldConfig(
-                        id=str(custom_eval_config.id) + "**" + choice,
-                        name=f"Avg. {choice} ({custom_eval_config.name})",
-                        group_by="Evaluation Metrics",
-                        output_type=output_type,
-                        is_visible=True,
-                        reverse_output=eval_template_config.get(
-                            "reverse_output", False
-                        ),
-                        eval_template_id=eval_template_id,
-                    )
-
-                    present_config = asdict(present_config)
-
-                    if present_config not in project_config:
-                        project_config.append(present_config)
-                    if present_config not in project_version_config:
-                        project_version_config.append(present_config)
-            else:
-                present_config = FieldConfig(
-                    id=str(custom_eval_config.id),
-                    name=f"Avg. {custom_eval_config.name}",
-                    group_by="Evaluation Metrics",
-                    output_type=output_type,
-                    is_visible=True,
-                    reverse_output=eval_template_config.get("reverse_output", False),
-                    eval_template_id=eval_template_id,
-                )
-                present_config = asdict(present_config)
-                if present_config not in project_config:
-                    project_config.append(present_config)
-                if present_config not in project_version_config:
-                    project_version_config.append(present_config)
-
-            project.config = project_config
-            project_version.config = project_version_config
-            project.save()
-            project_version.save()
-
 
 def _create_error_eval_logger(
     observation_span: ObservationSpan,
     custom_eval_config: CustomEvalConfig,
-    eval_task_id: str,
-    error: Exception,
+    eval_task_id: str | None,
+    error: Exception | str,
 ):
     """
     Persist the outcome when an eval could not run for an observation span.
