@@ -134,7 +134,12 @@ def stores(django_db_blocker):
     assert os.environ.get("CH25_HOST") in {"localhost", "127.0.0.1"}
     assert connection.settings_dict["HOST"] in {"localhost", "127.0.0.1"}
     assert connection.settings_dict["NAME"].startswith("test_")
-    client = Client(os.environ["CH25_HOST"], port=int(os.environ["CH25_TCP_PORT"]))
+    client = Client(
+        os.environ["CH25_HOST"],
+        port=int(os.environ["CH25_TCP_PORT"]),
+        user=os.environ.get("CH25_USER", "default"),
+        password=os.environ.get("CH25_PASSWORD", ""),
+    )
     database = "test_tag_budget_" + uuid4().hex
     schema = "tag_budget_" + uuid4().hex
     client.execute(f"CREATE DATABASE {database}")
