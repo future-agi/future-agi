@@ -287,7 +287,13 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
         if finished is not None:
-            if is_graded_label(request.label) and finished.graded_for_id != locked.id:
+            # Read under the fix's lock: the same request, sent twice at once, adopts once.
+            adopted_by = (
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id)
+                .values_list("graded_for_id", flat=True)
+                .get()
+            )
+            if is_graded_label(request.label) and adopted_by != locked.id:
                 # This retry's winner grades it: its evals are new spend, held against
                 # this fix's limit as its own graded runs' are.
                 _require_budget(locked, executions, request.label, read_again=True)

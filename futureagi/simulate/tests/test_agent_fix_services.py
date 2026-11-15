@@ -3028,6 +3028,48 @@ class TestRetryGrading:
         assert now[retried.id] - spent[retried.id] == Decimal("0.25")
         assert now[failed.id] == spent[failed.id]
 
+    def test_the_same_baseline_asked_for_twice_at_once_is_adopted_once(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.3)
+        # The second request read the run before the first adopted it.
+        stale = HostedHarnessJob.no_workspace_objects.get(id=finished["baseline-r1"].id)
+        _check(retried, label="baseline-r1")
+
+        with patch.object(engine, "_finished_earlier", return_value=stale):
+            again = _check(retried, label="baseline-r1")
+
+        assert again.id == finished["baseline-r1"].id
+        assert committed_usd(retried) == Decimal("0.25")
+
+    def test_a_retry_s_winner_holds_the_evals_it_grades_until_they_finish(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        failed, retried, finished = self._retry(source_run, user)
+        baseline = finished["baseline-r1"]
+        _check(retried, label="baseline-r1")
+        # The retry won and closed; its winner's grading runs the baseline's evals.
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(state=State.READY)
+        SimTestExecution.objects.filter(id=baseline.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+
+        # The retry holds them; the failed fix holds only the simulation it paid for.
+        assert committed_usd(retried) == Decimal("0.25")
+        assert committed_usd(failed) == Decimal("0.01")
+
+        SimTestExecution.objects.filter(id=baseline.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+        assert committed_usd(retried) == Decimal("0")
+
     def test_a_retry_grades_only_the_baselines_it_read_again(
         self, source_run, user, temporal
     ):
