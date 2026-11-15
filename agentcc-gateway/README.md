@@ -470,6 +470,52 @@ Corrections welcome — open an issue or send a PR.
 
 **Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
+### Selected-key guardrail policy limits
+
+Dashboard **Guardrails → Policies** binds policies to selected API keys. Org
+checks still run first; key policies cannot weaken them. Monitor policies do not
+block or rewrite client output. Dormant legacy key policies remain dormant until
+an explicit policy save activates their gateway configuration.
+
+The enforcement repair has two deliberate compatibility trade-offs, still
+subject to owner feature, image-budget and rollout approval:
+
+- **Selected-key response caching is bypassed.** Every applicable selected-key
+  policy bypasses exact, semantic and conditional edge-cache reads and writes,
+  including Monitor policies and policies with empty or disabled checks.
+  `x-agentcc-cache: skip_key_policy` identifies this path. Admitted requests reach
+  the provider instead of reusing cached output, which can increase latency and
+  provider cost. This conservative choice is broader than bypassing only known
+  request-dependent checks; it is not cache feature parity. Keys with no
+  applicable scoped policy retain their existing cache behavior. Effective
+  failure policy, timeout and pipeline settings remain part of the policy
+  fingerprint; an old request cannot populate a newly changed policy partition.
+- **Blocking output checks require nonstreaming requests.** An applicable
+  selected-key Enforce Block post-stage check, such as Hallucination Detection,
+  causes an HTTP text stream to return `403 stream_guardrail_unsupported` before
+  the provider is invoked. This also applies to clean output and `fail_open`
+  configurations. Use a nonstreaming request for these policies; nonstreaming
+  support does not imply streaming support. Speech has the separate
+  supported-direction rules documented below.
+
+Pass-through routes inspect projections but forward the original body. A
+projection-only redaction is reported as unsupported wire remediation and cannot
+hide the original content from a later Block check. Supported chat remediation
+still changes the actual forwarded request. Enabled checks with no resolvable
+implementation produce an unavailable result: Enforce Block returns
+`503 guardrail_unavailable` when fail-closed; fail-open logs the failure, and
+Monitor stays nonblocking. Arbitrary names can legitimately resolve to deployed
+static/custom implementations, so a successful policy save is not proof that an
+implementation exists on every gateway.
+
+**Monitor stream observation is incomplete.** With request/trace body capture
+disabled, post-stage checks receive no reconstructed output text and may record
+no `would_block` result. An empty guardrail-results list is not proof that the
+stream was inspected or passed. Even enabled capture is bounded and omits
+tool-call deltas. This repair does not enable persistent body logging or promise
+complete streamed-output observability; Monitor's unchanged-output guarantee is
+separate from that observation gap.
+
 ### 🌈 Modalities
 
 Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
