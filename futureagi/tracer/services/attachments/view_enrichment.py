@@ -9,6 +9,7 @@ from itertools import islice
 from typing import Any
 from uuid import UUID, uuid5
 
+from . import wire
 from .binding import Parent, Scope
 from .reads import MAX_PARENTS, ReadTarget, attachment_statuses
 from .references import InvalidReference
@@ -101,12 +102,12 @@ def enrich_observations(*, request, project_id, observations, reader=None):
 
 
 RECORDING_PURPOSE = "conversation_recording"
-# I04 coarse states. A recording is projected playable only with an authorized
-# manifest whose bytes the gateway can serve as-is: a server recording that is
-# one mixed segment (``_playable``), or a standalone upload (no recording_id)
-# of any validated audio type, described by a manifest synthesized from its
-# validated blob facts (``standalone_manifest``). Every other ready recording
-# reads as not-ready until channel/stitched derivatives (B11) exist.
+# I04 coarse states. A recording is projected ready only with an authorized,
+# complete mixed timeline whose segments are all bound/ready on the same parent,
+# or a standalone upload described by its validated blob facts. A multi-segment
+# manifest is a playlist of unchanged occurrences, not a stitched media object;
+# consumers must play its segments in timeline order. Channel layouts still
+# require derivatives (B11).
 _COARSE_RECORDING_STATES = {
     "pending": "pending",
     "pending_upload": "pending_upload",
@@ -225,24 +226,27 @@ def _playable_standalone(manifest, occurrence_id):
         return False
 
 
-def _playable(manifest, occurrence_id):
-    """One complete mixed segment covering the whole timeline, and nothing else.
+def _playable(manifest, occurrence_ids, recording_id):
+    """One finalized logical recording, with every segment authorized and ready.
 
-    The gateway serves an occurrence's validated bytes unchanged, so only a
-    recording that IS one mixed occurrence plays without derivatives.
+    The F01 oracle checks codec/track shape, unique ordered segment identities,
+    per-segment limits and exact timeline coverage. Do not infer completion from
+    ready uploads, sort a corrupt timeline, or omit a denied segment. The read
+    batch may be ordered by database identity rather than recording time.
     """
-    try:
-        (segment,) = manifest["segments"]
-        return (
-            manifest["layout"] == "mixed"
-            and manifest["capture_complete"] is True
-            and not manifest["gaps"]
-            and segment["occurrence_id"] == occurrence_id
-            and segment["start_ms"] == 0
-            and segment["duration_ms"] == manifest["duration_ms"]
-        )
-    except (KeyError, TypeError, ValueError):
+    if not wire.is_valid("RecordingManifest", manifest):
         return False
+    return (
+        manifest["recording_id"] == recording_id
+        and manifest["layout"] == "mixed"
+        and len(manifest["tracks"]) == 1
+        and manifest["tracks"][0]["role"] == "mixed"
+        and manifest["capture_complete"] is True
+        and not manifest["gaps"]
+        and len(occurrence_ids) == len(set(occurrence_ids))
+        and {segment["occurrence_id"] for segment in manifest["segments"]}
+        == set(occurrence_ids)
+    )
 
 
 def enrich_voice_detail(*, request, result, reader=None):
@@ -302,12 +306,32 @@ def enrich_voice_detail(*, request, result, reader=None):
         "state": _COARSE_RECORDING_STATES[status],
     }
     scope = _request_scope(request, result.get("project_id"))
-    if status == "ready" and len(items) == 1 and scope is not None:
+    if status == "ready" and scope is not None:
         target = ReadTarget(scope, parent)
+        playable = False
         if "recording_id" in item:
-            manifest = reader.recording_manifest(request, target, recording_id)
-            playable = manifest is not None and _playable(manifest, occurrence_id)
-        else:
+            # A manifest has one exact parent. Never borrow authorization from
+            # another span, even if a reader reports the same recording id.
+            same_parent = all(
+                str(row.get("trace_id", "")) == parent.trace_id
+                and str(row.get("id", "")) == parent.span_id
+                and entry.get("recording_id") == recording_id
+                for row, entry in owned
+            )
+            manifest = (
+                reader.recording_manifest(request, target, recording_id)
+                if same_parent
+                else None
+            )
+            playable = manifest is not None and _playable(
+                manifest,
+                [entry["reference"]["occurrence_id"] for entry in items],
+                recording_id,
+            )
+            if playable:
+                # Stable anchor: database row order is not timeline order.
+                projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]
+        elif len(items) == 1:
             # Re-authorized for this exact occurrence (ready only); any denial
             # leaves the projection not-ready.
             facts = reader.standalone_recording(request, target, occurrence_id)

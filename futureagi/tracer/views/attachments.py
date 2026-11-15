@@ -66,6 +66,30 @@ READ_BYTES = wire.MAX_JSON_BYTES
 # A 204 has no body. Declaring it as an empty string keeps generated clients on
 # the 204 entry instead of falling back to the default error schema.
 NO_CONTENT = openapi.Schema(type=openapi.TYPE_STRING, max_length=0, x_nullable=True)
+ISSUANCE_HEADERS = [
+    openapi.Parameter(
+        "Origin",
+        openapi.IN_HEADER,
+        type=openapi.TYPE_STRING,
+        required=True,
+        description="Exact configured HTTPS media origin; no ambient application-cookie authentication.",
+    ),
+    openapi.Parameter(
+        "Authorization",
+        openapi.IN_HEADER,
+        type=openapi.TYPE_STRING,
+        required=True,
+        description="Explicit application Bearer access token (original AuthToken row).",
+    ),
+]
+MEDIA_SESSION_HEADER = openapi.Parameter(
+    playback.SESSION_HEADER,
+    openapi.IN_HEADER,
+    type=openapi.TYPE_STRING,
+    format="uuid",
+    required=True,
+    description="Non-secret session UUID returned by this caller's exchange; no latest-session fallback.",
+)
 IDEMPOTENCY_HEADER = openapi.Parameter(
     "Idempotency-Key",
     openapi.IN_HEADER,
@@ -535,6 +559,7 @@ class AttachmentResolveView(AttachmentView):
     @validated_request(
         operation_id="resolveAttachmentOccurrences",
         tags=[TAG],
+        manual_parameters=[*ISSUANCE_HEADERS, MEDIA_SESSION_HEADER],
         request_serializer=AttachmentResolveRequestSerializer,
         strict_request_validation=False,
         responses={200: AttachmentResolveResponseSerializer, **ERRORS},
@@ -542,9 +567,17 @@ class AttachmentResolveView(AttachmentView):
     def post(self, request, project_id):
         self.enabled()
         viewer = self.viewer(request, project_id)
+        attachment_media.same_origin(request, media_origin(), issuance=True, csrf=False)
         body = self.body(request, "ResolveRequest")
         return json_response(
-            {"items": playback.resolve(viewer, authority(), body["items"])}
+            {
+                "items": playback.resolve(
+                    viewer,
+                    authority(),
+                    body["items"],
+                    media_session_id=request.headers.get(playback.SESSION_HEADER),
+                )
+            }
         )
 
 
@@ -597,9 +630,32 @@ class AttachmentMediaSessionView(AttachmentView):
     @validated_request(
         operation_id="exchangeAttachmentMediaSession",
         tags=[TAG],
+        manual_parameters=ISSUANCE_HEADERS,
         request_serializer=AttachmentEmptyRequestSerializer,
         strict_request_validation=False,
-        responses={204: openapi.Response("Media cookie set", NO_CONTENT), **ERRORS},
+        responses={
+            204: openapi.Response(
+                "Independent session cookie set; fixed expiry, no predecessor revocation",
+                NO_CONTENT,
+                headers={
+                    playback.SESSION_HEADER: {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Required non-secret handle for resolve.",
+                    },
+                    playback.EXPIRY_HEADER: {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Required fixed session expiry.",
+                    },
+                    "Set-Cookie": {
+                        "type": "string",
+                        "description": "Host-only fi_media_session_v2; Secure; HttpOnly; SameSite=Strict; Path=/tracer/v1/attachment-media/{media_session_id}/. Secret never appears in JSON or selector headers.",
+                    },
+                },
+            ),
+            **ERRORS,
+        },
     )
     def post(self, request):
         self.enabled()
@@ -610,7 +666,10 @@ class AttachmentMediaSessionView(AttachmentView):
         response = attachment_media.exchange_response(
             request, viewer, authority(), origin=origin
         )
-        if response.status_code != 204:
+        if response.status_code == 429:
+            response = error_response(request, AttachmentError("throttled", 429))
+            response["Retry-After"] = "60"
+        elif response.status_code != 204:
             raise AttachmentError("not_found", 404)
         return response
 
@@ -630,8 +689,8 @@ class AttachmentMediaView(AttachmentView):
             429: openapi.Response("Egress limit"),
         },
     )
-    def get(self, request, occurrence_id, grant_id):
-        return self._serve(request, occurrence_id, grant_id)
+    def get(self, request, media_session_id, occurrence_id, grant_id):
+        return self._serve(request, media_session_id, occurrence_id, grant_id)
 
     @validated_request(
         operation_id="headAttachmentMedia",
@@ -643,15 +702,16 @@ class AttachmentMediaView(AttachmentView):
             429: openapi.Response("Egress limit"),
         },
     )
-    def head(self, request, occurrence_id, grant_id):
-        return self._serve(request, occurrence_id, grant_id)
+    def head(self, request, media_session_id, occurrence_id, grant_id):
+        return self._serve(request, media_session_id, occurrence_id, grant_id)
 
-    def _serve(self, request, occurrence_id, grant_id):
+    def _serve(self, request, media_session_id, occurrence_id, grant_id):
         origin = media_origin()
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False) or not origin:
             return attachment_media.private(HttpResponse(status=404))
         return attachment_media.media_response(
             request._request,
+            media_session_id=media_session_id,
             occurrence_id=occurrence_id,
             grant_token=grant_id,
             authority=authority(),

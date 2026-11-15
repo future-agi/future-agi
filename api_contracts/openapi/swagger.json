@@ -77189,15 +77189,45 @@
                         "schema": {
                             "$ref": "#/definitions/AttachmentEmptyRequest"
                         }
+                    },
+                    {
+                        "name": "Origin",
+                        "in": "header",
+                        "description": "Exact configured HTTPS media origin; no ambient application-cookie authentication.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "Authorization",
+                        "in": "header",
+                        "description": "Explicit application Bearer access token (original AuthToken row).",
+                        "required": true,
+                        "type": "string"
                     }
                 ],
                 "responses": {
                     "204": {
-                        "description": "Media cookie set",
+                        "description": "Independent session cookie set; fixed expiry, no predecessor revocation",
                         "schema": {
                             "type": "string",
                             "maxLength": 0,
                             "x-nullable": true
+                        },
+                        "headers": {
+                            "X-Attachment-Media-Session": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "Required non-secret handle for resolve."
+                            },
+                            "X-Attachment-Media-Expires-At": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "Required fixed session expiry."
+                            },
+                            "Set-Cookie": {
+                                "type": "string",
+                                "description": "Host-only fi_media_session_v2; Secure; HttpOnly; SameSite=Strict; Path=/tracer/v1/attachment-media/{media_session_id}/. Secret never appears in JSON or selector headers."
+                            }
                         }
                     },
                     "400": {
@@ -77257,7 +77287,7 @@
             },
             "parameters": []
         },
-        "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": {
+        "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}": {
             "get": {
                 "operationId": "getAttachmentMedia",
                 "description": "Cookie-authenticated byte gateway. Errors carry no body.",
@@ -77294,6 +77324,12 @@
                 "x-runtime-response-validation": true
             },
             "parameters": [
+                {
+                    "name": "media_session_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
                 {
                     "name": "occurrence_id",
                     "in": "path",
@@ -78071,6 +78107,28 @@
                         "schema": {
                             "$ref": "#/definitions/AttachmentResolveRequest"
                         }
+                    },
+                    {
+                        "name": "Origin",
+                        "in": "header",
+                        "description": "Exact configured HTTPS media origin; no ambient application-cookie authentication.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "Authorization",
+                        "in": "header",
+                        "description": "Explicit application Bearer access token (original AuthToken row).",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "X-Attachment-Media-Session",
+                        "in": "header",
+                        "description": "Non-secret session UUID returned by this caller's exchange; no latest-session fallback.",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -183059,7 +183117,7 @@
                 "gateway_path": {
                     "title": "Gateway path",
                     "type": "string",
-                    "maxLength": 194,
+                    "maxLength": 230,
                     "minLength": 1
                 },
                 "expires_at": {

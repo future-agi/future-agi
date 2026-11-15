@@ -1,10 +1,12 @@
 """HTTP acceptance for all 17 F01 attachment operations, through real URLs.
 
 Real PostgreSQL, real application JWTs (``issue_tokens``) and the production
-``LiveAuthority`` session check. Only the ClickHouse span read and object
+``LiveAuthority`` session check. The ClickHouse span read and object
 storage are doubles: the span reader returns a fixed span for the test parent
-and storage keeps bytes in memory. These tests do not qualify ClickHouse,
-S3 or the decoder sandbox.
+and storage keeps bytes in memory. The suite's LocMem cache is a single-process
+component double, not a supported attachments-enabled deployment configuration.
+Shared admission/startup is qualified separately in test_attachment_admission.
+These tests do not qualify ClickHouse, S3 or the decoder sandbox.
 
 Every success body is validated against the vendored F01 schema; every error
 body must be exactly ``{code, request_id}`` with a code allowed for its HTTP
@@ -340,7 +342,21 @@ def media_exchange(a, token=None, origin=ORIGIN, **extra):
     )
 
 
-def resolve(a, occurrence_id, *, span=SPAN, representation="original", token=None):
+def resolve(
+    a,
+    occurrence_id,
+    *,
+    media_session_id,
+    span=SPAN,
+    representation="original",
+    token=None,
+    origin=ORIGIN,
+):
+    headers = auth(token or a.token)
+    if origin is not None:
+        headers["HTTP_ORIGIN"] = origin
+    if media_session_id is not None:
+        headers["HTTP_X_ATTACHMENT_MEDIA_SESSION"] = media_session_id
     return post(
         a,
         f"{base(a)}/resolve",
@@ -353,7 +369,7 @@ def resolve(a, occurrence_id, *, span=SPAN, representation="original", token=Non
                 }
             ]
         },
-        auth(token or a.token),
+        headers,
     )
 
 
@@ -974,20 +990,32 @@ def test_list_link_resolve_delete_through_live_authority(api):
     )
     assert linked["parent"]["span_id"] == OTHER_SPAN
     # Resolve needs a media session first, then issues a same-origin grant.
-    first = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")
-    assert first["items"][0]["status"] == "not_found"
-    ok(media_exchange(api), 204)
-    resolved = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")
+    assert_error(resolve(api, body["occurrence_id"], media_session_id=None), 404)
+    exchange = media_exchange(api)
+    ok(exchange, 204)
+    handle = exchange["X-Attachment-Media-Session"]
+    resolved = ok(
+        resolve(api, body["occurrence_id"], media_session_id=handle),
+        200,
+        "ResolveResponse",
+    )
     assert resolved["items"][0]["status"] == "ready"
     wrong_parent = ok(
-        resolve(api, body["occurrence_id"], span=OTHER_SPAN), 200, "ResolveResponse"
+        resolve(api, body["occurrence_id"], media_session_id=handle, span=OTHER_SPAN),
+        200,
+        "ResolveResponse",
     )
     assert wrong_parent["items"][0]["status"] == "not_found"
     for representation in ("channel", "peaks", "thumbnail"):
         if representation == "channel":
             continue
         reply = ok(
-            resolve(api, body["occurrence_id"], representation=representation),
+            resolve(
+                api,
+                body["occurrence_id"],
+                media_session_id=handle,
+                representation=representation,
+            ),
             200,
             "ResolveResponse",
         )
@@ -997,10 +1025,18 @@ def test_list_link_resolve_delete_through_live_authority(api):
         **auth(api.token),
     )
     ok(delete, 204)
-    gone = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")
+    gone = ok(
+        resolve(api, body["occurrence_id"], media_session_id=handle),
+        200,
+        "ResolveResponse",
+    )
     assert gone["items"][0]["status"] == "not_found"
     # The linked survivor is still readable.
-    survivor = ok(resolve(api, linked_id, span=OTHER_SPAN), 200, "ResolveResponse")
+    survivor = ok(
+        resolve(api, linked_id, media_session_id=handle, span=OTHER_SPAN),
+        200,
+        "ResolveResponse",
+    )
     assert survivor["items"][0]["status"] == "ready"
 
 
@@ -1165,7 +1201,7 @@ def test_manifest_write_replay_and_read(api):
 
 def gateway(a, path, method="get", cookie=None, **headers):
     if cookie is not None:
-        a.client.cookies["fi_media_session"] = cookie
+        a.client.cookies["fi_media_session_v2"] = cookie
     return getattr(a.client, method)(path, secure=True, **headers)
 
 
@@ -1175,10 +1211,15 @@ def test_media_session_and_gateway_bytes(api):
     assert_error(media_exchange(api, origin="https://evil.example.test"), 404)
     exchange = media_exchange(api)
     ok(exchange, 204)
-    cookie = exchange.cookies["fi_media_session"]
+    handle = exchange["X-Attachment-Media-Session"]
+    cookie = exchange.cookies["fi_media_session_v2"]
     assert cookie["httponly"] and cookie["secure"] and cookie["samesite"] == "Strict"
-    assert cookie["path"] == "/tracer/v1/attachment-media/"
-    item = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")["items"][0]
+    assert cookie["path"] == f"/tracer/v1/attachment-media/{handle}/"
+    item = ok(
+        resolve(api, body["occurrence_id"], media_session_id=handle),
+        200,
+        "ResolveResponse",
+    )["items"][0]
     path = item["gateway_path"]
     full = gateway(api, path)
     assert full.status_code == 200 and b"".join(full.streaming_content) == wav_bytes()
@@ -1191,18 +1232,22 @@ def test_media_session_and_gateway_bytes(api):
     assert gateway(api, path, HTTP_IF_NONE_MATCH=head["ETag"]).status_code == 304
     assert gateway(api, path, HTTP_RANGE="bytes=99999-").status_code == 416
     # A copied grant under another (or no) media session fails.
-    api.client.cookies.pop("fi_media_session")
+    api.client.cookies.pop("fi_media_session_v2")
     assert gateway(api, path).status_code == 404
-    other = media_exchange(api).cookies["fi_media_session"].value
+    other = media_exchange(api).cookies["fi_media_session_v2"].value
     assert gateway(api, path, cookie=other).status_code == 404
 
 
 def test_gateway_dies_with_application_session_and_egress_limit(api, monkeypatch):
     upload, body, _, _ = ready_occurrence(api)
-    ok(media_exchange(api), 204)
-    path = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")["items"][0][
-        "gateway_path"
-    ]
+    exchange = media_exchange(api)
+    ok(exchange, 204)
+    handle = exchange["X-Attachment-Media-Session"]
+    path = ok(
+        resolve(api, body["occurrence_id"], media_session_id=handle),
+        200,
+        "ResolveResponse",
+    )["items"][0]["gateway_path"]
     assert gateway(api, path, method="head").status_code == 200
     from tracer.services.attachments import egress
 
@@ -1245,7 +1290,8 @@ def test_routes_are_dark_when_disabled(api, settings):
         assert_error(getattr(api.client, method)(path, **auth(api.token)), 404)
     for method in ("get", "head"):
         reply = getattr(api.client, method)(
-            f"/tracer/v1/attachment-media/{uuid.uuid4()}/{'a' * 43}", secure=True
+            f"/tracer/v1/attachment-media/{uuid.uuid4()}/{uuid.uuid4()}/{'a' * 43}",
+            secure=True,
         )
         assert reply.status_code == 404
 

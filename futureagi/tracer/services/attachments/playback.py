@@ -8,9 +8,9 @@ thumbnail representations resolve to ``not_found`` until server-produced
 derivatives are bound. A grant never substitutes for a current source
 permission: every gateway request re-runs the full occurrence authorization.
 
-A media session belongs to one viewer and one application session. Resolution
-issues grants against the viewer's newest live media session; the cookie path
-is narrowed to the gateway, so resolve never sees the cookie itself.
+A media session belongs to one viewer, organization and original access row.
+Resolution selects only the explicit non-secret exchange handle. Independent
+sessions have separate gateway cookie paths and never revoke each other.
 """
 
 import hashlib
@@ -19,6 +19,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -38,9 +39,15 @@ from tracer.services.attachments.occurrences import (
     not_found,
     scope_for,
 )
+from tracer.services.attachments.wire import is_valid
 
 MEDIA_PATH = "/tracer/v1/attachment-media/"
-COOKIE_NAME = "fi_media_session"
+COOKIE_NAME = "fi_media_session_v2"
+SESSION_HEADER = "X-Attachment-Media-Session"
+EXPIRY_HEADER = "X-Attachment-Media-Expires-At"
+# Per original access row + organization, never a global/player-count limit.
+# Uses the same shared-cache, fail-closed counter pattern as gateway egress.
+EXCHANGES_PER_MINUTE = 60
 SESSION_SECONDS = 300
 GRANT_SECONDS = 60
 SERVED_REPRESENTATIONS = ("original", "playable")
@@ -106,17 +113,40 @@ def digest(token):
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
-def live_media_session(user_id, application_session_id):
-    return (
-        AttachmentMediaSession.objects.filter(
-            user_id=user_id,
-            application_session_id=application_session_id,
-            revoked_at__isnull=True,
-            expires_at__gt=timezone.now(),
-        )
-        .order_by("-expires_at")
-        .first()
+def session_path(session_id):
+    return f"{MEDIA_PATH}{session_id}/"
+
+
+def bound_media_session(viewer, authority, session_id):
+    """A selector is not a credential; require the exact original identity."""
+    if not is_valid("UUID", session_id) or not authority.session_is_live(viewer):
+        raise not_found()
+    session = AttachmentMediaSession.objects.filter(
+        pk=session_id,
+        user_id=viewer.user_id,
+        application_session_id=viewer.application_session_id,
+        organization_id=viewer.organization_id,
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).first()
+    if session is None:
+        raise not_found()
+    return session
+
+
+def _admit_exchange(viewer):
+    window = int(timezone.now().timestamp()) // 60
+    key = (
+        f"fi:attachments:exchange:{viewer.user_id}:"
+        f"{viewer.application_session_id}:{viewer.organization_id}:{window}"
     )
+    try:
+        cache.add(key, 0, timeout=120)
+        used = cache.incr(key)
+    except Exception:  # noqa: BLE001 - shared admission fails closed
+        raise AttachmentError("throttled", 429) from None
+    if not isinstance(used, int) or used > EXCHANGES_PER_MINUTE:
+        raise AttachmentError("throttled", 429)
 
 
 @transaction.atomic
@@ -124,6 +154,7 @@ def exchange(viewer, authority):
     """Mint the opaque media cookie for a live application session."""
     if not authority.session_is_live(viewer):
         raise not_found()
+    _admit_exchange(viewer)
     token = secrets.token_urlsafe(32)
     session = AttachmentMediaSession.objects.create(
         user_id=viewer.user_id,
@@ -145,6 +176,7 @@ def revoke_application_session(*, user_id, application_session_id):
 
 @transaction.atomic
 def issue(viewer, authority, *, media_session, row, scope, expiry, representation):
+    media_session = bound_media_session(viewer, authority, str(media_session.id))
     if representation not in SERVED_REPRESENTATIONS:
         raise not_found()
     if (
@@ -183,19 +215,19 @@ def issue(viewer, authority, *, media_session, row, scope, expiry, representatio
     return {
         "occurrence_id": str(row.client_id),
         "status": "ready",
-        "gateway_path": f"{MEDIA_PATH}{row.client_id}/{token}",
+        "gateway_path": f"{session_path(media_session.id)}{row.client_id}/{token}",
         "expires_at": expiry.isoformat(),
     }
 
 
-def resolve(viewer, authority, items):
+def resolve(viewer, authority, items, *, media_session_id):
     """F01 ``resolveAttachmentOccurrences``: per-item authorization, in order.
 
     A batch never inherits the first item's authorization. Unauthorized and
     nonexistent items are both ``not_found``.
     """
     scope_for(viewer, authority)
-    media_session = live_media_session(viewer.user_id, viewer.application_session_id)
+    media_session = bound_media_session(viewer, authority, media_session_id)
     results = []
     for item in items:
         occurrence_id = item["occurrence_id"]
@@ -216,8 +248,6 @@ def resolve(viewer, authority, items):
             )
             continue
         try:
-            if media_session is None:
-                raise not_found()
             results.append(
                 issue(
                     viewer,
@@ -234,9 +264,12 @@ def resolve(viewer, authority, items):
     return results
 
 
-def authorize(cookie, grant_token, occurrence_id, authority):
-    """Re-authorize the media session, grant, viewer and occurrence together."""
+def authorize(cookie, grant_token, occurrence_id, authority, *, media_session_id):
+    """Route session == cookie-derived session == grant session, on every check."""
+    if not is_valid("UUID", media_session_id):
+        raise not_found()
     session = AttachmentMediaSession.objects.filter(
+        pk=media_session_id,
         token_digest=digest(cookie),
         revoked_at__isnull=True,
         expires_at__gt=timezone.now(),
@@ -255,6 +288,8 @@ def authorize(cookie, grant_token, occurrence_id, authority):
     if grant is None or str(grant.occurrence.client_id) != str(occurrence_id):
         raise not_found()
     scope = grant.scope
+    if session.organization_id != scope.organization_id:
+        raise not_found()
     viewer = Viewer(
         session.user_id,
         session.application_session_id,

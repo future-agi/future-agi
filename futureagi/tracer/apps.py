@@ -44,7 +44,10 @@ class SdkConfig(AppConfig):
         )
 
         if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+            from tracer.services.attachments.cache_config import verify_admission_cache
             from tracer.services.attachments.storage import from_settings
 
+            # Reject process-local/non-atomic admission before storage/network I/O.
+            verify_admission_cache(settings)
             # Fail closed on unverifiable/private-storage policy drift.
             from_settings(settings).verify_readiness()

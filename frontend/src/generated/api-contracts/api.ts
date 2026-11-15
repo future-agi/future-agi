@@ -88611,22 +88611,24 @@ export type getAttachmentMediaResponse =
   | getAttachmentMediaResponseError;
 
 export const getGetAttachmentMediaUrl = (
+  mediaSessionId: string,
   occurrenceId: string,
   grantId: string,
 ) => {
-  return `/tracer/v1/attachment-media/${occurrenceId}/${grantId}`;
+  return `/tracer/v1/attachment-media/${mediaSessionId}/${occurrenceId}/${grantId}`;
 };
 
 /**
  * Cookie-authenticated byte gateway. Errors carry no body.
  */
 export const getAttachmentMedia = async (
+  mediaSessionId: string,
   occurrenceId: string,
   grantId: string,
   options?: RequestInit,
 ): Promise<getAttachmentMediaResponse> => {
   return apiMutator<getAttachmentMediaResponse>(
-    getGetAttachmentMediaUrl(occurrenceId, grantId),
+    getGetAttachmentMediaUrl(mediaSessionId, occurrenceId, grantId),
     {
       ...options,
       method: "GET",

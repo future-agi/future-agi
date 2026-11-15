@@ -181,7 +181,7 @@ def _cross_field(name, value):
         for item in value["items"]:
             if (
                 item["status"] == "ready"
-                and item["gateway_path"].split("/")[4] != item["occurrence_id"]
+                and item["gateway_path"].split("/")[5] != item["occurrence_id"]
             ):
                 raise ValueError("gateway occurrence mismatch")
     if name in {
