@@ -232,9 +232,6 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       const warning = page.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
       if (await warning.count()) await warning.check();
       await shot(`review-${parent.name}`);
-      await page.getByRole('button', { name: 'Confirm review', exact: true }).click();
-      // Acknowledgment invalidates the draft and remounts the digest-bound
-      // review. Do not tick the old controls while that refresh is in flight.
       await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible({ timeout: UI_READY });
       await reviewed.check();
       if (await warning.count()) await warning.check();

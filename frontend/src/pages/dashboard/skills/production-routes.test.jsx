@@ -241,7 +241,7 @@ it('starts editing from the explicitly viewed release, recognizing normalized mi
   expect(screen.getByText(/starts from exactly v4; it is never swapped for the latest version/)).toBeVisible();
   expect(axios.post).not.toHaveBeenCalled();
 });
-it('loads the production draft review and sends the exact head acknowledgment', async () => {
+it('loads the production draft review and sends the exact head acknowledgment, then publishes, on one click', async () => {
   const read = axios.get.getMockImplementation();
   const draft = { id: 'draft', revision: 3, base_version: 4, files: [{ path: 'AGENTS.md', content: '# Candidate' }], context_spec: { schema: 1, description: 'Standing policy', links: [] }, resolved_lock: { schema: 1, links: [] }, digest, recovery_digest: digest, checks: { items: [], summary: { errors: 0, warnings: 0 } }, note: '', expected_head_version: 4, head_acknowledged: false, review_fingerprint: null };
   axios.get.mockImplementation((url, config) => url.endsWith('/draft/') ? Promise.resolve(envelope(draft)) : read(url, config));
@@ -253,11 +253,17 @@ it('loads the production draft review and sends the exact head acknowledgment', 
   });
   mount(`/dashboard/skills/contexts/${id}/review`);
   const confirm = await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ });
-  expect(screen.getByRole('button', { name: 'Confirm review' })).toBeDisabled();
+  // One publish click acknowledges the reviewed head first: there is no separate confirm step.
+  expect(screen.queryByRole('button', { name: 'Confirm review' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
   fireEvent.click(confirm);
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm review' }));
+  expect(screen.getByRole('button', { name: 'Publish version' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
   await waitFor(() => expect(axios.post.mock.calls.find(([url]) => url.endsWith('/acknowledge-head/'))?.[1]).toEqual({ revision: 3, expected_digest: digest, expected_head_version: 4, review_fingerprint: digest }));
-  expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(false);
+  await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(true));
+  const writes = axios.post.mock.calls.map(([url]) => url).filter((url) => /\/(acknowledge-head|publish)\/$/.test(url));
+  expect(writes[0]).toMatch(/\/acknowledge-head\/$/);
+  expect(writes[1]).toMatch(/\/publish\/$/);
 });
 
 it('loads later-page dependencies and reads linked/generated saved bytes through the production editor', async () => {

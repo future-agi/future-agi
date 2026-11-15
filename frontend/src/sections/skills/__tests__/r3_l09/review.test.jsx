@@ -647,21 +647,22 @@ describe("publication and explicit spending", () => {
       screen.getByRole("button", { name: "Publish version" }),
     ).toBeDisabled();
   });
-  it("carries the reviewer's acknowledgements and note across the head acknowledgment, and only that step", async () => {
+  it("carries the reviewer's acknowledgements and note across the head acknowledgment inside the publish click, and only that step", async () => {
     const warned = {
       ...draftReview,
       headAcknowledged: false,
       note: "",
       checks: { items: [], summary: { errors: 0, warnings: 1, infos: 0 }, tokens: {} },
     };
-    const acknowledgeHead = vi.fn().mockResolvedValue({ revision: 9 });
-    const props = { scopeKey: "scope", state: "ready", canPublish: true, onAcknowledgeHead: acknowledgeHead, onPublish: vi.fn() };
+    // The head acknowledgment now happens inside the one publish click (the controller chains it).
+    const onPublish = vi.fn().mockResolvedValue({});
+    const props = { scopeKey: "scope", state: "ready", canPublish: true, onPublish };
     const { rerender } = render(<ContextReleaseReview {...props} draftReview={warned} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Version note" }), { target: { value: "Cap refunds" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /these changes against the current published version/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /check warnings/ }));
-    click("Confirm review");
-    await waitFor(() => expect(acknowledgeHead).toHaveBeenCalledTimes(1));
+    click("Publish version");
+    await waitFor(() => expect(onPublish).toHaveBeenCalledTimes(1));
     // The reloaded review is for the same candidate, head and warnings with a new fingerprint.
     const acknowledged = { ...warned, headAcknowledged: true, revision: 9, reviewFingerprint: CONFIG };
     rerender(<ContextReleaseReview {...props} draftReview={acknowledged} />);
