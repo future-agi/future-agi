@@ -4069,7 +4069,17 @@ export const ClickHouseHealthResponseApiStatus = {
   disabled: "disabled",
 } as const;
 
+/**
+ * Per-table lag in seconds; -1 means unverified, including empty tables.
+ */
 export type ClickHouseHealthResponseApiCdcLag = { [key: string]: number };
+
+/**
+ * True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.
+ */
+export type ClickHouseHealthResponseApiCdcLagVerified = {
+  [key: string]: boolean;
+};
 
 export type ClickHouseHealthResponseApiRouting = {
   [key: string]: { [key: string]: unknown };
@@ -4078,7 +4088,10 @@ export type ClickHouseHealthResponseApiRouting = {
 export interface ClickHouseHealthResponseApi {
   status: ClickHouseHealthResponseApiStatus;
   clickhouse_connected: boolean;
+  /** Per-table lag in seconds; -1 means unverified, including empty tables. */
   cdc_lag: ClickHouseHealthResponseApiCdcLag;
+  /** True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health. */
+  cdc_lag_verified?: ClickHouseHealthResponseApiCdcLagVerified;
   routing: ClickHouseHealthResponseApiRouting;
   /** @minLength 1 */
   error?: string;
@@ -4119,6 +4132,10 @@ export const ClickHouseHealthErrorResponseApiHealthStatus = {
 
 export type ClickHouseHealthErrorResponseApiCdcLag = { [key: string]: number };
 
+export type ClickHouseHealthErrorResponseApiCdcLagVerified = {
+  [key: string]: boolean;
+};
+
 export type ClickHouseHealthErrorResponseApiRouting = {
   [key: string]: { [key: string]: unknown };
 };
@@ -4138,6 +4155,7 @@ export interface ClickHouseHealthErrorResponseApi {
   health_status?: ClickHouseHealthErrorResponseApiHealthStatus;
   clickhouse_connected?: boolean;
   cdc_lag?: ClickHouseHealthErrorResponseApiCdcLag;
+  cdc_lag_verified?: ClickHouseHealthErrorResponseApiCdcLagVerified;
   routing?: ClickHouseHealthErrorResponseApiRouting;
 }
 
