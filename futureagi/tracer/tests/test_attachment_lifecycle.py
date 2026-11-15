@@ -815,7 +815,7 @@ def _reader(scope, user, row, lifetime):
 def _plays(authority, row):
     """Resolve then gateway-authorize ``row``: 'ready' or the denial status."""
     viewer = authority.viewer
-    _, cookie = playback.exchange(viewer, authority)
+    session, cookie = playback.exchange(viewer, authority)
     (result,) = playback.resolve(
         viewer,
         authority,
@@ -826,12 +826,15 @@ def _plays(authority, row):
                 "representation": "original",
             }
         ],
+        media_session_id=str(session.id),
     )
     if result["status"] != "ready":
         return result["status"]
     grant = result["gateway_path"].rsplit("/", 1)[1]
     try:
-        playback.authorize(cookie, grant, row.client_id, authority)
+        playback.authorize(
+            cookie, grant, row.client_id, authority, media_session_id=str(session.id)
+        )
     except AttachmentError as error:
         return f"gateway_{error.code}"
     return "ready"

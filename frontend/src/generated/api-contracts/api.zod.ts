@@ -83029,6 +83029,7 @@ export const ExchangeAttachmentMediaSessionBody = zod.object({}).passthrough();
  * Cookie-authenticated byte gateway. Errors carry no body.
  */
 export const GetAttachmentMediaParams = zod.object({
+  media_session_id: zod.string(),
   occurrence_id: zod.string(),
   grant_id: zod.string(),
 });
@@ -83556,7 +83557,7 @@ export const ResolveAttachmentOccurrencesBody = zod.object({
   ),
 });
 
-export const resolveAttachmentOccurrencesResponseItemsItemGatewayPathMax = 194;
+export const resolveAttachmentOccurrencesResponseItemsItemGatewayPathMax = 230;
 
 export const ResolveAttachmentOccurrencesResponse = zod.object({
   items: zod.array(

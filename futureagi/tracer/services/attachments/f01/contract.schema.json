@@ -1331,9 +1331,7 @@
               "const": "ready"
             },
             "gateway_path": {
-              "type": "string",
-              "pattern": "^/tracer/v1/attachment-media/(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[a-zA-Z0-9_-]{1,128}$",
-              "maxLength": 194
+              "$ref": "#/$defs/MediaGatewayPath"
             },
             "expires_at": {
               "$ref": "#/$defs/Timestamp"
@@ -2208,6 +2206,50 @@
         },
         "reason": {
           "$ref": "#/$defs/Reason"
+        }
+      }
+    },
+    "MediaSessionHandle": {
+      "description": "Non-secret existing media-session UUID; selector only, never a bearer credential.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/UUID"
+        }
+      ],
+      "minLength": 36
+    },
+    "MediaGatewayPath": {
+      "type": "string",
+      "pattern": "^/tracer/v1/attachment-media/(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[a-zA-Z0-9_-]{1,128}$(?![\\s\\S])",
+      "maxLength": 230
+    },
+    "MediaSessionExchangeHeaders": {
+      "description": "Closed projection of the two required JS-visible exchange headers, not the entire HTTP header map. Set-Cookie is deliberately excluded.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "X-Attachment-Media-Session",
+        "X-Attachment-Media-Expires-At"
+      ],
+      "properties": {
+        "X-Attachment-Media-Session": {
+          "$ref": "#/$defs/MediaSessionHandle"
+        },
+        "X-Attachment-Media-Expires-At": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "MediaSessionResolveHeaders": {
+      "description": "Closed projection of the required resolve selector header. Explicit application bearer and exact Origin are independently mandatory.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "X-Attachment-Media-Session"
+      ],
+      "properties": {
+        "X-Attachment-Media-Session": {
+          "$ref": "#/$defs/MediaSessionHandle"
         }
       }
     }

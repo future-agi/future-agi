@@ -36631,7 +36631,7 @@ export interface AttachmentResolveResultApi {
   status: AttachmentResolveResultApiStatus;
   /**
    * @minLength 1
-   * @maxLength 194
+   * @maxLength 230
    */
   gateway_path?: string;
   expires_at?: string;

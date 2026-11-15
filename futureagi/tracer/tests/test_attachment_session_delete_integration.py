@@ -55,7 +55,12 @@ def test_reassigned_session_cannot_tombstone_attachment(
     session.refresh_from_db()
     assert not session.deleted and r.row.deleted_at is None
     assert not AttachmentOutbox.objects.filter(event="erase").exists()
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "ready"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "ready"
+    )
 
 
 @pytest.mark.parametrize("foreign_trace", [False, True])
@@ -81,7 +86,12 @@ def test_pg_trace_hook_uses_only_locked_same_project_parents(
     assert (r.row.deleted_at is not None) is not foreign_trace
     assert AttachmentOutbox.objects.filter(event="erase").exists() is not foreign_trace
     # The session marker denies grants independently of physical cleanup.
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "not_found"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "not_found"
+    )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -121,7 +131,12 @@ def test_project_lock_covers_session_marker_and_attachment_cleanup(
     assert observed == ["55P03"]  # PostgreSQL lock_not_available, not a timing guess.
     r.row.refresh_from_db()
     assert r.row.deleted_at is not None
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "not_found"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "not_found"
+    )
 
 
 def test_late_failure_rolls_back_marker_and_attachment_tombstone(
@@ -145,7 +160,12 @@ def test_late_failure_rolls_back_marker_and_attachment_tombstone(
     r.row.refresh_from_db()
     assert not session.deleted and not parent.deleted and r.row.deleted_at is None
     assert not AttachmentOutbox.objects.filter(event="erase").exists()
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "ready"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "ready"
+    )
 
 
 def test_ch_overlay_owner_race_never_erases_media(

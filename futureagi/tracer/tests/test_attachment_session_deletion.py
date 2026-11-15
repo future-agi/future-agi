@@ -46,38 +46,78 @@ def collector_recording(setup, user, monkeypatch, parser_probe):
         start_time=timezone.now() - timedelta(minutes=1),
     )
     viewer = occurrences.Viewer(
-        user.id, uuid.uuid4(), scope.organization_id, scope.workspace_id, scope.project_id
+        user.id,
+        uuid.uuid4(),
+        scope.organization_id,
+        scope.workspace_id,
+        scope.project_id,
     )
     authority = LiveAuthority(span_reader=lambda *args: span)
     # Only application-session authentication is doubled; source authorization
     # uses the production reader and durable session deletion fence.
-    monkeypatch.setattr(authority, "session_is_live", lambda candidate: candidate == viewer)
+    monkeypatch.setattr(
+        authority, "session_is_live", lambda candidate: candidate == viewer
+    )
     parent = occurrences.Parent(row.trace_id, row.span_id)
     state = authority.source(viewer, scope, parent)
     assert state is not None
     retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
-    _, cookie = playback.exchange(viewer, authority)
-    items = [{"occurrence_id": str(row.client_id), "parent": {
-        "trace_id": str(row.trace_id), "span_id": row.span_id}, "representation": "original"}]
-    grant = playback.resolve(viewer, authority, items)[0]["gateway_path"].rsplit("/", 1)[1]
+    session, cookie = playback.exchange(viewer, authority)
+    items = [
+        {
+            "occurrence_id": str(row.client_id),
+            "parent": {"trace_id": str(row.trace_id), "span_id": row.span_id},
+            "representation": "original",
+        }
+    ]
+    grant = playback.resolve(
+        viewer, authority, items, media_session_id=str(session.id)
+    )[0]["gateway_path"].rsplit("/", 1)[1]
     reader = Mock()
     reader.remap_groups.return_value = {}
-    reader.list_by_ids.return_value = [{"id": row.span_id, "trace_id": str(row.trace_id),
-                                       "trace_session_id": str(session_id)}]
+    reader.list_by_ids.return_value = [
+        {
+            "id": row.span_id,
+            "trace_id": str(row.trace_id),
+            "trace_session_id": str(session_id),
+        }
+    ]
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
     writer = Mock()
-    monkeypatch.setattr("tracer.services.clickhouse.v2.curated_writer._get_client", lambda: writer)
-    monkeypatch.setattr("tracer.services.clickhouse.v2.curated_writer._reset_client", lambda: None)
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.curated_writer._get_client", lambda: writer
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.curated_writer._reset_client", lambda: None
+    )
     # Keep _resolve_ch_session_fields real: its org/workspace gate must still run.
     monkeypatch.setattr(
         "tracer.services.clickhouse.v2.trace_session_dict_reader.resolve_session_fields",
-        lambda ids: {str(session_id): {"project_id": str(scope.project_id),
-                                     "external_session_id": "sdk-session"}},
+        lambda ids: {
+            str(session_id): {
+                "project_id": str(scope.project_id),
+                "external_session_id": "sdk-session",
+            }
+        },
     )
-    return SimpleNamespace(scope=scope, upload=upload, row=row, session_id=session_id,
-                           span=span, viewer=viewer, authority=authority, parent=parent,
-                           items=items, cookie=cookie, grant=grant, reader=reader, writer=writer,
-                           store=media.RangeStoreDouble(core.wav_bytes()), objects=store)
+    return SimpleNamespace(
+        scope=scope,
+        upload=upload,
+        row=row,
+        session_id=session_id,
+        span=span,
+        viewer=viewer,
+        authority=authority,
+        parent=parent,
+        items=items,
+        session=session,
+        cookie=cookie,
+        grant=grant,
+        reader=reader,
+        writer=writer,
+        store=media.RangeStoreDouble(core.wav_bytes()),
+        objects=store,
+    )
 
 
 @pytest.mark.parametrize("pg_session", [False, True])
@@ -94,12 +134,19 @@ def test_collector_session_delete_denies_and_erases(
     assert media.response(r, method="HEAD").status_code == 200
     response = auth_client.delete(f"/tracer/trace-session/{r.session_id}/")
     assert response.status_code == 204
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "not_found"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "not_found"
+    )
     assert media.response(r, HTTP_RANGE="bytes=0-3").status_code == 404
     assert media.response(r, method="HEAD").status_code == 404
     r.row.refresh_from_db()
     assert r.row.deleted_at is not None
-    assert AttachmentOutbox.objects.filter(upload=r.upload, event="erase", processed_at=None).exists()
+    assert AttachmentOutbox.objects.filter(
+        upload=r.upload, event="erase", processed_at=None
+    ).exists()
     # Denial precedes physical erasure, not the other way around.
     assert r.objects.objects
     assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
@@ -107,15 +154,26 @@ def test_collector_session_delete_denies_and_erases(
     assert not Trace._base_manager.filter(id=r.row.trace_id).exists()
 
 
-def test_cleanup_outage_cannot_reauthorize_and_sweep_retries(collector_recording, auth_client):
+def test_cleanup_outage_cannot_reauthorize_and_sweep_retries(
+    collector_recording, auth_client
+):
     r = collector_recording
     r.reader.list_by_ids.side_effect = RuntimeError("CH read unavailable")
     r.writer.insert.side_effect = RuntimeError("CH write unavailable")
-    assert auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    assert (
+        auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    )
     r.row.refresh_from_db()
-    assert r.row.deleted_at is None  # Deliberate failed cleanup, not evidence of erasure.
+    assert (
+        r.row.deleted_at is None
+    )  # Deliberate failed cleanup, not evidence of erasure.
     assert r.objects.objects
-    assert playback.resolve(r.viewer, r.authority, r.items)[0]["status"] == "not_found"
+    assert (
+        playback.resolve(
+            r.viewer, r.authority, r.items, media_session_id=str(r.session.id)
+        )[0]["status"]
+        == "not_found"
+    )
     assert media.response(r, HTTP_RANGE="bytes=0-3").status_code == 404
     assert media.response(r, method="HEAD").status_code == 404
     r.reader.list_by_ids.side_effect = None
@@ -136,14 +194,18 @@ def test_foreign_project_marker_does_not_deny_or_erase(collector_recording):
     assert r.row.deleted_at is None
 
 
-def test_session_membership_is_exact_and_other_call_survives(collector_recording, auth_client):
+def test_session_membership_is_exact_and_other_call_survives(
+    collector_recording, auth_client
+):
     r = collector_recording
     # A live, different session, even for the same project's parent, is not the
     # deleted session. Both the read fence and erase selection must honor it.
     other_session = uuid.uuid4()
     r.span.trace_session_id = other_session
     r.reader.list_by_ids.return_value[0]["trace_session_id"] = str(other_session)
-    assert auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    assert (
+        auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    )
     assert media.response(r, method="HEAD").status_code == 200
     assert sweep_deleted_sessions(project_id=r.scope.project_id) == 0
     r.row.refresh_from_db()
@@ -164,12 +226,18 @@ def test_inaccessible_session_delete_does_not_create_marker(
             else r.scope.organization
         )
         workspace = Workspace.objects.create(
-            name="Other session workspace", organization=org,
-            is_default=False, is_active=True, created_by=user,
+            name="Other session workspace",
+            organization=org,
+            is_default=False,
+            is_active=True,
+            created_by=user,
         )
         project = Project.objects.create(
-            name="Other SDK project", organization=org, workspace=workspace,
-            model_type=r.scope.project.model_type, trace_type="observe",
+            name="Other SDK project",
+            organization=org,
+            workspace=workspace,
+            model_type=r.scope.project.model_type,
+            trace_type="observe",
         )
         project_id = project.id
     # Keep the real tenant gate: even an existing foreign project must be 404.
@@ -177,8 +245,12 @@ def test_inaccessible_session_delete_does_not_create_marker(
         "tracer.services.clickhouse.v2.trace_session_dict_reader.resolve_session_fields",
         lambda ids: {str(r.session_id): {"project_id": str(project_id)}},
     )
-    assert auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 404
-    assert not TraceSessionOverlay._base_manager.filter(trace_session_id=r.session_id).exists()
+    assert (
+        auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 404
+    )
+    assert not TraceSessionOverlay._base_manager.filter(
+        trace_session_id=r.session_id
+    ).exists()
     r.writer.insert.assert_not_called()
     r.reader.list_by_ids.assert_not_called()
     assert not AttachmentOutbox.objects.filter(event="erase").exists()
@@ -194,7 +266,8 @@ def test_deleted_survivor_denies_and_erases_new_session_id(collector_recording):
         project_id=r.scope.project_id, trace_session_id=survivor, deleted=True
     )
     r.reader.remap_groups.return_value = {
-        str(r.session_id): str(survivor), str(survivor): str(survivor)
+        str(r.session_id): str(survivor),
+        str(survivor): str(survivor),
     }
     assert media.response(r, method="HEAD").status_code == 404
     assert sweep_deleted_sessions(project_id=r.scope.project_id) == 1
@@ -234,10 +307,14 @@ def test_orphan_scan_checks_session_marker_before_advancing_shared_cursor(
     assert not r.objects.objects
 
 
-def test_cleanup_checks_trace_identity_not_only_span_id(collector_recording, auth_client):
+def test_cleanup_checks_trace_identity_not_only_span_id(
+    collector_recording, auth_client
+):
     r = collector_recording
     r.reader.list_by_ids.return_value[0]["trace_id"] = str(uuid.uuid4())
-    assert auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    assert (
+        auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 204
+    )
     r.row.refresh_from_db()
     assert r.row.deleted_at is None
     assert not AttachmentOutbox.objects.filter(event="erase").exists()
