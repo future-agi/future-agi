@@ -19057,7 +19057,10 @@ export const getApiHealthClickhouseListUrl = () => {
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
