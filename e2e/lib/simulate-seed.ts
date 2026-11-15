@@ -218,6 +218,10 @@ export interface HarnessEnvironmentSeed {
   scenarioKeys: string[];
   refundKeys: string[];
   lookupKeys: string[];
+  /** With `trial`: the finished run and its one trial. */
+  runTestId?: string;
+  testExecutionId?: string;
+  callExecutionId?: string;
 }
 
 /**
@@ -239,6 +243,10 @@ export function seedHarnessEnvironment(opts: {
   certified?: boolean;
   productionOnly?: 'lookup_order' | 'issue_refund';
   failedCheck?: 'lookup_order' | 'issue_refund';
+  /** The refunds include a world actor with no channel (Dana Brooks). */
+  actors?: boolean;
+  /** One finished trial whose World changes hold a committed write and a read. */
+  trial?: boolean;
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -255,6 +263,8 @@ export function seedHarnessEnvironment(opts: {
         certified: opts.certified ?? true,
         production_only: opts.productionOnly ?? null,
         failed_check: opts.failedCheck ?? null,
+        actors: opts.actors ?? false,
+        trial: opts.trial ?? false,
       }),
     },
   ) as HarnessEnvironmentSeed;
