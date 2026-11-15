@@ -254,7 +254,7 @@ it('reopens verification after a reload without inventing the previous productio
   recovery = { cohort: [], releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText('Production is v1 · 0 of 0 consumers confirmed')).toBeVisible();
-  expect(screen.getByText('Replace the application credential')).toBeVisible();
+  expect(screen.getByText('Replace the application key')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Choose another recovery release' }));
   expect(screen.getByRole('button', { name: 'Choose v3' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Choose v1' })).toBeNull();
@@ -513,7 +513,7 @@ it('keeps the reviewer select full width before and after the request is prepare
   expect(picker()).toHaveClass('MuiFormControl-fullWidth');
 });
 
-it('lists changed files first, shows six rows and keeps the rest behind "Show N more files" without an inner scroll', () => {
+it('shows every file for review without an extra gesture, with optional collapse and no inner scroll', () => {
   recovery = { cohort: [], releaseRevision: 7, canPromote: true, candidates: [rollbackCandidate] };
   const unchanged = Array.from({ length: 8 }, (_, index) => ({ path: `skills/a-${index}/SKILL.md`, status: 'unchanged', sizeBytes: 10, sha256: `u${index}` }));
   closureData = {
@@ -523,6 +523,9 @@ it('lists changed files first, shows six rows and keeps the rest behind "Show N 
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
   const files = screen.getByRole('table', { name: 'Recovery closure files' });
+  expect(within(files).getAllByRole('row')).toHaveLength(10);
+  expect(within(files).getByRole('cell', { name: 'skills/a-7/SKILL.md', exact: true })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Show fewer files' }));
   expect(within(files).getAllByRole('row')).toHaveLength(7);
   // The changed file is never hidden under the fold.
   expect(within(files).getByRole('cell', { name: 'skills/refund-policy/SKILL.md', exact: true })).toBeVisible();
@@ -553,7 +556,9 @@ it('never collapses a changed file, even when more than six files differ', () =>
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
   const files = screen.getByRole('table', { name: 'Recovery closure files' });
-  // 8 changed rows plus the header; the three unchanged files wait behind the button.
+  expect(within(files).getAllByRole('row')).toHaveLength(12);
+  fireEvent.click(screen.getByRole('button', { name: 'Show fewer files' }));
+  // 8 changed rows plus the header; only unchanged files may be collapsed.
   expect(within(files).getAllByRole('row')).toHaveLength(9);
   changed.forEach((row) => expect(within(files).getByRole('cell', { name: row.path, exact: true })).toBeVisible());
   expect(within(files).queryByRole('cell', { name: 'skills/s-0/SKILL.md', exact: true })).toBeNull();

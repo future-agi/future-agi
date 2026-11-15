@@ -269,11 +269,12 @@ const changeStatus = { added: "current_only", changed: "current_only", removed: 
 
 const linkSentence = (links) => links.map((link) => (link.from == null ? `${link.name} v${link.to} added` : link.to == null ? `${link.name} v${link.from} removed` : `${link.name} v${link.from} → v${link.to}`)).join(', ');
 
-// The first rows stay in view; the rest sit behind one disclosure so the table never scrolls inside the page.
+// Full review needs every file: start expanded without an extra gesture or inner scroll.
+// People may collapse unchanged files after reading; changed files always remain visible.
 const CLOSURE_ROWS_SHOWN = 6;
 
 function ClosureReview({ candidate, production, closure }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
   if (closure.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />;
   if (closure.error || !closure.data) {
     return (
@@ -545,7 +546,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
   });
   return (
     <Stack spacing={3}>
-        <Section title="Replace the application credential"><Stack spacing={1.5}>
+        <Section title="Replace the application key"><Stack spacing={1.5}>
         <Typography variant="s3">
           Create a new access key for apps using production, limited to v{candidate.number}.
           Expired or revoked keys stay invalid. This key cannot resume threads opened with an older key.
