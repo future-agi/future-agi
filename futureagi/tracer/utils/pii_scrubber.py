@@ -6,7 +6,8 @@ Low-level helpers preserve their historical fail-open behavior for explicit
 callers.  Batch ingestion never stores a raw value of a project that enables PII
 redaction: a value that can never be scanned (too long, undecodable) is stored
 as ``UNSCANNABLE_VALUE``, and when the engines are unavailable or fail for any
-other reason, the batch is rejected before anything is stored, to be retried.
+other reason, the batch is rejected before anything is stored. Trace ingestion
+then retries it a bounded number of times.
 """
 
 import json
@@ -192,7 +193,7 @@ def _is_content_key(key: str) -> bool:
 
 
 class PIIScrubError(RuntimeError):
-    """A value of a PII-enabled project could not be scrubbed. Never carries the value."""
+    """A batch of a PII-enabled project could not be scrubbed. Never carries a value."""
 
 
 def _unscannable_reason(exc: BaseException) -> str | None:
@@ -304,9 +305,9 @@ def scrub_pii_in_span_batch(
 
     Only scrubs spans whose project has PII redaction enabled, and never keeps
     one of their raw values. A value that can never be scanned is replaced with
-    ``UNSCANNABLE_VALUE`` and the batch goes on. Unavailable engines raise
-    ``RuntimeError``, and any other scrub failure raises ``PIIScrubError``, so
-    the caller stores nothing of the batch and can retry it.
+    ``UNSCANNABLE_VALUE`` and the batch goes on. Unavailable engines and any
+    other scrub failure raise ``PIIScrubError``, so the caller stores nothing of
+    the batch and can retry it.
     """
     pii_enabled = any(
         span_data.get("project_name")
@@ -314,7 +315,7 @@ def scrub_pii_in_span_batch(
         for span_data in otel_data_list
     )
     if pii_enabled and not _ensure_engines():
-        raise RuntimeError(
+        raise PIIScrubError(
             "PII redaction is enabled, but its engines are unavailable. "
             "Rebuild the backend image with EXTRAS=pii."
         )

@@ -1,5 +1,6 @@
 """Tests for tracer.utils.pii_scrubber."""
 
+import contextlib
 import json
 import traceback
 from unittest import mock
@@ -239,7 +240,7 @@ class TestIsContentKey:
 # ---------------------------------------------------------------------------
 class TestScrubPiiInSpanBatch:
     def test_enabled_project_fails_closed_when_engines_unavailable(self):
-        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+        from tracer.utils.pii_scrubber import PIIScrubError, scrub_pii_in_span_batch
 
         spans = [
             {
@@ -250,7 +251,8 @@ class TestScrubPiiInSpanBatch:
         with mock.patch(
             "tracer.utils.pii_scrubber._ensure_engines", return_value=False
         ):
-            with pytest.raises(RuntimeError, match="EXTRAS=pii"):
+            # A PIIScrubError, so trace ingestion retries the batch.
+            with pytest.raises(PIIScrubError, match="EXTRAS=pii"):
                 scrub_pii_in_span_batch(spans, {"proj": True})
 
         assert spans[0]["attributes"]["fi.input.value"] == "Email: a@b.com"
@@ -464,3 +466,98 @@ class TestScrubPiiInSpanBatch:
         scrub_pii_in_span_batch(spans, {"proj": True})
         assert spans[0]["attributes"]["fi.span.kind"] == "LLM"
         assert "<EMAIL_ADDRESS>" in spans[0]["attributes"]["fi.input.value"]
+
+
+# ---------------------------------------------------------------------------
+# bulk_create_observation_span_task — a batch whose scrub failed
+# ---------------------------------------------------------------------------
+class TestUnscrubbedBatchRetry:
+    """The task runs once (max_retries=0) and deletes its payload on read, so it
+    stores a rejected batch again and retries it, a bounded number of times."""
+
+    RAW = "Email: a@b.com"
+
+    def _run(self, *, attempt=0, store=None, enqueue=None):
+        from tracer.utils import trace_ingestion
+        from tracer.utils.pii_scrubber import PIIScrubError
+
+        spans = [{"project_name": "proj", "attributes": {"fi.input.value": self.RAW}}]
+        task = trace_ingestion.bulk_create_observation_span_task
+        storage = trace_ingestion.payload_storage
+        with (
+            mock.patch("ee.usage.deployment.DeploymentMode.is_oss", return_value=True),
+            # The scrub runs before the first write; no database is needed.
+            mock.patch.object(
+                trace_ingestion.transaction, "atomic", contextlib.nullcontext
+            ),
+            mock.patch.object(storage, "retrieve", return_value=self.RAW.encode()),
+            mock.patch.object(
+                storage, "store", side_effect=store, return_value="payload:retry"
+            ) as stored,
+            mock.patch.object(trace_ingestion, "deserialize_trace_payload"),
+            mock.patch.object(
+                trace_ingestion, "_parse_otel_request", return_value=spans
+            ),
+            mock.patch.object(trace_ingestion, "normalize_span_attributes"),
+            mock.patch.object(
+                trace_ingestion,
+                "get_pii_settings_for_projects",
+                return_value={"proj": True},
+            ),
+            mock.patch.object(
+                trace_ingestion,
+                "scrub_pii_in_span_batch",
+                side_effect=PIIScrubError("PII redaction failed (MemoryError)."),
+            ),
+            mock.patch.object(
+                trace_ingestion, "bulk_convert_otel_spans_to_observation_spans"
+            ) as converted,
+            mock.patch.object(task, "apply_async", side_effect=enqueue) as enqueued,
+            mock.patch.object(trace_ingestion, "logger") as log,
+        ):
+            task(
+                "payload:in", "org", "user", "ws", "protobuf", pii_scrub_attempt=attempt
+            )
+
+        converted.assert_not_called()
+        assert self.RAW not in str(log.mock_calls)
+        log.exception.assert_not_called()
+        log.error.assert_not_called()
+        return stored, enqueued, log
+
+    def test_a_rejected_batch_is_stored_again_and_retried_later(self):
+        from tracer.utils.trace_ingestion import PII_SCRUB_RETRY_DELAYS
+
+        stored, enqueued, log = self._run(attempt=1)
+
+        stored.assert_called_once_with(self.RAW.encode())
+        enqueued.assert_called_once_with(
+            args=["payload:retry", "org", "user", "ws", "protobuf"],
+            kwargs={"pii_scrub_attempt": 2},
+            task_id="payload:in-pii-retry",
+            start_delay=PII_SCRUB_RETRY_DELAYS[1],
+        )
+        assert log.warning.call_args.args == ("pii_scrub_batch_retried",)
+
+    def test_the_last_retry_drops_the_batch_and_says_so(self):
+        from tracer.utils.trace_ingestion import PII_SCRUB_RETRY_DELAYS
+
+        stored, enqueued, log = self._run(attempt=len(PII_SCRUB_RETRY_DELAYS))
+
+        stored.assert_not_called()
+        enqueued.assert_not_called()
+        assert log.warning.call_args.args == ("pii_scrub_batch_dropped",)
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            {"store": RuntimeError("Redis is not available")},
+            {"enqueue": RuntimeError("Temporal is not reachable")},
+        ],
+        ids=["store", "enqueue"],
+    )
+    def test_a_retry_that_cannot_be_enqueued_drops_the_batch_and_says_so(self, failure):
+        _stored, _enqueued, log = self._run(**failure)
+
+        assert log.warning.call_args.args == ("pii_scrub_batch_dropped",)
+        assert "RuntimeError" in log.warning.call_args.kwargs["error"]
