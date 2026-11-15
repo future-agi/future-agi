@@ -56,7 +56,7 @@ const mutation = (r: Request) => (r.method() === 'POST' && new URL(r.url()).path
 
 /** Test-specific oracle/readbacks, not a new harness or alternative write path. */
 async function seedScenario(page: Page, actor: TestActor, probe: StateProbe, info: TestInfo, mode: 'large' | 'roots') {
-  const prefix = `e2e-obs${mode === 'roots' ? '66' : info.title.includes('064') ? '64' : '65'}-${info.workerIndex}-${Date.now().toString(36)}`;
+  const prefix = `e2e-obs${mode === 'roots' ? '68' : info.title.includes('065') ? '65' : '67'}-${info.workerIndex}-${Date.now().toString(36)}`;
   const start = BigInt(Date.now() - 30_000) * 1_000_000n;
   const req = await request.newContext();
   const seeds: Awaited<ReturnType<typeof sendTrace>>[] = [];
@@ -276,7 +276,7 @@ async function addInDrawer(page: Page, value: string) {
 }
 
 for (const kind of ['trace', 'span'] as const) {
-  const id = kind === 'trace' ? 'OBS-E2E-064' : 'OBS-E2E-065';
+  const id = kind === 'trace' ? 'OBS-E2E-065' : 'OBS-E2E-067';
   test(`${id}: oversized ${kind} tags survive grid, drawer and bulk additions`, {
     tag: ['@flow'],
     annotation: flowAnnotation({
@@ -431,10 +431,10 @@ async function holdResponses(page: Page, path: string, method: string) {
   };
 }
 
-test('OBS-E2E-066: rapid sibling-root edits share manual labels without sharing SDK tags', {
+test('OBS-E2E-068: rapid sibling-root edits share manual labels without sharing SDK tags', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-066', area: 'observe',
+    id: 'OBS-E2E-068', area: 'observe',
     userGoal: 'A developer switches rapidly between roots of one trace while labeling them and always sees each root’s own SDK tags with shared manual labels',
     steps: [
       'ingest two root trees under one trace ID with distinct root and child SDK tags',

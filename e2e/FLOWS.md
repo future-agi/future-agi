@@ -2768,7 +2768,7 @@
 - the example API encodes the exact project name into one quoted Python literal
 - the visible Users setup code equals the exact example API result
 
-### OBS-E2E-063 — ClickHouse-only trace and child labels survive reload and filter without losing SDK tags
+### OBS-E2E-064 — ClickHouse-only trace and child labels survive reload and filter without losing SDK tags
 
 **Goal:** A developer labels an ingested trace and child span, reloads, and finds only the intended trace through tag filtering without losing SDK labels
 
@@ -2792,6 +2792,81 @@
 - B: only the intended trace/physical-child assignments and revisions change; fresh list/detail reads retain SDK names and rich colors
 - C: native picker choices and browser/API filtered trace IDs equal the independently seeded oracle and exclude beta
 - D: source versions, tags, attributes and usage remain unchanged after adding and removing manual labels
+
+### OBS-E2E-065 — oversized trace tags survive grid, drawer and bulk additions
+
+**Goal:** A developer adds labels to heavily tagged traces individually and in bulk without losing existing manual or SDK labels or changing other entities
+
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:280`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two two-span traces with 80 distinct 200-character SDK tags per physical span and seed distinct rich manual labels through the supported API
+2. open the real bounded trace grid and add a label to alpha
+3. reload and verify exact list/detail and assignment readback
+4. open alpha’s root in the drawer and add another label
+5. reload to traverse row bounding again, select exactly alpha and beta, and use Actions > Add tags
+6. reload and reopen both targets to verify each retained its own original labels plus the intended additions
+
+**Backend state verified:**
+
+- A: exact physical source identities belong to the actor project and expose the independently seeded SDK sets
+- B: each browser save sends the intended physical target, current revision and complete manual replacement, including each bulk target’s distinct labels
+- C: fresh trace/span lists, replayed browser queries and detail reads return exact source/manual/effective tags, rich colors and revisions
+- D: only intended PostgreSQL assignments change and each bulk target preserves its own manual tags
+- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged
+
+### OBS-E2E-067 — oversized span tags survive grid, drawer and bulk additions
+
+**Goal:** A developer adds labels to heavily tagged child spans individually and in bulk without losing existing manual or SDK labels or changing other entities
+
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:280`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two two-span traces with 80 distinct 200-character SDK tags per physical span and seed distinct rich manual labels through the supported API
+2. open the real bounded span grid and add a label to alpha
+3. reload and verify exact list/detail and assignment readback
+4. open alpha’s child in the drawer and add another label
+5. reload to traverse row bounding again, select exactly alpha and beta, and use Actions > Add tags
+6. reload and reopen both targets to verify each retained its own original labels plus the intended additions
+
+**Backend state verified:**
+
+- A: exact physical source identities belong to the actor project and expose the independently seeded SDK sets
+- B: each browser save sends the intended physical target, current revision and complete manual replacement, including each bulk target’s distinct labels
+- C: fresh trace/span lists, replayed browser queries and detail reads return exact source/manual/effective tags, rich colors and revisions
+- D: only intended PostgreSQL assignments change and each bulk target preserves its own manual tags
+- E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged
+
+### OBS-E2E-068 — rapid sibling-root edits share manual labels without sharing SDK tags
+
+**Goal:** A developer switches rapidly between roots of one trace while labeling them and always sees each root’s own SDK tags with shared manual labels
+
+**Spec:** `flows/observe/tag-edit-state-regressions.spec.ts:434`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two root trees under one trace ID with distinct root and child SDK tags
+2. open root A and save a label while delaying its unaltered real detail-refetch response
+3. switch A to B to A to B after acknowledgment and verify each selected root’s exact SDK/manual set
+4. attempt to add B’s SDK name, then add a B-authored manual label without promoting an SDK name to manual
+5. release refetch and repeat with the real A save response held until after selection switches to B
+6. remove a shared manual label through the real drawer editor, release responses and reload
+
+**Backend state verified:**
+
+- A: exact physical source identities belong to the actor project and expose the independently seeded SDK sets
+- B: each browser save sends the selected physical root, current shared revision and manual tags only in both acknowledgment/refetch orders
+- C: fresh trace/span lists and detail reads preserve each root’s own SDK set with the exact shared manual tags, rich colors and revision
+- D: PostgreSQL stores only the shared trace assignment, never either root’s SDK name or a child assignment
+- E: ClickHouse source identities, versions, tags, attributes and nonzero usage are unchanged after addition and deletion
 
 ## prompts
 

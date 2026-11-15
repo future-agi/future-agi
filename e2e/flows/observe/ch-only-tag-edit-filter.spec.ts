@@ -38,10 +38,10 @@ const flatten = (entries: Entry[]): Span[] => entries.flatMap(e => [e.observatio
 const names = (tags: Tag[]) => tags.map(t => t.name).sort();
 const checksum = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-test('OBS-E2E-063: ClickHouse-only trace and child labels survive reload and filter without losing SDK tags', {
+test('OBS-E2E-064: ClickHouse-only trace and child labels survive reload and filter without losing SDK tags', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-063', area: 'observe',
+    id: 'OBS-E2E-064', area: 'observe',
     userGoal: 'A developer labels an ingested trace and child span, reloads, and finds only the intended trace through tag filtering without losing SDK labels',
     steps: [
       'ingest alpha and beta two-span traces with independently named SDK tags',
@@ -64,7 +64,7 @@ test('OBS-E2E-063: ClickHouse-only trace and child labels survive reload and fil
   page.setDefaultTimeout(UI_READY);
   const req = await request.newContext();
   try {
-    const prefix = `e2e-th7275-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const prefix = `e2e-obs64-${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const alpha = `${prefix}-alpha`, beta = `${prefix}-beta`;
     const childName = `${alpha}-child`;
     const sdkA = `${prefix}-sdk-alpha`, sdkAC = `${prefix}-sdk-alpha-child`;
