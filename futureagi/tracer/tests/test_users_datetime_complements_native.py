@@ -256,13 +256,8 @@ def test_invalid_exclusion_cannot_be_a_successful_unfiltered_route(
     leaves = [tag_leaf(), date_leaf("not_equals", "invalid-timestamp")]
     assert users_request(auth_client, users_store, leaves).status_code == 400
     graph = graph_request(auth_client, users_store, leaves)
-    # The unchanged graph action maps canonical invalid dates to a sanitized
-    # server_error, not the list's invalid-filter 400. The bounded repair must
-    # fail closed rather than publish an exact unfiltered result; changing the
-    # graph action's validation/status contract is separate work.
-    assert graph.status_code == 500
-    assert graph.data["code"] == "server_error"
-    assert not graph.data.get("result")
+    assert graph.status_code == 400
+    assert graph.data["detail"] == "User filter configuration is invalid"
 
 
 def test_complement_preserves_colliding_tenant_and_project_scope(

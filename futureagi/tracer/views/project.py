@@ -1171,6 +1171,15 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 project = self._get_project_in_scope(project_id)
             if not project:
                 return finish(self._gm.bad_request("Project not found."))
+            # Cache normalization also validates dates. Reject known invalid
+            # native Users windows here, before its ValueError reaches the
+            # generic server-error boundary; unexpected failures stay errors.
+            try:
+                UserListQueryBuilderV2.parse_time_range(filters)
+            except UnsupportedFilterShapeError:
+                return finish(
+                    self._gm.bad_request("User filter configuration is invalid")
+                )
             workspace_id = getattr(getattr(request, "workspace", None), "id", None)
 
             if metric_type == "EVAL":
