@@ -641,11 +641,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         api_key = validated_data.get("api_key")
         if api_key is not None and not is_masked(api_key):
             instance.api_key = api_key
-        elif (
-            creds_input.provider_was_provided
-            and provider_family(creds_input.provider)
-            != provider_family(creds_input.previous_provider)
-        ):
+        elif creds_input.provider_was_provided and provider_family(
+            creds_input.provider
+        ) != provider_family(creds_input.previous_provider):
             instance.api_key = ""
         instance.model = validated_data.get("model", instance.model)
         instance.model_details = validated_data.get(

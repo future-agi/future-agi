@@ -821,11 +821,9 @@ class EditAgentDefinitionView(APIView):
                     source_provider = (version.configuration_snapshot or {}).get(
                         "provider"
                     ) or previous_provider
-                provider_changed = (
-                    "provider" in validated
-                    and provider_family(agent.provider)
-                    != provider_family(source_provider)
-                )
+                provider_changed = "provider" in validated and provider_family(
+                    agent.provider
+                ) != provider_family(source_provider)
                 if "provider" in validated:
                     validate_provider_change(
                         source_provider=source_provider,

@@ -168,10 +168,9 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
     # Bland and Vapi share the row's VAPI encoding. Only an explicit authored
     # provider change (not that encoding, nor a mutable definition alone) can
     # change the selected version's provider authority.
-    authored_provider_changed = (
-        data.provider_was_provided
-        and provider_family(provider) != provider_family(previous_provider)
-    )
+    authored_provider_changed = data.provider_was_provided and provider_family(
+        provider
+    ) != provider_family(previous_provider)
     if authored_provider_changed:
         validate_provider_change(
             source_provider=previous_provider, provider=provider, api_key=data.api_key

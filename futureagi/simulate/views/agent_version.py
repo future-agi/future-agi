@@ -275,7 +275,8 @@ class CreateAgentVersionView(APIView):
                             livekit_credentials.agent_version_id is None
                             or provider_family(
                                 provider_for_version(livekit_credentials.agent_version)
-                            ) == "livekit"
+                            )
+                            == "livekit"
                         )
                     ):
                         for name, column in livekit_fields.items():
@@ -471,10 +472,15 @@ class CreateAgentVersionView(APIView):
                 # Do not pre-create the row the blank-source guard would skip.
                 # Selected keyed rows, provider transitions and raw-empty Vapi
                 # markers must prevent adoption of unrelated legacy credentials.
-                if preserve_selected_row or preserve_empty_vapi_row or (
-                    provider_changed
-                    and not (
-                        initial_source_configuration and skip_blank_source_credentials
+                if (
+                    preserve_selected_row
+                    or preserve_empty_vapi_row
+                    or (
+                        provider_changed
+                        and not (
+                            initial_source_configuration
+                            and skip_blank_source_credentials
+                        )
                     )
                 ):
                     if requested_provider in ("livekit", "livekit_bridge"):

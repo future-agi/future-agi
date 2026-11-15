@@ -74,9 +74,7 @@ def test_livekit_alias_saves_preserve_selected_credentials(
     credentials.config_json = {"synthetic": {"preserve": True}}
     credentials.max_concurrency = 3
     credentials.save()
-    original.configuration_snapshot = original.create_snapshot(
-        commit_message="Fixture"
-    )
+    original.configuration_snapshot = original.create_snapshot(commit_message="Fixture")
     if not snapshot_provider:
         original.configuration_snapshot.pop("provider")
     original.save(update_fields=["configuration_snapshot"])
@@ -176,9 +174,7 @@ def test_livekit_create_replaces_unreadable_selected_credentials(
     credentials.config_json = {"synthetic": {"preserve": True}}
     credentials.max_concurrency = 3
     credentials.save()
-    original.configuration_snapshot = original.create_snapshot(
-        commit_message="Fixture"
-    )
+    original.configuration_snapshot = original.create_snapshot(commit_message="Fixture")
     original.save(update_fields=["configuration_snapshot"])
     original_snapshot = original.configuration_snapshot.copy()
     source_row = ProviderCredentials.objects.filter(pk=credentials.pk).values().get()
@@ -206,9 +202,7 @@ def test_livekit_create_replaces_unreadable_selected_credentials(
     assert response_snapshot["livekit_api_secret"] == "********"
     assert response_snapshot["livekit_url"] == "wss://synthetic.invalid"
     assert response_snapshot["livekit_agent_name"] == "Synthetic LiveKit agent"
-    assert response_snapshot["livekit_config_json"] == {
-        "synthetic": {"preserve": True}
-    }
+    assert response_snapshot["livekit_config_json"] == {"synthetic": {"preserve": True}}
     assert response_snapshot["livekit_max_concurrency"] == 3
     for secret in (new_key, new_secret):
         assert secret not in str(saved.data)
@@ -305,9 +299,7 @@ def test_switch_then_default_source_omitted_create_keeps_new_provider_pair(
     agent, original, _ = seed_version(provider, "assistant-A")
     agent.contact_number = "+16505550100"
     agent.save(update_fields=["contact_number"])
-    original.configuration_snapshot = original.create_snapshot(
-        commit_message="Fixture"
-    )
+    original.configuration_snapshot = original.create_snapshot(commit_message="Fixture")
     original.save(update_fields=["configuration_snapshot"])
     legacy = ProviderCredentials.objects.create(
         agent_definition=agent,
@@ -326,9 +318,9 @@ def test_switch_then_default_source_omitted_create_keeps_new_provider_pair(
         if switch_route == "create"
         else update_agent(client, agent, switch_payload, switch_route)
     )
-    assert switched.status_code == (
-        201 if switch_route == "create" else 200
-    ), switched.data
+    assert switched.status_code == (201 if switch_route == "create" else 200), (
+        switched.data
+    )
     clear_workspace_context()
     agent.refresh_from_db()
     switched_version = agent.active_version
@@ -372,16 +364,18 @@ def test_switch_then_default_source_omitted_create_keeps_new_provider_pair(
         switched_version.credentials.api_key,
     ) == selected_before
     assert legacy.agent_definition_id == agent.pk
-    assert (legacy.api_key, legacy.assistant_id, legacy.agent_version_id) == legacy_state
+    assert (
+        legacy.api_key,
+        legacy.assistant_id,
+        legacy.agent_version_id,
+    ) == legacy_state
     for representation in (switched.data, saved.data):
         for secret in ("synthetic-key-A", "synthetic-key-C"):
             assert secret not in str(representation)
 
 
 @pytest.mark.parametrize("source", ["selected", "legacy", "definition", "raw-empty"])
-def test_default_source_omitted_create_keeps_vapi_positive_sources(
-    vapi_setup, source
-):
+def test_default_source_omitted_create_keeps_vapi_positive_sources(vapi_setup, source):
     provider, client = vapi_setup
     provider.enabled = False
     provider.save(update_fields=["enabled"])
@@ -452,9 +446,7 @@ def test_default_source_omitted_create_keeps_unusable_vapi_authority_closed(
     provider.enabled = False
     provider.save(update_fields=["enabled"])
     agent, _, credentials = seed_version(provider, "assistant-A")
-    credentials.api_key = "enc::" + CredentialManager.encrypt({"v": ""}).decode(
-        "utf-8"
-    )
+    credentials.api_key = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
     if source == "wrong-provider":
         credentials.provider_type = "retell"
     credentials.save()
@@ -656,9 +648,9 @@ def test_legacy_null_sources_do_not_expand_tenant_visibility(
                 "description": "Must not be written",
             },
         )
-    assert saved.status_code == (
-        400 if scope == "nondefault-null-version" else 404
-    ), saved.data
+    assert saved.status_code == (400 if scope == "nondefault-null-version" else 404), (
+        saved.data
+    )
     upstream.assert_not_called()
     clear_workspace_context()
     assert _configuration_state(agent) == before
