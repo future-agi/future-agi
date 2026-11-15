@@ -771,7 +771,9 @@ def test_empty_vapi_row_form_roundtrip_preserves_effective_pair(
 
     # Only external HTTP and collector delivery are replaced: real auth,
     # preflight services, version views, scheduled poll and artifact parser run.
-    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    monkeypatch.setattr(
+        "tracer.services.observability_providers.requests.get", upstream
+    )
     monkeypatch.setattr(op, "_export_provider_call_to_collector", export)
     selected = original
     for save_number in (1, 2):
