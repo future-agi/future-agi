@@ -15,7 +15,12 @@ from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Dataset
-from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
+from simulate.models import (
+    EvidenceImport,
+    EvidenceImportCase,
+    HarnessSuiteMember,
+    HostedHarnessJob,
+)
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.selectors.dataset_evidence import MEDIA_TYPES, dataset_columns
 from simulate.selectors.evidence_import import (
@@ -33,7 +38,7 @@ from simulate.selectors.evidence_import import (
 from simulate.services.evidence_drafts import CATALOGUE
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import suite_documents
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import DELETE_CANCEL_REASON, HostedHarnessError
 from simulate.utils.transcript_parse import (
     Format,
     ParsedTranscript,
@@ -58,7 +63,7 @@ def create_evidence_import(
     show it without reading Observe again."""
     evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
-        _lock(environment.id)
+        environment = _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -96,7 +101,7 @@ def create_dataset_import(
     _check_columns(dataset, columns)
     evidence = import_rows(dataset, columns, row_ids)
     with transaction.atomic():
-        _lock(environment.id)
+        environment = _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -178,7 +183,7 @@ def create_transcript_import(
         [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
     )
     with transaction.atomic():
-        _lock(environment.id)
+        environment = _lock(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -241,13 +246,22 @@ def _case(
     )
 
 
-def _lock(environment_id) -> None:
-    """Holds the environment's row until the transaction commits, so two imports
-    of one source made at once cannot both propose it, and a discard waits for
-    either."""
-    HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",)).filter(
-        id=environment_id
-    ).first()
+def _lock(environment_id) -> HostedHarnessJob:
+    """The environment, read again and held until the transaction commits, so two
+    imports of one source made at once cannot both propose it, and a discard waits
+    for either. Refused once it is deleted or being deleted: what the request read
+    may predate that, and one deleted while it runs only stops later, with nothing
+    to delete what an import stores meanwhile."""
+    locked = (
+        HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",))
+        .filter(id=environment_id)
+        .first()
+    )
+    if locked is None or locked.cancel_reason == DELETE_CANCEL_REASON:
+        raise HostedHarnessError(
+            "environment_not_found", "Environment not found", status_code=404
+        )
+    return locked
 
 
 # Cases one already in the environment repeats: still to draft or add, or added.
@@ -273,6 +287,27 @@ def _stale_drafts(environment: HostedHarnessJob) -> Q:
     return Q(status=EvidenceImportCase.Status.DRAFTED) & ~Q(
         environment_hash=current.hash
     )
+
+
+def _gone_from_suite(environment: HostedHarnessJob) -> Q:
+    """Added cases whose scenario the suite no longer holds: the unsaved change they
+    were added in was discarded, or the scenario was removed since. Importing the
+    source again is how such a case comes back, so it is not one a new import
+    repeats."""
+    draft = drafts.fresh_draft(environment, "suite")
+    if draft is not None:
+        held = {
+            str(one["scenario_key"])
+            for one in (draft.documents or {}).get("scenarios") or []
+            if isinstance(one, dict) and one.get("scenario_key")
+        }
+    else:
+        held = set(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_key", flat=True)
+        )
+    return Q(status=EvidenceImportCase.Status.ADDED) & ~Q(scenario_key__in=held)
 
 
 def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
@@ -305,7 +340,8 @@ def _held(
     evidence_import: EvidenceImport, cases: list[EvidenceImportCase], statuses
 ) -> _Held:
     """The environment's cases in ``statuses`` (in imports still kept, no repeat
-    themselves, and no stale draft) that hold the source or the conversation of
+    themselves, no stale draft, and no added case the suite no longer holds) that
+    hold the source or the conversation of
     ``cases``."""
     held = _Held(by_source={}, by_digest={})
     digests = {case.content_digest for case in cases if case.content_digest}
@@ -330,6 +366,7 @@ def _held(
             duplicate_of__isnull=True,
         )
         .exclude(_stale_drafts(evidence_import.environment))
+        .exclude(_gone_from_suite(evidence_import.environment))
         .select_related("evidence_import")
         .order_by("evidence_import__created_at", "position")
     )

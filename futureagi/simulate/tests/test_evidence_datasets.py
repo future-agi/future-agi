@@ -455,6 +455,33 @@ class TestBounded:
         assert case["expected_outcome"]["text"] == "y" * TURN_CHARS
         assert case["expected_outcome"]["status"] == "truncated"
 
+    def test_a_value_the_cut_would_split_is_left_out_whole(
+        self, client, environment, dataset, rows, columns
+    ):
+        """A cell longer than a turn is cut before a value redaction replaces, never
+        through it: a part of an address is too short to recognise, so it would
+        reach the builder as it is."""
+        filler = "a " * ((TURN_CHARS - 8) // 2)
+        long = f"{filler}{EMAIL} wrote about the second refund."
+        for name in ("intent", "expected"):
+            Cell.objects.filter(row=rows[0], column=columns[name]).update(value=long)
+
+        made = _create(
+            client,
+            environment,
+            dataset,
+            rows[:1],
+            columns,
+            mapping=_mapping(columns, labels=[str(columns["intent"].id)]),
+        ).json()
+
+        [case] = made["cases"]
+        [label] = case["labels"]["labels"]
+        assert label["value"] == case["expected_outcome"]["text"] == filler.rstrip()
+        stored = EvidenceImport.no_workspace_objects.get(id=made["id"])
+        text = evidence_document(stored, [case["id"]])
+        assert "jane.doe" not in text and "jane" not in text
+
 
 class TestRefused:
     def test_a_dataset_of_another_organization_is_not_found(

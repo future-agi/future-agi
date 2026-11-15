@@ -1906,10 +1906,17 @@ def delete_environment(job: HostedHarnessJob) -> None:
 
         close_environment_nudges(locked, code="environment_deleted")
         # Its evidence imports go with it, and a transcript's stored text with them.
+        # One still drafting keeps its drafting chat until that is forgotten too.
+        from simulate.services.evidence_drafts import forget_later
+
         for evidence_import in EvidenceImport.no_workspace_objects.filter(
             environment=locked, deleted=False
         ):
             evidence_import.delete()
+            if evidence_import.drafting_job_id is not None:
+                transaction.on_commit(
+                    lambda gone=str(evidence_import.id): forget_later(gone)
+                )
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)
