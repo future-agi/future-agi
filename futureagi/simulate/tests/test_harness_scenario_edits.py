@@ -186,8 +186,20 @@ def _a_sub_goal(environment, name):
 
 def test_control_edit_needs_reproof(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ed-control")
-    # A built case names the sub-goals it checks; a control may only fail one of those.
-    _amend_with(auth_client, environment, NAMES[0], "sub_goals", ["refunded"])
+    # A built case names the sub-goals it checks, as the builder writes them; a control may only fail one of those.
+    from simulate.services.harness_versioning import drafts
+
+    suite = drafts.suite_documents(drafts.edit_sides(environment)["suite"])
+    drafts.write_suite_edit(
+        environment,
+        [
+            {**one, "sub_goals": [{"name": "refunded"}]}
+            if one.get("scenario_key") == _key(NAMES[0])
+            else one
+            for one in suite
+        ],
+        user=user,
+    )
     control = {
         "name": "refunds_twice",
         "why": "refunds the order twice",
