@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -1915,9 +1916,7 @@ def delete_environment(job: HostedHarnessJob) -> None:
         ):
             evidence_import.delete()
             if evidence_import.drafting_job_id is not None:
-                transaction.on_commit(
-                    lambda gone=str(evidence_import.id): forget_later(gone)
-                )
+                transaction.on_commit(partial(forget_later, str(evidence_import.id)))
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)

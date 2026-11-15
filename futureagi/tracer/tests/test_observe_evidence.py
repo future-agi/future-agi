@@ -21,6 +21,7 @@ from tracer.models.trace import Trace
 from tracer.selectors.observe_evidence import (
     MAX_TOOL_CALLS,
     MAX_TURNS,
+    TOOL_ERROR_CHARS,
     TOOL_FIELD_CHARS,
     TURN_CHARS,
     observe_evidence,
@@ -325,6 +326,26 @@ def test_a_cut_never_keeps_part_of_a_personal_value(project):
     # A tool field is read past its cut, so a value the cut splits is seen whole.
     read = reader.activity_by_trace_ids.call_args.kwargs
     assert read["field_chars"] == TOOL_FIELD_CHARS + STRADDLE_CHARS
+
+
+@pytest.mark.django_db
+def test_a_tool_error_is_cut_clear_of_a_personal_value(project):
+    session, trace = _id(), _id()
+    email = "jane.doe@example.com"
+    # The error's cut falls inside the address, as a provider error that echoes
+    # the user's input would put it.
+    words = ("word " * 100)[: TOOL_ERROR_CHARS - 5]
+    roots = [_root(trace, session=session, input="q", output="a")]
+    activity = [
+        _step(trace, "search", status="ERROR", message=words + " " + email + " tail")
+    ]
+
+    found, reader = _read(project, "session", [session], roots, activity)
+
+    assert found[session].tool_calls[0].error == words.rstrip()
+    # The read takes the error past its cut, so cut_clear sees the address whole.
+    read = reader.activity_by_trace_ids.call_args.kwargs
+    assert read["error_chars"] == TOOL_ERROR_CHARS + STRADDLE_CHARS
 
 
 @pytest.mark.django_db
