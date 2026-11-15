@@ -271,11 +271,11 @@ describe('Skills workspace navigation', () => {
     mountNavigation();
     expect(screen.getByRole('tab', { name: 'Reviews' })).toBeVisible();
   });
-  it('shows the assistant as a 32px icon button with its shortcut in the tooltip', async () => {
+  it('shows the assistant as a medium (32px) icon button with its shortcut in the tooltip', async () => {
     const user = userEvent.setup();
     mountNavigation();
     const button = within(screen.getByRole('navigation', { name: 'Skills navigation' })).getByRole('button', { name: 'Ask Falcon AI' });
-    expect(button).toHaveStyle({ width: '32px', height: '32px' });
+    expect(button).toHaveClass('MuiIconButton-sizeMedium');
     await user.hover(button);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Falcon AI (⌘K)');
   });

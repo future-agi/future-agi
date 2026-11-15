@@ -1,6 +1,6 @@
 import { Suspense, useId, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Box, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tab } from '@mui/material';
+import { Box, GlobalStyles, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tab } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import CustomTooltip from 'src/components/tooltip';
 import { FalconIcon, useOpenFalconAI } from 'src/sections/falcon-ai/components/FalconAIFab';
@@ -18,13 +18,14 @@ import { scrollTabsProps, scrollTabsSx, useActiveTabInView } from './tabStrip';
 import { skillsRouteSx } from './routeGutter';
 import './skillIcons';
 
-// The assistant as a quiet 32px icon in the navigation row, at every width,
+// The assistant as a quiet 32px icon (medium: 20px icon + 6px padding) in the
+// navigation row, at every width,
 // instead of a button floating over content (UX iteration 4, SH1). Same icon
 // and action as the floating button elsewhere; Cmd+K still opens it.
 function AssistantButton() {
   const open = useOpenFalconAI();
   return <CustomTooltip title="Falcon AI (⌘K)" show placement="bottom" arrow>
-    <IconButton size="small" aria-label="Ask Falcon AI" onClick={open} sx={{ flexShrink: 0, width: 32, height: 32, color: 'text.secondary' }}><FalconIcon sx={{ fontSize: 20 }} /></IconButton>
+    <IconButton size="medium" aria-label="Ask Falcon AI" onClick={open} sx={{ flexShrink: 0, color: 'text.secondary' }}><FalconIcon sx={{ fontSize: 20 }} /></IconButton>
   </CustomTooltip>;
 }
 
@@ -38,6 +39,9 @@ function AssistantButton() {
 // - Multiline fields: the root kept MUI's 14px side padding and the textarea added
 //   the theme's 12px, so their text sat ~24px in while single-line text sat 12px.
 //   The root now carries the single-line padding and the textarea none.
+// Dialogs and temporary drawers render outside the frame (portals), so while a
+// Skills route is mounted the same rules also apply inside them.
+const OVERLAYS = '.MuiDialog-root, .MuiDrawer-modal';
 const INLINE_LINK = '& .MuiLink-root:not(.MuiLink-underlineNone):not(.MuiBreadcrumbs-root .MuiLink-root):not(.MuiTableRow-root .MuiLink-root):not(.MuiButtonBase-root .MuiLink-root)';
 const workspaceSx = (theme) => {
   const link = theme.palette.text.link ?? theme.palette.primary.main;
@@ -103,7 +107,7 @@ function SkillsNavigation() {
 
   // No floating assistant in Skills, so the page end needs no extra clearance at any width.
   // The workspace never grows wider than the content panel, so nothing in it can scroll the app frame sideways.
-  return <Stack key={access.identity} data-skills-workspace sx={[{ minWidth: 0, maxWidth: '100%', width: '100%', minHeight: 0, flex: 1, pb: 3 }, workspaceSx]}>
+  return <><GlobalStyles styles={(theme) => ({ [OVERLAYS]: workspaceSx(theme) })} /><Stack key={access.identity} data-skills-workspace sx={[{ minWidth: 0, maxWidth: '100%', width: '100%', minHeight: 0, flex: 1, pb: 3 }, workspaceSx]}>
     <Box component="nav" aria-label="Skills navigation" sx={{ px: { xs: 2, md: 3 }, pt: 1.5, minWidth: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
         <CustomTabs ref={tabsRef} value={tabValue} {...scrollTabsProps} aria-label="Skills views" sx={{ ...scrollTabsSx, flex: 1 }}>
@@ -136,7 +140,7 @@ function SkillsNavigation() {
     <Suspense fallback={<Box sx={skillsRouteSx}><ContentSkeleton variant="page" sx={{ overflow: 'hidden' }} /></Box>}>
       <Outlet />
     </Suspense>
-  </Stack>;
+  </Stack></>;
 }
 
 export default function SkillsWorkspaceLayout() {

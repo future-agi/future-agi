@@ -138,6 +138,7 @@ export default function FalconAIFab() {
           },
           transition:
             "box-shadow 0.2s ease, background-color 0.2s ease, transform 0.15s ease",
+          "@media (prefers-reduced-motion: reduce)": { transition: "none" },
         }}
       >
         <FalconIcon sx={{ fontSize: 20 }} />
