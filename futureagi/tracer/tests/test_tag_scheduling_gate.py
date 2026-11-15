@@ -310,11 +310,23 @@ def test_single_user_graph_preserves_tag_error_status(monkeypatch, failure_kind)
     )
 
 
+@pytest.fixture
+def isolated_worker_db_lifecycle(monkeypatch):
+    from tfc.temporal.drop_in import decorator
+
+    # This unit test owns payload/cache/HTTP behavior, not Django connections.
+    # Keep the real run_sync wrapper, but isolate both of its lifecycle calls
+    # from connections left open by earlier tests in a reused CI database.
+    close_connections = MagicMock()
+    monkeypatch.setattr(decorator, "close_old_connections", close_connections)
+    return close_connections
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("surface", ["agent", "users"])
 @pytest.mark.parametrize("failure_kind", ["graph", "overlay"])
 def test_worker_tag_failure_survives_cache_envelope_and_endpoint_poll(
-    monkeypatch, settings, surface, failure_kind
+    monkeypatch, settings, surface, failure_kind, isolated_worker_db_lifecycle
 ):
     from django.core.cache import cache
 
@@ -351,6 +363,7 @@ def test_worker_tag_failure_survives_cache_envelope_and_endpoint_poll(
             identity=identity,
             refresh_token=token,
         )
+    assert isolated_worker_db_lifecycle.call_count == 2  # entry and finally
     envelope = snapshots.read_or_schedule_exact_snapshot(
         namespace,
         identity,

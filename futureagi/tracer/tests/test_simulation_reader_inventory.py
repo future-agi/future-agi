@@ -1104,13 +1104,30 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.clickhouse.v2.effective_tags": {
         "live_tag_source_sql": filed(
             PROJECT_SET,
+            ROW_DRIVEN,
             CHILDREN_ATTRIBUTE_PICKERS,
             CHILDREN_TRACE_FILTERS,
             why=(
                 "latest live span identities with projected tag sources, bound to "
                 "the view/builder's authorized project set, a finite time window "
                 "and, for list classifiers, the candidate traces; singular tag "
-                "includes children, native tags selects the canonical root"
+                "includes children, native tags selects the canonical root. "
+                "Sampling supplies its snapshot-bound sampling_source for the "
+                "previewed or stored EvalTask's project: preview/creation resolves "
+                "the visible project manager and simulation creates no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "prepare_effective_tag_params": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "navigation target discovery through the span-list classifier's "
+                "execution hook: maps a finite candidate_span_ids set to trace ids "
+                "only within the EffectiveTagRelation's authorized project set "
+                "and bounded hour partitions, with candidate and deadline limits. "
+                "It conservatively discovers versions; the caller's exact target "
+                "classifier still validates liveness, event time and physical key"
             ),
         ),
         "canonical_root_sql": filed(

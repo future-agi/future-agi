@@ -72990,6 +72990,7 @@ export const TracerObservationSpanUpdateTagsResponse = zod.object({
     ),
     source_tag_names: zod.array(zod.string().min(1)),
     tag_revision: zod.number().min(1),
+    tag_assignment_exists: zod.boolean(),
   }),
 });
 
@@ -80808,6 +80809,7 @@ export const TracerTraceUpdateTagsResponse = zod.object({
     ),
     source_tag_names: zod.array(zod.string().min(1)),
     tag_revision: zod.number().min(1),
+    tag_assignment_exists: zod.boolean(),
   }),
 });
 

@@ -99771,6 +99771,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "manual_tags",
         "source_tag_names",
         "tag_revision",
+        "tag_assignment_exists",
       ],
       type: "object",
       properties: {
@@ -99802,6 +99803,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Tag revision",
           type: "integer",
           minimum: 1,
+        },
+        tag_assignment_exists: {
+          title: "Tag assignment exists",
+          type: "boolean",
         },
       },
     },

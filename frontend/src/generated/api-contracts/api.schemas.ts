@@ -32845,6 +32845,7 @@ export interface EntityTagsResultApi {
   source_tag_names: string[];
   /** @minimum 1 */
   tag_revision: number;
+  tag_assignment_exists: boolean;
 }
 
 export interface EntityTagsResponseApi {
