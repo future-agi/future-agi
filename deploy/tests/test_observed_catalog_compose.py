@@ -417,6 +417,10 @@ class ComposeContractTests(unittest.TestCase):
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
                 "peerdb-minio",
+                # Attachment playback (OBS-E2E-066): the S3 double and the
+                # https media origin are managed Distributed services too.
+                "attachments-s3",
+                "attachments-origin",
             ],
         )
         self.assertIn(
