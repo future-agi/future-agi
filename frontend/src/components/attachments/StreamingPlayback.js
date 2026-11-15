@@ -191,6 +191,15 @@ export default class StreamingPlayback {
     // Chromium can request a Range despite preload=none: withhold src until Play.
     if (this.started) this.loadSources();
   }
+  // A segment sequence reuses this transport (one element, one listener set):
+  // swap the grant source and the local clock bound together. Play intent is
+  // retained exactly as in a renewal.
+  replaceSegment(paths, duration, seconds) {
+    if (this.disposed || paths.length !== this.elements.length) return;
+    this.replaceSources(paths);
+    this.duration = duration;
+    this.setTime(seconds);
+  }
   loadSources() {
     if (!this.pendingSources) return;
     const paths = this.pendingSources;

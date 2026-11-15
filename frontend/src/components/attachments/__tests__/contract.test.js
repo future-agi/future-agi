@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   manifestSchema,
   occurrenceFromUri,
+  recordingPlan,
   recordingRequests,
   resolveResponseSchema,
 } from "../contract";
@@ -10,8 +11,10 @@ import {
   mixedManifest,
   occurrenceId,
   parent,
+  standaloneManifest,
   stereoManifest,
 } from "./fixtures";
+import { pipecatProjection, threeSegmentProjection } from "./pipecatRecording";
 import { validateContractedResponse } from "src/api/contracts/openapi-contract";
 
 describe("attachment read contract", () => {
@@ -27,9 +30,9 @@ describe("attachment read contract", () => {
     ].forEach((uri) => expect(occurrenceFromUri(uri)).toBeNull());
   });
   it("requests one playable mixed recording without inferring speakers", () => {
-    expect(recordingRequests(occurrenceId, parent, mixedManifest)).toEqual([
-      { occurrence_id: occurrenceId, parent, representation: "playable" },
-    ]);
+    expect(recordingRequests(occurrenceId, parent, standaloneManifest)).toEqual(
+      [{ occurrence_id: occurrenceId, parent, representation: "playable" }],
+    );
   });
   it("uses explicit channel mapping, not left equals customer", () => {
     expect(recordingRequests(occurrenceId, parent, stereoManifest)).toEqual([
@@ -99,5 +102,115 @@ describe("media-session exchange response contract", () => {
     expect(result.endpoint.template).toBe(
       "/tracer/v1/attachment-media-sessions",
     );
+  });
+});
+
+describe("unit: recording playback plan from the manifest (TH-2379)", () => {
+  const plan = ({ occurrence_id, parent: owner, manifest }) =>
+    recordingPlan(occurrence_id, owner, manifest);
+  it("plays the actual two-segment Pipecat call as a sequence on the timeline", () => {
+    const { mode, parts, requests } = plan(pipecatProjection);
+    const ids = pipecatProjection.manifest.segments.map(
+      (segment) => segment.occurrence_id,
+    );
+    expect(mode).toBe("sequence");
+    expect(
+      parts.map(({ kind, occurrence_id, start_ms, duration_ms }) => [
+        kind,
+        occurrence_id,
+        start_ms,
+        duration_ms,
+      ]),
+    ).toEqual([
+      ["segment", ids[0], 0, 30000],
+      ["segment", ids[1], 30000, 6467],
+    ]);
+    expect(requests).toEqual(
+      ids.map((occurrence_id) => ({
+        occurrence_id,
+        parent: pipecatProjection.parent,
+        representation: "playable",
+      })),
+    );
+    expect(
+      plan(threeSegmentProjection).parts.map((part) => part.start_ms),
+    ).toEqual([0, 30000, 60000]);
+  });
+  it("keeps a standalone file tiled on the timeline as ONE occurrence", () => {
+    expect(recordingPlan(occurrenceId, parent, standaloneManifest)).toEqual({
+      mode: "file",
+      requests: [
+        { occurrence_id: occurrenceId, parent, representation: "playable" },
+      ],
+    });
+  });
+  it("keeps separate channels simultaneous, whatever the segments", () => {
+    expect(recordingPlan(occurrenceId, parent, stereoManifest).mode).toBe(
+      "channels",
+    );
+  });
+  it("keeps a gap in place between segments instead of closing it", () => {
+    const { manifest } = pipecatProjection;
+    const { parts } = plan({
+      ...pipecatProjection,
+      manifest: {
+        ...manifest,
+        capture_complete: false,
+        segments: [
+          manifest.segments[0],
+          { ...manifest.segments[1], start_ms: 32000 },
+        ],
+        gaps: [{ start_ms: 30000, duration_ms: 2000, reason: "truncated" }],
+        duration_ms: 38467,
+      },
+    });
+    expect(parts.map((part) => [part.kind, part.start_ms])).toEqual([
+      ["segment", 0],
+      ["gap", 30000],
+      ["segment", 32000],
+    ]);
+  });
+  const [a, b] = pipecatProjection.manifest.segments;
+  it.each([
+    [
+      "an anchor that is not the first segment",
+      { occurrence_id: b.occurrence_id },
+    ],
+    [
+      "indexes that disagree with timeline order",
+      {
+        manifest: {
+          ...pipecatProjection.manifest,
+          segments: [
+            { ...a, index: 1 },
+            { ...b, index: 0 },
+          ],
+        },
+      },
+    ],
+    [
+      "segments listed against their timeline order",
+      {
+        manifest: {
+          ...pipecatProjection.manifest,
+          segments: [b, a],
+        },
+      },
+    ],
+    [
+      "one occurrence repeated among other segments",
+      {
+        manifest: {
+          ...pipecatProjection.manifest,
+          segments: [a, b, { ...a, index: 2, start_ms: 36467, duration_ms: 1 }],
+          duration_ms: 36468,
+        },
+      },
+    ],
+  ])("refuses %s rather than reorder it", (_, change) => {
+    const projection = { ...pipecatProjection, ...change };
+    // Each is a schema-valid timeline; only the playback order is unsafe.
+    expect(manifestSchema.safeParse(projection.manifest).success).toBe(true);
+    expect(() => plan(projection)).toThrow();
   });
 });

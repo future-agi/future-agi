@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Slider, Stack, Typography } from "@mui/material";
-import { recordingProjectionSchema, recordingRequests, uuid } from "./contract";
+import { recordingPlan, recordingProjectionSchema, uuid } from "./contract";
 import { resolveAttachments } from "./client";
+import SequentialPlayback from "./SequentialPlayback";
 import StreamingPlayback from "./StreamingPlayback";
 import AttachmentStatus from "./AttachmentStatus";
 
@@ -27,7 +28,18 @@ export default function RecordingAttachmentPlayer({
   const parsed = useMemo(() => {
     if (!uuid.safeParse(projectId).success) return null;
     const result = recordingProjectionSchema.safeParse(attachment);
-    return result.success ? result.data : null;
+    if (!result.success) return null;
+    if (result.data.state !== "ready") return result.data;
+    try {
+      const { occurrence_id, parent, manifest } = result.data;
+      return {
+        ...result.data,
+        plan: recordingPlan(occurrence_id, parent, manifest),
+      };
+    } catch {
+      // A timeline that cannot be played as given is never repaired here.
+      return { state: "not_found" };
+    }
   }, [projectId, attachment]);
   if (!parsed || parsed.state !== "ready")
     return (
@@ -40,7 +52,7 @@ export default function RecordingAttachmentPlayer({
     <ReadyRecording
       key={identity}
       projectId={projectId}
-      attachment={parsed}
+      plan={parsed.plan}
       manifest={parsed.manifest}
       onInstance={onInstance}
     />
@@ -52,7 +64,7 @@ RecordingAttachmentPlayer.propTypes = {
   onInstance: PropTypes.func,
 };
 
-function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
+function ReadyRecording({ projectId, plan, manifest, onInstance }) {
   const container = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState("loading");
@@ -63,11 +75,63 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
   const [attempt, setAttempt] = useState(0);
   const [retryable, setRetryable] = useState(false);
   const duration = manifest.duration_ms / 1000;
-  const requestKey = JSON.stringify(
-    recordingRequests(attachment.occurrence_id, attachment.parent, manifest),
-  );
+  const planKey = JSON.stringify(plan);
 
   useEffect(() => {
+    const current = JSON.parse(planKey);
+    if (current.mode === "sequence") {
+      // Distinct segment occurrences, one live grant and source at a time.
+      let released = false;
+      const element = document.createElement("audio");
+      element.preload = "none";
+      element.setAttribute("aria-hidden", "true");
+      container.current.appendChild(element);
+      const sequence = new SequentialPlayback(
+        element,
+        current.parts,
+        duration,
+        async (part, signal) => {
+          const [result] = await resolveAttachments(
+            projectId,
+            [part.request],
+            signal,
+          );
+          return result;
+        },
+      );
+      const release = () => {
+        released = true;
+        sequence.destroy();
+        playerRef.current = null;
+        onInstance?.({ multitrack: null, wavesurfers: [] });
+      };
+      sequence.on("timeupdate", setTime);
+      sequence.on("intent", setPlaying);
+      sequence.on("buffering", setBuffering);
+      sequence.on("ready", () => {
+        if (released) return;
+        playerRef.current = sequence;
+        setStatus("ready");
+        onInstance?.({ multitrack: sequence, wavesurfers: [sequence] });
+      });
+      sequence.on("unavailable", ({ status: next, retryable: retry }) => {
+        if (released) return;
+        release();
+        setPlaying(false);
+        setBuffering(false);
+        setRetryable(retry);
+        setStatus(next);
+      });
+      // A retried sequence starts again at 0; never show the old position.
+      setTime(0);
+      setStatus("loading");
+      setRetryable(false);
+      sequence.prepare();
+      return () => {
+        release();
+        element.remove();
+      };
+    }
     const controller = new AbortController();
     let renewal;
     let stopped = false;
@@ -91,7 +155,7 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
       try {
         const results = await resolveAttachments(
           projectId,
-          JSON.parse(requestKey),
+          current.requests,
           controller.signal,
         );
         if (stopped) return;
@@ -161,7 +225,7 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
       playerRef.current = null;
       onInstance?.({ multitrack: null, wavesurfers: [] });
     };
-  }, [projectId, requestKey, duration, onInstance, attempt]);
+  }, [projectId, planKey, duration, onInstance, attempt]);
 
   const currentGap = manifest.gaps.find(
     (gap) =>
@@ -260,7 +324,7 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
 }
 ReadyRecording.propTypes = {
   projectId: PropTypes.string.isRequired,
-  attachment: PropTypes.object.isRequired,
+  plan: PropTypes.object.isRequired,
   manifest: PropTypes.object.isRequired,
   onInstance: PropTypes.func,
 };

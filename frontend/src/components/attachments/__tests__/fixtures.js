@@ -30,8 +30,11 @@ export const mixedManifest = {
       role: "mixed",
     },
   ],
+  // view_enrichment anchors a logical recording on its first timeline segment.
   segments: Array.from({ length: 240 }, (_, index) => ({
-    occurrence_id: `b0000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`,
+    occurrence_id: index
+      ? `b0000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`
+      : occurrenceId,
     index,
     start_ms: index * 30000,
     duration_ms: 30000,
@@ -59,6 +62,52 @@ export const stereoManifest = {
       role: "user",
     },
   ],
+};
+/**
+ * A standalone upload as tracer view_enrichment.standalone_manifest projects
+ * it: one validated Ogg/Opus file (48 kHz, 3,190,416 frames = 66,467 ms),
+ * tiled into <= 30 s timeline segments that ALL name that one occurrence.
+ * recording_id is the occurrence; track_id is uuid5(occurrence,
+ * "fi.attachments.v1/standalone-mixed").
+ * @satisfies {import("zod").infer<typeof import("../contract").manifestSchema>}
+ */
+export const standaloneManifest = {
+  schema_version: 1,
+  recording_id: occurrenceId,
+  timebase: "session_relative_ms",
+  sample_format: "encoded",
+  sample_rate_hz: 48000,
+  channels: 1,
+  codec: "opus",
+  container: "ogg",
+  layout: "mixed",
+  tracks: [
+    {
+      track_id: "e4842675-627c-5375-878d-70f540d6708a",
+      channels: [0],
+      direction: "mixed",
+      role: "mixed",
+    },
+  ],
+  segments: [
+    { occurrence_id: occurrenceId, index: 0, start_ms: 0, duration_ms: 30000 },
+    {
+      occurrence_id: occurrenceId,
+      index: 1,
+      start_ms: 30000,
+      duration_ms: 30000,
+    },
+    {
+      occurrence_id: occurrenceId,
+      index: 2,
+      start_ms: 60000,
+      duration_ms: 6467,
+    },
+  ],
+  gaps: [],
+  playout: [],
+  capture_complete: true,
+  duration_ms: 66467,
 };
 /** @satisfies {import("zod").infer<typeof import("../contract").occurrenceSchema>} */
 export const occurrence = {

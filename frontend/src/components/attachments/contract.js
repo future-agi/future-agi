@@ -179,7 +179,8 @@ export const manifestSchema = z
       )
       .min(1)
       .max(32),
-    // The UI does not consume or decode segments. Playback uses server derivatives.
+    // The UI never decodes or joins segments: it plays each occurrence's
+    // served bytes in turn (see recordingPlan).
     segments: z
       .array(
         z
@@ -338,18 +339,79 @@ export const recordingProjectionSchema = z.union([
 /** @typedef {import('zod').infer<typeof resolveItemSchema>} ResolveItem */
 /** @typedef {import('zod').infer<typeof scopeSchema>} AttachmentScope */
 
-export function recordingRequests(occurrenceId, parent, manifest) {
+/**
+ * How a ready recording plays, from its manifest alone (throws when unsafe).
+ * - `channels`: stereo/separate tracks play simultaneously from server channel
+ *   derivatives of the anchor occurrence.
+ * - `file`: every timeline tile names the anchor, with no gaps. A standalone
+ *   file longer than 30 s is tiled in the manifest but is still ONE file.
+ * - `sequence`: distinct segment occurrences of one logical recording play one
+ *   after another at their own `start_ms`, with gaps kept as silent time.
+ *   F01 order is required as given (index = position, unique identities,
+ *   start order); a malformed timeline is refused, never sorted into shape.
+ */
+export function recordingPlan(occurrenceId, parent, manifest) {
   uuid.parse(occurrenceId);
   parentSchema.parse(parent);
   const m = manifestSchema.parse(manifest);
-  return m.layout === "mixed"
-    ? [{ occurrence_id: occurrenceId, parent, representation: "playable" }]
-    : m.tracks.map((track) => ({
+  const playable = (occurrence_id) => ({
+    occurrence_id,
+    parent,
+    representation: "playable",
+  });
+  if (m.layout !== "mixed")
+    return {
+      mode: "channels",
+      requests: m.tracks.map((track) => ({
         occurrence_id: occurrenceId,
         parent,
         representation: "channel",
         channel: track.channels[0],
-      }));
+      })),
+    };
+  if (!m.segments.length) throw new Error("No recorded segment");
+  if (
+    !m.gaps.length &&
+    m.segments.every((segment) => segment.occurrence_id === occurrenceId)
+  )
+    return { mode: "file", requests: [playable(occurrenceId)] };
+  const seen = new Set();
+  m.segments.forEach((segment, index) => {
+    if (
+      segment.index !== index ||
+      (index > 0 && segment.start_ms <= m.segments[index - 1].start_ms) ||
+      seen.has(segment.occurrence_id)
+    )
+      throw new Error("Unordered or repeated segment");
+    seen.add(segment.occurrence_id);
+  });
+  // The projection anchors on its first timeline segment; anything else
+  // belongs to a different recording.
+  if (m.segments[0].occurrence_id !== occurrenceId)
+    throw new Error("Anchor is not the first segment");
+  const parts = [
+    ...m.segments.map(({ occurrence_id, start_ms, duration_ms }) => ({
+      kind: "segment",
+      occurrence_id,
+      start_ms,
+      duration_ms,
+      request: playable(occurrence_id),
+    })),
+    ...m.gaps.map(({ start_ms, duration_ms }) => ({
+      kind: "gap",
+      start_ms,
+      duration_ms,
+    })),
+  ].sort((a, b) => a.start_ms - b.start_ms);
+  return {
+    mode: "sequence",
+    parts,
+    requests: m.segments.map((segment) => playable(segment.occurrence_id)),
+  };
+}
+
+export function recordingRequests(occurrenceId, parent, manifest) {
+  return recordingPlan(occurrenceId, parent, manifest).requests;
 }
 
 export function occurrenceFromUri(value) {

@@ -18,6 +18,8 @@ import {
   parent,
   projectId,
   projection,
+  readyGrant,
+  standaloneManifest,
   stereoManifest,
 } from "./fixtures";
 vi.mock("../client", () => ({
@@ -40,6 +42,10 @@ afterEach(() => {
 
 describe("framework recording component", () => {
   it("creates one lazy native player for a two-hour mix and publishes transcript transport", async () => {
+    resolveAttachments.mockImplementation(async (_, items) =>
+      items.map((item) => readyGrant(item.occurrence_id)),
+    );
+    const last = mixedManifest.segments[239].occurrence_id;
     const onInstance = vi.fn();
     const { container } = render(
       <RecordingAttachmentPlayer
@@ -65,9 +71,17 @@ describe("framework recording component", () => {
     expect(multitrack.getDuration()).toBe(7200);
     fireEvent.click(screen.getByRole("button", { name: "Play recording" }));
     await screen.findByRole("button", { name: "Pause recording" });
-    expect(container.querySelector("audio").getAttribute("src")).toBe(
-      grant.gateway_path,
+    // The seek target's own segment is authorized at Play, alone.
+    await waitFor(() =>
+      expect(container.querySelector("audio").getAttribute("src")).toBe(
+        readyGrant(last).gateway_path,
+      ),
     );
+    expect(resolveAttachments.mock.calls.map((call) => call[1])).toEqual([
+      [{ occurrence_id: occurrenceId, parent, representation: "playable" }],
+      [{ occurrence_id: last, parent, representation: "playable" }],
+    ]);
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
   });
   it("uses server channels and actual roles, without browser stereo splitting", async () => {
     resolveAttachments.mockResolvedValue([
@@ -183,18 +197,18 @@ describe("framework recording component", () => {
     render(
       <RecordingAttachmentPlayer
         projectId={projectId}
-        attachment={projection}
+        attachment={{ ...projection, manifest: standaloneManifest }}
         onInstance={onInstance}
       />,
     );
     await act(async () => {});
     const player = onInstance.mock.calls[0][0].multitrack;
-    act(() => player.setTime(7100));
+    act(() => player.setTime(60));
     await act(async () => {
       vi.advanceTimersByTime(10000);
     });
     expect(resolveAttachments).toHaveBeenCalledTimes(2);
-    expect(player.getCurrentTime()).toBe(7100);
+    expect(player.getCurrentTime()).toBe(60);
     expect(onInstance).toHaveBeenCalledTimes(1);
   });
   it("clears bytes and transport when renewal is denied", async () => {
@@ -210,7 +224,7 @@ describe("framework recording component", () => {
     const { container } = render(
       <RecordingAttachmentPlayer
         projectId={projectId}
-        attachment={projection}
+        attachment={{ ...projection, manifest: standaloneManifest }}
         onInstance={onInstance}
       />,
     );
