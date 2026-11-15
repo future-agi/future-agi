@@ -291,8 +291,14 @@ it('says the test is private at the confirmation step, beside the provider', asy
   fireEvent.click(screen.getByRole('button', { name: 'Preview answer check' }));
   expect(await screen.findByText('Test runs are private and don’t change production. The task provider, OpenAI, receives the files and request below.')).toBeVisible();
 });
-it('shows remembered model and cost as one line, with the fields behind Change', () => {
-  window.localStorage.setItem('skills.contextTest.last:org:workspace:author', JSON.stringify({ model: 'gpt-4o-mini', limit: '2' }));
+it('keeps the fields open for a first test in a context, even with settings carried from another one', () => {
+  window.localStorage.setItem('skills.contextTest.last:org:workspace:author', JSON.stringify({ model: 'gpt-4o-mini', limit: '2', contextId: 'another-context' }));
+  mount();
+  expect(screen.getByRole('textbox', { name: 'Maximum estimated cost (USD)' })).toHaveValue('2');
+  expect(screen.queryByText('gpt-4o-mini · up to $2')).not.toBeInTheDocument();
+});
+it('shows the model and cost last used in this context as one line, with the fields behind Change', () => {
+  window.localStorage.setItem('skills.contextTest.last:org:workspace:author', JSON.stringify({ model: 'gpt-4o-mini', limit: '2', contextId: 'context' }));
   mount();
   expect(screen.getByText('gpt-4o-mini · up to $2')).toBeVisible();
   expect(screen.queryByRole('textbox', { name: 'Maximum estimated cost (USD)' })).not.toBeInTheDocument();

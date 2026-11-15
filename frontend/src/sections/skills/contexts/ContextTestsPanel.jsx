@@ -221,9 +221,10 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
   const [configuration, setConfiguration] = useState(null);
   const [inventory, setInventory] = useState({ review: emptyReview(), complete: false });
   const [providerConsent, setProviderConsent] = useState(false);
-  // Remembered run settings show as one line ("gpt-4o-mini · up to $2") behind Change; with nothing
-  // remembered the fields are open, so a first test asks for them where they are needed.
-  const [editSettings, setEditSettings] = useState(() => !(typeof last.model === 'string' && last.model && typeof last.limit === 'string' && isLimit(last.limit)));
+  // Settings last used for this same context show as one line ("gpt-4o-mini · up to $2") behind Change.
+  // A first test in a context (even with values carried over from another one) shows the fields, so the
+  // model and ceiling are seen where they are first needed.
+  const [editSettings, setEditSettings] = useState(() => !(last.contextId === contextId && typeof last.model === 'string' && last.model && typeof last.limit === 'string' && isLimit(last.limit)));
   const options = useSkillTestingOptions();
   const runnable = (options.data?.models || []).filter((item) => item.canRun);
   // Preselect the last-used model, else the first model this workspace can run; it stays visible and changeable.
@@ -257,7 +258,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
       profile: 'quick', repetitions: 1, limits: { max_total_tokens: options.data.limits.profiles.quick.maxTotalTokens, max_estimated_cost_usd: limit }, purpose: 'regression', parent_run_id: null,
     };
     setConfiguration(config);
-    writeLastTest(identity, { prompt, expected, model, limit, reference: comparison });
+    writeLastTest(identity, { prompt, expected, model, limit, reference: comparison, contextId });
     try { setPreview(await prepare.mutateAsync(config)); } catch { /* The mutation error is rendered below. */ }
   };
   if (options.isLoading || state === 'loading' || source?.isLoading) return <ContentSkeleton />;
