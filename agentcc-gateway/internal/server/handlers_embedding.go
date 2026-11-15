@@ -99,6 +99,15 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The provider forwards the typed request, not this inspection projection.
+	var inspectable bool
+	rc.GuardrailRequest, inspectable = embeddingGuardrailRequest(&req)
+	if !inspectable {
+		rc.GuardrailInputUnsupported = "embedding input is not text; token IDs and unsupported input forms cannot be inspected"
+	}
+	rc.GuardrailOutputUnsupported = "embedding output is a vector, not inspectable text"
+	rc.UserID = req.User
+
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := ep.CreateEmbedding(ctx, rc.EmbeddingRequest)
 		if err != nil {

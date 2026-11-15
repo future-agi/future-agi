@@ -73,6 +73,15 @@ type RequestContext struct {
 	GuardrailRequest  *ChatCompletionRequest
 	GuardrailResponse *ChatCompletionResponse
 
+	// GuardrailInspectionOnly marks a Request projection that is not the body
+	// forwarded by the selected route (native legacy completions). Keeping Request
+	// available to other plugins does not make its remediation wire-backed.
+	GuardrailInspectionOnly bool
+	// Unsupported reasons describe route capabilities, never client content.
+	// Selected-key checks must not treat token IDs or binary output as empty text.
+	GuardrailInputUnsupported  string
+	GuardrailOutputUnsupported string
+
 	// mu serializes writes to Timings and Metadata between the goroutines that
 	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
 	// streaming callbacks.
@@ -183,6 +192,9 @@ func (rc *RequestContext) Release() {
 	rc.Response = nil
 	rc.GuardrailRequest = nil
 	rc.GuardrailResponse = nil
+	rc.GuardrailInspectionOnly = false
+	rc.GuardrailInputUnsupported = ""
+	rc.GuardrailOutputUnsupported = ""
 	rc.IsStream = false
 	rc.SessionID = ""
 	rc.UserID = ""

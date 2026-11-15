@@ -34,17 +34,22 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 	}
 	for _, entry := range resolved.policies {
 		pol := entry.policy
+		monitor := strings.EqualFold(pol.Mode, "monitor")
 		checks := make([]orgCheck, 0, len(entry.checks))
 		for _, c := range entry.checks {
-			if c.g.Stage() == stage {
-				checks = append(checks, c)
+			c = keyPolicyRouteCheck(rc, c)
+			if c.g.Stage() != stage {
+				continue
 			}
+			if unsupported, ok := c.g.(unsupportedRouteCheck); ok && !monitor && parseAction(c.check.Action) == ActionBlock {
+				return p.refuseKeyPolicyRoute(rc, pol, c, unsupported)
+			}
+			checks = append(checks, c)
 		}
 		if len(checks) == 0 {
 			continue
 		}
 		input := checkInput(rc, stage == StagePost)
-		monitor := strings.EqualFold(pol.Mode, "monitor")
 		var outcomes []*CheckResult
 		blockIdx := -1
 		sequential := strings.EqualFold(strings.TrimSpace(cfg.PipelineMode), "sequential")
@@ -235,21 +240,21 @@ const passThroughNote = " (client's body was forwarded unchanged on this pass-th
 func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, check *tenant.GuardrailCheck) Guardrail {
 	if p.dynamicFactory != nil {
 		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
-			return g
+			return validateKeyPolicyCheck(name, g)
 		}
 		cfg := check.Config
 		if cfg == nil {
 			cfg = map[string]interface{}{}
 		}
 		if g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, cfg); g != nil {
-			return g
+			return validateKeyPolicyCheck(name, g)
 		}
 	}
 	// The factory was already attempted with the policy's own config. Do not
 	// retry it through getGuardrailScoped: a failed resolution is one unavailable
 	// check, while a legitimately configured static/custom implementation remains
 	// a valid fallback.
-	return p.registry[name]
+	return validateKeyPolicyCheck(name, p.registry[name])
 }
 
 func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action) (string, string) {
@@ -258,7 +263,7 @@ func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action)
 		return message, "blocked"
 	}
 	if cr.InputRewritten {
-		if rc.Request != nil {
+		if rc.Request != nil && !rc.GuardrailInspectionOnly {
 			return message, "redacted"
 		}
 		return message + passThroughNote, "logged"
@@ -288,7 +293,7 @@ func (p *GuardrailPlugin) recordKeyOutcome(result *PipelineResult, rc *models.Re
 			outcome = "logged"
 		case wouldAction == "block":
 			outcome = "would_block"
-		case mutatesInput(c.g) && cr.InputRewritten && rc.Request == nil:
+		case mutatesInput(c.g) && cr.InputRewritten && (rc.Request == nil || rc.GuardrailInspectionOnly):
 			// Even enforced, the gateway forwards the client's own body here.
 			outcome = "logged"
 		case mutatesInput(c.g) && cr.InputRewritten:
@@ -300,7 +305,7 @@ func (p *GuardrailPlugin) recordKeyOutcome(result *PipelineResult, rc *models.Re
 		}
 		// A monitor check runs on a snapshot, so no client body was changed.
 		message = cr.Message
-		if outcome == "logged" && mutatesInput(c.g) && cr.InputRewritten && rc.Request == nil {
+		if outcome == "logged" && mutatesInput(c.g) && cr.InputRewritten && (rc.Request == nil || rc.GuardrailInspectionOnly) {
 			message += passThroughNote
 		}
 	}

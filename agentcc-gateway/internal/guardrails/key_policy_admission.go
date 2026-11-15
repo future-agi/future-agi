@@ -90,6 +90,56 @@ func (unavailableKeyPolicyCheck) Check(context.Context, *CheckInput) *CheckResul
 	return &CheckResult{Err: errors.New("configured guardrail implementation is unavailable")}
 }
 
+// validateKeyPolicyCheck is deliberately scoped to this built-in and selected
+// keys. Legacy static/org behavior and arbitrary custom names are unchanged.
+// The leaf owns parameter validation; invalid configuration uses the existing
+// unavailable-check execution envelope (503 only for fail-closed Enforce Block).
+func validateKeyPolicyCheck(name string, g Guardrail) Guardrail {
+	if name == "keyword-blocklist" {
+		if validator, ok := g.(interface{ ValidateConfig() error }); ok && validator.ValidateConfig() != nil {
+			return unavailableKeyPolicyCheck{name: name}
+		}
+	}
+	return g
+}
+
+// unsupportedRouteCheck records a truthful execution failure for observational
+// checks. Blocking enforcement of a missing route capability is refused at
+// admission, independently of fail_open, rather than admitting uninspected data.
+type unsupportedRouteCheck struct {
+	name, code, reason string
+}
+
+func (g unsupportedRouteCheck) Name() string { return g.name }
+func (unsupportedRouteCheck) Stage() Stage   { return StagePre }
+func (g unsupportedRouteCheck) Check(context.Context, *CheckInput) *CheckResult {
+	return &CheckResult{Err: errors.New(g.code + ": " + g.reason)}
+}
+
+func keyPolicyRouteCheck(rc *models.RequestContext, c orgCheck) orgCheck {
+	code, reason := "", ""
+	if c.g.Stage() == StagePre && rc.GuardrailInputUnsupported != "" {
+		code, reason = "input_guardrail_unsupported", rc.GuardrailInputUnsupported
+	} else if c.g.Stage() == StagePost && rc.GuardrailOutputUnsupported != "" {
+		code, reason = "output_guardrail_unsupported", rc.GuardrailOutputUnsupported
+	}
+	if reason != "" {
+		c.g = unsupportedRouteCheck{name: c.name, code: code, reason: reason}
+	}
+	return c
+}
+
+func (p *GuardrailPlugin) refuseKeyPolicyRoute(rc *models.RequestContext, pol *tenant.KeyGuardrailPolicy, c orgCheck, unsupported unsupportedRouteCheck) pipeline.PluginResult {
+	message := unsupported.code + ": " + unsupported.reason
+	result := &PipelineResult{Blocked: true}
+	p.recordKeyOutcome(result, rc, pol, c, &CheckResult{Message: message}, false)
+	storeGuardrailResults(rc, result)
+	rc.Flags.GuardrailTriggered = true
+	rc.Metadata["guardrail_name"] = c.name
+	rc.Metadata["guardrail_action"] = "blocked"
+	return pipeline.ResultError(models.ErrGuardrailBlocked(unsupported.code, message))
+}
+
 // checkKeyPolicyStreamAdmission explicitly refuses streams whose selected-key
 // Enforce Block checks require completed output. The existing streaming checker
 // releases chunks before its final verdict and cannot enforce arbitrary post

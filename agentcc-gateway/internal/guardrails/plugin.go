@@ -389,7 +389,7 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // remain unchanged across checks, or a later Block would inspect different
 // content from the bytes the handler actually sends.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
-	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.GuardrailInspectionOnly || rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
 	if input.Request == nil {
 		input.Request = rc.GuardrailRequest
 	}

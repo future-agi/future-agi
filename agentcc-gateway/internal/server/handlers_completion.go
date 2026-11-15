@@ -179,6 +179,18 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleCompletionStream(ctx, w, rc, provider)
 	} else if native, ok := provider.(nativeTextCompletionProvider); ok {
+		// This path forwards req, not rc.Request. Redacting its chat projection
+		// must not hide original content from a later blocking check. Streaming
+		// and non-native completions above/below still forward the mutable chat body.
+		rc.GuardrailInspectionOnly = true
+		if messages, inspectable := textInputMessages(req.Prompt); inspectable {
+			rc.Request.Messages = messages
+			if req.Suffix != "" {
+				rc.Request.Messages = append(rc.Request.Messages, textMessage("user", req.Suffix))
+			}
+		} else {
+			rc.GuardrailInputUnsupported = "native completion prompt is not text; token IDs and unsupported input forms cannot be inspected"
+		}
 		h.handleCompletionNative(ctx, w, rc, native, &req)
 	} else {
 		h.handleCompletionNonStream(ctx, w, rc, provider)
