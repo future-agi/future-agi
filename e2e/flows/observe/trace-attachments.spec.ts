@@ -566,7 +566,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const cookieBefore = await sessionCookie();
       expect(Boolean(cookieBefore)).toBe(true);
       if (!SKIP_DELETE) {
-        const deleted = await viewer.delete(gateway(SESSION(livekitSessionId)), { headers: viewerHeaders });
+        // The attachment gateway proxies media routes, not the general session API.
+        const deleted = await viewer.delete(`${E2E.apiUrl}${SESSION(livekitSessionId)}`, { headers: viewerHeaders });
         expect(deleted.status(), await deleted.text()).toBe(204);
       }
       // Immediate read denial is separate from the bounded tombstone cleanup poll.
