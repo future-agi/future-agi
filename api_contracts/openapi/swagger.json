@@ -15403,7 +15403,7 @@
             "get": {
                 "operationId": "api_health_clickhouse_list",
                 "summary": "Health check endpoint for the ClickHouse analytics backend.",
-                "description": "Returns JSON with:\n- status: healthy | degraded | unhealthy | disabled\n- clickhouse_connected: bool\n- cdc_lag: per-table replication lag in seconds\n- routing: per-query-type routing configuration\n\nNo authentication required (intended for infrastructure monitoring).",
+                "description": "Returns JSON with:\n- status: healthy | degraded | unhealthy | disabled\n- clickhouse_connected: bool\n- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty\n- cdc_lag_verified: optional per-table boolean; true only for complete coverage\n  with an observed sync timestamp on every relevant destination. Incomplete\n  coverage alone does not degrade health; metadata-denial failures still do.\n- routing: per-query-type routing configuration\n\nNo authentication required (intended for infrastructure monitoring).",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -96254,9 +96254,18 @@
                 },
                 "cdc_lag": {
                     "title": "Cdc lag",
+                    "description": "Per-table lag in seconds; -1 means unverified, including empty tables.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "number"
+                    }
+                },
+                "cdc_lag_verified": {
+                    "title": "Cdc lag verified",
+                    "description": "True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
                     }
                 },
                 "routing": {
@@ -96363,6 +96372,13 @@
                     "type": "object",
                     "additionalProperties": {
                         "type": "number"
+                    }
+                },
+                "cdc_lag_verified": {
+                    "title": "Cdc lag verified",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
                     }
                 },
                 "routing": {
