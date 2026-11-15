@@ -85,6 +85,8 @@ def _apply_non_secrets(
 
 def _adopt_legacy_credentials(version):
     """Migrate credentials from the old agent_definition FK to this version."""
+    if ProviderCredentials.objects.filter(agent_version=version).exists():
+        return False
     try:
         agent = version.agent_definition
         legacy = agent.credentials_legacy
@@ -189,11 +191,15 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         version.configuration_snapshot = snapshot
 
 
-def resolve_api_key_for_version(version):
-    """Read API key from version's credentials.
+def resolve_api_key_for_version(version, *, for_save=False):
+    """Read the effective API key, or the stored key to carry forward on save.
 
     Falls back to legacy credentials on the agent definition's old FK
     for versions that predate the ProviderCredentials migration (0076).
+    An existing empty Vapi row selects the definition's key AND assistant for
+    reads/preflight, never the stale legacy row. With ``for_save=True``, leave
+    that source marker empty instead of materializing the effective key next to
+    a possibly stale version assistant. Nonempty ciphertext stays authoritative.
 
     Returns decrypted API key string, or None if not configured.
     """
@@ -201,6 +207,15 @@ def resolve_api_key_for_version(version):
         return None
     try:
         creds = version.credentials
+        if creds and creds.provider_type == ProviderCredentials.ProviderType.VAPI:
+            if (
+                not creds.api_key
+                and not for_save
+                and version.agent_definition.provider
+                == ProviderCredentials.ProviderType.VAPI
+            ):
+                return version.agent_definition.api_key or None
+            return creds.get_api_key() or None
         if creds and creds.get_api_key():
             return creds.get_api_key()
     except AgentVersion.credentials.RelatedObjectDoesNotExist:
