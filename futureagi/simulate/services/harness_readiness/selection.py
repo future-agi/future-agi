@@ -44,7 +44,12 @@ from simulate.services.harness_readiness.report import (
     readiness_report,
 )
 from simulate.services.harness_readiness.rules import answer
-from simulate.services.harness_scenario_needs import TOOL_ROWS, CaseNeeds, case_needs
+from simulate.services.harness_scenario_needs import (
+    ACTING,
+    TOOL_ROWS,
+    CaseNeeds,
+    case_needs,
+)
 from simulate.services.harness_versioning import validation
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -55,6 +60,12 @@ PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
 # Held-back key for a selected case certifying the pair dropped.
 DROPPED_ROW = "scenario_dropped"
+# A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
+NO_DOOR_ROW = "no_world_door"
+NO_DOOR_REASON = (
+    "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
+    "tools service to test this."
+)
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
@@ -321,6 +332,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         for row in report["rows"]
         if row["id"] in by
     }
+    if NO_DOOR_ROW in by:
+        reasons[NO_DOOR_ROW] = NO_DOOR_REASON
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
@@ -493,6 +506,7 @@ def _place_all(
     judge_failed = judge_unreachable(pairing, bundle)
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
+    reach = _door_reach(pairing)
     many = len(kept) > 1 or trials > 1
     placed = [
         _place(
@@ -503,6 +517,7 @@ def _place_all(
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
+            no_door=_needs_a_missing_door(case, reach),
             judge_failed=judge_failed,
         )
         for case in kept
@@ -573,6 +588,54 @@ def _proved_tokens(pairing: Pairing) -> frozenset[str]:
     )
 
 
+def _door_reach(pairing: Pairing) -> dict[str, bool]:
+    """Whether the world's door stands in front of each contract tool, by tool name and by the world action a fault
+    names: a tools-service tool is behind the tool proxy, a Python agent's module-level callable or method behind
+    the door in its own process; anything else runs where no door stands. Empty when the contract names no
+    entrypoints (nothing to tell, nothing held back). A tool the build found out of the door's reach says so
+    (`door_unreached`). The same rule as the actors' `harness_actors.door_reach`."""
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    contract = contract if isinstance(contract, Mapping) else {}
+    runtime = (
+        contract.get("runtime") if isinstance(contract.get("runtime"), Mapping) else {}
+    )
+    python = str(runtime.get("language") or "python").strip().lower() in (
+        "",
+        "python",
+        "py",
+    )
+    reach: dict[str, bool] = {}
+    for entry in contract.get("tool_entrypoints") or []:
+        if not isinstance(entry, Mapping) or not entry.get("tool"):
+            continue
+        mode = str(entry.get("mode") or "")
+        route = str(entry.get("endpoint") or "").strip("/")
+        reachable = bool(
+            (mode == "service" and route)
+            or (
+                python
+                and mode in ("import", "construct")
+                and entry.get("module")
+                and entry.get("callable")
+                and not entry.get("door_unreached")
+            )
+        )
+        reach[str(entry["tool"])] = reachable
+        if route:
+            reach[route.replace("/", ".")] = reachable
+    return reach
+
+
+def _needs_a_missing_door(case: CaseNeeds, reach: Mapping[str, bool]) -> bool:
+    """Whether the case needs the world's door where it does not stand: a fault on a tool the door cannot hold, or an
+    acting actor on an agent none of whose tools the door can reach."""
+    if not reach or not case.door:
+        return False
+    if ACTING in case.door and not any(reach.values()):
+        return True
+    return any(reach.get(action) is False for action in case.door if action != ACTING)
+
+
 def _voice(pairing: Pairing) -> bool:
     contract = (pairing.environment_version.documents or {}).get("contract")
     modality = contract.get("modality") if isinstance(contract, Mapping) else None
@@ -606,6 +669,7 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
+    no_door: bool = False,
     judge_failed: bool = False,
 ) -> Placed:
     needed = set(case.rows)
@@ -633,6 +697,8 @@ def _place(
     blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
+    if no_door:
+        blocked.append(NO_DOOR_ROW)
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")
