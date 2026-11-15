@@ -25,6 +25,7 @@ from tracer.models.project import Project
 from tracer.services.analysis_retention import retained_spans
 from tracer.services.clickhouse.v2.span_reader import CHSpan, merge_span_attributes
 from tracer.services.instant_eval_rows import message_text
+from tracer.utils.pii_scrubber import STRADDLE_CHARS, cut_clear
 
 logger = structlog.get_logger(__name__)
 
@@ -177,7 +178,8 @@ def _activity(reader, project_id: str, roots) -> dict[str, list[dict]] | None:
             trace_ids,
             project_id=project_id,
             media_patterns=_NO_MEDIA,
-            field_chars=TOOL_FIELD_CHARS,
+            # Read past the cut, so a value the cut would split is seen whole.
+            field_chars=TOOL_FIELD_CHARS + STRADDLE_CHARS,
             per_trace=MAX_TOOL_CALLS,
         )
     except Exception:
@@ -289,7 +291,7 @@ def recorded_turn(role, value: str, trace_id: str, at: datetime | None) -> Turn 
         return None
     return Turn(
         role=role,
-        text=text[:TURN_CHARS],
+        text=cut_clear(text, TURN_CHARS),
         truncated=len(text) > TURN_CHARS,
         trace_id=trace_id,
         at=at,
@@ -341,8 +343,8 @@ def _tool_calls(
                 at=row["start_time"],
                 failed=str(row["status"] or "").upper() == "ERROR",
                 error=str(row["status_message"] or ""),
-                input=str(row["input"] or ""),
-                output=str(row["output"] or ""),
+                input=cut_clear(str(row["input"] or ""), TOOL_FIELD_CHARS),
+                output=cut_clear(str(row["output"] or ""), TOOL_FIELD_CHARS),
                 input_truncated=int(row["input_chars"] or 0) > TOOL_FIELD_CHARS,
                 output_truncated=int(row["output_chars"] or 0) > TOOL_FIELD_CHARS,
             )

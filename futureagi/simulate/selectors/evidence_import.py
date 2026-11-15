@@ -34,7 +34,7 @@ from simulate.pydantic_schemas.evidence_import import (
 )
 from simulate.selectors.dataset_evidence import dataset_evidence, text_evidence
 from simulate.utils.transcript_parse import ParsedTranscript
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.selectors.observe_evidence import (
     Label,
     SourceEvidence,
@@ -43,7 +43,13 @@ from tracer.selectors.observe_evidence import (
     Turn,
     observe_evidence,
 )
-from tracer.utils.pii_scrubber import PiiFinding, find_pii, find_pii_basic, redact
+from tracer.utils.pii_scrubber import (
+    PiiFinding,
+    cut_clear,
+    find_pii,
+    find_pii_basic,
+    redact,
+)
 
 # Sources one import may hold.
 MAX_SOURCES = 20
@@ -102,6 +108,123 @@ ROW_NO_EXPECTED = "No column was picked as the expected outcome, or it was delet
 ROW_EXPECTED_EMPTY = "This row's expected outcome is empty."
 
 
+# The bundle a person reviews, as EvidenceImportSerializer writes it.
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvidencePart:
+    """What one part of a source holds (present, partial, truncated, missing or
+    unreadable), and why when it is not all there."""
+
+    status: str
+    reason: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TranscriptPart(EvidencePart):
+    turns: tuple[Turn, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolCallsPart(EvidencePart):
+    calls: tuple[ToolCall, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class LabelsPart(EvidencePart):
+    labels: tuple[Label, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExpectedOutcomePart(EvidencePart):
+    text: str = ""
+
+
+@dataclass(frozen=True)
+class ToolParts:
+    tool_calls: ToolCallsPart
+    tool_inputs: EvidencePart
+    tool_outputs: EvidencePart
+
+
+@dataclass(frozen=True)
+class NewCheck:
+    name: str
+    what: str
+
+
+@dataclass(frozen=True)
+class DuplicateOf:
+    """The case, in another import still kept, that a case repeats."""
+
+    import_id: UUID
+    case_id: UUID
+    scenario_name: str
+
+
+@dataclass(frozen=True)
+class CaseBundle:
+    id: UUID
+    source_id: str
+    name: str
+    status: str
+    reason: str
+    source_available: bool
+    scenario_key: str | None
+    scenario_name: str
+    new_checks: tuple[NewCheck, ...]
+    changed_since_import: bool | None
+    trace_ids: tuple[str, ...]
+    started_at: datetime | None
+    ended_at: datetime | None
+    transcript: TranscriptPart
+    tool_calls: ToolCallsPart
+    tool_inputs: EvidencePart
+    tool_outputs: EvidencePart
+    starting_state: EvidencePart
+    labels: LabelsPart
+    expected_outcome: ExpectedOutcomePart
+    also_from: int
+    duplicate_of: DuplicateOf | None
+
+
+@dataclass(frozen=True)
+class RedactionFinding:
+    case_id: UUID
+    part: str
+    index: int
+    field: str
+    entity: str
+    start: int
+    end: int
+    value: str
+    replacement: str
+
+
+@dataclass(frozen=True)
+class Redaction:
+    method: RedactionMethod
+    reason: str
+    findings: tuple[RedactionFinding, ...]
+    total: int
+
+
+@dataclass(frozen=True)
+class ImportBundle:
+    id: UUID
+    environment_id: UUID
+    project_id: UUID | None
+    dataset_id: UUID | None
+    agent_version_id: UUID | None
+    source_kind: str
+    created_at: datetime
+    drafting: bool
+    simulated: bool
+    production: bool
+    cases: tuple[CaseBundle, ...]
+    redaction: Redaction
+
+
 def _environment_scope(environment: HostedHarnessJob) -> Q:
     """What the environment may take evidence from: its organization, and a
     workspace the environment's own scope reads, as Observe scopes a default
@@ -156,17 +279,18 @@ def is_declared(evidence_import: EvidenceImport) -> bool:
 
 
 def is_simulated(evidence_import: EvidenceImport) -> bool:
-    """Whether the import's sources come from a Simulator project: our own
-    simulated conversations, never production evidence."""
+    """Whether the import's sources come from a simulation agent's own project:
+    our simulated conversations, never production evidence. The Simulator source
+    alone does not say so: a voice provider's project (Vapi, Retell) carries it
+    and holds the agent's real calls. Transcripts and dataset rows have no
+    project."""
     project = evidence_import.project
-    return (
-        project is not None and project.source == ProjectSourceChoices.SIMULATOR.value
-    )
+    return project is not None and project.simulation_agent_id is not None
 
 
 def is_production(evidence_import: EvidenceImport) -> bool:
     """Whether the import is production evidence: an Observe project's that is
-    not a Simulator project, or transcripts or dataset rows the person said
+    not a simulation agent's, or transcripts or dataset rows the person said
     come from production."""
     if is_declared(evidence_import):
         return evidence_import.declared_production
@@ -565,14 +689,14 @@ def _redacted(texts: list[str]) -> list[str]:
 def import_bundle(
     evidence_import: EvidenceImport,
     evidence: dict[str, SourceEvidence] | None = None,
-) -> dict:
+) -> ImportBundle:
     """The import as the review shows it. ``evidence`` is what its sources hold
     now (``current_evidence``); it is read when not given. A case repeating another
     of this import is left out: that one is proposed, and counts it as a source."""
     every = list(evidence_import.cases.all())
     own = {case.id for case in every}
     cases = [case for case in every if case.duplicate_of_id not in own]
-    provenance = _provenance(cases)
+    also, repeated = _provenance(cases)
     if evidence is None:
         evidence = current_evidence(evidence_import, cases)
     # A source the import found nothing for stays unavailable: it was frozen so.
@@ -582,44 +706,48 @@ def import_bundle(
         if case.status != EvidenceImportCase.Status.UNAVAILABLE
     }
     transcript = is_transcript(evidence_import)
-    return {
-        "id": evidence_import.id,
-        "environment_id": evidence_import.environment_id,
-        "project_id": evidence_import.project_id,
-        "dataset_id": evidence_import.dataset_id,
-        "agent_version_id": evidence_import.agent_version_id,
-        "source_kind": evidence_import.source_kind,
-        "created_at": evidence_import.created_at,
-        "drafting": evidence_import.drafting_job_id is not None,
-        "simulated": is_simulated(evidence_import),
-        "production": is_production(evidence_import),
-        "cases": [
-            {
-                **_case(
-                    case,
-                    current.get(case.source_id),
-                    evidence_import.source_kind,
-                    _stored(case) if transcript else None,
-                    name=_row_name(evidence_import, case)
-                    if is_dataset(evidence_import)
-                    else "",
+    return ImportBundle(
+        id=evidence_import.id,
+        environment_id=evidence_import.environment_id,
+        project_id=evidence_import.project_id,
+        dataset_id=evidence_import.dataset_id,
+        agent_version_id=evidence_import.agent_version_id,
+        source_kind=evidence_import.source_kind,
+        created_at=evidence_import.created_at,
+        drafting=evidence_import.drafting_job_id is not None,
+        simulated=is_simulated(evidence_import),
+        production=is_production(evidence_import),
+        cases=tuple(
+            _case(
+                case,
+                current.get(case.source_id),
+                evidence_import.source_kind,
+                _stored(case) if transcript else None,
+                name=_row_name(evidence_import, case)
+                if is_dataset(evidence_import)
+                else "",
+                also_from=also.get(case.id, 0),
+                duplicate_of=(
+                    repeated.get(case.duplicate_of_id) if case.duplicate_of_id else None
                 ),
-                **provenance(case),
-            }
+            )
             for case in cases
-        ],
-        "redaction": (
+        ),
+        redaction=(
             _stored_redaction(evidence_import)
             if transcript
             else _redaction(cases, current)
         ),
-    }
+    )
 
 
-def _provenance(cases: list[EvidenceImportCase]):
+def _provenance(
+    cases: list[EvidenceImportCase],
+) -> tuple[dict[UUID, int], dict[UUID, DuplicateOf]]:
     """What the review says of each case's other sources: how many more sources a
-    case has (its duplicates in any import still kept), and, for a case already
-    imported elsewhere, the case it repeats, to open that import's review."""
+    case has (its duplicates in any import still kept), by case id, and the cases
+    already imported elsewhere that a case repeats, to open that import's review,
+    by their id."""
     also = dict(
         EvidenceImportCase.no_workspace_objects.filter(
             duplicate_of__in=[case.id for case in cases],
@@ -630,40 +758,25 @@ def _provenance(cases: list[EvidenceImportCase]):
         .annotate(count=Count("id"))
     )
     repeated = {
-        one["id"]: one
-        for one in EvidenceImportCase.no_workspace_objects.filter(
-            id__in=[case.duplicate_of_id for case in cases if case.duplicate_of_id]
-        ).values("id", "evidence_import_id", "scenario_name")
+        case_id: DuplicateOf(
+            import_id=import_id, case_id=case_id, scenario_name=scenario_name
+        )
+        for case_id, import_id, scenario_name in (
+            EvidenceImportCase.no_workspace_objects.filter(
+                id__in=[case.duplicate_of_id for case in cases if case.duplicate_of_id]
+            ).values_list("id", "evidence_import_id", "scenario_name")
+        )
     }
-
-    def of(case: EvidenceImportCase) -> dict:
-        original = repeated.get(case.duplicate_of_id) if case.duplicate_of_id else None
-        return {
-            "also_from": also.get(case.id, 0),
-            "duplicate_of": (
-                {
-                    "import_id": original["evidence_import_id"],
-                    "case_id": original["id"],
-                    "scenario_name": original["scenario_name"],
-                }
-                if original
-                else None
-            ),
-        }
-
-    return of
+    return also, repeated
 
 
-def _stored_redaction(evidence_import: EvidenceImport) -> dict:
+def _stored_redaction(evidence_import: EvidenceImport) -> Redaction:
     """What redaction replaced when the transcripts were stored. Their values
     were never kept, so none is listed."""
     stored = StoredRedaction.model_validate(evidence_import.redaction)
-    return {
-        "method": stored.method,
-        "reason": stored.reason,
-        "findings": [],
-        "total": stored.total,
-    }
+    return Redaction(
+        method=stored.method, reason=stored.reason, findings=(), total=stored.total
+    )
 
 
 def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
@@ -720,8 +833,9 @@ def _shares(sizes: tuple[int, ...], total: int) -> list[int]:
 
 
 def _clip(text: str, room: int) -> tuple[str, int]:
-    """``text`` cut to ``room``, and the room left after it."""
-    kept = text[: max(0, room)]
+    """``text`` cut to ``room``, never through a value redaction replaces, and
+    the room left after it."""
+    kept = cut_clear(text, max(0, room))
     return kept, room - len(kept)
 
 
@@ -817,9 +931,12 @@ def _case(
     stored: StoredTranscript | None = None,
     *,
     name: str = "",
-) -> dict:
+    also_from: int = 0,
+    duplicate_of: DuplicateOf | None = None,
+) -> CaseBundle:
     """One case as the review shows it; ``stored`` is a transcript case's text and
-    ``name`` what any other case is called (blank for an Observe source)."""
+    ``name`` what any other case is called (blank for an Observe source).
+    ``also_from`` and ``duplicate_of`` are its other sources (``_provenance``)."""
     row = source_kind == EvidenceImport.SourceKind.DATASET
     if evidence is None:
         # A drafted, blocked or added case keeps what became of it; only one
@@ -832,190 +949,192 @@ def _case(
             if row
             else SOURCE_UNAVAILABLE
         )
-        return {
-            "id": case.id,
-            "source_id": case.source_id,
-            "name": name,
-            "status": EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
-            "reason": reason if pending or not case.reason else case.reason,
-            "source_available": False,
-            "scenario_key": case.scenario_key,
-            "scenario_name": case.scenario_name,
-            "new_checks": _new_checks(case),
-            "changed_since_import": None,
-            "trace_ids": [],
-            "started_at": None,
-            "ended_at": None,
-            "transcript": _part("missing", reason, turns=[]),
-            "tool_calls": _part("missing", reason, calls=[]),
-            "tool_inputs": _part("missing", reason),
-            "tool_outputs": _part("missing", reason),
-            "starting_state": _part("missing", STATE_MISSING),
-            "labels": _part("missing", reason, labels=[]),
-            "expected_outcome": _part("missing", reason, text=""),
-        }
+        return CaseBundle(
+            id=case.id,
+            source_id=case.source_id,
+            name=name,
+            status=EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
+            reason=reason if pending or not case.reason else case.reason,
+            source_available=False,
+            scenario_key=case.scenario_key,
+            scenario_name=case.scenario_name,
+            new_checks=_new_checks(case),
+            changed_since_import=None,
+            trace_ids=(),
+            started_at=None,
+            ended_at=None,
+            transcript=TranscriptPart(status="missing", reason=reason),
+            tool_calls=ToolCallsPart(status="missing", reason=reason),
+            tool_inputs=EvidencePart(status="missing", reason=reason),
+            tool_outputs=EvidencePart(status="missing", reason=reason),
+            starting_state=EvidencePart(status="missing", reason=STATE_MISSING),
+            labels=LabelsPart(status="missing", reason=reason),
+            expected_outcome=ExpectedOutcomePart(status="missing", reason=reason),
+            also_from=also_from,
+            duplicate_of=duplicate_of,
+        )
     digest = evidence_digest(evidence)
-    shown = {
-        "id": case.id,
-        "source_id": case.source_id,
-        "name": stored.name if stored else name,
-        "status": case.status,
-        "reason": case.reason,
-        "source_available": True,
-        "scenario_key": case.scenario_key,
-        "scenario_name": case.scenario_name,
-        "new_checks": _new_checks(case),
+    tools = _tools(evidence)
+    starting_state = EvidencePart(status="missing", reason=STATE_MISSING)
+    labels = _labels(evidence)
+    expected = _expected(evidence)
+    if stored is not None:
+        tools = _tools_as("missing", TRANSCRIPT_NO_TOOLS)
+        starting_state = EvidencePart(status="missing", reason=TRANSCRIPT_STATE_MISSING)
+        labels = LabelsPart(status="missing", reason=TRANSCRIPT_NO_LABELS)
+    elif row:
+        tools = _tools_as("missing", ROW_NO_TOOLS)
+        starting_state = EvidencePart(status="missing", reason=ROW_STATE_MISSING)
+        expected = _expected(evidence, ROW_NO_EXPECTED)
+        if not evidence.labels:
+            labels = LabelsPart(status="missing", reason=ROW_NO_LABELS)
+    return CaseBundle(
+        id=case.id,
+        source_id=case.source_id,
+        name=stored.name if stored else name,
+        status=case.status,
+        reason=case.reason,
+        source_available=True,
+        scenario_key=case.scenario_key,
+        scenario_name=case.scenario_name,
+        new_checks=_new_checks(case),
         # Unknown when either side could not be read in full. A transcript has
         # no source to read again, so it is never known.
-        "changed_since_import": (
+        changed_since_import=(
             digest != case.digest if digest and case.digest else None
         ),
-        "trace_ids": list(evidence.trace_ids),
-        "started_at": evidence.started_at,
-        "ended_at": evidence.ended_at,
-        "transcript": _transcript(evidence, stored.left_out if stored else 0),
-        **_tools(evidence),
-        "starting_state": _part("missing", STATE_MISSING),
-        "labels": _labels(evidence),
-        "expected_outcome": _expected(evidence),
-    }
-    if stored is not None:
-        none = _part("missing", TRANSCRIPT_NO_TOOLS)
-        shown |= {
-            "tool_calls": {**none, "calls": []},
-            "tool_inputs": none,
-            "tool_outputs": none,
-            "starting_state": _part("missing", TRANSCRIPT_STATE_MISSING),
-            "labels": _part("missing", TRANSCRIPT_NO_LABELS, labels=[]),
-        }
-    elif row:
-        none = _part("missing", ROW_NO_TOOLS)
-        shown |= {
-            "tool_calls": {**none, "calls": []},
-            "tool_inputs": none,
-            "tool_outputs": none,
-            "starting_state": _part("missing", ROW_STATE_MISSING),
-            "expected_outcome": _expected(evidence, ROW_NO_EXPECTED),
-        }
-        if not evidence.labels:
-            shown["labels"] = _part("missing", ROW_NO_LABELS, labels=[])
-    return shown
+        trace_ids=tuple(evidence.trace_ids),
+        started_at=evidence.started_at,
+        ended_at=evidence.ended_at,
+        transcript=_transcript(evidence, stored.left_out if stored else 0),
+        tool_calls=tools.tool_calls,
+        tool_inputs=tools.tool_inputs,
+        tool_outputs=tools.tool_outputs,
+        starting_state=starting_state,
+        labels=labels,
+        expected_outcome=expected,
+        also_from=also_from,
+        duplicate_of=duplicate_of,
+    )
 
 
-def _expected(evidence: SourceEvidence, unrecorded: str = NO_EXPECTED) -> dict:
+def _expected(
+    evidence: SourceEvidence, unrecorded: str = NO_EXPECTED
+) -> ExpectedOutcomePart:
     """The expected outcome part; ``unrecorded`` says why there is none."""
     text = evidence.expected
     if text is None:
-        return _part("missing", unrecorded, text="")
+        return ExpectedOutcomePart(status="missing", reason=unrecorded)
     if not text:
-        return _part("missing", ROW_EXPECTED_EMPTY, text="")
+        return ExpectedOutcomePart(status="missing", reason=ROW_EXPECTED_EMPTY)
     if evidence.expected_truncated:
-        return _part("truncated", CUT_TO_FIT, text=text)
-    return _part("present", text=text)
+        return ExpectedOutcomePart(status="truncated", reason=CUT_TO_FIT, text=text)
+    return ExpectedOutcomePart(status="present", text=text)
 
 
-def _new_checks(case: EvidenceImportCase) -> list[dict]:
-    return [
-        {"name": str(one.get("name") or ""), "what": str(one.get("what") or "")}
+def _new_checks(case: EvidenceImportCase) -> tuple[NewCheck, ...]:
+    return tuple(
+        NewCheck(name=str(one.get("name") or ""), what=str(one.get("what") or ""))
         for one in case.new_sub_goals or []
-    ]
+    )
 
 
-def _part(status: str, reason: str = "", **items) -> dict:
-    return {"status": status, "reason": reason, **items}
-
-
-def _transcript(evidence: SourceEvidence, left_out: int = 0) -> dict:
+def _transcript(evidence: SourceEvidence, left_out: int = 0) -> TranscriptPart:
     """The transcript part; ``left_out`` system or tool messages are named."""
     part = _turns_part(evidence)
-    if left_out:
-        note = (
-            f"{left_out} system or tool message{'s' if left_out != 1 else ''} "
-            "left out: only what the user and the agent said is kept."
-        )
-        part["reason"] = f"{part['reason']} {note}".strip()
-    return part
+    if not left_out:
+        return part
+    note = (
+        f"{left_out} system or tool message{'s' if left_out != 1 else ''} "
+        "left out: only what the user and the agent said is kept."
+    )
+    return replace(part, reason=f"{part.reason} {note}".strip())
 
 
-def _turns_part(evidence: SourceEvidence) -> dict:
-    turns = [asdict(turn) for turn in evidence.turns]
+def _turns_part(evidence: SourceEvidence) -> TranscriptPart:
+    turns = evidence.turns
     if evidence.transcript_unreadable and not turns:
-        return _part(
-            "unreadable", "The recorded transcript could not be read.", turns=[]
+        return TranscriptPart(
+            status="unreadable", reason="The recorded transcript could not be read."
         )
     if not turns:
-        return _part("missing", "No conversation text was recorded.", turns=[])
+        return TranscriptPart(
+            status="missing", reason="No conversation text was recorded."
+        )
     if evidence.turns_omitted:
         count = evidence.turns_omitted
-        return _part(
-            "truncated",
-            f"{count} middle turn{'s' if count != 1 else ''} left out to fit; "
+        return TranscriptPart(
+            status="truncated",
+            reason=f"{count} middle turn{'s' if count != 1 else ''} left out to fit; "
             "the first and last are kept.",
             turns=turns,
         )
-    if evidence.turns_truncated or any(t["truncated"] for t in turns):
-        return _part("truncated", CUT_TO_FIT, turns=turns)
-    return _part("present", turns=turns)
+    if evidence.turns_truncated or any(turn.truncated for turn in turns):
+        return TranscriptPart(status="truncated", reason=CUT_TO_FIT, turns=turns)
+    return TranscriptPart(status="present", turns=turns)
 
 
-def _tools(evidence: SourceEvidence) -> dict:
+def _tools(evidence: SourceEvidence) -> ToolParts:
     if evidence.tool_calls is None:
-        unreadable = _part("unreadable", "The tool calls could not be read.")
-        return {
-            "tool_calls": {**unreadable, "calls": []},
-            "tool_inputs": unreadable,
-            "tool_outputs": unreadable,
-        }
-    calls = [asdict(call) for call in evidence.tool_calls]
+        return _tools_as("unreadable", "The tool calls could not be read.")
+    calls = evidence.tool_calls
     if not calls and evidence.tool_calls_truncated:
-        cut = _part("truncated", "More steps were recorded than could be shown.")
-        return {
-            "tool_calls": {**cut, "calls": []},
-            "tool_inputs": cut,
-            "tool_outputs": cut,
-        }
+        return _tools_as("truncated", "More steps were recorded than could be shown.")
     if not calls:
         # Observe cannot tell an agent that called no tool from one whose
         # tools are not traced.
-        missing = _part(
+        return _tools_as(
             "missing",
             "No tool calls were recorded, or the agent's tools are not traced.",
         )
-        return {
-            "tool_calls": {**missing, "calls": []},
-            "tool_inputs": missing,
-            "tool_outputs": missing,
-        }
     listed = (
-        _part("truncated", "More tool calls were recorded than are shown.", calls=calls)
+        ToolCallsPart(
+            status="truncated",
+            reason="More tool calls were recorded than are shown.",
+            calls=calls,
+        )
         if evidence.tool_calls_truncated
-        else _part("present", calls=calls)
+        else ToolCallsPart(status="present", calls=calls)
     )
-    return {
-        "tool_calls": listed,
-        "tool_inputs": _values(calls, "input", "inputs"),
-        "tool_outputs": _values(calls, "output", "outputs"),
-    }
+    return ToolParts(
+        tool_calls=listed,
+        tool_inputs=_values(calls, "input", "inputs"),
+        tool_outputs=_values(calls, "output", "outputs"),
+    )
 
 
-def _values(calls: list[dict], field: str, plural: str) -> dict:
-    recorded = [call for call in calls if call[field]]
+def _tools_as(status: str, reason: str) -> ToolParts:
+    """Every tool part the same: nothing listed, for the one ``reason``."""
+    part = EvidencePart(status=status, reason=reason)
+    return ToolParts(
+        tool_calls=ToolCallsPart(status=status, reason=reason),
+        tool_inputs=part,
+        tool_outputs=part,
+    )
+
+
+def _values(calls: tuple[ToolCall, ...], field: str, plural: str) -> EvidencePart:
+    recorded = [call for call in calls if getattr(call, field)]
     if not recorded:
-        return _part("missing", f"The tool calls recorded no {plural}.")
+        return EvidencePart(
+            status="missing", reason=f"The tool calls recorded no {plural}."
+        )
     if len(recorded) < len(calls):
-        return _part("partial", f"Some tool calls recorded no {plural}.")
-    if any(call[f"{field}_truncated"] for call in calls):
-        return _part("truncated", CUT_TO_FIT)
-    return _part("present")
+        return EvidencePart(
+            status="partial", reason=f"Some tool calls recorded no {plural}."
+        )
+    if any(getattr(call, f"{field}_truncated") for call in calls):
+        return EvidencePart(status="truncated", reason=CUT_TO_FIT)
+    return EvidencePart(status="present")
 
 
-def _labels(evidence: SourceEvidence) -> dict:
-    labels = [asdict(label) for label in evidence.labels]
+def _labels(evidence: SourceEvidence) -> LabelsPart:
+    labels = evidence.labels
     if not labels:
-        return _part("missing", "Nobody labelled this source.", labels=[])
+        return LabelsPart(status="missing", reason="Nobody labelled this source.")
     if evidence.labels_truncated:
-        return _part("truncated", CUT_TO_FIT, labels=labels)
-    return _part("present", labels=labels)
+        return LabelsPart(status="truncated", reason=CUT_TO_FIT, labels=labels)
+    return LabelsPart(status="present", labels=labels)
 
 
 def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
@@ -1050,12 +1169,20 @@ def _texts(
                 )
             ]
         for i, label in enumerate(source.labels):
-            values.append((case, "labels", i, "notes", label.notes))
-            if isinstance(label.value, str):
-                values.append((case, "labels", i, "value", label.value))
+            values += [
+                (case, "labels", i, "name", label.name),
+                (case, "labels", i, "value", _label_text(label.value)),
+                (case, "labels", i, "notes", label.notes),
+            ]
         if source.expected:
             values.append((case, "expected_outcome", 0, "text", source.expected))
     return values
+
+
+def _label_text(value: object) -> str:
+    """A label's value as the document shows it: text as written, anything
+    else (a score, a choice list, a structured answer) as its JSON."""
+    return value if isinstance(value, str) else json.dumps(value)
 
 
 def _analysed(
@@ -1071,27 +1198,31 @@ def _analysed(
 
 def _redaction(
     cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
-) -> dict:
+) -> Redaction:
     """What redaction would replace in every text the bundle carries."""
     values = _texts(cases, evidence)
     found, method, reason = _analysed([text for *_, text in values])
     findings = [
-        {
-            "case_id": case.id,
-            "part": part,
-            "index": index,
-            "field": field,
-            **asdict(finding),
-        }
+        RedactionFinding(
+            case_id=case.id,
+            part=part,
+            index=index,
+            field=field,
+            entity=finding.entity,
+            start=finding.start,
+            end=finding.end,
+            value=finding.value,
+            replacement=finding.replacement,
+        )
         for (case, part, index, field, _), hits in zip(values, found, strict=True)
         for finding in hits
     ]
-    return {
-        "method": method,
-        "reason": reason,
-        "findings": findings[:MAX_FINDINGS],
-        "total": len(findings),
-    }
+    return Redaction(
+        method=method,
+        reason=reason,
+        findings=tuple(findings[:MAX_FINDINGS]),
+        total=len(findings),
+    )
 
 
 def evidence_document(
@@ -1136,14 +1267,14 @@ def evidence_document(
         lines += [
             "",
             _document_case(evidence_import, case, source),
-            f"-- transcript: {_transcript(source)['status']}",
+            f"-- transcript: {_transcript(source).status}",
         ]
         for i, turn in enumerate(source.turns):
             lines += _wrapped(
                 f"[turn {i + 1}] {turn.role}",
                 redacted[(case.id, "transcript", i, "text")],
             )
-        lines.append(f"-- tool calls: {_tools(source)['tool_calls']['status']}")
+        lines.append(f"-- tool calls: {_tools(source).tool_calls.status}")
         for i, call in enumerate(source.tool_calls or ()):
             lines.append(
                 f"[call {i + 1}] {call.name} at {call.at.isoformat()}"
@@ -1153,21 +1284,18 @@ def evidence_document(
                 text = redacted[(case.id, "tool_calls", i, field)]
                 if text:
                     lines += _wrapped(f"[call {i + 1}] {field}", text)
-        lines.append(f"-- labels: {_labels(source)['status']}")
+        lines.append(f"-- labels: {_labels(source).status}")
         for i, label in enumerate(source.labels):
-            value = (
-                redacted[(case.id, "labels", i, "value")]
-                if isinstance(label.value, str)
-                else json.dumps(label.value)
-            )
+            name = redacted[(case.id, "labels", i, "name")]
             lines += _wrapped(
-                f"[label {i + 1}] {label.name} on the {label.target}", value
+                f"[label {i + 1}] {name} on the {label.target}",
+                redacted[(case.id, "labels", i, "value")],
             )
             notes = redacted[(case.id, "labels", i, "notes")]
             if notes:
                 lines += _wrapped(f"[label {i + 1}] notes", notes)
         if is_dataset(evidence_import):
-            lines.append(f"-- expected outcome: {_expected(source)['status']}")
+            lines.append(f"-- expected outcome: {_expected(source).status}")
             if source.expected:
                 lines += _wrapped(
                     "[expected outcome]",

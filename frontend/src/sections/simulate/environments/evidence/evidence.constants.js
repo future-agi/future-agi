@@ -140,7 +140,7 @@ export const EVIDENCE_COPY = {
   // What each choice keeps from the evidence, and what the builder makes up.
   showsDetail: {
     unset:
-      "Nothing here records how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it.",
+      "You haven't said how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it.",
     failure:
       "Keeps: the situation, what the user said and the failure. Makes: what should have happened, from the policy, not the agent's answer.",
     success:
@@ -343,15 +343,6 @@ export const cutAtWord = (text, length) => {
   const space = head.lastIndexOf(" ");
   return `${(space > 0 ? head.slice(0, space) : text.slice(0, length)).trimEnd()}…`;
 };
-
-// Labels record how a source ended; without them, no choice is made for the person.
-// A dataset row's label columns are context the person picked (an intent, say), not
-// an outcome, so a row never gets a default either.
-export const caseShowsDefault = (item, kind) =>
-  kind !== "dataset" &&
-  ["present", "partial", "truncated"].includes(item.labels?.status)
-    ? "failure"
-    : "";
 
 export const errorText = (error) =>
   EVIDENCE_COPY.errors[error?.error] ||

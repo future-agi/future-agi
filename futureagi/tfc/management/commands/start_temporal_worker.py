@@ -13,6 +13,7 @@ import threading
 from django.core.management.base import BaseCommand
 
 from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
+from tfc.temporal.common.media_tool_interceptor import MediaToolActivityInterceptor
 
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
@@ -36,6 +37,16 @@ def _activity_thread_kwargs(queue_name: str) -> dict[str, list]:
     if queue_name in _OWN_THREAD_ACTIVITY_QUEUES:
         return {"interceptors": [OwnThreadActivityInterceptor()]}
     return {}
+
+
+def _worker_interceptors(queue_name: str) -> list:
+    """Every queue maps a missing ffmpeg to a non-retryable failure; some
+    queues also run each activity on its own thread."""
+
+    return [
+        MediaToolActivityInterceptor(),
+        *_activity_thread_kwargs(queue_name).get("interceptors", []),
+    ]
 
 
 def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
@@ -358,7 +369,7 @@ class Command(BaseCommand):
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
                 kwargs.update(_workflow_cache_kwargs(queue_name))
-                kwargs.update(_activity_thread_kwargs(queue_name))
+                kwargs["interceptors"] = _worker_interceptors(queue_name)
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.

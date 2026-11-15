@@ -303,6 +303,29 @@ def find_pii_basic(texts: Sequence[str]) -> list[list[PiiFinding]]:
     return found
 
 
+# Characters scanned on each side of a cut, so a value the cut would split is seen
+# whole: longer than an address, a card or a key that redaction replaces.
+STRADDLE_CHARS = 256
+
+
+def cut_clear(text: str, limit: int) -> str:
+    """``text`` cut to at most ``limit`` characters, moved back before any value
+    redaction would replace that the cut would split. Part of an address or a card
+    number is too short for redaction to recognise, so no part of one is kept.
+    Only the STRADDLE_CHARS on each side of the cut are scanned."""
+    if len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    start = max(0, limit - STRADDLE_CHARS)
+    window = text[start : limit + STRADDLE_CHARS]
+    found = find_pii([window])
+    hits = (found if found is not None else find_pii_basic([window]))[0]
+    cut = limit - start
+    end = min([cut, *(hit.start for hit in hits if hit.start < cut < hit.end)])
+    return text[: start + end] if end == cut else text[: start + end].rstrip()
+
+
 def redact(text: str, findings: Sequence[PiiFinding]) -> str:
     """``text`` with each finding replaced by its token."""
     for finding in sorted(findings, key=lambda f: f.start, reverse=True):
