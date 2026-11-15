@@ -587,7 +587,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 func assertNoCredential(t *testing.T, where, s string) {
 	t.Helper()
-	for _, secret := range []string{"hunter2", "s3cret"} {
+	for _, secret := range []string{"hunter2", "s3cret", "sigsecret", "credsecret", "toksecret", "googsecret"} {
 		if strings.Contains(s, secret) {
 			t.Errorf("%s carries the credential %q: %s", where, secret, s)
 		}
@@ -624,6 +624,49 @@ func TestSync_CredentialsNeverReachLogsOrInfo(t *testing.T) {
 		assertNoCredential(t, "info.last_error", info.LastError)
 		assertNoCredential(t, "log", logs.String())
 	})
+}
+
+// signedURL is a presigned-URL catalogue address: the signature, the
+// credential and the session token are credentials in the query string.
+func signedURL(serverURL string) string {
+	return serverURL + "/catalogue.json?X-Amz-Signature=sigsecret&X-Amz-Credential=credsecret" +
+		"&X-Amz-Security-Token=toksecret&X-Goog-Signature=googsecret&X-Amz-Expires=300"
+}
+
+// Neither a presigned URL nor an unparseable one, with or without a query,
+// reaches the stored diagnostics or the logs. An unparseable URL fails in the
+// request build, before any connection.
+func TestSync_SignedAndUnparseableURLsNeverReachLogsOrInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  func(serverURL string) string
+		// fails: the fetch is expected to fail, so last_error is what is checked.
+		fails bool
+	}{
+		{"signed query, good fetch", signedURL, false},
+		{"signed query, unreachable", signedURL, true},
+		{"unparseable with a query", func(string) string { return "http://bob:hunter2@127.0.0.1:badport/x?token=s3cret" }, true},
+		{"unparseable without a query", func(string) string { return "http://bob:hunter2@127.0.0.1:badport/x" }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			f := newFakeCatalogue(t, catalogueJSON(60, 1e-6))
+			if tc.fails {
+				f.Close()
+			}
+			s, _, c := newTestSyncer(tc.url(f.URL), 100)
+
+			s.syncOnce(context.Background(), time.Second)
+
+			info := c.Info()
+			if tc.fails == (info.LastError == "") || tc.fails == (info.Source == SourceFetched) {
+				t.Fatalf("precondition: fetch outcome is not the expected one: %+v", info)
+			}
+			assertNoCredential(t, "info.url", info.URL)
+			assertNoCredential(t, "info.last_error", info.LastError)
+			assertNoCredential(t, "log", logs.String())
+		})
+	}
 }
 
 // "At least half" of an odd count rounds up: 61 of 121, not 60.

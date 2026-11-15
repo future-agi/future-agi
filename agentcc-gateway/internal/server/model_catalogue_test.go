@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
@@ -97,5 +100,43 @@ func TestCatalogueSourceEndpoint(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil ||
 		info.Source != modeldb.SourceFetched || info.URL != "https://catalogue.test/litellm.json" || info.Entries != len(modeldb.BundledModels)+1 {
 		t.Errorf("fetched: %+v err=%v", info, err)
+	}
+}
+
+// The admin endpoint shows a failed sync's last_error, and a catalogue URL can
+// carry a credential: in a signed query, or in userinfo that does not parse.
+func TestCatalogueSourceEndpointRedactsTheCatalogueURL(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"signed query", "http://127.0.0.1:1/c.json?X-Amz-Signature=sigsecret&X-Amz-Credential=credsecret&X-Amz-Security-Token=toksecret&X-Goog-Signature=googsecret"},
+		{"unparseable userinfo", "http://bob:hunter2@127.0.0.1:badport/c.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, c := newCatalogueTestServer(t)
+			srv.cfg.Admin.Token = "admin-secret"
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go modeldb.NewSyncer(c, tc.url, time.Hour).Run(ctx)
+			deadline := time.Now().Add(5 * time.Second)
+			for c.Info().LastError == "" {
+				if time.Now().After(deadline) {
+					t.Fatal("the failed sync was not recorded")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/-/model-catalogue/source", nil)
+			req.Header.Set("Authorization", "Bearer admin-secret")
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			for _, secret := range []string{"sigsecret", "credsecret", "toksecret", "googsecret", "hunter2"} {
+				if strings.Contains(w.Body.String(), secret) {
+					t.Errorf("the endpoint carries the credential %q: %s", secret, w.Body.String())
+				}
+			}
+		})
 	}
 }
