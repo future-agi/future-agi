@@ -2327,6 +2327,87 @@ def test_a_finished_builder_session_build_asks_its_builder_to_check_it(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "state, kind, refused",
+    [
+        (HostedHarnessJob.State.COMPLETED, "user_message", True),
+        (HostedHarnessJob.State.FAILED, "user_message", True),
+        (HostedHarnessJob.State.RUNNING, "user_message", False),
+        (HostedHarnessJob.State.COMPLETED, "interrupt", False),
+        (HostedHarnessJob.State.COMPLETED, "cancel_operation", False),
+    ],
+    ids=["finished build", "failed build", "running build", "a stop", "a cancel"],
+)
+def test_a_message_after_the_build_is_refused_over_the_authoring_cap(
+    organization, settings, monkeypatch, state, kind, refused
+):
+    """A message on a finished job starts a builder turn of its own, billed as authoring, so it
+    gets the build's own 402 over the cap. A running build was admitted already, and a stop runs
+    no turn: neither is refused."""
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: None,
+    )
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"cap-{state}-{kind}"
+    )
+    job.state = state
+    job.payload["metadata"]["authoring_object_key"] = (
+        "harness-authoring/org/saved.tar.gz"
+    )
+    job.save()
+    checked = []
+
+    def over_the_cap(organization_id):
+        checked.append(organization_id)
+        raise UsageLimitExceeded(
+            CheckResult(
+                allowed=False,
+                error_code="BUDGET_PAUSED",
+                dimension="ai_credits",
+                reason="Authoring is paused by your budget",
+                current_usage=12,
+                limit=12,
+            )
+        )
+
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.require_harness_authoring", over_the_cap
+    )
+    provider = HostedHarnessProvider()
+    provider._job = lambda _request, _pk: job
+    request = SimpleNamespace(
+        validated_data={
+            "content": "one more change",
+            "client_request_id": "over-cap",
+            "kind": kind,
+            "payload": {},
+        },
+        build_absolute_uri=lambda _path: "https://platform.example.com/",
+        user=SimpleNamespace(id="author-1"),
+    )
+
+    response = provider.send_message(request, job.id)
+
+    queued = HostedHarnessConversationMessage.no_workspace_objects.filter(
+        conversation__job=job, client_request_id="over-cap"
+    ).exists()
+    if refused:
+        assert response.status_code == 402
+        assert not queued
+        assert checked == [str(job.organization_id)]
+    else:
+        assert response.status_code == 202
+        assert queued
+        assert checked == []
+
+
+@pytest.mark.django_db
 def test_a_person_cannot_mark_their_message_as_sent_by_the_platform(
     organization, settings, monkeypatch
 ):
