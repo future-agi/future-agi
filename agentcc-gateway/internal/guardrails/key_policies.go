@@ -289,21 +289,21 @@ func (p *GuardrailPlugin) getKeyPolicyGuardrail(orgID, name, cacheKey string, ch
 	}
 	if p.dynamicFactory != nil {
 		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
-			return validateKeyPolicyCheck(name, g)
+			return validateSelectedKeyPolicyCheck(name, g, check)
 		}
 		cfg := check.Config
 		if cfg == nil {
 			cfg = map[string]interface{}{}
 		}
 		if g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, cfg); g != nil {
-			return validateKeyPolicyCheck(name, g)
+			return validateSelectedKeyPolicyCheck(name, g, check)
 		}
 	}
 	// The factory was already attempted with the policy's own config. Do not
 	// retry it through getGuardrailScoped: a failed resolution is one unavailable
 	// check, while a legitimately configured static/custom implementation remains
 	// a valid fallback.
-	return validateKeyPolicyCheck(name, p.registry[name])
+	return validateSelectedKeyPolicyCheck(name, p.registry[name], check)
 }
 
 func guardrailOutcome(rc *models.RequestContext, cr *CheckResult, action Action) (string, string) {
