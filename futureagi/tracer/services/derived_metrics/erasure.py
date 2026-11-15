@@ -778,9 +778,15 @@ def _process_erasure(request_id, *, store=None, writer=None):
                     "cleanup_failures": failures,
                     "failure_phase": phase,
                     "failure_type": type(exc).__name__,
+                    "failure_cause": code,
                 }
             )
-            MetricErasureRequest.fail(request.id, token=token, error_code=code)
+            reported_code = (
+                "cleanup_retry_exhausted"
+                if failures >= MAX_AUTOMATIC_ATTEMPTS and code not in TERMINAL_ERRORS
+                else code
+            )
+            MetricErasureRequest.fail(request.id, token=token, error_code=reported_code)
             structlog.get_logger(__name__).warning(
                 "metric_erasure_recovery_required",
                 erasure_request_id=str(request.id),

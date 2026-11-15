@@ -344,7 +344,10 @@ def test_failed_erasure_closes_staged_attempt_and_bounds_automatic_retries(
         and request.completed_at is None
         and request.receipts == {}
     )
-    assert request.error_code == "native_or_state_cleanup_pending"
+    assert request.error_code == "cleanup_retry_exhausted"
+    assert request.store_payload["failure_cause"] == "native_or_state_cleanup_pending"
+    assert request.store_payload["failure_phase"] == "live_checkpoint"
+    assert request.store_payload["failure_type"] == "RuntimeError"
     assert request.store_payload["cleanup_failures"] == 5
     assert not erasure.pending_requests().filter(pk=request.pk).exists()
 
@@ -489,3 +492,43 @@ def test_legacy_execution_registers_every_result_write_before_expiry(
         "SELECT count() FROM derived_metric_results WHERE run_id = %(run)s",
         {"run": str(run.pk)},
     ) == [(0,)]
+
+
+def test_real_history_collection_preserves_current_sql_jobs(
+    live_writer, workspace, observe_project, user
+):
+    from tracer.services.derived_metrics.deletion_protocol import collect_history
+    from tracer.sql_workbench.metric_retention import guard_result
+
+    writer, now = live_writer, timezone.now()
+    definition = numeric_definition(uuid4())
+    seed_fields_and_buckets(writer, definition, [("kept", now, 7, "kept-user")])
+    old_attempt = MetricProjectRefresh.for_project(
+        observe_project.pk
+    ).head_manifest.published_by_id
+    writer.compact()
+    actor = SimpleNamespace(
+        user_id=user.pk,
+        organization_id=workspace.organization_id,
+        workspace_id=workspace.pk,
+    )
+    jobs = [
+        create_job(actor, observe_project, state=state, sql=sql, result={"rows": [[7]]})
+        for state in ("running", "succeeded")
+        for sql in ("SELECT 1", "SELECT value FROM derived_metrics")
+    ]
+    intent = collect_history(observe_project.pk, now=now + timedelta(days=30))
+    assert intent is not None and intent.scope_kind == "history"
+    assert any(
+        row["id"] == str(old_attempt) for row in intent.store_payload["attempts"]
+    )
+    assert erasure.process_erasure(intent.pk, store=writer.store)
+    assert writer.store.execute(
+        "SELECT count() FROM metric_field_values WHERE attempt_id = %(old)s",
+        {"old": str(old_attempt)},
+    ) == [(0,)]
+    for job in jobs:
+        before = job.state
+        job.refresh_from_db()
+        assert job.state == before and job.result == {"rows": [[7]]}
+        assert guard_result(job)
