@@ -256,6 +256,17 @@ class Validation:
         }
 
 
+def ended_on_our_side(job: HostedHarnessJob) -> bool:
+    """Whether settling this failed check recorded it on its pairing as ending on our side."""
+    bundle = (
+        HarnessAssembledBundle._base_manager.filter(id=job.assembled_bundle_id).first()
+        if job.assembled_bundle_id
+        else None
+    )
+    last = ((bundle.error or {}).get("last_attempt") or {}) if bundle is not None else {}
+    return last.get("code") == CHECK_UNAVAILABLE and last.get("job_id") == str(job.id)
+
+
 def failed_reason(error: dict[str, Any]) -> str:
     """A failed check's reason in plain words, from its bundle's ``error``."""
     reason = _FAILED_REASONS.get(str(error.get("code")), "the check failed")

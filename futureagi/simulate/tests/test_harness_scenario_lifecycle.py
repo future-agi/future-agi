@@ -707,3 +707,20 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
         views[REFUND_KEYS[1]]["reason_text"]
         == "A cited source is not in this environment."
     )
+
+
+@pytest.mark.parametrize(
+    ("code", "why", "detail"),
+    [
+        (
+            "policy_conflict",
+            'its expected outcome contradicts a cited rule:\n  - rule:0 "Refund once": it refunds twice',
+            'rule:0 "Refund once": it refunds twice',
+        ),
+        ("not_ready", "the order the case cites is missing", "the order the case cites is missing"),
+    ],
+)
+def test_a_listed_reason_reads_by_its_first_item_not_its_heading(code, why, detail):
+    from simulate.services.harness_scenario_lifecycle import REASON_TEXTS, reason_text
+
+    assert reason_text(code, {"why": why}) == REASON_TEXTS[code].format(why=detail)

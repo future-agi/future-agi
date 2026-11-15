@@ -1930,7 +1930,9 @@ class HarnessScenarioValidationQuerySerializer(serializers.Serializer):
 
 
 class HarnessScenarioValidationStatusSerializer(serializers.Serializer):
-    state = serializers.ChoiceField(choices=["validating", "finished", "failed"])
+    state = serializers.ChoiceField(
+        choices=["validating", "finished", "failed", "unavailable"]
+    )
     job_id = serializers.CharField()
     deadline_at = serializers.CharField(allow_null=True)
     finished_at = serializers.CharField(allow_null=True)

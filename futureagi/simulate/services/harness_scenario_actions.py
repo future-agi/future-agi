@@ -186,10 +186,7 @@ def validate_scenarios(
             422,
         )
     if started.state == validation.CHECK_UNAVAILABLE:
-        return {
-            "state": "unavailable",
-            "message": validation.failed_reason(started.bundle.error or {}),
-        }, 200
+        return {"state": "unavailable", "message": validation.UNAVAILABLE_REASON}, 200
     job = started.job
     deadline = validation.check_deadline(job) if job is not None else None
     return {
@@ -217,6 +214,9 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, A
     elif job.state == HostedHarnessJob.State.COMPLETED:
         state, finished = "finished", job.updated_at.isoformat()
         message = None if recorded else NO_RESULTS
+    elif validation.ended_on_our_side(job):
+        state, finished = "unavailable", job.updated_at.isoformat()
+        message = validation.UNAVAILABLE_REASON
     else:
         state, finished = "failed", job.updated_at.isoformat()
         message = validation.failed_reason(job.failure or {})

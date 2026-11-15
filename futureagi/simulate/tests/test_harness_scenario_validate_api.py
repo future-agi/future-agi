@@ -174,3 +174,32 @@ def test_bad_key_is_refused(auth_client, certified):
     assert not HostedHarnessJob.no_workspace_objects.filter(
         payload__metadata__scenario_keys__isnull=False
     ).exists()
+
+
+def test_a_check_that_ended_on_our_side_says_so_when_read_again(auth_client, certified):
+    job_id = _post(auth_client, certified).json()["job_id"]
+    job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+    bundle = _row(certified)
+    bundle.error = {"last_attempt": {"code": validation.CHECK_UNAVAILABLE, "job_id": job_id}}
+    bundle.save(update_fields=["error"])
+    HostedHarnessJob.no_workspace_objects.filter(id=job_id).update(
+        state=HostedHarnessJob.State.FAILED,
+        assembled_bundle_id=bundle.id,
+        failure={"code": "authoring_runtime_validation_failed"},
+    )
+
+    read = _get(auth_client, certified, job_id).json()
+
+    assert job.state != HostedHarnessJob.State.FAILED
+    assert (read["state"], read["message"]) == ("unavailable", validation.UNAVAILABLE_REASON)
+
+
+def test_starting_a_check_that_would_end_on_our_side_says_so(auth_client, certified):
+    with patch.object(
+        validation,
+        "start_validation",
+        return_value=validation.Validation(validation.CHECK_UNAVAILABLE, _row(certified), "prove"),
+    ):
+        response = _post(auth_client, certified)
+
+    assert response.json()["message"] == validation.UNAVAILABLE_REASON

@@ -42,7 +42,7 @@ export default function ValidateScenariosButton({
   const ended =
     state === "finished" && status.data?.proofs_recorded === false
       ? status.data?.message || SCENARIOS_COPY.validationNoResults
-      : state === "failed"
+      : state === "failed" || state === "unavailable"
         ? status.data?.message
         : null;
 

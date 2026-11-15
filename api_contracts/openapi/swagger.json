@@ -146649,7 +146649,8 @@
                     "enum": [
                         "validating",
                         "finished",
-                        "failed"
+                        "failed",
+                        "unavailable"
                     ]
                 },
                 "job_id": {

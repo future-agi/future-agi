@@ -69986,7 +69986,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           type: "string",
-          enum: ["validating", "finished", "failed"],
+          enum: ["validating", "finished", "failed", "unavailable"],
         },
         job_id: {
           title: "Job id",

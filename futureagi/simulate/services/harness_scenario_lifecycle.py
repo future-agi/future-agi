@@ -112,7 +112,8 @@ def reason_text(
         return None
     entry = entry or {}
     why = str(entry.get("why") or "").strip().splitlines()
-    values = _Safe(why=why[0] if why else "", **extra)
+    items = [line.strip().removeprefix("- ") for line in why[1:] if line.strip().startswith("- ")]
+    values = _Safe(why=items[0] if items else why[0] if why else "", **extra)
     if code == "negative_control_passed":
         passed = next(
             (

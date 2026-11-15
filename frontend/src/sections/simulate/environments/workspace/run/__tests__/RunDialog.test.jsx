@@ -821,6 +821,21 @@ describe("RunDialog lifecycle refusals", () => {
     vi.useRealTimers();
   });
 
+  it("reads a long wait in minutes, not thousands of seconds", () => {
+    renderDialog({
+      error: {
+        statusCode: 409,
+        error: "pair_validating",
+        message: "being validated",
+        retry_after: 2692,
+      },
+    });
+    expect(screen.getByTestId("run-try-again")).toHaveTextContent(
+      "Try again in 44m 52s",
+    );
+    vi.useRealTimers();
+  });
+
   it("offers Validate scenarios when every case waits for validation", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderDialog({

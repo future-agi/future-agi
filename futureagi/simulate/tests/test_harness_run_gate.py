@@ -213,3 +213,30 @@ def test_the_dialog_preview_holds_back_what_the_run_holds_back(
         preview["reasons"][selection.ARCHIVED_ROW]
         == sent["reasons"][selection.ARCHIVED_ROW]
     )
+
+
+def test_the_preview_says_why_each_held_back_case_cannot_run(user, workspace, storage):
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+    from simulate.services.harness_scenario_lifecycle import REASON_TEXTS
+
+    environment = _environment(user, workspace, storage, "gate-reasons")
+    _suite(environment, _ten())
+    failing = {"format": 2, "proved": False}
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(
+        proofs={
+            **dict.fromkeys(LOOKUP_KEYS, PROVED),
+            REFUND_KEYS[0]: {**failing, "blocked_reason": "no_negative_control"},
+            REFUND_KEYS[1]: {**failing, "blocked_reason": "vacuous"},
+        }
+    )
+
+    preview = selection.selection_report(
+        resolve_pairing(environment), keys=KEYS, trials=1
+    )["selection"]
+
+    shown = preview["reasons"][selection.NOT_VALIDATED_ROW]
+    assert REASON_TEXTS["no_negative_control"] in shown
+    assert REASON_TEXTS["vacuous"] in shown

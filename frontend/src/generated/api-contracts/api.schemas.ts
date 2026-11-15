@@ -21357,6 +21357,7 @@ export const HarnessScenarioValidationStatusApiState = {
   validating: "validating",
   finished: "finished",
   failed: "failed",
+  unavailable: "unavailable",
 } as const;
 
 export interface HarnessScenarioValidationStatusApi {

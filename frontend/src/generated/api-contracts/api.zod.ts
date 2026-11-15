@@ -43080,7 +43080,7 @@ export const SimulateApiHarnessEnvironmentsValidationStatusQueryParams =
 
 export const SimulateApiHarnessEnvironmentsValidationStatusResponse =
   zod.object({
-    state: zod.enum(["validating", "finished", "failed"]),
+    state: zod.enum(["validating", "finished", "failed", "unavailable"]),
     job_id: zod.string().min(1),
     deadline_at: zod.string().min(1),
     finished_at: zod.string().min(1),

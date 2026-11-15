@@ -8,6 +8,8 @@
 // Runs badge the length of their matching env-state slice. Settings is last.
 // The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
 // component/folder keep the OverviewPanel name.
+import { formatDuration } from "src/utils/format-time";
+
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   {
@@ -459,7 +461,7 @@ export const RUN_DIALOG_COPY = {
       "These versions failed their check together. Fix them and check again.",
   },
   tryAgain: "Try again",
-  tryAgainIn: (seconds) => `Try again in ${seconds}s`,
+  tryAgainIn: (seconds) => `Try again in ${formatDuration(seconds)}`,
   validateScenarios: "Validate scenarios",
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
@@ -510,6 +512,7 @@ export const DRAFTS_COPY = {
   validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
+    ready: "Validated. Name this version to save it.",
     retry: "Validation did not start. Try again",
     superseded: "The environment changed while validating. Validate again",
     failed: (n) =>

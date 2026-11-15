@@ -318,14 +318,8 @@ def _held_back(
             for one in placed
             if one.bucket == "blocked" and row in one.by and one.lifecycle_reason
         ]
-        if len(texts) == 1:
-            reasons[row] = texts[0]
-        elif texts:
-            reasons[row] = (
-                f"{len(texts)} cases are not validated on these versions"
-                if row == NOT_VALIDATED_ROW
-                else f"{len(texts)} cases are archived"
-            )
+        if texts:
+            reasons[row] = "; ".join(dict.fromkeys(texts))
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON

@@ -295,6 +295,20 @@ describe("DraftBar", () => {
       expect(saveMutate).not.toHaveBeenCalled();
     });
 
+    it("says a validated change needs a name before Save", () => {
+      decided();
+      withValidation(
+        { state: "ready" },
+        { environment_version_id: "e9", suite_version_id: "s9" },
+      );
+      render(<DraftBar env={ENV} />);
+
+      expect(saveButton()).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        DRAFTS_COPY.validation.ready,
+      );
+    });
+
     it("names the scenarios a failed validation needs changed and keeps Save off", () => {
       decided();
       withValidation({
