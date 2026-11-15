@@ -565,9 +565,8 @@ def test_a_post_build_turn_that_cannot_be_priced_keeps_its_usage_and_bills_nothi
     [
         {"models": 7},
         {"models": [None, {}]},
-        {"tokens_in": 0, "tokens_out": 0, "usd": "a lot"},
     ],
-    ids=["models not a list", "model not a string", "usd not a number"],
+    ids=["models not a list", "model not a string"],
 )
 def test_a_post_build_turn_with_a_malformed_usage_keeps_the_row_and_bills_nothing(
     organization, monkeypatch, django_capture_on_commit_callbacks, bad

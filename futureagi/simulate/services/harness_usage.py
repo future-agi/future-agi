@@ -586,6 +586,12 @@ def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
     if is_oss():
         return None
     usage = turn.usage
+    if not isinstance(usage.get("models") or [], list):
+        logger.error(
+            "builder turn usage has malformed models command=%s",
+            turn.command_message_id,
+        )
+        return None
     try:
         record = _authoring_stage_record(
             {
