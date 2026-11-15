@@ -1088,7 +1088,12 @@ class HarnessCapabilityDroppedCaseSerializer(serializers.Serializer):
 class HarnessCapabilityNotGradableSerializer(serializers.Serializer):
     key = serializers.CharField()
     reason = serializers.ChoiceField(
-        choices=("check_unreadable", "no_checks", "evidence_not_supported")
+        choices=(
+            "check_unreadable",
+            "no_checks",
+            "evidence_not_supported",
+            "judge_unavailable",
+        )
     )
 
 
