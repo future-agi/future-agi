@@ -473,6 +473,14 @@ def reset_failed(bundle: HarnessAssembledBundle) -> None:
     bundle.refresh_from_db()
 
 
+def reset_outdated(bundle: HarnessAssembledBundle) -> None:
+    """Put a certified row back to pending, so its validation certifies it again."""
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, state=HarnessAssembledBundle.State.READY
+    ).update(**_RESET, updated_at=timezone.now())
+    bundle.refresh_from_db()
+
+
 def bundle_ready(
     environment: HostedHarnessJob,
     runtime: HarnessAgentVersionRuntime,

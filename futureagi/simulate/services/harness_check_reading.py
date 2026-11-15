@@ -16,13 +16,14 @@ class CheckReading:
 
     ``tools`` are the tools it fails without a call to; ``named`` every tool it
     compares a call's name with, a tool it forbids included. ``clear`` is false when
-    a named tool's role could not be read.
+    a named tool's role could not be read. ``judged`` marks a sub-goal a model grades.
     """
 
     world: bool
     tools: frozenset[str]
     named: frozenset[str] = frozenset()
     clear: bool = True
+    judged: bool = False
 
 
 def read_check(source: str) -> CheckReading | None:

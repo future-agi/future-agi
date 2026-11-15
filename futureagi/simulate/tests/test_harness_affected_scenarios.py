@@ -394,6 +394,56 @@ class TestBuckets:
         assert report["selection"]["eligible"] == 10
 
 
+class TestGrading:
+    """Whether the judge answered in the check decides if judged checks can be graded."""
+
+    def _judged(self, user, workspace, storage, key, checks):
+        environment = _environment(user, workspace, storage, key)
+        _suite(
+            environment,
+            [
+                _doc("polite-1", sub_goals=("polite",)),
+                _doc("polite-2", sub_goals=("looked_up", "polite")),
+                _doc("coded", solution=(LOOKUP,)),
+            ],
+        )
+        _certify(environment, storage, checks=checks)
+        return environment
+
+    def test_an_unreachable_judge_makes_judged_cases_not_gradable(
+        self, user, workspace, storage
+    ):
+        environment = self._judged(
+            user,
+            workspace,
+            storage,
+            "gr-judge-down",
+            {**PASSED, "judge_reachable": "failed"},
+        )
+
+        grading = _select(environment)["selection"]["grading"]
+
+        assert grading["not_gradable"] == [
+            {"key": "polite-1", "reason": "judge_unavailable"},
+            {"key": "polite-2", "reason": "judge_unavailable"},
+        ]
+        assert grading["gradable"] == 1
+
+    @pytest.mark.parametrize("judge", ["passed", "not_run", None])
+    def test_an_old_certificate_without_the_judge_check_reports_no_gap(
+        self, user, workspace, storage, judge
+    ):
+        checks = {**PASSED, **({"judge_reachable": judge} if judge else {})}
+        environment = self._judged(
+            user, workspace, storage, f"gr-judge-{judge}", checks
+        )
+
+        grading = _select(environment)["selection"]["grading"]
+
+        assert grading["not_gradable"] == []
+        assert grading["gradable"] == 3
+
+
 class TestRunRefusals:
     def test_failed_validation_blocks_every_case_as_runs_are_refused(
         self, user, workspace, storage
