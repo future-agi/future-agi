@@ -199,8 +199,12 @@ class CreateAgentVersionView(APIView):
             # Omission keeps the selected source even when it was selected by
             # active/latest rather than an explicit ID. Otherwise sync could
             # adopt an unrelated, unversioned legacy key on the next save.
-            carry_api_key = not provider_changed and (
-                preserve_existing_api_key or not incoming_api_key
+            # LiveKit uses its own fields below; a fresh replacement must not
+            # decrypt the old key merely because generic api_key was omitted.
+            carry_api_key = (
+                provider_family(requested_provider) != "livekit"
+                and not provider_changed
+                and (preserve_existing_api_key or not incoming_api_key)
             )
             existing_configuration = None
             existing_api_key = None

@@ -146,6 +146,96 @@ def test_livekit_alias_saves_preserve_selected_credentials(
         assert secret not in str(saved.data)
 
 
+@pytest.mark.parametrize(
+    "old_provider,new_provider",
+    [
+        ("livekit", "livekit"),
+        ("livekit_bridge", "livekit_bridge"),
+        ("livekit", "livekit_bridge"),
+        ("livekit_bridge", "livekit"),
+    ],
+)
+def test_livekit_create_replaces_unreadable_selected_credentials(
+    vapi_setup, old_provider, new_provider
+):
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, original, credentials = seed_version(provider, "")
+    agent.provider = old_provider
+    agent.save(update_fields=["provider"])
+    credentials.provider_type = "livekit"
+    credentials.api_key = "enc::synthetic-invalid-key"
+    credentials.api_secret = "enc::synthetic-invalid-secret"
+    credentials.server_url = "wss://synthetic.invalid"
+    credentials.agent_name = "Synthetic LiveKit agent"
+    credentials.config_json = {"synthetic": {"preserve": True}}
+    credentials.max_concurrency = 3
+    credentials.save()
+    original.configuration_snapshot = original.create_snapshot(
+        commit_message="Fixture"
+    )
+    original.save(update_fields=["configuration_snapshot"])
+    original_snapshot = original.configuration_snapshot.copy()
+    source_row = ProviderCredentials.objects.filter(pk=credentials.pk).values().get()
+    for decrypt in (credentials.get_api_key, credentials.get_api_secret):
+        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+            decrypt()
+
+    new_key = "synthetic-livekit-replacement-key"
+    new_secret = "synthetic-livekit-replacement-secret"
+    # No generic api_key or source_version_id: active/latest selects the old row,
+    # but neither old ciphertext is needed when both LiveKit secrets are fresh.
+    saved = save_version(
+        client,
+        agent,
+        {
+            "provider": new_provider,
+            "livekit_api_key": new_key,
+            "livekit_api_secret": new_secret,
+        },
+    )
+    assert saved.status_code == 201, saved.data
+    response_snapshot = saved.data["version"]["configuration_snapshot"]
+    assert saved.data["version"]["api_key"] == mask_key(new_key)
+    assert response_snapshot["livekit_api_key"] == mask_key(new_key)
+    assert response_snapshot["livekit_api_secret"] == "********"
+    assert response_snapshot["livekit_url"] == "wss://synthetic.invalid"
+    assert response_snapshot["livekit_agent_name"] == "Synthetic LiveKit agent"
+    assert response_snapshot["livekit_config_json"] == {
+        "synthetic": {"preserve": True}
+    }
+    assert response_snapshot["livekit_max_concurrency"] == 3
+    for secret in (new_key, new_secret):
+        assert secret not in str(saved.data)
+
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    selected_credentials = selected.credentials
+    assert selected.pk != original.pk
+    assert selected_credentials.pk != credentials.pk
+    assert selected_credentials.provider_type == "livekit"
+    assert selected_credentials.get_api_key() == new_key
+    assert selected_credentials.get_api_secret() == new_secret
+    assert selected_credentials.api_key.startswith("enc::")
+    assert selected_credentials.api_secret.startswith("enc::")
+    assert selected_credentials.server_url == "wss://synthetic.invalid"
+    assert selected_credentials.agent_name == "Synthetic LiveKit agent"
+    assert selected_credentials.config_json == {"synthetic": {"preserve": True}}
+    assert selected_credentials.max_concurrency == 3
+    assert selected.configuration_snapshot["provider"] == new_provider
+    assert "livekit_api_key" not in selected.configuration_snapshot
+    assert "livekit_api_secret" not in selected.configuration_snapshot
+    assert agent.api_key == "synthetic-key-A"
+    original.refresh_from_db()
+    assert original.configuration_snapshot == original_snapshot
+    assert (
+        ProviderCredentials.objects.filter(pk=credentials.pk).values().get()
+        == source_row
+    )
+
+
 @pytest.mark.parametrize("route", ["edit", "operations", "create"])
 @pytest.mark.parametrize("key", [None, "********", "synthetic-key-C"])
 def test_livekit_to_real_provider_still_requires_fresh_credentials(
