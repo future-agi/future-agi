@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 from rest_framework import status
 
 from accounts.tests.test_rbac_regressions import WORKSPACE_WRITE_DENIED, _viewer_client
-from simulate.models import EvidenceImport, EvidenceImportCase
+from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.selectors.evidence_import import (
     BASIC_REDACTION,
     MAX_IMPORT_CHARS,
@@ -21,6 +21,8 @@ from simulate.selectors.evidence_import import (
     TRANSCRIPT_STATE_MISSING,
     evidence_document,
 )
+from simulate.services.evidence_import import TranscriptInput, create_transcript_import
+from simulate.services.hosted_harness import DELETE_CANCEL_REASON, HostedHarnessError
 from tracer.selectors.observe_evidence import MAX_TURNS, TURN_CHARS
 
 from .test_evidence_import_api import ENVIRONMENTS, SESSION
@@ -362,6 +364,31 @@ class TestStored:
         assert stored.deleted is True
         assert stored.redaction is None
         assert [c.transcript for c in EvidenceImportCase._base_manager.all()] == [None]
+
+    @pytest.mark.parametrize(
+        "change", [{"deleted": True}, {"cancel_reason": DELETE_CANCEL_REASON}]
+    )
+    def test_an_environment_deleted_or_being_deleted_stores_no_transcript(
+        self, environment, user, change
+    ):
+        """The request may have read the environment before its deletion: the import
+        checks it again under its lock. One deleted while it runs is only asked to
+        stop, and nothing would delete a transcript stored meanwhile."""
+        read = HostedHarnessJob.objects.get(id=environment.id)
+        HostedHarnessJob._base_manager.filter(id=environment.id).update(**change)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            create_transcript_import(
+                environment=read,
+                transcripts=[TranscriptInput("Support chat", "text", PASTED)],
+                production=False,
+                user=user,
+            )
+
+        assert refused.value.status_code == status.HTTP_404_NOT_FOUND
+        assert not EvidenceImport._base_manager.filter(
+            environment_id=environment.id
+        ).exists()
 
     def test_deleting_the_environment_deletes_its_transcripts(
         self, client, environment, no_observe

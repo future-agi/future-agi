@@ -243,7 +243,7 @@ def land(
             from simulate.services.harness_versioning.rebuild import _expire_chat_lease
 
             _expire_chat_lease(conversation)
-            _settled(import_id)
+            forget_later(import_id)
 
         transaction.on_commit(close)
 
@@ -444,7 +444,8 @@ def _last_words(
 
 
 def is_drafting_job(job: HostedHarnessJob) -> bool:
-    return EvidenceImport.no_workspace_objects.filter(drafting_job=job).exists()
+    # A deleted import's drafting job is one still, until it is forgotten.
+    return EvidenceImport._base_manager.filter(drafting_job=job).exists()
 
 
 def refuse_for_drafting_job(job: HostedHarnessJob) -> None:
@@ -630,10 +631,10 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
         last_words = _last_words(command.conversation, command)
         _block(cases, _with_reply(TURN_FAILED, last_words))
         import_id = str(payload.get("_evidence_import_id") or "")
-        transaction.on_commit(lambda: _settled(import_id))
+        transaction.on_commit(lambda: forget_later(import_id))
 
 
-def _settled(evidence_import_id: str) -> None:
+def forget_later(evidence_import_id: str) -> None:
     """Delete the drafting job now; the sweep finishes it if this cannot."""
     from simulate.tasks.evidence_drafts import schedule_forget
 
@@ -656,9 +657,8 @@ def forget(evidence_import_id: str) -> None:
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
-    evidence_import = EvidenceImport.no_workspace_objects.filter(
-        id=evidence_import_id
-    ).first()
+    # A deleted import too: its environment's deletion leaves its drafting here.
+    evidence_import = EvidenceImport._base_manager.filter(id=evidence_import_id).first()
     if evidence_import is None or evidence_import.drafting_job_id is None:
         return
     job_id = evidence_import.drafting_job_id
@@ -709,9 +709,13 @@ def sweep() -> dict[str, int]:
     including one a deletion left part way."""
     stale_before = timezone.now() - DRAFTING_TIMEOUT
     timed_out = forgotten = 0
-    for evidence_import in EvidenceImport.no_workspace_objects.filter(
+    for evidence_import in EvidenceImport._base_manager.filter(
         drafting_job__isnull=False
     ).select_related("drafting_job"):
+        if evidence_import.deleted:
+            # Its environment was deleted: nothing waits for the turn, so it goes now.
+            forgotten += _forgotten(evidence_import)
+            continue
         conversation = HostedHarnessConversation._base_manager.filter(
             job_id=evidence_import.drafting_job_id
         ).first()
@@ -726,14 +730,21 @@ def sweep() -> dict[str, int]:
                 continue
             _block(list(waiting), TIMED_OUT)
             timed_out += 1
-        try:
-            forget(str(evidence_import.id))
-            forgotten += 1
-        except Exception:  # noqa: BLE001 - one import's failure never stops the rest
-            logger.exception(
-                "evidence_forget_failed", evidence_import=str(evidence_import.id)
-            )
+        forgotten += _forgotten(evidence_import)
     return {"timed_out": timed_out, "forgotten": forgotten}
+
+
+def _forgotten(evidence_import: EvidenceImport) -> int:
+    """1 once the import's drafting is forgotten, 0 when that failed and the next
+    sweep tries again. One import's failure never stops the rest."""
+    try:
+        forget(str(evidence_import.id))
+    except Exception:  # noqa: BLE001 - logged; the next sweep tries again
+        logger.exception(
+            "evidence_forget_failed", evidence_import=str(evidence_import.id)
+        )
+        return 0
+    return 1
 
 
 def _drafting_command(

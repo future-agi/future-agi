@@ -28,7 +28,11 @@ from simulate.models import (
 from simulate.selectors.runs import user_environment_runs
 from simulate.services import evidence_drafts
 from simulate.services.harness_versioning import drafts
-from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    create_hosted_job,
+    delete_environment,
+)
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
@@ -756,3 +760,41 @@ def test_only_a_dataset_turn_carries_the_expected_outcome_rule(cases, user, sche
     conversation = _start(cases, user)
 
     assert evidence_drafts.EXPECTED_OUTCOME_RULE not in _command(conversation).content
+
+
+class TestDeletedWhileDrafting:
+    """The environment's imports go with it. One still drafting keeps its drafting
+    chat, sandbox and job until they are deleted too, though the import is gone."""
+
+    def test_deleting_the_environment_deletes_the_drafting_chat(
+        self, environment, cases, user, scheduled, django_capture_on_commit_callbacks
+    ):
+        conversation = _start(cases, user)
+        _lease(conversation)
+        with (
+            patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            delete_environment(environment)
+        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+
+        with patch(
+            "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
+        ) as gateway:
+            evidence_drafts.forget(str(cases[0].evidence_import_id))
+
+        gateway.return_value._delete_chat_sandbox.assert_called_once()
+        assert not any(_gone(conversation).values())
+
+    def test_the_sweep_deletes_a_deleted_imports_drafting_chat(
+        self, environment, cases, user, scheduled
+    ):
+        conversation = _start(cases, user)
+        with patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"):
+            delete_environment(environment)
+
+        with patch("simulate.services.hosted_harness_gateway.HostedHarnessGateway"):
+            swept = evidence_drafts.sweep()
+
+        assert swept["forgotten"] == 1
+        assert not any(_gone(conversation).values())

@@ -826,3 +826,48 @@ def test_a_case_drafted_on_the_current_environment_is_still_already_imported(
     [case] = _imported(environment, user, "again").cases.all()
 
     assert (case.status, case.duplicate_of_id) == ("duplicate", drafted.id)
+
+
+def test_a_case_whose_suite_change_was_discarded_is_imported_again_as_new(
+    environment, storage, user
+):
+    """A case added beside other edits sits in the unsaved suite change. While that
+    change is kept, importing its source again repeats it; once the person discards
+    the change, the scenario is gone, so the source is proposed anew."""
+    chat = "User: Refund me twice\nAgent: Done, both refunds are issued."
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput("first", "text", chat)],
+        production=True,
+        user=user,
+    )
+    [case] = made.cases.all()
+    conversation, command = _command(environment, [case], 81)
+    key, digest = _save(
+        conversation, command, storage, [evidence_drafts.scenario_key_for(case)]
+    )
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 81)
+    seen = _other_edit(environment, user)
+    assert (
+        add_to_suite(
+            made, [str(case.id)], expected=seen, idempotency_key="add-d", user=user
+        )
+        is False
+    )
+
+    def again(name):
+        return create_transcript_import(
+            environment=environment,
+            transcripts=[TranscriptInput(name, "text", chat)],
+            production=True,
+            user=user,
+        ).cases.get()
+
+    kept = again("while the change is kept")
+    assert (kept.status, kept.duplicate_of_id) == ("duplicate", case.id)
+
+    assert drafts.discard_draft(environment, "suite", user=user)
+    after = again("after the change is discarded")
+
+    assert (after.status, after.duplicate_of_id) == ("pending", None)
