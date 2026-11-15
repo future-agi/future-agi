@@ -42,7 +42,10 @@ vi.mock("src/api/develop/dataset-compare", async (importOriginal) => ({
   useDeleteCompare: () => ({ mutate: deleteCompare }),
 }));
 vi.mock("src/components/snackbar", () => snackbar);
-vi.mock("src/utils/Mixpanel", () => ({ resetUser: vi.fn() }));
+vi.mock("src/utils/Mixpanel", async () => ({
+  ...(await import("src/utils/Mixpanel/EventNames")),
+  resetUser: vi.fn(),
+}));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
 vi.mock("src/hooks/use-local-storage", () => ({
   useLocalStorage: () => ({ state: { vals: [] }, update: vi.fn() }),
