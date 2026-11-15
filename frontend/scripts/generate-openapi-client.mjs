@@ -1773,6 +1773,14 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         );
       }
     }
+    // Add sends a null draft id for a piece with no open draft.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody = zod.object({",
+      /("id": zod\.string\(\)\.uuid\(\))/g,
+      "$1.nullable()",
+      "evidence Add draft ids nullable",
+    );
 
     for (const responseName of [
       "ModelHubDevelopsGetDatasetTableListResponse",

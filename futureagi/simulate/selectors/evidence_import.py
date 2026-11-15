@@ -288,12 +288,13 @@ def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
     )
 
 
+# Each counts what redaction reads of it (``_texts``), so the budget bounds that.
 def _call_size(call: ToolCall) -> int:
-    return len(call.input) + len(call.output) + len(call.error)
+    return len(call.name) + len(call.input) + len(call.output) + len(call.error)
 
 
 def _label_size(label: Label) -> int:
-    return len(label.notes) + (len(label.value) if isinstance(label.value, str) else 0)
+    return len(label.name) + len(_label_text(label.value)) + len(label.notes)
 
 
 def _shares(sizes: tuple[int, ...], total: int) -> list[int]:
@@ -362,12 +363,19 @@ def _cut_calls(
         if room <= 0:
             cut = True
             break
+        name, room = _clip(call.name, room)
         given, room = _clip(call.input, room)
         taken, room = _clip(call.output, room)
         error, room = _clip(call.error, room)
-        cut = cut or (given, taken, error) != (call.input, call.output, call.error)
+        cut = cut or (name, given, taken, error) != (
+            call.name,
+            call.input,
+            call.output,
+            call.error,
+        )
         kept[index] = replace(
             call,
+            name=name,
             input=given,
             output=taken,
             error=error,
@@ -383,12 +391,14 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
     for label in labels:
         if room <= 0 and _label_size(label):
             return tuple(kept), True
+        name, room = _clip(label.name, room)
+        written = _label_text(label.value)
+        shown, room = _clip(written, room)
+        # A structured value that does not fit is kept as the start of its JSON.
+        value = label.value if shown == written else shown
         notes, room = _clip(label.notes, room)
-        value = label.value
-        if isinstance(value, str):
-            value, room = _clip(value, room)
-        cut = cut or notes != label.notes or value != label.value
-        kept.append(replace(label, notes=notes, value=value))
+        cut = cut or (name, value, notes) != (label.name, label.value, label.notes)
+        kept.append(replace(label, name=name, value=value, notes=notes))
     return tuple(kept), cut
 
 
@@ -563,6 +573,7 @@ def _texts(
             values += [
                 (case, "tool_calls", i, field, text)
                 for field, text in (
+                    ("name", call.name),
                     ("input", call.input),
                     ("output", call.output),
                     ("error", call.error),
@@ -684,8 +695,8 @@ def evidence_document(
         lines.append(f"-- tool calls: {_tools(source).tool_calls.status}")
         for i, call in enumerate(source.tool_calls or ()):
             lines.append(
-                f"[call {i + 1}] {call.name} at {call.at.isoformat()}"
-                + (" FAILED" if call.failed else "")
+                f"[call {i + 1}] {redacted[(case.id, 'tool_calls', i, 'name')]} "
+                f"at {call.at.isoformat()}" + (" FAILED" if call.failed else "")
             )
             for field in ("input", "output", "error"):
                 text = redacted[(case.id, "tool_calls", i, field)]

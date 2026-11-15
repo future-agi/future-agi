@@ -40429,7 +40429,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
     expected_drafts: zod
       .object({
         environment: zod.object({
-          id: zod.string().uuid(),
+          id: zod.string().uuid().nullable(),
           revision: zod
             .number()
             .min(
@@ -40437,7 +40437,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
             ),
         }),
         suite: zod.object({
-          id: zod.string().uuid(),
+          id: zod.string().uuid().nullable(),
           revision: zod
             .number()
             .min(
