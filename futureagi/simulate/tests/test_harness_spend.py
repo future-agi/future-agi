@@ -283,6 +283,45 @@ def test_a_reset_ledger_never_lowers_its_own_snapshot(organization):
     assert attempt["total_usd"] == 0.15
 
 
+@pytest.mark.parametrize(
+    "bad_stages",
+    [[None], [1], [{"stage": ["build"]}]],
+    ids=["null stage", "non-dict stage", "unhashable stage name"],
+)
+@pytest.mark.django_db
+def test_a_malformed_ledger_never_replaces_its_last_snapshot(organization, bad_stages):
+    """A read the combine cannot use must neither lower the attempt nor become the snapshot."""
+    job = _job(organization)
+    cli = _ledger(1.0, {"stage": "a", "usd": 1.0})
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(2.0, {"stage": "b", "usd": 2.0})
+    )
+
+    _record_harness_spend(job, 1, cli=cli, builder=_ledger(3.0, *bad_stages))
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["total_usd"] == 3.0
+    assert attempt["sources"]["builder"]["total_usd"] == 2.0
+    assert _spend(job)["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_well_formed_later_read_still_replaces_the_snapshot(organization):
+    job = _job(organization)
+    cli = _ledger(1.0, {"stage": "a", "usd": 1.0})
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(2.0, {"stage": "b", "usd": 2.0})
+    )
+
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(3.0, {"stage": "b", "usd": 3.0})
+    )
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["total_usd"] == 4.0
+    assert attempt["sources"]["builder"]["total_usd"] == 3.0
+
+
 def _read_at_cleanup(job, monkeypatch, builder_read):
     """Run the cleanup read with a good CLI ledger and the builder read given."""
     from simulate.services import hosted_harness_gateway as gateway
