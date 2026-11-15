@@ -145,7 +145,9 @@ class LiveAuthority:
         # Collector sessions have no PG Trace row. Their durable session-delete
         # marker must deny media even while CH still returns the live span.
         try:
-            if session_deleted(scope.project_id, getattr(span, "trace_session_id", None)):
+            if session_deleted(
+                scope.project_id, getattr(span, "trace_session_id", None)
+            ):
                 return None
         except Exception:  # noqa: BLE001 - source/marker read boundary; fail closed
             logger.warning("attachment_session_deletion_unavailable")
