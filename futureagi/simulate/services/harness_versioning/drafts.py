@@ -598,7 +598,8 @@ def record_draft(
             refuse_scenario_keys(
                 locked, prepared.scenarios, origin=origin, exempt=exempt
             )
-            if origin == "extend":
+            if origin in ("extend", "nudge"):
+                # Extend, and a rebuild restoring a dropped scenario, bring a dropped key back.
                 exempt |= _extend_exempt(locked, prepared.scenarios)
         rows: dict[str, Any] = {}
         written: set[str] = set()
@@ -1165,7 +1166,10 @@ def activate_drafts(
             )
         else:
             diff, draft.summary = suite_change(
-                default, documents.get("scenarios") or [], origin or draft.origin
+                default,
+                documents.get("scenarios") or [],
+                origin or draft.origin,
+                documents.get("dropped"),
             )
             draft.authored_against = targets["environment"]
         draft.diff = diff

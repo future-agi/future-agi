@@ -867,6 +867,16 @@ def _user_draft_keys(locked: HostedHarnessJob) -> list[str]:
     return sorted({*(diff.get("added") or []), *(diff.get("changed") or {})})
 
 
+def _suite_agent_label(nudge: HarnessNudge, head: HostedHarnessJob) -> str | None:
+    """The agent version a suite rebuild follows: the one its environment version was built for,
+    named in the reason a scenario it drops for a removed capability keeps."""
+    environment = nudge.base_environment_version
+    agent = getattr(environment, "agent_version", None) or head.agent_version
+    if agent is None:
+        return None
+    return reads._agent_label(agent.version_name, agent.version_number)
+
+
 def _labels(nudge: HarnessNudge) -> dict[str, str | None]:
     refs = reads.version_refs(
         nudge.base_agent_version,
@@ -1005,7 +1015,10 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
                     _user_draft_keys(head) if nudge.target == Target.SUITE else []
                 ),
                 **(
-                    {"new_sub_goals": _added_sub_goals(nudge)}
+                    {
+                        "new_sub_goals": _added_sub_goals(nudge),
+                        "agent_label": _suite_agent_label(nudge, head),
+                    }
                     if nudge.target == Target.SUITE
                     else {}
                 ),
@@ -1304,6 +1317,7 @@ def _items(piece: str, diff: Mapping[str, Any] | None) -> set[str]:
                 if isinstance(one, Mapping)
             ),
             *(diff.get("changed") or {}),
+            *(diff.get("restored") or []),
         }
     contract = diff.get("contract") or {}
     names: set[str] = set(contract.get("fields") or [])
@@ -1356,8 +1370,9 @@ def _buckets(
             before, documents.get("contract") or {}, documents
         )
     else:
+        # The drops the rebuild recorded give a removed case its reason and a restored one its bucket.
         update, _summary = suite_change(
-            before, documents.get("scenarios") or [], "nudge"
+            before, documents.get("scenarios") or [], "nudge", documents.get("dropped")
         )
     edits = ((nudge.draft_snapshot or {}).get("piece") or {}).get("diff")
     return (
@@ -1412,6 +1427,15 @@ def _report(
         one for one in secret_result.get("left_out") or [] if isinstance(one, Mapping)
     ][:PROBLEMS_MAX]
     secret_not_checked = list(secret_checks.get("not_checked") or [])[:PROBLEMS_MAX]
+    # Dropped scenarios the rebuild put back and proved, and those it could not.
+    secret_restored = [
+        one for one in secret_result.get("restored") or [] if isinstance(one, Mapping)
+    ][:PROBLEMS_MAX]
+    secret_restore_failed = [
+        one
+        for one in secret_result.get("restore_failed") or []
+        if isinstance(one, Mapping)
+    ][:PROBLEMS_MAX]
     # Every free text the builder wrote, as (part, field, cap), masked in one pass.
     secret_parts = [
         ("notes", None, str(secret_result.get("notes") or ""), NOTES_MAX),
@@ -1432,6 +1456,21 @@ def _report(
         *(
             ("left_out", (index, field), str(one.get(field) or ""), PROBLEM_TEXT_MAX)
             for index, one in enumerate(secret_left_out)
+            for field in ("key", "why")
+        ),
+        *(
+            ("restored", (index, field), str(one.get(field) or ""), PROBLEM_TEXT_MAX)
+            for index, one in enumerate(secret_restored)
+            for field in ("key", "name")
+        ),
+        *(
+            (
+                "restore_failed",
+                (index, field),
+                str(one.get(field) or ""),
+                PROBLEM_TEXT_MAX,
+            )
+            for index, one in enumerate(secret_restore_failed)
             for field in ("key", "why")
         ),
     ]
@@ -1459,6 +1498,8 @@ def _report(
         "warnings": [],
         "not_checked": [],
         "left_out": [{} for _ in secret_left_out],
+        "restored": [{} for _ in secret_restored],
+        "restore_failed": [{} for _ in secret_restore_failed],
     }
     for (part, at, _text, cap), text in zip(secret_parts, masked, strict=True):
         text = text[:cap]
@@ -1644,7 +1685,13 @@ def land_nudge_result(
             )
         extra = {
             key: report[key]
-            for key in ("left_out", "not_checked", "warnings")
+            for key in (
+                "left_out",
+                "not_checked",
+                "warnings",
+                "restored",
+                "restore_failed",
+            )
             if report[key]
         }
         if draft is None or not report["changed"] or draft.hash == snapshot.get("hash"):

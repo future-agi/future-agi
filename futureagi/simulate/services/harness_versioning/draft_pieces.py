@@ -167,7 +167,12 @@ def draft_content(
             "diff": diff,
             "agent_version_id": locked.agent_version_id,
         }
-    diff, summary = suite_change(default, prepared.scenarios, origin)
+    diff, summary = suite_change(
+        default,
+        prepared.scenarios,
+        origin,
+        prepared.suite_documents.get("dropped"),
+    )
     return {
         **prepared.suite_fields,
         "documents": dict(prepared.suite_documents),
@@ -193,16 +198,13 @@ def discard_version(draft: Any, *, user: Any = None, **documents: Any) -> None:
 
 
 def active_twin(model: Any, locked: HostedHarnessJob, draft: Any) -> Any | None:
-    return (
-        model.no_workspace_objects.filter(
-            job=locked,
-            hash=draft.hash,
-            hash_kind=draft.hash_kind,
-            status=VersionStatus.ACTIVE,
-        )
-        .order_by("-version_number")
-        .first()
+    found = model.no_workspace_objects.filter(
+        job=locked,
+        hash=draft.hash,
+        hash_kind=draft.hash_kind,
+        status=VersionStatus.ACTIVE,
     )
+    return found.order_by("-version_number").first()
 
 
 def draft_changed(**details: Any) -> HostedHarnessError:

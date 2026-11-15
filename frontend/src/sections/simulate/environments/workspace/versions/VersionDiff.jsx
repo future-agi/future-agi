@@ -104,12 +104,19 @@ EnvironmentDiff.propTypes = { diff: PropTypes.object };
 
 function SuiteDiff({ diff }) {
   const added = list(diff?.added).map(String);
+  const restored = list(diff?.restored).map(String);
   const removed = list(diff?.removed);
   const changed = Object.entries(diff?.changed || {});
   return (
     <Stack spacing={1.5}>
       {added.length > 0 && (
         <ChangeGroup title={COPY.scenariosAdded} change={{ added }} />
+      )}
+      {restored.length > 0 && (
+        <ChangeGroup
+          title={COPY.scenariosRestored}
+          change={{ added: restored }}
+        />
       )}
       {removed.length > 0 && (
         <Stack

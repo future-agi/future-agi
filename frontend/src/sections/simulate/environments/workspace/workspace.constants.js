@@ -261,6 +261,7 @@ export const VERSIONS_COPY = {
     removed: "Removed",
     changed: "Changed",
     scenariosAdded: "Scenarios added",
+    scenariosRestored: "Scenarios restored",
     scenariosRemoved: "Scenarios removed",
     scenariosChanged: "Scenarios changed",
     source: "Source changed",

@@ -171,6 +171,33 @@ def _sub_goals(files: Mapping[str, bytes]) -> list[dict[str, Any]]:
     return [goal for goal in value or [] if isinstance(goal, dict) and goal.get("name")]
 
 
+def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+    """Each scenario a rebuild dropped for a removed capability, by key: what it needed, what was
+    gone, the agent version, the reason and the last suite version that held it. Its last content
+    stays in the archive; a digest of it tells two records apart."""
+    from simulate.services.canonical_json import canonical_digest
+
+    body = _json(suite, "dropped.json")
+    held = body.get("scenarios") if isinstance(body, dict) else None
+    if not isinstance(held, dict):
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    for key, record in held.items():
+        if not isinstance(record, dict):
+            continue
+        found[str(key)] = {
+            "name": str(record.get("name") or key),
+            "capabilities": record.get("capabilities") or {},
+            "missing": record.get("missing") or {},
+            "agent_version": str(record.get("agent_version") or ""),
+            "reason": str(record.get("reason") or ""),
+            "last_suite_version": str(record.get("last_suite_version") or ""),
+            "restore_failed": str(record.get("restore_failed") or ""),
+            "content_digest": canonical_digest(record.get("content") or {}),
+        }
+    return found
+
+
 def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     """The suite's scenarios, from its index or else from each folder's document."""
     listed = _json(suite, "scenarios.json")
@@ -233,8 +260,10 @@ def prepare_pieces(
         ],
         "authoring_revisions": [authoring_revision],
     }
+    dropped = dropped_documents(split.suite)
     suite_documents_ = {
         "scenarios": scenarios,
+        **({"dropped": dropped} if dropped else {}),
         "coverage": _json(split.suite, "coverage.json"),
         "stage_outputs": [
             one for one in outputs if one.get("kind") in SUITE_OUTPUT_KINDS
@@ -305,18 +334,15 @@ def _land(
     hash_kind: str = HashKind.TREE_V1,
 ) -> tuple[Any, bool]:
     """An active version with this hash: the existing one, or a new one numbered next."""
-    existing = (
-        # The base manager, so historical models in a migration work too.
-        model._base_manager.filter(
-            deleted=False,
-            job=job,
-            hash=hash,
-            hash_kind=hash_kind,
-            status=VersionStatus.ACTIVE,
-        )
-        .order_by("-version_number")
-        .first()
+    # The base manager, so historical models in a migration work too.
+    found = model._base_manager.filter(
+        deleted=False,
+        job=job,
+        hash=hash,
+        hash_kind=hash_kind,
+        status=VersionStatus.ACTIVE,
     )
+    existing = found.order_by("-version_number").first()
     if existing is not None:
         return existing, False
     created = model._base_manager.create(
@@ -607,14 +633,19 @@ def suite_change(
     base: HarnessSuiteVersion | None,
     scenarios: list[dict[str, Any]],
     origin: str,
+    dropped: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """The scenarios' diff against ``base``, and its summary."""
+    """The scenarios' diff against ``base``, and its summary. ``dropped`` is the new suite's
+    ``documents.dropped``: a scenario it records was removed for that reason, and one ``base``
+    recorded that is back was restored."""
     diff = None
     if base is not None:
         diff = diffs.suite_diff(
             (base.documents or {}).get("scenarios") or [],
             scenarios,
             removed_reason=REMOVED_REASONS.get(origin, "removed"),
+            dropped=dropped,
+            was_dropped=(base.documents or {}).get("dropped"),
         )
     return diff, diffs.summarize_suite(diff)
 
@@ -1017,7 +1048,9 @@ def record_authoring(
                 "created_by": user,
             },
         )
-        suite_diff, suite_summary = suite_change(base_suite, documents, origin)
+        suite_diff, suite_summary = suite_change(
+            base_suite, documents, origin, pieces.suite_documents.get("dropped")
+        )
         suite_version, suite_created = _land(
             HarnessSuiteVersion,
             locked,
