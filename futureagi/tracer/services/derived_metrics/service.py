@@ -329,7 +329,6 @@ def _authorized_metric(metric: DerivedMetric) -> bool:
 def _requester_can_run(run: DerivedMetricRun) -> bool:
     from accounts.models.organization_membership import OrganizationMembership
     from accounts.models.workspace import WorkspaceMembership
-
     from tfc.constants.levels import Level
 
     metric = run.definition.metric
@@ -1110,6 +1109,9 @@ def preview(
             "trace_preview_unavailable",
             "Trace preview is not available until the measured trace reader is installed.",
         )
+    from tracer.services.derived_metrics.source_retention import require_window
+
+    require_window(scope.organization, start)
     recipe = field_recipe(definition)
     recipe.source.selection_unit = "span" if definition.level == "span" else "session"
     from tracer.models.derived_metric import MetricProjectRefresh
@@ -1212,6 +1214,7 @@ def preview(
                     }
                 ) from exc
             raise
+    require_window(scope.organization, start)
     names = [column[0] for column in columns]
     results = [
         shape_result(dict(zip(names, row, strict=True)), include_uncertainty=True)

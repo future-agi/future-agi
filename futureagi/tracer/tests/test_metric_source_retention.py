@@ -272,7 +272,7 @@ def test_expiry_preserves_an_earlier_pin_revocation(workspace, observe_project):
     pin = capture_pin(
         observe_project.pk, consumer_kind="snapshot", ttl=timedelta(minutes=5)
     )
-    revoked = now - timedelta(minutes=1)
+    revoked = timezone.now()
     type(pin).objects.filter(pk=pin.pk).update(
         invalidated_at=revoked, invalidation_reason="erased"
     )
@@ -287,3 +287,25 @@ def test_expiry_preserves_an_earlier_pin_revocation(workspace, observe_project):
     source_retention.expire_run(run)
     pin.refresh_from_db()
     assert pin.invalidated_at == revoked and pin.invalidation_reason == "erased"
+
+
+def test_pending_privacy_work_bypasses_paused_batch_interval(
+    workspace,
+    observe_project,
+    settings,
+):
+    settings.METRICS_ENABLED = 1
+    settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 10
+    now = timezone.now()
+    MetricProjectRefresh.objects.create(
+        project=observe_project,
+        paused_reason="size_cap",
+        paused_at=now,
+        paused_rows=11,
+        last_started_at=now,
+        pending_expiry=True,
+    )
+    (reservation,) = admission.reserve_projects()
+    assert reservation.purpose == "expiry"
+    admission.release(reservation, now=timezone.now())

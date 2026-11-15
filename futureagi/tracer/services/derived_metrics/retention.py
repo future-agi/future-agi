@@ -1446,6 +1446,8 @@ def finish_unpublished_replan(writer):
         debts = MetricErasureRequest.objects.filter(
             project_key=project_id,
             organization_key=writer.org_id,
+            scope_kind="history",
+            deletion_key__startswith="retention-replan:",
             store_payload__protocol="metric_policy_replan",
         ).exclude(status="done")
         ids = list(debts.values_list("id", flat=True))
@@ -1474,6 +1476,7 @@ def finish_unpublished_replan(writer):
         )
     submissions = MetricErasureRequest.objects.filter(
         project_key=project_id,
+        organization_key=writer.org_id,
         store_payload__protocol="metric_submission",
         store_payload__generation__lte=through,
     )

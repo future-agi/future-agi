@@ -246,6 +246,7 @@ def eligible_projects(now: datetime):
         # PAUSED_EXPIRY_SLACK: the next pass then finds the interval elapsed.
         .filter(
             Q(paused_reason="")
+            | Q(pending_expiry=True)
             | Q(cleanup_id__isnull=False)
             | Q(last_started_at__isnull=True)
             | Q(last_started_at__lte=now - expiry_interval() - PAUSED_EXPIRY_SLACK)
@@ -368,7 +369,7 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                 )
             )
             privacy_only = not metrics_enabled(project=state.project_id)
-            if state.paused_reason or privacy_only:
+            if state.paused_reason or privacy_only or state.pending_expiry:
                 purpose = "expiry"
             expiry_id = state.cleanup_id
             if expiry_id:
