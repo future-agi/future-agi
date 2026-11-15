@@ -29,9 +29,13 @@ from tracer.tests.test_derived_metric_refresh_clickhouse import (
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("revision_kind", ["move", "move_delete", "update"])
+@pytest.mark.parametrize(
+    ("revision_kind", "fail_owner_read"),
+    [("move", False), ("move_delete", False), ("update", False), ("move", True)],
+)
 def test_partial_repair_then_overflow_matches_latest_source(
-    history_writer, workspace, observe_project, monkeypatch, revision_kind
+    history_writer, workspace, observe_project, monkeypatch, revision_kind,
+    fail_owner_read,
 ):
     writer = history_writer
     scope, runner = context(writer, workspace, observe_project, retention=0, page_size=1)
@@ -101,10 +105,30 @@ def test_partial_repair_then_overflow_matches_latest_source(
     # Exercise the real overflow catch/queue with a tiny discovery fixture;
     # production budgets and the sweep's bounded page size remain unchanged.
     monkeypatch.setattr(changes.arrivals, "_MAX_PUBLIC_CANDIDATES", 1)
-    head = runner.run_repair_page()
+    if fail_owner_read:
+        read = changes.read
+
+        def fail_preimages(analytics, query, params, budget, **kwargs):
+            if "SELECT DISTINCT trace_session_id AS raw_session_id" in query:
+                raise changes.MetricChangeReadError("owner-read fixture limit")
+            return read(analytics, query, params, budget, **kwargs)
+
+        with monkeypatch.context() as failing:
+            failing.setattr(changes, "read", fail_preimages)
+            with pytest.raises(changes.MetricChangeReadError, match="owner-read fixture"):
+                runner.run_repair_page()
+        unchanged = MetricProjectRefresh.for_project(observe_project.id)
+        assert unchanged.head_manifest_id == head.id
+        assert unchanged.watermark_ns == watermark
+        assert unchanged.reconciliation_cursor["after"] is None
+        assert unchanged.reconciliation_cursor["scanned"] == 0
+    head = runner.run_repair_page(skip_incremental=fail_owner_read)
     state = MetricProjectRefresh.for_project(observe_project.id)
     assert state.pending_repair
     assert state.reconciliation_cursor["arrival_floor_ns"] > changes.ns(at)
+    burst_ceiling = changes.ns(
+        datetime.fromisoformat(state.reconciliation_cursor["started_at"])
+    )
     assert state.watermark_ns == watermark
     for _ in range(6):
         head = runner.run_repair_page(skip_incremental=True)
@@ -114,7 +138,7 @@ def test_partial_repair_then_overflow_matches_latest_source(
         assert state.watermark_ns == watermark
     else:
         pytest.fail("bounded arrival sweep did not complete")
-    assert state.watermark_ns == changes.ns(now)
+    assert state.watermark_ns == burst_ceiling
     assert state.reconciliation_cursor["completed_passes"] == 0
 
     # Independent oracle: collapse raw source identities BEFORE filtering live
