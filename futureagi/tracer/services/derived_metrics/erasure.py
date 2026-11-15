@@ -1,6 +1,7 @@
 """Bounded, resumable erasure of frozen and live metrics using the B02R outbox.
 
-Retention and ordinary conversation deletion deliberately do not enter here.
+Live retention uses the writer cleanup protocol; frozen-copy expiry uses this
+outbox. Ordinary conversation deletion is not an explicit metric erasure.
 Private subjects never appear in exceptions, logs or receipts. A receipt means
 physical deletion, including historical result versions, not just PG deletion.
 """
@@ -11,6 +12,7 @@ from contextvars import ContextVar
 from datetime import timedelta
 from uuid import uuid4
 
+import structlog
 from django.db import connections
 from django.db.models import Q
 from django.utils import timezone
@@ -115,7 +117,14 @@ def erase_metric_data(
     )
     from tracer.sql_workbench.metric_retention import invalidate_scope
 
-    invalidate_scope(organization_id, project_id)
+    try:
+        invalidate_scope(organization_id, project_id)
+    except Exception as exc:
+        # The outbox is already durable. Readers deny this namespace immediately;
+        # the worker retries payload removal before it can record completion.
+        structlog.get_logger(__name__).warning(
+            "metric_sql_cleanup_pending", error_type=type(exc).__name__
+        )
     return request
 
 

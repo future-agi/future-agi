@@ -333,7 +333,12 @@ class RefreshWriter:
             ):
                 raise MetricStateConflict("project erasure is in progress")
             ceilings = dict(ceilings or {})
-            head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
+            state = MetricProjectRefresh.for_project(self.lease.project_id)
+            head = state.head_manifest
+            # A checkpoint may advance no cursor of its own. Preserve the
+            # copied head's consumed cut so an old pin never borrows a later
+            # publication's watermark when another writer advances the project.
+            ceilings["read_watermark_ns"] = state.watermark_ns
             inherited = (
                 head.published_by.source_ceilings.get("retention_floor")
                 if head

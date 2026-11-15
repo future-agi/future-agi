@@ -267,8 +267,11 @@ def cut_terms(manifest, definition):
         frozen = (
             manifest.published_by.source_ceilings.get("cursor_updates") or {}
         ).get("watermark_ns")
-        if frozen is not None:
-            watermarks.append(int(frozen))
+        if frozen is None:
+            frozen = manifest.published_by.source_ceilings.get("read_watermark_ns")
+        # Old checkpoints without a frozen cut cannot prove fresh coverage.
+        # Never substitute a newer head's watermark for this pinned value.
+        watermarks.append(int(frozen) if frozen is not None else 0)
     through = from_ns(min(watermarks))
     cursor = state["reconciliation_cursor"] or {}
     if state["pending_repair"] and cursor.get("floor"):
@@ -303,15 +306,19 @@ def open_buckets(store, metric, definition, manifest, start, end):
 
     Refresh keeps a unit open, and out of every total, until settle_minutes
     after its LAST arrival, however long ago it started. Only the committed
-    units say which: a bucket holding one is not final. Nominates from raw
-    field history in the range, then collapses complete keys.
+    units say which: a bucket holding one is not final. Nominate only raw open
+    rows in the range, then collapse their COMPLETE keys and reapply the predicate.
+    A closed/deleted/moved winner must still suppress an older open revision.
     """
     fields, params = windowed_rows_select(
         FIELD_VALUES,
         manifest,
         org_id=metric.organization_id,
         project_id=metric.project_id,
-        predicate="bucket_start >= %(open_start)s AND bucket_start < %(open_end)s",
+        predicate=(
+            "bucket_start >= %(open_start)s AND bucket_start < %(open_end)s "
+            "AND status = 'open' AND is_deleted = 0"
+        ),
         params={"open_start": start, "open_end": end},
         key_in={
             "field_id": (definition.metric_id,),
@@ -337,7 +344,7 @@ def open_buckets(store, metric, definition, manifest, start, end):
 
 
 class Finality:
-    """Which 15-minute buckets of a forward window are final.
+    """Which 15-minute buckets of a history or forward window are final.
 
     A bucket is final only if it ends at or before ``settled`` and holds no
     unit refresh still keeps open; ``opened`` maps each bucket holding open
@@ -414,6 +421,7 @@ def read_finality(store, metric, definition, manifest, window):
 
 
 def provenance(manifest, definition, through=None):
+    floor = manifest.published_by.source_ceilings.get("retention_floor")
     return {
         "manifest_id": manifest.id,
         "generation": manifest.generation,
@@ -426,7 +434,7 @@ def provenance(manifest, definition, through=None):
         "history_mode": definition.history_mode,
         "coverage_start": definition.coverage_start,
         "calculated_through": through,
-        "retention_floor": manifest.published_by.source_ceilings.get("retention_floor"),
+        **({"retention_floor": floor} if floor else {}),
         "retention_policy": "follow_source",
     }
 
@@ -783,7 +791,7 @@ def read_kpi(metric, data, *, store=None):
             )
         return {
             "provenance": provenance(
-                manifest, definition, calculated_through(manifest, definition)
+                manifest, definition, finality.calculated if finality else None
             ),
             "effective_window": window,
             **_disclosure(finality, window),
@@ -909,7 +917,7 @@ def read_trend(metric, data, *, store=None):
         )
         return {
             "provenance": provenance(
-                manifest, definition, calculated_through(manifest, definition)
+                manifest, definition, finality.calculated if finality else None
             ),
             **_disclosure(finality, window),
             "effective_window": window,

@@ -80,7 +80,9 @@ def invalidate(queryset):
 def invalidate_scope(organization_id, project_id=None):
     # Arbitrary SQL transformations do not retain per-subject lineage. Erasure
     # conservatively discards all saved results in scope, including cache hits.
-    jobs = SQLExecution.objects.filter(organization_id=organization_id)
+    jobs = SQLExecution.objects.filter(organization_id=organization_id).filter(
+        Q(state__in=("queued", "running")) | Q(output_bytes__gt=0) | ~Q(result={})
+    )
     if project_id is not None:
         jobs = jobs.filter(project_id=project_id)
     invalidate(jobs)

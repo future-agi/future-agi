@@ -242,6 +242,13 @@ def test_no_head_replan_scrubs_late_writes_without_admitting_a_project(live_writ
     }
     insert = "INSERT INTO metric_field_values (org_id, project_id, attempt_id, generation, unit_id) VALUES (%(org)s, %(project)s, %(attempt)s, %(generation)s, 'late-private')"
     writer.store.execute(insert, params)
+    # Neither another namespace nor a later generation belongs to this debt.
+    for control in (
+        {**params, "project": str(uuid4())},
+        {**params, "org": str(uuid4())},
+        {**params, "generation": attempt.generation + 1},
+    ):
+        writer.store.execute(insert, control)
     run_expiry_pass(writer)
     debt.refresh_from_db()
     assert debt.status != "done"
@@ -265,5 +272,69 @@ def test_no_head_replan_scrubs_late_writes_without_admitting_a_project(live_writ
     assert state.head_manifest_id is None  # the no-head admission guard still applies
     assert state.pending_repair and not state.pending_expiry
     assert writer.store.execute(
-        "SELECT count() FROM metric_field_values WHERE unit_id = 'late-private'"
+        "SELECT count() FROM metric_field_values WHERE unit_id = 'late-private' "
+        "AND org_id = %(org)s AND project_id = %(project)s AND generation <= %(generation)s",
+        params,
     ) == [(0,)]
+    assert writer.store.execute(
+        "SELECT count() FROM metric_field_values WHERE unit_id = 'late-private'"
+    ) == [(3,)]
+
+
+def test_pinned_checkpoint_never_borrows_a_newer_heads_finality(live_writer):
+    from tracer.services.derived_metrics import reads
+    from tracer.tests.test_derived_metric_publication_clickhouse import prepare_field
+
+    writer = live_writer
+    now = timezone.now().replace(minute=0, second=0, microsecond=0)
+    old_cut = now - timedelta(hours=2)
+    definition = numeric_definition(uuid4())
+    attempt, _ = prepare_field(writer, metric=definition.metric_id)
+    # prepare_field seals with its generation as a synthetic cursor. Publish a
+    # real source cut before the checkpoint whose own cursor updates are empty.
+    writer.stage_and_publish(attempt)
+    advance = writer.begin()
+    writer.seal(advance, cursors={"watermark_ns": int(old_cut.timestamp()) * 10**9})
+    writer.stage_and_publish(advance)
+    pinned = writer.compact()
+    advance = writer.begin()
+    writer.seal(advance, cursors={"watermark_ns": int(now.timestamp()) * 10**9})
+    writer.stage_and_publish(advance)
+    assert reads.cut_terms(pinned, definition)[0] == old_cut
+
+
+def test_open_bucket_nomination_does_not_revive_closed_moved_or_deleted_rows(live_writer):
+    from types import SimpleNamespace
+
+    from tracer.services.derived_metrics import reads
+    from tracer.services.derived_metrics.storage import FIELD_VALUES
+    from tracer.tests.test_derived_metric_publication_clickhouse import field_query
+
+    writer = live_writer
+    now = timezone.now().replace(minute=0, second=0, microsecond=0)
+    before = now - timedelta(hours=1)
+    definition = numeric_definition(uuid4())
+    metric = SimpleNamespace(
+        organization_id=writer.org_id, project_id=writer.lease.project_id
+    )
+
+    def publish(start, *, opened, deleted=False):
+        attempt = writer.begin()
+        sql, params = field_query(
+            "moving-unit", metric=definition.metric_id, start=start, deleted=deleted
+        )
+        if opened:
+            sql = sql.replace("'ok' AS status", "'open' AS status")
+        writer.freeze(attempt, FIELD_VALUES, sql, params)
+        writer.seal(attempt)
+        return writer.stage_and_publish(attempt)
+
+    head = publish(before, opened=True)
+    assert reads.open_buckets(writer.store, metric, definition, head, before, now) == {before: 1}
+    head = publish(before, opened=False)
+    assert reads.open_buckets(writer.store, metric, definition, head, before, now) == {}
+    head = publish(now, opened=True)
+    assert reads.open_buckets(writer.store, metric, definition, head, before, now) == {}
+    assert reads.open_buckets(writer.store, metric, definition, head, now, now + timedelta(hours=1)) == {now: 1}
+    head = publish(now, opened=True, deleted=True)
+    assert reads.open_buckets(writer.store, metric, definition, head, now, now + timedelta(hours=1)) == {}

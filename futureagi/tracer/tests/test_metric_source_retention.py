@@ -309,3 +309,26 @@ def test_pending_privacy_work_bypasses_paused_batch_interval(
     (reservation,) = admission.reserve_projects()
     assert reservation.purpose == "expiry"
     admission.release(reservation, now=timezone.now())
+
+
+def test_erasure_remains_queued_if_initial_sql_cleanup_fails(tenants, policy, monkeypatch):
+    from tracer.sql_workbench import metric_retention
+
+    (actor, project, _), _ = tenants
+    job = metric_job(
+        actor, project, state="succeeded", result={"rows": [["erased-subject"]]}
+    )
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("synthetic SQL cleanup outage")
+
+    monkeypatch.setattr(metric_retention, "invalidate_scope", unavailable)
+    request = erase_metric_data(
+        organization_id=actor.organization_id,
+        project_id=project.pk,
+        scope_kind="project",
+    )
+    request.refresh_from_db()
+    assert request.status == "queued" and request.completed_at is None
+    # Even before the worker's retry, the durable intent denies poll/download.
+    assert sql_service.snapshot(job)["result"] == {}

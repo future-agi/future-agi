@@ -64776,12 +64776,20 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    retention_floor: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "Permanent floor of the published retained-only state; current source policy can be stricter.",
+      ),
+    retention_policy: zod.enum(["follow_source"]).optional(),
     calculated_through: zod
       .string()
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -64794,7 +64802,7 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
     .datetime({ offset: true })
     .optional()
     .describe(
-      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+      "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
     ),
   partial: zod
     .boolean()
@@ -65841,12 +65849,20 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    retention_floor: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "Permanent floor of the published retained-only state; current source policy can be stricter.",
+      ),
+    retention_policy: zod.enum(["follow_source"]).optional(),
     calculated_through: zod
       .string()
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -65859,7 +65875,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
     .datetime({ offset: true })
     .optional()
     .describe(
-      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+      "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
     ),
   partial: zod
     .boolean()
@@ -67417,6 +67433,10 @@ export const tracerDerivedMetricsTrendResponseProvenanceBackfillDaysDoneMin = 0;
 
 export const tracerDerivedMetricsTrendResponseProvenanceBackfillDaysTotalMin = 0;
 
+export const tracerDerivedMetricsTrendResponseNonfinalBucketsMin = 0;
+
+export const tracerDerivedMetricsTrendResponseOpenUnitsMin = 0;
+
 export const tracerDerivedMetricsTrendResponseResultsItemEligibleCountMin = 0;
 
 export const tracerDerivedMetricsTrendResponseResultsItemEvaluatedCountMin = 0;
@@ -67454,12 +67474,20 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    retention_floor: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "Permanent floor of the published retained-only state; current source policy can be stricter.",
+      ),
+    retention_policy: zod.enum(["follow_source"]).optional(),
     calculated_through: zod
       .string()
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -67467,6 +67495,21 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
     window_end: zod.string().datetime({ offset: true }),
     rounding: zod.string().min(1).describe("Rounded to 15 minutes"),
   }),
+  complete_through: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+    ),
+  nonfinal_buckets: zod
+    .number()
+    .min(tracerDerivedMetricsTrendResponseNonfinalBucketsMin)
+    .optional(),
+  open_units: zod
+    .number()
+    .min(tracerDerivedMetricsTrendResponseOpenUnitsMin)
+    .optional(),
   partial: zod
     .boolean()
     .optional()
@@ -67639,12 +67682,20 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
         "forward: started with no history; values exist from coverage_start",
       ),
     coverage_start: zod.string().datetime({ offset: true }).optional(),
+    retention_floor: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "Permanent floor of the published retained-only state; current source policy can be stricter.",
+      ),
+    retention_policy: zod.enum(["follow_source"]).optional(),
     calculated_through: zod
       .string()
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -67657,7 +67708,7 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
     .datetime({ offset: true })
     .optional()
     .describe(
-      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+      "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
     ),
   partial: zod
     .boolean()
