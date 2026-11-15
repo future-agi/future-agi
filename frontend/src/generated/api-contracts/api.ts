@@ -601,6 +601,7 @@ import type {
   HarnessAcceptedResponseApi,
   HarnessActorLimitsWriteApi,
   HarnessActorListApi,
+  HarnessActorUnresolvedAcceptApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
   HarnessAgentCredentialsResponseApi,
@@ -60140,6 +60141,54 @@ export const simulateApiHarnessEnvironmentsActorLimits = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessActorLimitsWriteApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseSuccess =
+  simulateApiHarnessEnvironmentsAcceptUnresolvedResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseError =
+  simulateApiHarnessEnvironmentsAcceptUnresolvedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
+  | simulateApiHarnessEnvironmentsAcceptUnresolvedResponseSuccess
+  | simulateApiHarnessEnvironmentsAcceptUnresolvedResponseError;
+
+export const getSimulateApiHarnessEnvironmentsAcceptUnresolvedUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/actor-unresolved/accept/`;
+};
+
+/**
+ * Accept the cast as written for one policy point the builder could not model.
+ */
+export const simulateApiHarnessEnvironmentsAcceptUnresolved = async (
+  id: string,
+  harnessActorUnresolvedAcceptApi: HarnessActorUnresolvedAcceptApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsAcceptUnresolvedResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAcceptUnresolvedResponse>(
+    getSimulateApiHarnessEnvironmentsAcceptUnresolvedUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorUnresolvedAcceptApi),
     },
   );
 };

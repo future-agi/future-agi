@@ -19306,6 +19306,11 @@ export type HarnessEnvironmentContractApiToolEntrypointsItem = {
 
 export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
 
+/**
+ * Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.
+ */
+export type HarnessEnvironmentContractApiDoorReach = { [key: string]: boolean };
+
 export interface HarnessEnvironmentContractApi {
   agent?: string;
   one_liner?: string;
@@ -19325,6 +19330,8 @@ export interface HarnessEnvironmentContractApi {
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
   call_actors: HarnessEnvironmentCallActorApi[];
+  /** Per tool: whether the world's door stands in front of it, so actors can take it and faults apply. */
+  door_reach?: HarnessEnvironmentContractApiDoorReach;
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -19639,6 +19646,13 @@ export interface HarnessActorKnowledgeSourcesApi {
   records: HarnessActorRecordSourceApi[];
 }
 
+export interface HarnessActorUnresolvedApi {
+  /** @minLength 1 */
+  policy: string;
+  why?: string;
+  actor?: string;
+}
+
 export interface HarnessActorListApi {
   actors: HarnessActorListApiActorsItem[];
   source: HarnessActorListApiSource;
@@ -19651,6 +19665,17 @@ export interface HarnessActorListApi {
   knowledge_sources: HarnessActorKnowledgeSourcesApi;
   limits?: HarnessActorListApiLimits;
   actor_models?: string[];
+  unresolved?: HarnessActorUnresolvedApi[];
+}
+
+export interface HarnessActorUnresolvedAcceptApi {
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  policy: string;
+  /** @minimum 0 */
+  expected_revision?: number;
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };
@@ -25513,6 +25538,20 @@ export interface TrialStateChangeApi {
   no_change?: boolean;
 }
 
+export type DuplicateCommitApiArguments = { [key: string]: unknown };
+
+/**
+ * Writes the world committed twice after the agent's answer was lost; the trial fails on them.
+ */
+export interface DuplicateCommitApi {
+  /** @minLength 1 */
+  action: string;
+  name?: string;
+  arguments?: DuplicateCommitApiArguments;
+  first_action_id?: string;
+  repeat_action_id?: string;
+}
+
 export type ActorDecisionApiPlay =
   (typeof ActorDecisionApiPlay)[keyof typeof ActorDecisionApiPlay];
 
@@ -25623,6 +25662,8 @@ export type TrialStateApiLimits = { [key: string]: string };
 
 export interface TrialStateApi {
   state_changes?: TrialStateChangeApi[];
+  /** Writes the world committed twice after the agent's answer was lost; the trial fails on them. */
+  duplicates?: DuplicateCommitApi[];
   decisions?: ActorDecisionApi[];
   approvals?: ApprovalLineApi[];
   usage?: ActorUsageApi[];
