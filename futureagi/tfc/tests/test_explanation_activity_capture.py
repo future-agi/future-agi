@@ -91,7 +91,9 @@ def real_logging(request, monkeypatch, tmp_path):
 
 def _rendered_errors(real_logging):
     """Read the output of the actual ProcessorFormatter, not its input record."""
-    rendered = [json.loads(line) for line in real_logging.stream.getvalue().splitlines()]
+    rendered = [
+        json.loads(line) for line in real_logging.stream.getvalue().splitlines()
+    ]
     return [payload for payload in rendered if payload["level"] == "error"]
 
 
@@ -442,7 +444,9 @@ def test_explanation_denial_classification_is_source_bound(case):
             try:
                 raise RuntimeError("synthetic classified handler fault")
             except RuntimeError:
-                logging.getLogger(logger_name).exception("synthetic fault", extra=fields)
+                logging.getLogger(logger_name).exception(
+                    "synthetic fault", extra=fields
+                )
         else:
             logging.getLogger(logger_name).error("synthetic fault", extra=fields)
         assert len(transport.events) == 1
