@@ -504,15 +504,10 @@ class CreateAgentVersionView(APIView):
                     workspace=agent.workspace,
                 )
 
-                # Sync updates a separately queried credential instance. Clear
-                # any pre-created empty row cached by the reverse relation before
-                # snapshotting or serializing the replacement credential.
-                if (
-                    preserve_selected_row
-                    or preserve_empty_vapi_row
-                    or provider_changed
-                ):
-                    version.refresh_from_db()
+                # Sync updates a separately queried credential instance. Both
+                # precreation and legacy adoption can cache an older relation on
+                # this object, so always reload before snapshotting/serialization.
+                version.refresh_from_db()
                 # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
                 version.configuration_snapshot = version.create_snapshot(
                     commit_message=version.commit_message or ""

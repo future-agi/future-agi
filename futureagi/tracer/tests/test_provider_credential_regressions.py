@@ -24,8 +24,12 @@ from tracer.tests.test_vapi_inplace_edit import (
     _prepare_saved_version,
     seed_version,
     update_agent,
-    vapi_setup,  # noqa: F401 - shared real-authentication fixture
 )
+from tracer.tests.test_vapi_inplace_edit import vapi_setup as shared_vapi_setup
+
+# Expose the existing fixture without shadowing an unused imported name in
+# every test signature. This remains the same real-authentication fixture.
+vapi_setup = shared_vapi_setup
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -471,7 +475,16 @@ def test_default_source_omitted_create_keeps_unusable_vapi_authority_closed(
     assert saved.status_code == (201 if replacement else 400), saved.data
     clear_workspace_context()
     if replacement:
+        # Read a fresh ORM instance separately: the persisted replacement and
+        # the immediate POST response must agree after legacy-row adoption.
+        created = AgentVersion.objects.get(pk=saved.data["version"]["id"])
+        assert created.credentials.get_api_key() == "synthetic-key-C"
+        assert created.credentials.assistant_id == "assistant-C"
         assert saved.data["version"]["api_key"] == "synt...ey-C"
+        assert (
+            saved.data["version"]["configuration_snapshot"]["assistant_id"]
+            == "assistant-C"
+        )
     else:
         assert "selected source version has no usable API key" in str(saved.data)
         assert _configuration_state(agent) == before
