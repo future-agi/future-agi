@@ -651,6 +651,7 @@ class TestApiKeyFromAgentDefinition:
         from simulate.models.agent_definition import ProviderCredentials
 
         agent = Mock(
+            provider="vapi",
             active_version=None,
             latest_version=None,
             api_key=plaintext,
@@ -661,7 +662,11 @@ class TestApiKeyFromAgentDefinition:
         )
         if versioned:
             agent.latest_version = Mock(
-                configuration_snapshot={"assistant_id": "version-assistant"}
+                agent_definition=agent,
+                configuration_snapshot={
+                    "provider": "vapi",
+                    "assistant_id": "version-assistant",
+                },
             )
             type(agent.latest_version).credentials = PropertyMock(
                 side_effect=ProviderCredentials.DoesNotExist
@@ -770,9 +775,13 @@ class TestGetApiKeyForProject:
 
     def test_returns_provider_row_key_when_present(self):
         agent = SimpleNamespace(
+            provider="vapi",
             active_version=None,
             latest_version=SimpleNamespace(
-                configuration_snapshot={"assistant_id": "synthetic-assistant"},
+                configuration_snapshot={
+                    "provider": "vapi",
+                    "assistant_id": "synthetic-assistant",
+                },
                 credentials=SimpleNamespace(
                     provider_type="vapi",
                     api_key="enc::synthetic",

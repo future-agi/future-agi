@@ -139,7 +139,10 @@ from simulate.serializers.test_execution import (
 )
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
-from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_definition import (
+    provider_for_version,
+    resolve_provider_configuration_for_version,
+)
 from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
@@ -317,6 +320,7 @@ def _run_test_read_queryset(queryset):
     return queryset.select_related(
         "agent_definition",
         "agent_version",
+        "agent_version__agent_definition",
         "agent_version__credentials",
         "simulator_agent",
         "prompt_template",
@@ -4743,24 +4747,20 @@ class RunTestComponentsUpdateView(APIView):
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
                         ):
-                            api_key = resolve_api_key_for_version(
+                            configuration = resolve_provider_configuration_for_version(
                                 agent_version_to_check
                             )
-                            assistant_id = None
-                            try:
-                                creds = agent_version_to_check.credentials
-                                if creds:
-                                    assistant_id = creds.assistant_id
-                            except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                                pass
-                            if not assistant_id:
-                                assistant_id = (
-                                    agent_version_to_check.configuration_snapshot.get(
-                                        "assistant_id"
-                                    )
-                                    if agent_version_to_check.configuration_snapshot
-                                    else None
-                                )
+                            api_key = configuration.api_key
+                            assistant_id = configuration.assistant_id
+                            if provider_for_version(agent_version_to_check) != "vapi":
+                                # Retain this validator's credential-first
+                                # behavior for other providers; runtime calls
+                                # still use their authored snapshot identity.
+                                try:
+                                    creds = agent_version_to_check.credentials
+                                    assistant_id = creds.assistant_id or assistant_id
+                                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                                    pass
 
                             missing_fields = []
                             if not api_key:

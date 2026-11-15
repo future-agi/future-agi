@@ -1,5 +1,9 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from accounts.utils import get_request_organization
+from simulate.models import AgentDefinition, AgentVersion
+from simulate.services.agent_definition import source_version_for_agent
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 
 # Providers whose api-key / assistant verification is actually implemented.
@@ -81,7 +85,41 @@ class ObservabilityProviderSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class VerifyApiKeyRequestSerializer(serializers.Serializer):
+class CredentialSourceRequestSerializer(serializers.Serializer):
+    source_version_id = serializers.UUIDField(
+        required=False,
+        help_text="Credential source within agent_id; omitted selects active/latest.",
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if "source_version_id" not in attrs:
+            return attrs
+        request = self.context.get("request")
+        organization = get_request_organization(request) if request else None
+        if organization is None or not attrs.get("agent_id"):
+            raise serializers.ValidationError(
+                {"source_version_id": "An authorized agent_id is required."}
+            )
+        agents = AgentDefinition.objects.filter(organization=organization, deleted=False)
+        workspace = getattr(request, "workspace", None)
+        if workspace is not None:
+            agents = agents.filter(workspace=workspace)
+        try:
+            agent = agents.get(pk=attrs["agent_id"])
+            source_version_for_agent(agent, attrs["source_version_id"])
+        except (
+            AgentDefinition.DoesNotExist,
+            AgentVersion.DoesNotExist,
+            DjangoValidationError,
+        ):
+            raise serializers.ValidationError(
+                {"source_version_id": "Source version not found for this agent."}
+            )
+        return attrs
+
+
+class VerifyApiKeyRequestSerializer(CredentialSourceRequestSerializer):
     """verify_api_key body. provider is constrained to the providers the verify
     logic actually supports, so the contract advertises only those (not the full
     enum) and an unsupported provider is rejected at validation."""
@@ -91,7 +129,7 @@ class VerifyApiKeyRequestSerializer(serializers.Serializer):
     agent_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
-class VerifyAssistantIdRequestSerializer(serializers.Serializer):
+class VerifyAssistantIdRequestSerializer(CredentialSourceRequestSerializer):
     """verify_assistant_id body; provider constrained to the verifiable set."""
 
     provider = serializers.ChoiceField(choices=VERIFIABLE_PROVIDERS)

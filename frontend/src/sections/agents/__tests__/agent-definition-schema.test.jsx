@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const axiosMocks = vi.hoisted(() => ({
   post: vi.fn(),
   verifyApiKey: "/simulate/agent-definitions/verify-api-key/",
+  verifyAssistantId: "/simulate/agent-definitions/verify-assistant-id/",
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -12,6 +13,7 @@ vi.mock("src/utils/axios", () => ({
   endpoints: {
     agentDefinitions: {
       verifyApiKey: axiosMocks.verifyApiKey,
+      verifyAssistantId: axiosMocks.verifyAssistantId,
     },
   },
 }));
@@ -210,6 +212,57 @@ describe("createAgentDefinitionSchema — voice transport", () => {
     const result = await schema.safeParseAsync(voiceAgent);
 
     expect(result.success ? [] : errorPaths(result)).toEqual([]);
+  });
+});
+
+describe("selected-version credential preflight", () => {
+  const sourceVersionId = "00000000-0000-4000-8000-000000000001";
+  const historicalForm = {
+    ...baseAgent,
+    provider: "vapi",
+    apiKey: "synt...ey-A",
+    assistantId: "assistant-A",
+    authenticationMethod: "api_key",
+    sourceVersionId,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    axiosMocks.post.mockResolvedValue({ data: {} });
+  });
+
+  it("sends the selected source and displayed pair through both checks", async () => {
+    const schema = createAgentDefinitionSchema({ agentDefinitionId: "agent-1" });
+    const parsed = await schema.parseAsync(historicalForm);
+    expect(parsed.sourceVersionId).toBe(sourceVersionId);
+    expect(axiosMocks.post.mock.calls).toEqual([
+      [axiosMocks.verifyApiKey, {
+        provider: "vapi", api_key: "synt...ey-A", agent_id: "agent-1",
+        source_version_id: sourceVersionId,
+      }],
+      [axiosMocks.verifyAssistantId, {
+        provider: "vapi", api_key: "synt...ey-A", assistant_id: "assistant-A",
+        agent_id: "agent-1", source_version_id: sourceVersionId,
+      }],
+    ]);
+  });
+
+  it("retains source provenance when inbound validation skips remote checks", async () => {
+    const schema = createAgentDefinitionSchema({ agentDefinitionId: "agent-1" });
+    const parsed = await schema.parseAsync({ ...historicalForm, inbound: true });
+    expect(parsed.sourceVersionId).toBe(sourceVersionId);
+    expect(parsed.apiKey).toBe("synt...ey-A");
+    expect(axiosMocks.post).not.toHaveBeenCalled();
+  });
+
+  it("leaves source omitted for a new agent", async () => {
+    const newForm = { ...historicalForm };
+    delete newForm.sourceVersionId;
+    await createAgentDefinitionSchema().parseAsync(newForm);
+    for (const [, payload] of axiosMocks.post.mock.calls) {
+      expect(payload).not.toHaveProperty("source_version_id");
+      expect(payload).not.toHaveProperty("agent_id");
+    }
   });
 });
 

@@ -5,10 +5,12 @@ edit route, encryption, ORM, configuration resolver and scheduled poll are real.
 """
 
 import gzip
+from contextlib import contextmanager, nullcontext
 from datetime import timedelta
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
+from asgiref.sync import async_to_sync
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -119,6 +121,40 @@ def update_agent(client, agent, payload, route):
     return client.patch(
         f"/simulate/api/agent-definition-operations/{agent.id}/", payload, format="json"
     )
+
+
+def _configuration_state(agent):
+    from django.db.models import Q
+
+    return (
+        list(AgentDefinition.no_workspace_objects.filter(pk=agent.pk).values()),
+        list(AgentVersion.no_workspace_objects.filter(agent_definition=agent).order_by("pk").values()),
+        list(ProviderCredentials.no_workspace_objects.filter(
+            Q(agent_definition=agent) | Q(agent_version__agent_definition=agent)
+        ).order_by("pk").values()),
+        list(ObservabilityProvider.no_workspace_objects.filter(pk=agent.observability_provider_id).values()),
+    )
+
+
+@contextmanager
+def _assert_no_configuration_writes():
+    from django.db import connection
+
+    writes = []
+    tables = tuple(model._meta.db_table for model in (
+        AgentDefinition, AgentVersion, ProviderCredentials, ObservabilityProvider,
+    ))
+
+    def record_writes(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith(("INSERT ", "UPDATE ", "DELETE ")) and any(
+            table in sql for table in tables
+        ):
+            writes.append(sql)
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(record_writes):
+        yield
+    assert writes == []
 
 
 def poll(provider):
@@ -710,6 +746,515 @@ def test_save_empty_active_row_does_not_resurrect_stale_legacy(
     assert provider.poll_state["other"] == {"sentinel": "preserved"}
 
 
+@pytest.mark.parametrize("key", ["", "synthetic-key-C"])
+def test_vapi_wrong_provider_row_blocks_masked_preflight(vapi_setup, monkeypatch, key):
+    provider, client = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-S")
+    credentials.provider_type = "retell"
+    credentials.api_key = key
+    credentials.save()
+    ProviderCredentials.objects.create(
+        agent_definition=agent,
+        provider_type="vapi",
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    detail = client.get(
+        f"/simulate/agent-definitions/{agent.id}/versions/{version.id}/"
+    )
+    assert detail.status_code == 200, detail.data
+    assert detail.data["api_key"] is None
+    assert detail.data["configuration_snapshot"]["assistant_id"] == ""
+    for mask in ("synt...ey-A", "synt...ey-C"):
+        preflight = client.post(
+            "/tracer/observability-provider/verify_api_key/",
+            {"provider": "vapi", "api_key": mask, "agent_id": str(agent.id)},
+            format="json",
+        )
+        assert preflight.status_code == 400
+    upstream.assert_not_called()
+    credentials.refresh_from_db()
+    assert credentials.provider_type == "retell"
+    assert credentials.get_api_key() == key
+
+
+@pytest.mark.parametrize("route", ["edit", "operations", "save-version"])
+def test_migrated_bland_omitted_then_masked_saves_keep_legacy_key(
+    vapi_setup, monkeypatch, route
+):
+    from simulate.services.agent_definition import resolve_api_key_for_version
+
+    provider, client = vapi_setup
+    provider.provider = "bland"
+    provider.save(update_fields=["provider"])
+    agent, original, _ = seed_version(
+        provider, "assistant-S", with_credentials=False
+    )
+    agent.provider = "bland"
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["provider", "api_key", "assistant_id", "contact_number"])
+    original.configuration_snapshot = {
+        **original.create_snapshot(commit_message="Synthetic Bland version"),
+        "assistant_id": "assistant-S",
+    }
+    original.save(update_fields=["configuration_snapshot"])
+    # 0071 stores Bland as VAPI; 0076 links the latest version without
+    # clearing agent_definition. The older active version remains rowless.
+    newer = agent.create_version(description="Synthetic draft", commit_message="Draft")
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent,
+        agent_version=newer,
+        provider_type=ProviderCredentials.ProviderType.VAPI,
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    legacy_ciphertext = legacy.api_key
+    response = update_agent(
+        client,
+        agent,
+        {
+            "provider": "bland",
+            "assistant_id": "assistant-S",
+            "description": "Synthetic omitted-key edit",
+        },
+        route,
+    )
+    assert response.status_code == (201 if route == "save-version" else 200), response.data
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    assert selected.credentials.provider_type == "vapi"
+    assert selected.credentials.api_key == ""
+    assert resolve_api_key_for_version(selected) == "synthetic-key-A"
+    assert resolve_api_key_for_version(selected, for_save=True) == "synthetic-key-A"
+
+    requests_seen = []
+
+    def upstream(url, *, headers, **kwargs):
+        requests_seen.append((url, headers))
+        return Mock(status_code=200)
+
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    for save_number in (1, 2):
+        detail = client.get(
+            f"/simulate/agent-definitions/{agent.id}/versions/{selected.id}/"
+        )
+        assert detail.status_code == 200, detail.data
+        snapshot = detail.data["configuration_snapshot"]
+        assert snapshot["provider"] == "bland"
+        assert snapshot["assistant_id"] == "assistant-S"
+        assert detail.data["api_key"] == "synt...ey-A"
+        assert "synthetic-key-A" not in str(detail.data)
+        preflight = {
+            "provider": "bland",
+            "api_key": detail.data["api_key"],
+            "agent_id": str(agent.id),
+        }
+        key_check = client.post(
+            "/tracer/observability-provider/verify_api_key/", preflight, format="json"
+        )
+        assistant_check = client.post(
+            "/tracer/observability-provider/verify_assistant_id/",
+            {**preflight, "assistant_id": snapshot["assistant_id"]},
+            format="json",
+        )
+        assert key_check.status_code == 200, key_check.data
+        assert assistant_check.status_code == 200, assistant_check.data
+        assert requests_seen[-2:] == [
+            (ObservabilityRoutes.BLAND_ME_URL.value, {"authorization": "synthetic-key-A"}),
+            (
+                f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/assistant-S",
+                {"authorization": "synthetic-key-A"},
+            ),
+        ]
+        saved = update_agent(
+            client,
+            agent,
+            {
+                "provider": "bland",
+                "api_key": detail.data["api_key"],
+                "assistant_id": snapshot["assistant_id"],
+                "contact_number": snapshot["contact_number"],
+                "description": f"Synthetic masked-key edit {save_number}",
+            },
+            "save-version",
+        )
+        assert saved.status_code == 201, saved.data
+        clear_workspace_context()
+        agent.refresh_from_db()
+        selected = agent.active_version
+        assert selected.credentials.provider_type == "vapi"
+        assert selected.credentials.get_api_key() == "synthetic-key-A"
+        assert selected.configuration_snapshot["assistant_id"] == "assistant-S"
+        assert saved.data["version"]["api_key"] == "synt...ey-A"
+    legacy.refresh_from_db()
+    assert legacy.agent_version_id == newer.id
+    assert legacy.agent_definition_id == agent.id
+    assert legacy.api_key == legacy_ciphertext
+    assert legacy.assistant_id == "assistant-A"
+
+
+@pytest.mark.parametrize("route", ["edit", "operations", "save-version"])
+@pytest.mark.parametrize("source", ["keyed", "legacy", "legacy-version"])
+def test_vapi_read_surfaces_and_masked_carry_forward_use_selected_pair(
+    vapi_setup, monkeypatch, route, source
+):
+    provider, client = vapi_setup
+    agent, original, _ = seed_version(
+        provider, "assistant-S", with_credentials=False
+    )
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["api_key", "assistant_id"])
+    credential_version = original if source == "keyed" else None
+    if source == "legacy-version":
+        _, credential_version, _ = seed_version(
+            provider, "assistant-L", number=2, status="draft", agent=agent,
+            with_credentials=False,
+        )
+    credentials = ProviderCredentials.objects.create(
+        agent_definition=agent if source != "keyed" else None,
+        agent_version=credential_version,
+        provider_type="vapi",
+        api_key="synthetic-key-A",
+        assistant_id="" if source == "legacy-version" else "assistant-A",
+    )
+    expected_assistant = "assistant-L" if source == "legacy-version" else "assistant-A"
+    detail = client.get(
+        f"/simulate/agent-definitions/{agent.id}/versions/{original.id}/"
+    )
+    assert detail.status_code == 200, detail.data
+    assert detail.data["api_key"] == "synt...ey-A"
+    assert detail.data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    # Both definition serializers also feed editable read surfaces.
+    from simulate.serializers.agent_definition import AgentDefinitionSerializer
+    from simulate.serializers.response.agent_definition import AgentDefinitionResponseSerializer
+
+    for serializer in (AgentDefinitionSerializer, AgentDefinitionResponseSerializer):
+        representation = serializer(agent).data
+        assert representation["api_key"] == "synt...ey-A"
+        assert representation["assistant_id"] == expected_assistant
+        assert "synthetic-key-A" not in str(representation)
+
+    upstream = Mock(return_value=Mock(status_code=200))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    preflight = client.post(
+        "/tracer/observability-provider/verify_assistant_id/",
+        {
+            "provider": "vapi",
+            "api_key": detail.data["api_key"],
+            "assistant_id": detail.data["configuration_snapshot"]["assistant_id"],
+            "agent_id": str(agent.id),
+        },
+        format="json",
+    )
+    assert preflight.status_code == 200, preflight.data
+    assert upstream.call_args.args[0].endswith(f"/{expected_assistant}")
+    assert upstream.call_args.kwargs["headers"] == {"Authorization": "Bearer synthetic-key-A"}
+    # No assistant supplied: carry the selected source's identity with its key.
+    saved = update_agent(
+        client, agent, {"api_key": detail.data["api_key"]}, route
+    )
+    assert saved.status_code == (201 if route == "save-version" else 200), saved.data
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    assert selected.credentials.get_api_key() == "synthetic-key-A"
+    assert selected.credentials.assistant_id == expected_assistant
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    assert poll(provider) == op.StoreOutcome(1, 0, 0)
+    assert requests_seen == [("Bearer synthetic-key-A", expected_assistant)]
+    assert imported == [(f"call-for-{expected_assistant}", expected_assistant)]
+    credentials.refresh_from_db()
+    if source == "legacy-version":
+        assert credentials.agent_version_id == credential_version.id
+        assert credentials.assistant_id == ""
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["pinned", "latest-fallback"])
+@pytest.mark.parametrize(
+    "source,expected_mask,expected_assistant",
+    [
+        ("empty-definition", "synt...ey-B", "assistant-B"),
+        ("missing-legacy", "synt...ey-A", "assistant-A"),
+        ("keyed-stale-snapshot", "synt...ey-C", "assistant-C"),
+        ("wrong-provider", None, ""),
+        ("unreadable", None, ""),
+    ],
+)
+def test_run_test_detail_exposes_effective_masked_pair_for_ui_gate(
+    vapi_setup, pinned, source, expected_mask, expected_assistant
+):
+    from simulate.models import RunTest
+
+    provider, client = vapi_setup
+    agent, selected, _ = seed_version(
+        provider, "assistant-S", with_credentials=False
+    )
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["api_key", "assistant_id"])
+    if pinned:
+        # A pinned historical run must not silently display the latest pair.
+        seed_version(provider, "assistant-other", number=2, status="draft", agent=agent)
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent,
+        provider_type="vapi",
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    credentials = None
+    if source != "missing-legacy":
+        row_key = "" if source == "empty-definition" else "synthetic-key-C"
+        if source == "unreadable":
+            row_key = "enc::invalid"
+        credentials = ProviderCredentials.objects.create(
+            agent_version=selected,
+            provider_type="retell" if source == "wrong-provider" else "vapi",
+            api_key=row_key,
+            assistant_id="assistant-C",
+        )
+    stored_snapshot = selected.configuration_snapshot.copy()
+    stored_key = credentials.api_key if credentials else None
+    legacy_key = legacy.api_key
+    run = RunTest.objects.create(
+        name="Synthetic evaluation gate",
+        agent_definition=agent,
+        agent_version=selected if pinned else None,
+        organization=provider.organization,
+        workspace=provider.workspace,
+    )
+    url = f"/simulate/run-tests/{run.id}/"
+    assert APIClient().get(url).status_code == 401
+    response = client.get(url)
+    assert response.status_code == 200, response.data
+    version_data = response.data["agent_version"]
+    assert str(version_data["id"]) == str(selected.id)
+    assert version_data["api_key"] == expected_mask
+    assert version_data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    assert response.data["agent_definition_detail"]["agent_type"] == "voice"
+    # TestEvaluationPage's existing gate (no raw secret needed in the browser).
+    opens_update_keys_dialog = not (
+        version_data["api_key"]
+        and version_data["configuration_snapshot"].get("assistant_id")
+    )
+    assert opens_update_keys_dialog is (source in ("wrong-provider", "unreadable"))
+    for key in ("synthetic-key-A", "synthetic-key-B", "synthetic-key-C"):
+        assert key not in str(response.data)
+    if pinned and source != "unreadable":
+        enabled = client.patch(
+            f"{url}components/", {"enable_tool_evaluation": True}, format="json"
+        )
+        assert enabled.status_code == (
+            400 if opens_update_keys_dialog else 200
+        ), enabled.data
+        run.refresh_from_db()
+        assert run.enable_tool_evaluation is not opens_update_keys_dialog
+    clear_workspace_context()
+    selected.refresh_from_db()
+    legacy.refresh_from_db()
+    assert selected.configuration_snapshot == stored_snapshot
+    assert legacy.api_key == legacy_key
+    assert legacy.agent_version_id is None
+    if credentials:
+        credentials.refresh_from_db()
+        assert credentials.api_key == stored_key
+        assert credentials.assistant_id == "assistant-C"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("old_provider", ["bland", "retell"])
+@pytest.mark.parametrize("snapshot_provider", [True, False], ids=["authored", "legacy"])
+@pytest.mark.parametrize("active", [True, False], ids=["active", "latest-fallback"])
+def test_explicit_provider_change_updates_selected_version_and_runtime_reads(
+    vapi_setup, update_route, old_provider, snapshot_provider, active
+):
+    from ee.voice.temporal.activities.voice_small import prepare_call
+    from simulate.models import RunTest, Scenarios
+    from simulate.models.test_execution import CallExecution, TestExecution
+    from simulate.services.agent_definition import (
+        resolve_provider_configuration_for_version,
+    )
+    from simulate.temporal.types.activities import PrepareCallInput
+
+    provider, client = vapi_setup
+    agent, older, older_credentials = seed_version(
+        provider, "assistant-old-1", status="active" if active else "archived"
+    )
+    agent.provider = old_provider
+    agent.save(update_fields=["provider"])
+    _, newer, newer_credentials = seed_version(
+        provider, "assistant-old-2", number=2, status="draft", agent=agent
+    )
+    for version, credentials in ((older, older_credentials), (newer, newer_credentials)):
+        version.configuration_snapshot.update(
+            provider=old_provider, contact_number="+16505550100"
+        )
+        version.save(update_fields=["configuration_snapshot"])
+        # Migration 0071 encodes Bland as VAPI; it is not authored for Vapi.
+        credentials.provider_type = "vapi" if old_provider == "bland" else "retell"
+        credentials.save()
+    selected, untouched = (older, newer) if active else (newer, older)
+    selected_credentials = older_credentials if active else newer_credentials
+    untouched_credentials = newer_credentials if active else older_credentials
+    if not snapshot_provider:
+        del selected.configuration_snapshot["provider"]
+        selected.save(update_fields=["configuration_snapshot"])
+    before = selected.configuration_snapshot.copy()
+    untouched_snapshot = untouched.configuration_snapshot.copy()
+    untouched_key = untouched_credentials.api_key
+    payload = {
+        "provider": "vapi",
+        "api_key": "synthetic-key-B",
+        "assistant_id": "assistant-B",
+    }
+    assert update_agent(APIClient(), agent, payload, update_route).status_code == 401
+    saved = update_agent(client, agent, payload, update_route)
+    assert saved.status_code == 200, saved.data
+    saved_agent = saved.data["agent"] if update_route == "edit" else saved.data
+    assert saved_agent["provider"] == "vapi"
+    assert saved_agent["api_key"] == "synt...ey-B"
+    assert saved_agent["assistant_id"] == "assistant-B"
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected.refresh_from_db()
+    selected_credentials.refresh_from_db()
+    untouched.refresh_from_db()
+    untouched_credentials.refresh_from_db()
+    assert selected.configuration_snapshot == {
+        **before, "provider": "vapi", "assistant_id": "assistant-B"
+    }
+    assert selected_credentials.provider_type == "vapi"
+    assert selected_credentials.get_api_key() == "synthetic-key-B"
+    assert selected_credentials.assistant_id == "assistant-B"
+    assert untouched.configuration_snapshot == untouched_snapshot
+    assert untouched_credentials.api_key == untouched_key
+    assert untouched_credentials.provider_type == (
+        "vapi" if old_provider == "bland" else "retell"
+    )
+
+    detail = client.get(f"/simulate/agent-definitions/{agent.id}/")
+    assert detail.status_code == 200, detail.data
+    assert (detail.data["api_key"], detail.data["assistant_id"]) == (
+        "synt...ey-B", "assistant-B"
+    )
+    version_detail = client.get(
+        f"/simulate/agent-definitions/{agent.id}/versions/{selected.id}/"
+    )
+    assert version_detail.status_code == 200, version_detail.data
+    assert version_detail.data["api_key"] == "synt...ey-B"
+    assert version_detail.data["configuration_snapshot"]["provider"] == "vapi"
+    assert version_detail.data["configuration_snapshot"]["assistant_id"] == "assistant-B"
+    for representation in (saved.data, detail.data, version_detail.data):
+        assert "synthetic-key-B" not in str(representation)
+        assert "synthetic-key-A" not in str(representation)
+    clear_workspace_context()
+    configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+    assert (configuration.api_key, configuration.assistant_id) == (
+        "synthetic-key-B", "assistant-B"
+    )
+
+    # Real prepare_call, not a mocked resolver: only the Temporal context is
+    # replaced. It must route to Vapi with the same pair after either writer.
+    scenario = Scenarios.objects.create(
+        name="Synthetic provider switch",
+        source="Synthetic scenario",
+        scenario_type="script",
+        organization=provider.organization,
+        workspace=provider.workspace,
+        agent_definition=agent,
+    )
+    run = RunTest.objects.create(
+        name="Synthetic switched run",
+        agent_definition=agent,
+        agent_version=selected,
+        organization=provider.organization,
+        workspace=provider.workspace,
+    )
+    execution = TestExecution.objects.create(
+        run_test=run, agent_definition=agent, agent_version=selected
+    )
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        agent_version=selected,
+        call_metadata={"call_direction": "outbound"},
+    )
+    with patch("temporalio.activity.info"):
+        prepared = async_to_sync(prepare_call)(
+            PrepareCallInput(
+                call_id=str(call.id), workspace_id=str(provider.workspace_id)
+            )
+        )
+    assert prepared.error is None
+    assert prepared.client_provider == "vapi"
+    assert (prepared.client_api_key, prepared.client_assistant_id) == (
+        "synthetic-key-B", "assistant-B"
+    )
+    assert prepared.client_uses_own_provider is True
+
+    # Activating an unrelated historical version changes selection, not its
+    # authored provider. A Bland row's VAPI encoding must still not enable Vapi.
+    untouched.activate()
+    agent.refresh_from_db()
+    historical = resolve_provider_configuration_for_version(untouched)
+    assert (historical.api_key, historical.assistant_id) == (
+        "synthetic-key-A", untouched_snapshot["assistant_id"]
+    )
+    vapi_configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+    assert (vapi_configuration.api_key, vapi_configuration.assistant_id) == (None, None)
+    omitted = update_agent(
+        client, agent, {"description": "Synthetic historical edit"}, update_route
+    )
+    assert omitted.status_code == 200, omitted.data
+    clear_workspace_context()
+    selected.refresh_from_db()
+    untouched.refresh_from_db()
+    untouched_credentials.refresh_from_db()
+    assert selected.configuration_snapshot == {
+        **before, "provider": "vapi", "assistant_id": "assistant-B"
+    }
+    assert untouched.configuration_snapshot == untouched_snapshot
+    assert untouched_credentials.api_key == untouched_key
+
+
+@pytest.mark.parametrize("snapshot_provider", [True, False], ids=["authored", "legacy"])
+@pytest.mark.parametrize("key", [None, "********"], ids=["omitted-key", "masked-key"])
+def test_explicit_bland_to_vapi_change_does_not_reuse_encoded_bland_secret(
+    vapi_setup, update_route, snapshot_provider, key
+):
+    provider, client = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-A")
+    agent.provider = "bland"
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["provider", "contact_number"])
+    if snapshot_provider:
+        version.configuration_snapshot["provider"] = "bland"
+        version.save(update_fields=["configuration_snapshot"])
+    # Disabling observability must not let an encoded Bland secret authorize
+    # a provider change without a usable replacement key.
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    payload = {"provider": "vapi", "assistant_id": "assistant-B"}
+    if key is not None:
+        payload["api_key"] = key
+    before = _configuration_state(agent)
+    with _assert_no_configuration_writes():
+        response = update_agent(client, agent, payload, update_route)
+    assert response.status_code == 400, response.data
+    assert "new API key is required" in str(response.data)
+    clear_workspace_context()
+    assert _configuration_state(agent) == before
+    agent.refresh_from_db()
+    configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+    assert (configuration.api_key, configuration.assistant_id) == (None, None)
+    assert "synthetic-key-A" not in str(response.data)
+
+
 def test_empty_vapi_row_form_roundtrip_preserves_effective_pair(
     vapi_setup, monkeypatch
 ):
@@ -1026,3 +1571,674 @@ def test_row_without_an_assistant_falls_back_to_its_versions_snapshot(
     poll(provider)
     assert requests_seen == [("Bearer synthetic-key-A", "assistant-A")]
     assert imported == [("call-for-assistant-A", "assistant-A")]
+
+
+def _prepare_saved_version(provider, agent, version):
+    from ee.voice.temporal.activities.voice_small import prepare_call
+    from simulate.models import RunTest, Scenarios
+    from simulate.models.test_execution import CallExecution, TestExecution
+    from simulate.temporal.types.activities import PrepareCallInput
+
+    scenario = Scenarios.objects.create(
+        name="Synthetic credential provenance", source="Synthetic scenario",
+        scenario_type="script", organization=provider.organization,
+        workspace=provider.workspace, agent_definition=agent,
+    )
+    run = RunTest.objects.create(
+        name="Synthetic credential run", agent_definition=agent, agent_version=version,
+        organization=provider.organization, workspace=provider.workspace,
+    )
+    execution = TestExecution.objects.create(
+        run_test=run, agent_definition=agent, agent_version=version
+    )
+    call = CallExecution.objects.create(
+        test_execution=execution, scenario=scenario, agent_version=version,
+        call_metadata={"call_direction": "outbound"},
+    )
+    with patch("temporalio.activity.info"):
+        return async_to_sync(prepare_call)(
+            PrepareCallInput(call_id=str(call.id), workspace_id=str(provider.workspace_id))
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("old_provider,new_provider", [("bland", "vapi"), ("vapi", "bland")])
+@pytest.mark.parametrize("key_mode", ["omitted", "masked", "replacement"])
+@pytest.mark.parametrize("explicit_source", [False, True])
+@pytest.mark.parametrize("snapshot_provider", [True, False], ids=["authored", "legacy-snapshot"])
+def test_create_version_provider_switch_never_carries_incompatible_key(
+    vapi_setup, monkeypatch, old_provider, new_provider, key_mode, explicit_source,
+    snapshot_provider,
+):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, original, credentials = seed_version(provider, "assistant-A")
+    agent.provider = old_provider
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["provider", "contact_number"])
+    original.configuration_snapshot = original.create_snapshot(commit_message=original.commit_message)
+    if not snapshot_provider:
+        original.configuration_snapshot.pop("provider")
+    original.save(update_fields=["configuration_snapshot"])
+    # The same storage encoding in both directions is intentional (0071).
+    assert credentials.provider_type == "vapi"
+    # Separate 0076 legacy row, owned by a historical version of the old provider.
+    older = agent.create_version(description="Synthetic legacy", commit_message="legacy")
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent, agent_version=older, provider_type="vapi",
+        api_key="synthetic-key-L", assistant_id="assistant-L",
+    )
+    before = (original.configuration_snapshot.copy(), credentials.api_key,
+              older.configuration_snapshot.copy(), legacy.api_key)
+    payload = {
+        "agent_type": "voice", "provider": new_provider, "assistant_id": "assistant-C",
+        "commit_message": "Synthetic provider change", "observability_enabled": False,
+        "inbound": True, "authentication_method": "api_key", "contact_number": "+16505550100",
+    }
+    if explicit_source:
+        payload["source_version_id"] = str(original.id)
+    if key_mode != "omitted":
+        payload["api_key"] = "synt...ey-A" if key_mode == "masked" else "synthetic-key-C"
+        upstream = Mock(return_value=Mock(status_code=200))
+        monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+        preflight = {
+            "provider": new_provider, "agent_id": str(agent.id), "api_key": payload["api_key"],
+            **({"source_version_id": str(original.id)} if explicit_source else {}),
+        }
+        for action in ("verify_api_key", "verify_assistant_id"):
+            check = client.post(
+                f"/tracer/observability-provider/{action}/",
+                {**preflight, **({"assistant_id": "assistant-C"} if action == "verify_assistant_id" else {})},
+                format="json",
+            )
+            assert check.status_code == (400 if key_mode == "masked" else 200), check.data
+        if key_mode == "masked":
+            upstream.assert_not_called()
+    # The create endpoint must be safe even without a successful preflight.
+    state = _configuration_state(agent)
+    replacing = key_mode == "replacement"
+    with nullcontext() if replacing else _assert_no_configuration_writes():
+        saved = client.post(
+            f"/simulate/agent-definitions/{agent.id}/versions/create/", payload, format="json"
+        )
+    assert saved.status_code == (201 if replacing else 400), saved.data
+    clear_workspace_context()
+    if not replacing:
+        assert "new API key is required" in str(saved.data)
+        assert _configuration_state(agent) == state
+    agent.refresh_from_db()
+    selected = agent.active_version
+    configuration = resolve_provider_configuration_for_version(selected)
+    expected_key = "synthetic-key-C" if replacing else "synthetic-key-A"
+    expected_assistant = "assistant-C" if replacing else "assistant-A"
+    expected_provider = new_provider if replacing else old_provider
+    assert (configuration.api_key, configuration.assistant_id) == (expected_key, expected_assistant)
+    assert selected.configuration_snapshot.get("provider", agent.provider) == expected_provider
+    assert selected.credentials.provider_type == "vapi"
+    assert selected.credentials.get_api_key() == expected_key
+    assert agent.api_key == expected_key
+    prepared = _prepare_saved_version(provider, agent, selected)
+    assert prepared.error is None
+    assert prepared.client_provider == expected_provider
+    assert prepared.client_api_key == expected_key
+    assert prepared.client_assistant_id == expected_assistant
+    original.refresh_from_db()
+    credentials.refresh_from_db()
+    older.refresh_from_db()
+    legacy.refresh_from_db()
+    assert (original.configuration_snapshot, credentials.api_key,
+            older.configuration_snapshot, legacy.api_key) == before
+    assert legacy.agent_version_id == older.pk
+    assert legacy.agent_definition_id == agent.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("key", [None, "synt...ey-A"], ids=["omitted", "masked"])
+def test_inplace_vapi_to_bland_does_not_resurrect_separate_legacy(
+    vapi_setup, update_route, key
+):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, original, credentials = seed_version(provider, "assistant-A")
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["contact_number"])
+    original.configuration_snapshot = original.create_snapshot(commit_message=original.commit_message)
+    original.save(update_fields=["configuration_snapshot"])
+    legacy_owner = agent.create_version(description="Synthetic legacy", commit_message="legacy")
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent, agent_version=legacy_owner, provider_type="vapi",
+        api_key="synthetic-key-L", assistant_id="assistant-L",
+    )
+    legacy_snapshot = legacy_owner.configuration_snapshot.copy()
+    legacy_ciphertext = legacy.api_key
+    payload = {"provider": "bland", "assistant_id": "pathway-B"}
+    if key is not None:
+        payload["api_key"] = key
+    before = _configuration_state(agent)
+    with _assert_no_configuration_writes():
+        saved = update_agent(client, agent, payload, update_route)
+    assert saved.status_code == 400, saved.data
+    assert "new API key is required" in str(saved.data)
+    clear_workspace_context()
+    assert _configuration_state(agent) == before
+    agent.refresh_from_db()
+    original.refresh_from_db()
+    configuration = resolve_provider_configuration_for_version(original)
+    assert (configuration.api_key, configuration.assistant_id) == ("synthetic-key-A", "assistant-A")
+    prepared = _prepare_saved_version(provider, agent, original)
+    assert prepared.error is None
+    assert prepared.client_provider == "vapi"
+    assert prepared.client_api_key == "synthetic-key-A"
+    assert prepared.client_assistant_id == "assistant-A"
+    legacy_owner.refresh_from_db()
+    legacy.refresh_from_db()
+    assert legacy_owner.configuration_snapshot == legacy_snapshot
+    assert legacy.api_key == legacy_ciphertext
+    assert legacy.agent_version_id == legacy_owner.pk
+    assert legacy.agent_definition_id == agent.pk
+
+
+@pytest.mark.parametrize("preflight_enabled", [True, False])
+@pytest.mark.parametrize("key_mode", ["masked", "omitted"])
+def test_historical_form_preflight_and_create_share_authorized_source(
+    vapi_setup, monkeypatch, preflight_enabled, key_mode
+):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, historical, credentials_a = seed_version(provider, "stale-snapshot-A", status="archived")
+    historical.configuration_snapshot = historical.create_snapshot(commit_message=historical.commit_message)
+    historical.save(update_fields=["configuration_snapshot"])
+    credentials_a.assistant_id = "assistant-A"
+    credentials_a.save()
+    _, active, credentials_b = seed_version(provider, "assistant-B", number=2, agent=agent)
+    credentials_b.api_key = "synthetic-key-B"
+    credentials_b.save()
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["api_key", "assistant_id"])
+    before = (historical.configuration_snapshot.copy(), credentials_a.api_key,
+              active.configuration_snapshot.copy(), credentials_b.api_key)
+    detail = client.get(f"/simulate/agent-definitions/{agent.id}/versions/{historical.id}/")
+    assert detail.status_code == 200, detail.data
+    snapshot = detail.data["configuration_snapshot"]
+    assert detail.data["api_key"] == "synt...ey-A"
+    assert snapshot["assistant_id"] == "assistant-A"
+    upstream = Mock(return_value=Mock(status_code=200))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    preflight = {
+        "provider": snapshot["provider"], "api_key": detail.data["api_key"],
+        "agent_id": str(agent.id), "source_version_id": detail.data["id"],
+    }
+    if preflight_enabled:
+        for action in ("verify_api_key", "verify_assistant_id"):
+            check = client.post(
+                f"/tracer/observability-provider/{action}/",
+                {**preflight, **({"assistant_id": snapshot["assistant_id"]} if action == "verify_assistant_id" else {})},
+                format="json",
+            )
+            assert check.status_code == 200, check.data
+        assert upstream.call_count == 2
+        assert all(call.kwargs["headers"] == {"Authorization": "Bearer synthetic-key-A"}
+                   for call in upstream.call_args_list)
+        assert upstream.call_args.args[0].endswith("/assistant-A")
+    else:
+        upstream.assert_not_called()
+    # UI-shaped version create with A selected while B is still active. A
+    # missing key with an explicit source also means keep A, never copy B.
+    payload = {
+        "agent_type": "voice", "agent_name": snapshot["agent_name"], "languages": ["en"],
+        "provider": snapshot["provider"], "assistant_id": snapshot["assistant_id"],
+        "source_version_id": detail.data["id"], "description": "Synthetic historical edit",
+        "knowledge_base": None, "contact_number": "", "inbound": True,
+        "authentication_method": "api_key", "observability_enabled": False,
+        "livekit_max_concurrency": 5, "commit_message": "Historical form save",
+    }
+    if key_mode == "masked":
+        payload["api_key"] = detail.data["api_key"]
+    saved = client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/", payload, format="json"
+    )
+    assert saved.status_code == 201, saved.data
+    assert saved.data["version"]["api_key"] == "synt...ey-A"
+    assert saved.data["version"]["configuration_snapshot"]["assistant_id"] == "assistant-A"
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    configuration = resolve_provider_configuration_for_version(selected)
+    assert (configuration.api_key, configuration.assistant_id) == ("synthetic-key-A", "assistant-A")
+    historical.refresh_from_db()
+    active.refresh_from_db()
+    credentials_a.refresh_from_db()
+    credentials_b.refresh_from_db()
+    assert (historical.configuration_snapshot, credentials_a.api_key,
+            active.configuration_snapshot, credentials_b.api_key) == before
+    assert historical.status == "archived"
+
+
+@pytest.mark.parametrize("mask,explicit_source", [
+    ("synt...ey-B", True), ("synt...ey-B", False), ("********", True),
+])
+def test_create_rejects_a_mask_from_another_source_before_writing(
+    vapi_setup, monkeypatch, mask, explicit_source
+):
+    # Legacy unversioned callers retain the generic keep-marker contract. A
+    # selected-version form must use the actual displayed mask, never a sentinel.
+    provider, client = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-A")
+    before = (agent.description, agent.provider, credentials.api_key,
+              version.configuration_snapshot.copy())
+    payload = {
+        "provider": "vapi", "api_key": mask, "assistant_id": "assistant-A",
+        "description": "Must not be written", "commit_message": "Invalid source mask",
+        "observability_enabled": False,
+    }
+    if explicit_source:
+        payload["source_version_id"] = str(version.id)
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    for action in ("verify_api_key", "verify_assistant_id"):
+        preflight = {
+            "provider": "vapi", "api_key": mask, "agent_id": str(agent.id),
+            **({"source_version_id": str(version.id)} if explicit_source else {}),
+            **({"assistant_id": "assistant-A"} if action == "verify_assistant_id" else {}),
+        }
+        check = client.post(f"/tracer/observability-provider/{action}/", preflight, format="json")
+        assert check.status_code == 400, check.data
+    saved = client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/", payload, format="json"
+    )
+    assert saved.status_code == 400, saved.data
+    upstream.assert_not_called()
+    clear_workspace_context()
+    agent.refresh_from_db()
+    credentials.refresh_from_db()
+    version.refresh_from_db()
+    assert (agent.description, agent.provider, credentials.api_key,
+            version.configuration_snapshot) == before
+    assert agent.versions.count() == 1
+
+
+@pytest.mark.parametrize("scope", ["other-agent", "other-org", "other-workspace", "mismatched-version", "missing"])
+@pytest.mark.parametrize("key", ["synt...ey-A", "synthetic-replacement-key"])
+def test_source_version_ids_are_scoped_even_with_raw_replacement_keys(
+    vapi_setup, monkeypatch, user, scope, key
+):
+    from accounts.models import Organization
+    from accounts.models.workspace import Workspace
+
+    provider, client = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-A")
+    foreign_agent, foreign_version, foreign_credentials = seed_version(provider, "assistant-foreign")
+    if scope == "other-org":
+        foreign_org = Organization.objects.create(name="Synthetic other organization")
+        AgentDefinition.no_workspace_objects.filter(pk=foreign_agent.pk).update(organization=foreign_org)
+        AgentVersion.no_workspace_objects.filter(pk=foreign_version.pk).update(organization=foreign_org)
+    elif scope in ("other-workspace", "mismatched-version"):
+        foreign_workspace = Workspace.objects.create(
+            name="Synthetic other workspace", organization=provider.organization, created_by=user
+        )
+        if scope == "other-workspace":
+            AgentDefinition.no_workspace_objects.filter(pk=foreign_agent.pk).update(workspace=foreign_workspace)
+        else:
+            # Corrupt denormalized scope must not be sufficient just because
+            # this row's parent ID happens to match the authorized agent.
+            AgentVersion.no_workspace_objects.filter(pk=foreign_version.pk).update(
+                agent_definition=agent, version_number=2
+            )
+        AgentVersion.no_workspace_objects.filter(pk=foreign_version.pk).update(workspace=foreign_workspace)
+    source_id = "00000000-0000-0000-0000-000000000000" if scope == "missing" else str(foreign_version.id)
+    before = (agent.description, credentials.api_key, version.configuration_snapshot.copy())
+    version_count = AgentVersion.no_workspace_objects.filter(agent_definition=agent).count()
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    for action in ("verify_api_key", "verify_assistant_id"):
+        check = client.post(
+            f"/tracer/observability-provider/{action}/",
+            {"provider": "vapi", "api_key": key, "agent_id": str(agent.id),
+             "source_version_id": source_id,
+             **({"assistant_id": "assistant-A"} if action == "verify_assistant_id" else {})},
+            format="json",
+        )
+        assert check.status_code == 400, check.data
+    saved = client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/",
+        {"provider": "vapi", "api_key": key, "assistant_id": "assistant-A",
+         "source_version_id": source_id, "description": "Must not be written",
+         "commit_message": "Invalid source", "observability_enabled": False},
+        format="json",
+    )
+    assert saved.status_code == 400, saved.data
+    upstream.assert_not_called()
+    clear_workspace_context()
+    agent.refresh_from_db()
+    version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert (agent.description, credentials.api_key, version.configuration_snapshot) == before
+    assert AgentVersion.no_workspace_objects.filter(agent_definition=agent).count() == version_count
+
+
+@pytest.mark.parametrize("source_key", ["", "synthetic-key-A"])
+def test_historical_source_does_not_take_new_definitions_other_provider_fallback(
+    vapi_setup, source_key
+):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, historical, credentials = seed_version(provider, "assistant-A", status="archived")
+    historical.configuration_snapshot["provider"] = "vapi"
+    historical.save(update_fields=["configuration_snapshot"])
+    credentials.api_key = source_key
+    credentials.save()
+    agent.provider = "bland"
+    agent.api_key = "synthetic-bland-key-B"
+    agent.assistant_id = "pathway-B"
+    agent.save(update_fields=["provider", "api_key", "assistant_id"])
+    active = agent.create_version(description="Synthetic Bland", commit_message="B", status="active")
+    ProviderCredentials.objects.create(
+        agent_definition=agent, agent_version=active, provider_type="vapi",
+        api_key="synthetic-bland-key-B", assistant_id="pathway-B",
+    )
+    before = _configuration_state(agent)
+    with nullcontext() if source_key else _assert_no_configuration_writes():
+        saved = client.post(
+            f"/simulate/agent-definitions/{agent.id}/versions/create/",
+            {"provider": "vapi", "source_version_id": str(historical.id),
+             "assistant_id": "assistant-A", "commit_message": "Historical source",
+             "observability_enabled": False},
+            format="json",
+        )
+    assert saved.status_code == (201 if source_key else 400), saved.data
+    clear_workspace_context()
+    if not source_key:
+        # A raw-empty source cannot use a definition of another provider.
+        assert "selected source version has no usable API key" in str(saved.data)
+        assert _configuration_state(agent) == before
+    agent.refresh_from_db()
+    configuration = resolve_provider_configuration_for_version(agent.active_version)
+    assert configuration.api_key == (source_key or "synthetic-bland-key-B")
+    assert configuration.assistant_id == ("assistant-A" if source_key else "pathway-B")
+    assert agent.api_key == ("" if source_key else "synthetic-bland-key-B")
+
+
+@pytest.mark.parametrize("source_id", ["not-a-uuid", None])
+def test_invalid_source_id_is_not_silently_treated_as_omitted(vapi_setup, monkeypatch, source_id):
+    provider, client = vapi_setup
+    agent, version, _ = seed_version(provider, "assistant-A")
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    for action in ("verify_api_key", "verify_assistant_id"):
+        response = client.post(
+            f"/tracer/observability-provider/{action}/",
+            {"provider": "vapi", "api_key": "synthetic-replacement-key", "agent_id": str(agent.id),
+             "source_version_id": source_id,
+             **({"assistant_id": "assistant-A"} if action == "verify_assistant_id" else {})},
+            format="json",
+        )
+        assert response.status_code == 400, response.data
+    response = client.post(
+        f"/simulate/agent-definitions/{agent.id}/versions/create/",
+        {"source_version_id": source_id, "commit_message": "Invalid source"}, format="json",
+    )
+    assert response.status_code == 400, response.data
+    upstream.assert_not_called()
+    clear_workspace_context()
+    assert agent.versions.count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("route", ["edit", "operations", "save-version"])
+@pytest.mark.parametrize("row", ["keyed", "raw-empty", "missing"])
+@pytest.mark.parametrize("key", [None, "", "********", "synt...ey-L", "synthetic-key-C"],
+                         ids=["omitted", "blank", "keep-mask", "display-mask", "replacement"])
+def test_provider_change_with_unversioned_legacy_requires_replacement(
+    vapi_setup, monkeypatch, route, row, key
+):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, original, credentials = seed_version(
+        provider, "assistant-A", with_credentials=row != "missing"
+    )
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["contact_number"])
+    original.configuration_snapshot = original.create_snapshot(commit_message=original.commit_message)
+    original.save(update_fields=["configuration_snapshot"])
+    if row == "raw-empty":
+        credentials.api_key = ""
+        credentials.save()
+    unrelated = agent.create_version(description="Synthetic history", commit_message="History")
+    unrelated_snapshot = unrelated.configuration_snapshot.copy()
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent, provider_type="vapi", api_key="synthetic-key-L",
+        assistant_id="assistant-L",
+    )
+    legacy_state = (legacy.api_key, legacy.assistant_id, legacy.agent_definition_id, legacy.agent_version_id)
+    before = _configuration_state(agent)
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    payload = {
+        "provider": "bland", "assistant_id": "pathway-C", "description": "Synthetic change",
+    }
+    if key is not None:
+        payload["api_key"] = key
+    replacing = key == "synthetic-key-C"
+    with nullcontext() if replacing else _assert_no_configuration_writes():
+        if route == "save-version":
+            saved = client.post(
+                f"/simulate/agent-definitions/{agent.id}/versions/create/",
+                {**payload, "commit_message": "Synthetic provider change", "observability_enabled": False},
+                format="json",
+            )
+        else:
+            saved = update_agent(client, agent, payload, route)
+    assert saved.status_code == ((201 if route == "save-version" else 200) if replacing else 400), saved.data
+    upstream.assert_not_called()
+    clear_workspace_context()
+    if not replacing:
+        assert "new API key is required" in str(saved.data)
+        assert _configuration_state(agent) == before
+    agent.refresh_from_db()
+    selected = agent.active_version
+    expected_key = "synthetic-key-C" if replacing else ("synthetic-key-L" if row == "missing" else "synthetic-key-A")
+    expected_assistant = "pathway-C" if replacing else ("assistant-L" if row == "missing" else "assistant-A")
+    expected_provider = "bland" if replacing else "vapi"
+    configuration = resolve_provider_configuration_for_version(selected)
+    assert (configuration.api_key, configuration.assistant_id) == (expected_key, expected_assistant)
+    detail = client.get(f"/simulate/agent-definitions/{agent.id}/versions/{selected.id}/")
+    assert detail.status_code == 200, detail.data
+    assert detail.data["configuration_snapshot"]["provider"] == expected_provider
+    assert detail.data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    from agentcc.services.credential_manager import mask_key
+
+    assert detail.data["api_key"] == mask_key(expected_key)
+    if replacing and route == "save-version":
+        assert saved.data["version"]["api_key"] == mask_key("synthetic-key-C")
+        assert saved.data["version"]["api_key"] != mask_key("synthetic-key-L")
+    for secret in ("synthetic-key-A", "synthetic-key-L", "synthetic-key-C"):
+        assert secret not in str(saved.data)
+        assert secret not in str(detail.data)
+    prepared = _prepare_saved_version(provider, agent, selected)
+    assert prepared.error is None
+    assert prepared.client_provider == expected_provider
+    assert (prepared.client_api_key, prepared.client_assistant_id) == (expected_key, expected_assistant)
+    unrelated.refresh_from_db()
+    legacy.refresh_from_db()
+    assert unrelated.configuration_snapshot == unrelated_snapshot
+    assert (legacy.api_key, legacy.assistant_id, legacy.agent_definition_id, legacy.agent_version_id) == legacy_state
+    if not replacing or route != "save-version":
+        assert selected.pk == original.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("route", ["edit", "operations", "save-version"])
+@pytest.mark.parametrize("key", [None, "synt...ey-L"], ids=["omitted", "masked"])
+def test_same_provider_bland_save_keeps_unversioned_legacy_fallback(vapi_setup, route, key):
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, original, credentials = seed_version(provider, "pathway-A")
+    agent.provider = "bland"
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["provider", "contact_number"])
+    original.configuration_snapshot = original.create_snapshot(commit_message=original.commit_message)
+    original.save(update_fields=["configuration_snapshot"])
+    credentials.api_key = ""
+    credentials.save()
+    ProviderCredentials.objects.create(
+        agent_definition=agent, provider_type="vapi", api_key="synthetic-key-L",
+        assistant_id="legacy-pathway",
+    )
+    payload = {"provider": "bland", "assistant_id": "pathway-A", "description": "Same provider"}
+    if key is not None:
+        payload["api_key"] = key
+    if route == "save-version":
+        saved = client.post(
+            f"/simulate/agent-definitions/{agent.id}/versions/create/",
+            {**payload, "commit_message": "Synthetic same-provider save", "observability_enabled": False},
+            format="json",
+        )
+    else:
+        saved = update_agent(client, agent, payload, route)
+    assert saved.status_code == (201 if route == "save-version" else 200), saved.data
+    clear_workspace_context()
+    agent.refresh_from_db()
+    selected = agent.active_version
+    configuration = resolve_provider_configuration_for_version(selected)
+    assert (configuration.api_key, configuration.assistant_id) == ("synthetic-key-L", "pathway-A")
+    detail = client.get(f"/simulate/agent-definitions/{agent.id}/versions/{selected.id}/")
+    assert detail.status_code == 200, detail.data
+    assert detail.data["api_key"] == "synt...ey-L"
+    assert detail.data["configuration_snapshot"]["assistant_id"] == "pathway-A"
+    assert "synthetic-key-L" not in str(detail.data)
+    prepared = _prepare_saved_version(provider, agent, selected)
+    assert prepared.error is None
+    assert prepared.client_provider == "bland"
+    assert (prepared.client_api_key, prepared.client_assistant_id) == ("synthetic-key-L", "pathway-A")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("source", ["empty-ciphertext", "wrong-provider", "raw-empty"])
+@pytest.mark.parametrize("key_mode", ["omitted", "blank", "replacement"])
+def test_historical_detail_form_preserves_closed_source_authority(
+    vapi_setup, monkeypatch, source, key_mode
+):
+    from integrations.services.credentials import CredentialManager
+    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+
+    provider, client = vapi_setup
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    agent, historical, credentials_a = seed_version(provider, "assistant-A", status="archived")
+    agent.contact_number = "+16505550100"
+    agent.save(update_fields=["contact_number"])
+    historical.configuration_snapshot = historical.create_snapshot(commit_message=historical.commit_message)
+    historical.save(update_fields=["configuration_snapshot"])
+    credentials_a.api_key = (
+        "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+        if source == "empty-ciphertext" else ""
+    )
+    if source == "wrong-provider":
+        credentials_a.provider_type = "retell"
+    credentials_a.save()
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["api_key", "assistant_id"])
+    active = agent.create_version(description="Synthetic active B", commit_message="B", status="active")
+    ProviderCredentials.objects.create(
+        agent_version=active, provider_type="vapi", api_key="synthetic-key-B", assistant_id="assistant-B",
+    )
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent, provider_type="vapi", api_key="synthetic-key-L", assistant_id="assistant-L",
+    )
+    before = _configuration_state(agent)
+    historical_state = (historical.configuration_snapshot.copy(), credentials_a.api_key, credentials_a.provider_type)
+    detail = client.get(f"/simulate/agent-definitions/{agent.id}/versions/{historical.id}/")
+    assert detail.status_code == 200, detail.data
+    snapshot = detail.data["configuration_snapshot"]
+    assert detail.data["api_key"] == ("synt...ey-B" if source == "raw-empty" else None)
+    assert snapshot["assistant_id"] == {
+        "empty-ciphertext": "assistant-A", "wrong-provider": "", "raw-empty": "assistant-B",
+    }[source]
+    # Submit the actual detail-derived form with preflight disabled. Omission
+    # (also explicit blank) retains this source, not the active definition B.
+    upstream = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", upstream)
+    payload = {
+        "agent_type": snapshot["agent_type"], "agent_name": snapshot["agent_name"],
+        "provider": snapshot["provider"], "assistant_id": snapshot["assistant_id"],
+        "source_version_id": detail.data["id"], "languages": snapshot["languages"],
+        "contact_number": snapshot["contact_number"], "inbound": snapshot["inbound"],
+        "authentication_method": "api_key", "knowledge_base": None,
+        "livekit_max_concurrency": snapshot["livekit_max_concurrency"],
+        "description": "Synthetic historical form", "commit_message": "Historical form",
+        "observability_enabled": False,
+    }
+    replacing = key_mode == "replacement"
+    if key_mode == "blank":
+        payload["api_key"] = ""
+    elif replacing:
+        payload["api_key"] = "synthetic-key-C"
+        if source == "wrong-provider":
+            payload["assistant_id"] = "assistant-C"
+    accepted = replacing or source == "raw-empty"
+    with nullcontext() if accepted else _assert_no_configuration_writes():
+        saved = client.post(
+            f"/simulate/agent-definitions/{agent.id}/versions/create/", payload, format="json"
+        )
+    assert saved.status_code == (201 if accepted else 400), saved.data
+    upstream.assert_not_called()
+    clear_workspace_context()
+    agent.refresh_from_db()
+    if not accepted:
+        assert "selected source version has no usable API key" in str(saved.data)
+        assert _configuration_state(agent) == before
+        assert agent.active_version.pk == active.pk
+        historical.refresh_from_db()
+        closed = resolve_provider_configuration_for_version(historical)
+        assert closed.api_key is None
+        prepared_source = _prepare_saved_version(provider, agent, historical)
+        assert prepared_source.error is None
+        assert prepared_source.client_api_key is None
+        assert prepared_source.client_assistant_id == ("assistant-A" if source == "empty-ciphertext" else None)
+    selected = agent.active_version
+    expected_key = "synthetic-key-C" if replacing else "synthetic-key-B"
+    expected_assistant = payload["assistant_id"] if replacing else "assistant-B"
+    configuration = resolve_provider_configuration_for_version(selected)
+    assert (configuration.api_key, configuration.assistant_id) == (expected_key, expected_assistant)
+    prepared = _prepare_saved_version(provider, agent, selected)
+    assert prepared.error is None
+    assert prepared.client_provider == "vapi"
+    assert (prepared.client_api_key, prepared.client_assistant_id) == (expected_key, expected_assistant)
+    if accepted:
+        if not replacing:
+            assert selected.credentials.api_key == ""
+        saved_detail = client.get(f"/simulate/agent-definitions/{agent.id}/versions/{selected.id}/")
+        assert saved_detail.status_code == 200, saved_detail.data
+        assert saved_detail.data["api_key"] == ("synt...ey-C" if replacing else "synt...ey-B")
+        assert saved_detail.data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    for representation in (detail.data, saved.data):
+        for secret in ("synthetic-key-B", "synthetic-key-C", "synthetic-key-L"):
+            assert secret not in str(representation)
+    credentials_a.refresh_from_db()
+    historical.refresh_from_db()
+    assert (historical.configuration_snapshot, credentials_a.api_key, credentials_a.provider_type) == historical_state
+    # A replacement may legitimately adopt the legacy row, but must replace its
+    # key with C; rejected saves above leave every row and link byte-for-byte.
+    if not replacing:
+        legacy.refresh_from_db()
+        assert legacy.agent_version_id is None

@@ -4,7 +4,11 @@ from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
-from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_definition import (
+    provider_for_version,
+    resolve_api_key_for_version,
+    resolve_provider_configuration_for_version,
+)
 from simulate.services.agent_setup import agent_summary
 from tracer.services.observability_switch import snapshot_as_shown
 
@@ -75,22 +79,18 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
                 )
                 snapshot["livekit_api_secret"] = creds.get_masked_api_secret()
                 data["configuration_snapshot"] = snapshot
-            elif (
-                isinstance(snapshot, dict)
-                and creds.provider_type == "vapi"
-                and instance.agent_definition.provider == "vapi"
-                and not creds.api_key
-            ):
-                # An empty Vapi row selects the definition's whole pair. The
-                # form reads api_key above but assistant_id from this snapshot;
-                # showing the historical assistant would round-trip a mixed pair.
-                # Overlay only the response, never rewrite the stored snapshot.
-                data["configuration_snapshot"] = {
-                    **snapshot,
-                    "assistant_id": instance.agent_definition.assistant_id or "",
-                }
         except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
+        if isinstance(snapshot, dict) and provider_for_version(instance) == "vapi":
+            # The form reads api_key separately from the snapshot's assistant.
+            # Overlay the effective identity for every Vapi source, including
+            # keyed rows with stale snapshots and missing-row legacy fallback.
+            # Never persist this overlay or replace another provider's fields.
+            configuration = resolve_provider_configuration_for_version(instance)
+            data["configuration_snapshot"] = {
+                **snapshot,
+                "assistant_id": configuration.assistant_id or "",
+            }
         return data
 
     def get_version_name_display(self, obj):

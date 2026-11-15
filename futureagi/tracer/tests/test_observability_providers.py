@@ -216,6 +216,8 @@ class TestVerifyApiKey:
 
 
 class _LegacyVapiAgent(SimpleNamespace):
+    provider = "vapi"
+
     @property
     def credentials_legacy(self):
         raise ProviderCredentials.DoesNotExist
