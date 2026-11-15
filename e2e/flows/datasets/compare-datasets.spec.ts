@@ -1398,11 +1398,15 @@ for (const initiallyEmpty of [false, true]) {
             expect(response.status()).toBe(200);
             const empty: ComparePage = await response.json();
             expect(empty.status).toBe(true);
-            expect(empty.result.table).toEqual([]);
-            expect(empty.result.metadata).toEqual({
-              compare_id: expect.any(String),
-              total_rows: 0,
-              total_pages: 0,
+            // Empty joins skip the page writer and return only metadata
+            // (CompareDatasetView's empty compare_json branch). Pin that exact
+            // wire shape; the client supplies its own empty grid result.
+            expect(empty.result).toEqual({
+              metadata: {
+                compare_id: expect.any(String),
+                total_rows: 0,
+                total_pages: 0,
+              },
             });
             expect(empty.result.metadata.compare_id).not.toBe(oldId);
             generations.push({ request: body, body: empty });
