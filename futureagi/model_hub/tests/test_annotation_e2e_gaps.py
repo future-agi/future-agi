@@ -116,9 +116,7 @@ def second_user(db, second_organization):
 
 @pytest.fixture
 def second_workspace(db, second_user):
-    return Workspace.objects.get(
-        organization=second_user.organization, is_default=True
-    )
+    return Workspace.objects.get(organization=second_user.organization, is_default=True)
 
 
 @pytest.fixture
@@ -500,7 +498,7 @@ class TestAnnotationSummaryFromScore:
         span = observation_span_factory()
         Score.objects.create(
             source_type="observation_span",
-            dataset_row=rows[1],   # leaks into dataset
+            dataset_row=rows[1],  # leaks into dataset
             observation_span=span,
             label=numeric_label,
             annotator=user,
@@ -511,9 +509,7 @@ class TestAnnotationSummaryFromScore:
         resp = auth_client.get(self._summary_url(ds.id))
         assert resp.status_code == status.HTTP_200_OK
         target = next(
-            l
-            for l in _result(resp)["labels"]
-            if l["label_id"] == str(numeric_label.id)
+            l for l in _result(resp)["labels"] if l["label_id"] == str(numeric_label.id)
         )
         # Only the legitimate score (value=5) should be counted, not the leak.
         assert target["count_records"] == 1
@@ -543,7 +539,9 @@ class TestAnnotationSummaryFromScore:
         )
         # Seed a foreign-org Score on a foreign dataset (should not appear
         # in our summary regardless of how it's queried)
-        other_ws = Workspace.objects.get(organization=second_organization, is_default=True)
+        other_ws = Workspace.objects.get(
+            organization=second_organization, is_default=True
+        )
         other_ds = Dataset.objects.create(
             name="Other DS",
             organization=second_organization,
@@ -587,16 +585,12 @@ class TestCrossOrgIsolation:
     annotation resources. Each test seeds a resource in org A, then
     attempts access from org B's auth_client and asserts 403/404."""
 
-    def test_other_org_cannot_read_label(
-        self, other_org_client, numeric_label
-    ):
+    def test_other_org_cannot_read_label(self, other_org_client, numeric_label):
         """GET /annotations-labels/{id}/ for another org's label → 404."""
         resp = other_org_client.get(f"{LABEL_URL}{numeric_label.id}/")
         assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.data
 
-    def test_other_org_cannot_update_label(
-        self, other_org_client, numeric_label
-    ):
+    def test_other_org_cannot_update_label(self, other_org_client, numeric_label):
         """PATCH attempting to mutate another org's label → must not succeed."""
         resp = other_org_client.patch(
             f"{LABEL_URL}{numeric_label.id}/",
@@ -608,9 +602,7 @@ class TestCrossOrgIsolation:
         numeric_label.refresh_from_db()
         assert numeric_label.name != "hijacked"
 
-    def test_other_org_cannot_delete_label(
-        self, other_org_client, numeric_label
-    ):
+    def test_other_org_cannot_delete_label(self, other_org_client, numeric_label):
         resp = other_org_client.delete(f"{LABEL_URL}{numeric_label.id}/")
         assert resp.status_code != status.HTTP_204_NO_CONTENT
         numeric_label.refresh_from_db()
@@ -705,9 +697,7 @@ class TestCrossOrgIsolation:
         result = _result(resp)
         ids = [
             l.get("id")
-            for l in (
-                result.get("results", []) if isinstance(result, dict) else result
-            )
+            for l in (result.get("results", []) if isinstance(result, dict) else result)
         ]
         assert str(numeric_label.id) not in ids
         assert str(categorical_label.id) not in ids
@@ -739,7 +729,9 @@ class TestEEEntitlementGating:
             "ee.usage.services.entitlements.Entitlements.check_feature",
             return_value=FeatCheck(
                 allowed=allowed,
-                reason="test-allowed" if allowed else "Plan does not include this feature",
+                reason="test-allowed"
+                if allowed
+                else "Plan does not include this feature",
             ),
         )
 
@@ -865,9 +857,7 @@ class TestSubmitNextItemRoundTrip:
         ]
 
         # next-item BEFORE any submit → should return one of the two items
-        resp_first = auth_client.get(
-            f"{QUEUE_URL}{queue.id}/items/next-item/"
-        )
+        resp_first = auth_client.get(f"{QUEUE_URL}{queue.id}/items/next-item/")
         assert resp_first.status_code == status.HTTP_200_OK
         first_payload = _result(resp_first)
         first_item = first_payload.get("item") or first_payload
@@ -1133,7 +1123,9 @@ class TestDefaultQueueAutoCreateRace:
                         format="json",
                     )
                     if resp.status_code != status.HTTP_200_OK:
-                        errors.append(f"value={value} status={resp.status_code} data={resp.data}")
+                        errors.append(
+                            f"value={value} status={resp.status_code} data={resp.data}"
+                        )
                 finally:
                     client.stop_workspace_injection()
             except Exception as exc:
@@ -1205,8 +1197,6 @@ def observation_span_factory(db, project, organization, workspace):
     return _make
 
 
-
-
 @pytest.fixture
 def queue(db, auth_client, user):
     """Active queue with current user as MANAGER."""
@@ -1225,7 +1215,6 @@ def queue(db, auth_client, user):
     )
     assert r.status_code == 200
     return qid
-
 
 
 def _items_url(qid):
@@ -1320,9 +1309,7 @@ class TestItemActionCrossOrg:
         resp = auth_client.get(_annotate_detail_url(qid, iid))
         assert resp.status_code == status.HTTP_200_OK, resp.data
 
-    def test_other_org_cannot_annotate_detail(
-        self, other_org_client, queue_with_item
-    ):
+    def test_other_org_cannot_annotate_detail(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.get(_annotate_detail_url(qid, iid))
         assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
@@ -1413,6 +1400,7 @@ class TestItemActionCrossOrg:
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
+
 def _queue_detail_url(qid):
     return f"{QUEUE_URL}{qid}/"
 
@@ -1457,7 +1445,6 @@ def _export_to_dataset_url(qid):
     return f"{QUEUE_URL}{qid}/export-to-dataset/"
 
 
-
 @pytest.mark.django_db
 class TestQueueLevelCrossOrg:
     """Org B must not read/mutate org A's queue-level endpoints, and org A's
@@ -1499,9 +1486,7 @@ class TestQueueLevelCrossOrg:
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
-    def test_other_org_cannot_add_label(
-        self, other_org_client, queue, numeric_label
-    ):
+    def test_other_org_cannot_add_label(self, other_org_client, queue, numeric_label):
         resp = other_org_client.post(
             _add_label_url(queue), {"label_id": str(numeric_label.id)}, format="json"
         )

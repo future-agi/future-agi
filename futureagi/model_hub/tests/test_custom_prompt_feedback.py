@@ -260,3 +260,87 @@ def test_shared_params_logs_retrieval_failure_and_continues(monkeypatch):
 
     assert params["few_shots"] == []
     logger.warning.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "context_key",
+    ["trace_context", "span_context", "session_context", "ground_truth_blocks"],
+)
+def test_runtime_context_is_not_used_for_feedback_lookup(monkeypatch, context_key):
+    from agentic_eval.core.embeddings import embedding_manager
+
+    manager = Mock()
+    manager.process_examples.return_value = [{"type": "text", "text": "correction"}]
+    monkeypatch.setattr(embedding_manager, "EmbeddingManager", lambda: manager)
+    template = SimpleNamespace(
+        id="synthetic-template",
+        config={
+            "eval_type_id": "AgentEvaluator",
+            "required_keys": ["output"],
+            "optional_keys": ["reference_context"],
+        },
+    )
+    inputs = {
+        context_key: {"current": "runtime grounding"},
+        "output": {"answer": [1, 2]},
+        # Keep user-defined context names and older/versioned mapped variables.
+        "reference_context": "mapped reference",
+        "old_version_input": "mapped value",
+    }
+    before = deepcopy(inputs)
+    params = prepare_run_params(inputs, template, organization_id="synthetic-org")
+    manager.retrieve_avg_rag_based_examples.assert_called_once_with(
+        eval_id=template.id,
+        inputs=[inputs["output"], "mapped reference", "mapped value"],
+        input_cols=["output", "reference_context", "old_version_input"],
+        organization_id="synthetic-org",
+        workspace_id=None,
+    )
+    assert manager.process_examples.call_args.kwargs["inputs"] == [
+        "output",
+        "reference_context",
+        "old_version_input",
+    ]
+    assert params[context_key] == inputs[context_key]
+    assert params["few_shots"] == manager.process_examples.return_value
+    assert inputs == before
+    manager.close.assert_called_once()
+
+
+@pytest.mark.parametrize("declaration", ["required_keys", "optional_keys"])
+def test_explicitly_declared_runtime_named_input_is_retrieved(monkeypatch, declaration):
+    from agentic_eval.core.embeddings import embedding_manager
+
+    manager = Mock()
+    monkeypatch.setattr(embedding_manager, "EmbeddingManager", lambda: manager)
+    template = SimpleNamespace(
+        id="synthetic-template",
+        config={"eval_type_id": "AgentEvaluator", declaration: ["trace_context"]},
+    )
+    prepare_run_params(
+        {"trace_context": "mapped context"}, template, organization_id="synthetic-org"
+    )
+    assert manager.retrieve_avg_rag_based_examples.call_args.kwargs["input_cols"] == [
+        "trace_context"
+    ]
+    assert manager.retrieve_avg_rag_based_examples.call_args.kwargs["inputs"] == [
+        "mapped context"
+    ]
+
+
+def test_only_runtime_context_skips_retrieval_and_closes_manager(monkeypatch):
+    from agentic_eval.core.embeddings import embedding_manager
+
+    manager = Mock()
+    monkeypatch.setattr(embedding_manager, "EmbeddingManager", lambda: manager)
+    template = SimpleNamespace(
+        id="synthetic-template", config={"eval_type_id": "AgentEvaluator"}
+    )
+    params = prepare_run_params(
+        {"trace_context": {"id": "synthetic-trace"}},
+        template,
+        organization_id="synthetic-org",
+    )
+    assert params["few_shots"] == []
+    manager.retrieve_avg_rag_based_examples.assert_not_called()
+    manager.close.assert_called_once()
