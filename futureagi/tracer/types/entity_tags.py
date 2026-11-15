@@ -64,3 +64,4 @@ class TagUpdateResult(EffectiveTags):
     id: str
     manual_tags: list[TagItem]
     tag_revision: int
+    tag_assignment_exists: bool

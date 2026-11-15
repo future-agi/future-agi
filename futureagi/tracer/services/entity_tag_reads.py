@@ -16,7 +16,12 @@ from django.db.models import Q
 from tracer.models.entity_tag_assignment import EntityTagAssignment
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.entity_tag_targets import TRACE_ASSIGNMENT_HOUR
-from tracer.services.entity_tags import TagReadUnavailable, effective_tags
+from tracer.services.entity_tags import (
+    TagInputError,
+    TagReadUnavailable,
+    effective_tags,
+    legacy_editable_tags,
+)
 from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.types.entity_tags import TagAssignmentKey, TagSourceRow
 
@@ -33,7 +38,14 @@ _IDENTITY_FIELDS = (
     "observation_type",
     "service_name",
 )
-_TAG_FIELDS = ("tags", "source_tag_names", "manual_tags", "tag_revision", "tag_target")
+_TAG_FIELDS = (
+    "tags",
+    "source_tag_names",
+    "manual_tags",
+    "tag_revision",
+    "tag_target",
+    "tag_assignment_exists",
+)
 
 
 def tag_assignment_key(
@@ -181,7 +193,13 @@ def tag_fields(row: dict[str, Any]) -> dict[str, Any]:
 
 
 # The tag editor's write contract on a list row, not exported data.
-_TAG_EDITOR_FIELDS = ("source_tag_names", "manual_tags", "tag_revision", "tag_target")
+_TAG_EDITOR_FIELDS = (
+    "source_tag_names",
+    "manual_tags",
+    "tag_revision",
+    "tag_target",
+    "tag_assignment_exists",
+)
 
 
 def tag_export_row(
@@ -282,10 +300,19 @@ def enrich_entity_tags(
                     skip_oversized=True,
                 )
                 target = None
+            editable_manual = manual
+            if assignment is None:
+                try:
+                    editable_manual = legacy_editable_tags(row.get("trace_tags"))
+                except (TagInputError, TagReadUnavailable):
+                    # Never authorize a replacement from a partial legacy set.
+                    editable_manual = None
+                    target = None
             enriched.append(
                 {
                     **values,
-                    "manual_tags": manual if manual is not None else [],
+                    "manual_tags": editable_manual,
+                    "tag_assignment_exists": assignment is not None,
                     "tag_revision": assignment["revision"]
                     if assignment is not None
                     else 0,

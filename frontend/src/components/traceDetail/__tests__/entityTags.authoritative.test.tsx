@@ -99,6 +99,7 @@ const row = (
   parent_span_id: "",
   tag_target: target(span, trace),
   tag_revision: revision,
+  tag_assignment_exists: revision > 0,
   source_tag_names: sources,
   manual_tags: manual.map((name) => ({ name })),
   tags: [...sources, ...manual].map((name) => ({ name })),
@@ -113,11 +114,14 @@ function required<T>(value: T | null | undefined): T {
 // A replacement/CAS server, not an echo-only API mock: reads are reconstructed
 // from the stored assignment plus the requested physical root's SDK tags.
 function serverFor(rows: TestRow[]) {
-  const stored = new Map<string, ManualTagState>();
+  const stored = new Map<string, Omit<ManualTagState, "tag_assignment_exists"> & {
+    tag_assignment_exists: boolean;
+  }>();
   rows.forEach((entity) =>
     stored.set(entity.trace_id, {
       manual_tags: entity.manual_tags,
       tag_revision: entity.tag_revision,
+      tag_assignment_exists: entity.tag_assignment_exists,
     }),
   );
   const read = (entity: TestRow): TestRow => {
@@ -141,6 +145,7 @@ function serverFor(rows: TestRow[]) {
     stored.set(entity.trace_id, {
       manual_tags: body.tags.map((tag) => ({ ...tag })),
       tag_revision: previous.tag_revision + 1,
+      tag_assignment_exists: true,
     });
     return { data: { result: read(entity) } };
   };
@@ -386,6 +391,7 @@ describe("response/refetch ordering and deletions", () => {
       // Another writer replaces reviewed while A's acknowledged response is delayed.
       server.stored.set("trace-1", {
         manual_tags: [{ name: "remote" }],
+        tag_assignment_exists: true,
         tag_revision: 2,
       });
       rerender(view(server.read(b)));
@@ -427,6 +433,7 @@ describe("response/refetch ordering and deletions", () => {
       expect(screen.getByText("sdk-b")).toBeDisabled();
       server.stored.set("trace-1", {
         manual_tags: [{ name: "remote" }],
+        tag_assignment_exists: true,
         tag_revision: 3,
       });
       add("conflicting");

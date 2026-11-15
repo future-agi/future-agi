@@ -34,6 +34,7 @@ const entry = {
     source_tag_names: [],
     manual_tags: [{ name: "billing", color: "#2563EB" }],
     tag_revision: 0,
+    tag_assignment_exists: false,
     tag_target: {
       project_id: "project-1",
       trace_id: "trace-1",
@@ -94,7 +95,7 @@ describe("SpanDetailPane read-only", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each(["tag_target", "tag_revision", "manual_tags", "source_tag_names"])(
+  it.each(["tag_target", "tag_revision", "manual_tags", "source_tag_names", "tag_assignment_exists"])(
     "disables span tag editing when %s is absent",
     (field) => {
       renderPane({

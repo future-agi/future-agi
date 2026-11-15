@@ -55,6 +55,7 @@ const target = {
 const entity = {
   tag_target: target,
   tag_revision: 0,
+  tag_assignment_exists: false,
   manual_tags: [],
   source_tag_names: ["sdk"],
   tags: [{ name: "sdk" }],
@@ -66,6 +67,7 @@ const success = (revision = 1) => ({
       tags,
       manual_tags: tags,
       source_tag_names: ["sdk"],
+      tag_assignment_exists: true,
       tag_revision: revision,
     },
   },
@@ -311,6 +313,7 @@ describe("scoped entity tag writes", () => {
             tags: [{ name: "sdk" }, ...body.tags],
             manual_tags: body.tags,
             source_tag_names: ["sdk"],
+            tag_assignment_exists: true,
             tag_revision: revision + 1,
           },
         },
@@ -414,6 +417,7 @@ describe("scoped entity tag writes", () => {
     liveRow.tags = [{ name: "sdk" }, { name: "c" }];
     liveRow.manual_tags = [{ name: "c" }];
     liveRow.tag_revision = 1;
+    liveRow.tag_assignment_exists = true;
     nextTag.name = "a";
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
@@ -439,6 +443,7 @@ describe("scoped entity tag writes", () => {
     liveRow.tags = [{ name: "sdk" }, { name: "c" }];
     liveRow.manual_tags = [{ name: "c" }];
     liveRow.tag_revision = 1;
+    liveRow.tag_assignment_exists = true;
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
     const body = axios.patch.mock.calls[0][1];
@@ -455,6 +460,7 @@ describe("scoped entity tag writes", () => {
           tags: [{ name: "sdk" }, { name: "a", color: "#123456" }],
           manual_tags: [{ name: "a", color: "#123456" }],
           source_tag_names: ["sdk"],
+          tag_assignment_exists: true,
           tag_revision: 1,
         },
       },
@@ -511,6 +517,7 @@ describe("scoped entity tag writes", () => {
           tags: [{ name: "sdk" }, { name: "a", color: "#123456" }],
           manual_tags: [{ name: "a", color: "#123456" }],
           source_tag_names: ["sdk"],
+          tag_assignment_exists: true,
           tag_revision: 1,
         },
       },
@@ -670,6 +677,7 @@ describe("scoped entity tag writes", () => {
             tags: [{ name: "sdk" }, ...body.tags],
             manual_tags: body.tags,
             source_tag_names: ["sdk"],
+            tag_assignment_exists: true,
             tag_revision: revision,
           },
         },
@@ -899,6 +907,7 @@ describe("scoped entity tag writes", () => {
             tags: [{ name: "sdk" }, { name: "x", color: "#123456" }],
             manual_tags: [{ name: "x", color: "#123456" }],
             source_tag_names: ["sdk"],
+            tag_assignment_exists: true,
             tag_revision: 1,
           },
         },
@@ -1020,6 +1029,7 @@ describe("scoped entity tag writes", () => {
             tags: [{ name: "sdk" }, { name, color: "#123456" }],
             manual_tags: [{ name, color: "#123456" }],
             source_tag_names: ["sdk"],
+            tag_assignment_exists: true,
             tag_revision: 1,
           },
         },

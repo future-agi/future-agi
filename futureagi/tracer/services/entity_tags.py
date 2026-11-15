@@ -100,6 +100,16 @@ def _decode(value: object) -> object:
     return value if not isinstance(value, str) else None
 
 
+def legacy_editable_tags(value: object) -> list[TagItem]:
+    """Return the complete replacement set, or refuse lossy legacy editing.
+
+    Display decoding is deliberately permissive; replacement authority is not.
+    In particular, SDK-overlapping names and rich colors remain manual labels.
+    A missing legacy value means absence, but malformed JSON is not an empty set.
+    """
+    return normalize_manual_tags([] if value is None else _decode(value))
+
+
 def _source_items(value: object, *, skip_oversized: bool = False) -> list[TagItem]:
     try:
         decoded = _decode(value)

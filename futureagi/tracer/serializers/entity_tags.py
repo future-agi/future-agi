@@ -135,6 +135,7 @@ class EntityTagsResultSerializer(serializers.Serializer):
         child=serializers.CharField(trim_whitespace=False)
     )
     tag_revision = serializers.IntegerField(min_value=1)
+    tag_assignment_exists = serializers.BooleanField()
 
 
 class EntityTagsResponseSerializer(serializers.Serializer):
