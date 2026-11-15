@@ -462,14 +462,86 @@ class TestResolveApiKeyForVersion:
         )
         assert resolve_api_key_for_version(agent_version) == "sk-direct-key"
 
-    def test_falls_back_to_legacy_credentials(self, agent_version):
+    @pytest.mark.parametrize("provider", ["vapi", "retell", "livekit"])
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_falls_back_to_legacy_credentials(self, agent_version, provider, for_save):
         agent = agent_version.agent_definition
         ProviderCredentials.objects.create(
             agent_definition=agent,
-            provider_type=ProviderCredentials.ProviderType.VAPI,
+            provider_type=provider,
             api_key="sk-legacy-fallback-key",
         )
-        assert resolve_api_key_for_version(agent_version) == "sk-legacy-fallback-key"
+        assert (
+            resolve_api_key_for_version(agent_version, for_save=for_save)
+            == "sk-legacy-fallback-key"
+        )
+
+    @pytest.mark.parametrize("provider", ["vapi", "retell", "livekit"])
+    @pytest.mark.parametrize("key", ["", "synthetic-key-B"])
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_existing_row_authority_keeps_other_providers_unchanged(
+        self, agent_version, provider, key, for_save
+    ):
+        agent = agent_version.agent_definition
+        agent.provider = provider
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["provider", "api_key"])
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=provider,
+            api_key="synthetic-key-A",
+        )
+        ProviderCredentials.objects.create(
+            agent_version=agent_version,
+            provider_type=provider,
+            api_key=key,
+        )
+        # Empty Vapi rows select the definition on read, but must remain empty
+        # on save. Retell/LiveKit retain their existing legacy fallback.
+        fallback = "synthetic-key-A"
+        if provider == "vapi":
+            fallback = None if for_save else "synthetic-definition-key"
+        assert resolve_api_key_for_version(agent_version, for_save=for_save) == (
+            key or fallback
+        )
+
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_nonempty_vapi_ciphertext_with_empty_plaintext_is_authoritative(
+        self, agent_version, for_save
+    ):
+        from integrations.services.credentials import CredentialManager
+
+        agent = agent_version.agent_definition
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["api_key"])
+        ciphertext = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+        ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key=ciphertext
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent_version.agent_definition,
+            provider_type="vapi",
+            api_key="synthetic-legacy-key",
+        )
+        assert resolve_api_key_for_version(agent_version, for_save=for_save) is None
+
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_unreadable_vapi_ciphertext_does_not_fall_back(
+        self, agent_version, for_save
+    ):
+        agent = agent_version.agent_definition
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["api_key"])
+        ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key="enc::invalid"
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type="vapi",
+            api_key="synthetic-legacy-key",
+        )
+        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+            resolve_api_key_for_version(agent_version, for_save=for_save)
 
 
 # ============================================================================
@@ -560,6 +632,73 @@ class TestResolveStoredApiKey:
             masked_value="sk-r...2345",
         )
         assert key is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "provider,row_provider,key,expected_mask,expected_assistant",
+    [
+        ("vapi", "vapi", "", "synt...ey-B", "assistant-B"),
+        ("vapi", "vapi", "synthetic-key-C", "synt...ey-C", "assistant-S"),
+        ("vapi", "vapi", "empty-ciphertext", None, "assistant-S"),
+        ("vapi", "retell", "", "synt...ey-A", "assistant-S"),
+        ("vapi", "retell", "synthetic-key-C", "synt...ey-C", "assistant-S"),
+        ("retell", "retell", "", "synt...ey-A", "assistant-S"),
+        ("livekit", "livekit", "", "synt...ey-A", "assistant-S"),
+        ("retell", "vapi", "", None, "assistant-S"),
+        ("livekit", "vapi", "", None, "assistant-S"),
+        ("vapi", None, "", "synt...ey-A", "assistant-S"),
+    ],
+)
+def test_version_response_overlays_only_empty_vapi_definition_pair(
+    agent_version, provider, row_provider, key, expected_mask, expected_assistant
+):
+    from integrations.services.credentials import CredentialManager
+    from simulate.serializers.response.agent_version import (
+        AgentVersionResponseSerializer,
+    )
+
+    agent = agent_version.agent_definition
+    agent.provider = provider
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["provider", "api_key", "assistant_id"])
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "provider": provider,
+        "assistant_id": "assistant-S",
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+    stored_snapshot = agent_version.configuration_snapshot.copy()
+    ProviderCredentials.objects.create(
+        agent_definition=agent,
+        provider_type=provider,
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    if key == "empty-ciphertext":
+        key = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+    if row_provider:
+        credentials = ProviderCredentials.objects.create(
+            agent_version=agent_version,
+            provider_type=row_provider,
+            api_key=key,
+            assistant_id="assistant-S",
+        )
+        stored_key = credentials.api_key
+
+    data = AgentVersionResponseSerializer(agent_version).data
+    assert data["api_key"] == expected_mask
+    assert data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    for secret in ("synthetic-key-A", "synthetic-key-B", "synthetic-key-C"):
+        assert secret not in str(data)
+    assert agent_version.configuration_snapshot == stored_snapshot
+    agent_version.refresh_from_db()
+    assert agent_version.configuration_snapshot == stored_snapshot
+    if row_provider:
+        credentials.refresh_from_db()
+        assert credentials.api_key == stored_key
+        assert credentials.assistant_id == "assistant-S"
 
 
 # ============================================================================

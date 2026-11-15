@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion, CallExecution
+from simulate.models.agent_definition import ProviderCredentials
 from simulate.serializers.requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
@@ -224,16 +225,28 @@ class CreateAgentVersionView(APIView):
                 existing_api_key = None
                 existing_livekit_api_key = None
                 existing_livekit_api_secret = None
+                active_version = agent.active_version or agent.latest_version
+                # An empty Vapi row deliberately selects the definition's pair,
+                # not the old credentials_legacy row. Carry that source marker
+                # into the new version before sync can adopt legacy credentials.
+                preserve_empty_vapi_row = (
+                    agent.provider == ProviderCredentials.ProviderType.VAPI
+                    and active_version is not None
+                    and ProviderCredentials.objects.filter(
+                        agent_version=active_version,
+                        provider_type=ProviderCredentials.ProviderType.VAPI,
+                        api_key="",
+                    ).exists()
+                )
                 if (
                     preserve_existing_api_key
                     or preserve_livekit_api_key
                     or preserve_livekit_api_secret
                 ):
-                    active_version = agent.active_version or agent.latest_version
                     if active_version:
                         if preserve_existing_api_key:
                             existing_api_key = resolve_api_key_for_version(
-                                active_version
+                                active_version, for_save=True
                             )
                         if preserve_livekit_api_key:
                             existing_livekit_api_key = resolve_api_key_for_version(
@@ -250,6 +263,11 @@ class CreateAgentVersionView(APIView):
                     status=AgentVersion.StatusChoices.ACTIVE,
                 )
                 version.activate()
+                if preserve_empty_vapi_row:
+                    ProviderCredentials.objects.create(
+                        agent_version=version,
+                        provider_type=ProviderCredentials.ProviderType.VAPI,
+                    )
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
@@ -345,6 +363,9 @@ class CreateAgentVersionView(APIView):
                     workspace=agent.workspace,
                 )
 
+                # Sync may have replaced the pre-created row's empty key.
+                if preserve_empty_vapi_row:
+                    version.refresh_from_db()
                 # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
                 version.configuration_snapshot = version.create_snapshot(
                     commit_message=version.commit_message or ""

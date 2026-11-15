@@ -787,7 +787,7 @@ class EditAgentDefinitionView(APIView):
                 if version is None:
                     version = versions.first()
                 existing_api_key = (
-                    resolve_api_key_for_version(version)
+                    resolve_api_key_for_version(version, for_save=True)
                     if preserve_existing_api_key and version is not None
                     else None
                 )

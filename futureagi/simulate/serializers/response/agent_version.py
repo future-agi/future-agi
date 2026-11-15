@@ -75,6 +75,20 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
                 )
                 snapshot["livekit_api_secret"] = creds.get_masked_api_secret()
                 data["configuration_snapshot"] = snapshot
+            elif (
+                isinstance(snapshot, dict)
+                and creds.provider_type == "vapi"
+                and instance.agent_definition.provider == "vapi"
+                and not creds.api_key
+            ):
+                # An empty Vapi row selects the definition's whole pair. The
+                # form reads api_key above but assistant_id from this snapshot;
+                # showing the historical assistant would round-trip a mixed pair.
+                # Overlay only the response, never rewrite the stored snapshot.
+                data["configuration_snapshot"] = {
+                    **snapshot,
+                    "assistant_id": instance.agent_definition.assistant_id or "",
+                }
         except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
         return data
