@@ -2127,7 +2127,6 @@ def test_finite_mixed_refresh_computes_an_unowned_quarter_mate(
 def test_idle_span_expiry_replaces_final_bucket_statistics(
     live_writer, workspace, observe_project
 ):
-    from tracer.services.derived_metrics.buckets import STATS
     from tracer.services.derived_metrics.changes import Dependency
     from tracer.tests.test_derived_metric_refresh_clickhouse import (
         metric_bucket_rows,

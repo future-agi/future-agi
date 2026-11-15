@@ -538,6 +538,9 @@ def test_m10_complete_service_budget_with_source_retained_parts(
     19 deltas is the most a head carries before its next pass compacts it
     (METRICS_MAX_DELTAS_BEFORE_COMPACTION's default), under the same budget.
     """
+    from ee.usage.models.usage import PlanEntitlement
+    from tfc.capabilities import retention as policy_adapter
+    from tfc.licensing.types import DeploymentFlavor
     from tracer.services.derived_metrics.publication import committed_rows_select
     from tracer.services.derived_metrics.retention import expire_project
     from tracer.services.derived_metrics.storage import RETIRED_PARTS
@@ -545,10 +548,6 @@ def test_m10_complete_service_budget_with_source_retained_parts(
         numeric_definition,
         seed_fields_and_buckets,
     )
-
-    from ee.usage.models.usage import PlanEntitlement
-    from tfc.capabilities import retention as policy_adapter
-    from tfc.licensing.types import DeploymentFlavor
 
     monkeypatch.setattr(policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD)
     policy, _ = PlanEntitlement.objects.get_or_create(

@@ -1153,7 +1153,7 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
         if drivers and cutoff is not None and window["window_start"] < cutoff:
             raise MetricUnavailableError(
                 "retention_expired",
-                "This window includes expired evidence; anonymous KPI totals remain readable.",
+                "This window includes expired source data. Choose a later start.",
             )
         sql, params = _fields_select(
             metric, definition, manifest, window, ids=ids, cutoff=cutoff
