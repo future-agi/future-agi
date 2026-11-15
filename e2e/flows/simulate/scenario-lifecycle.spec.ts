@@ -31,7 +31,7 @@ test('SIM-E2E-008: each scenario shows its lifecycle and only validated cases ru
               + '(e2e/lib/harness_environment_seed.py proofs and archived options)',
             'read the Scenarios list with its lifecycle', 'read the archived cases through the filter',
             'read the cases readiness holds back (GET capabilities/cases?bucket=blocked)', 'open the Scenarios tab'],
-    backendChecks: ['the list reads Active, Active kept as written and Draft "Not validated on these versions yet."',
+    backendChecks: ['the list reads Active, Kept as written and Draft "Not validated on these versions yet."',
                     'the archived case appears only under lifecycle=archived',
                     'lifecycle_counts reads 1 proved, 1 kept as written, 1 not proved',
                     'readiness holds back the unproved case for not_validated and the archived one for scenario_archived'],
@@ -54,7 +54,7 @@ test('SIM-E2E-008: each scenario shows its lifecycle and only validated cases ru
     const page1 = await list();
     const byKey = Object.fromEntries(page1.results.map((row) => [row.scenario_key, row.lifecycle]));
     expect(byKey[p]).toMatchObject({ state: 'active', warning: null });
-    expect(byKey[k]).toMatchObject({ state: 'active', warning: 'solution_assumed' });
+    expect(byKey[k]).toMatchObject({ state: 'kept_as_written', warning: 'solution_assumed' });
     expect(byKey[u]).toMatchObject({ state: 'draft', reason: 'not_validated', reason_text: 'Not validated on these versions yet.' });
     expect(byKey[a]).toBeUndefined();
     expect(page1.lifecycle_counts).toMatchObject({ proved: 1, kept_as_written: 1, not_proved: 1, archived: 1 });
@@ -76,8 +76,8 @@ test('SIM-E2E-008: each scenario shows its lifecycle and only validated cases ru
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=scenarios`);
     await expect(page.getByTestId('scenario-proof-counts'))
       .toHaveText('1 proved · 1 kept as written · 1 not proved', { timeout: UI_READY });
-    await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Active' })).toHaveCount(2);
-    await expect(page.getByTestId('lifecycle-kept-chip')).toHaveCount(1);
+    await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Active' })).toHaveCount(1);
+    await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Kept as written' })).toHaveCount(1);
     await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Draft' })).toHaveCount(1);
   }, { timeout: UI_READY });
 });
