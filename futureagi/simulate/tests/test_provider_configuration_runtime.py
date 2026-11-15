@@ -184,6 +184,9 @@ def test_standalone_tool_adapter_uses_effective_provider(
     assert data.version.configuration_snapshot == snapshot
 
 
+# The real task calls close_old_connections(); do not wrap it in pytest's
+# atomic test transaction, which that legitimate cleanup would close.
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("direction", ["inbound", "outbound"])
 @pytest.mark.parametrize("source", ["version", "definition", "empty-snapshot"])
 def test_evaluation_task_reaches_customer_tool_evaluation(
@@ -293,6 +296,7 @@ def test_evaluation_task_reaches_customer_tool_evaluation(
     assert data.version.configuration_snapshot == snapshot
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "state", ["disabled", "wrong-provider", "unreadable", "bland", "retell"]
 )
@@ -337,6 +341,7 @@ def test_evaluation_task_skips_without_initializing_voice_transport(
     assert data.call.call_metadata["eval_completed"] is True
 
 
+@pytest.mark.django_db(transaction=True)
 def test_evaluation_task_keeps_text_tool_evaluation_provider_neutral(
     voice_call_factory,
 ):
