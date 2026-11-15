@@ -51,7 +51,9 @@ def test_maintained_policy_is_available_in_enterprise_flavors(monkeypatch, flavo
     ) as get_retention_days:
         organization = uuid4()
         assert retention.current_trace_retention_days(organization) == 30
-    get_retention_days.assert_called_once_with(str(organization), "traces")
+    get_retention_days.assert_called_once_with(
+        str(organization), "traces", use_cache=False
+    )
 
 
 def test_cloud_without_the_source_policy_fails_closed(monkeypatch, cloud_policy):
