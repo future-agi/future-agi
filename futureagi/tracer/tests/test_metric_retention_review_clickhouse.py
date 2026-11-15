@@ -443,21 +443,24 @@ def test_legacy_execution_registers_every_result_write_before_expiry(
         backfill_status="complete",
         history_mode="history",
     )
-    run = DerivedMetricRun.objects.create(
-        definition=version,
-        requested_by=user,
-        window_start=now - timedelta(hours=2),
-        window_end=now,
-        as_of=now,
-        fingerprint=uuid4().hex,
-        snapshot_id=uuid4(),
-        source_manifest={
-            "write_protocol": snapshots.SUBMISSION_PROTOCOL,
-            "schema_version": 1,
-            "compiler_version": 1,
-            "definition_hash": version.definition_hash,
+    run, created = service.create_run(
+        metric,
+        {
+            "window_start": now - timedelta(hours=2),
+            "window_end": now,
+            "filters": [],
+            "idempotency_key": str(uuid4()),
         },
+        user,
     )
+    assert created and run.source_manifest == {
+        "write_protocol": snapshots.SUBMISSION_PROTOCOL
+    }
+    run.snapshot_id = uuid4()
+    run.source_manifest.update(
+        schema_version=1, compiler_version=1, definition_hash=version.definition_hash
+    )
+    run.save(update_fields=["snapshot_id", "source_manifest"])
     publication_store.execute(
         "INSERT INTO derived_metric_inputs (org_id, workspace_id, project_id, snapshot_id, unit_id, session_id, input_values, probability) "
         "VALUES (%(org)s, %(workspace)s, %(project)s, %(snapshot)s, 'synthetic-unit', 'synthetic-unit', map('y', 7.), 1.)",

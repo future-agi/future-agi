@@ -174,7 +174,6 @@ def save_definition(
     validate_definition(data, project)
     recipe = _json_value(normalize_spec(data))
     from tracer.services.derived_metrics.deletion_protocol import project_lock
-    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
 
     project_lock(project.pk)
     if metric:
@@ -222,6 +221,7 @@ def create_run(
     metric: DerivedMetric, data: dict, user
 ) -> tuple[DerivedMetricRun, bool]:
     from tracer.services.derived_metrics.deletion_protocol import project_lock
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
 
     project_lock(metric.project_id)
     version = data.get(
