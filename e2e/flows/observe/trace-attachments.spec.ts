@@ -39,9 +39,27 @@ const SESSION = (session: string) => `/tracer/trace-session/${session}/`;
 const SKIP_DELETE = process.env.E2E_ATTACHMENTS_SKIP_DELETE === '1';
 // A fresh scope starts at deletion generation 0 (tracer/models/attachment.py AttachmentScope).
 const DELETION_GENERATION = 0;
-// tracer/urls.py "v1/attachment-media/<occurrence_id>/<grant_id>" (the gateway every
-// player must use; legacy recording URLs never go through it).
+// tracer/urls.py "v1/attachment-media/<media_session_id>/<occurrence_id>/<grant_id>"
+// (F01 traceAI #675: the gateway every player must use; legacy recording URLs and
+// the old two-identity route never go through it).
 const GATEWAY_PREFIX = '/tracer/v1/attachment-media/';
+// F01 MediaGatewayPath: two canonical non-nil UUIDs and an opaque grant token,
+// bounded to 230 characters. Validate the whole route before reading its parts.
+const gatewayIds = (path: string) => {
+  expect(path.length).toBeLessThanOrEqual(230);
+  expect(path.startsWith(GATEWAY_PREFIX)).toBe(true);
+  const ids = path.slice(GATEWAY_PREFIX.length).split('/');
+  expect(ids).toHaveLength(3);
+  for (const id of ids.slice(0, 2)) {
+    expect(id).toMatch(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+    expect(id).not.toBe('00000000-0000-0000-0000-000000000000');
+  }
+  expect(ids[2]).toMatch(/^[a-zA-Z0-9_-]{1,128}$/);
+  return ids;
+};
+// playback.py SESSION_HEADER: the non-secret handle the browser's own exchange
+// returned. API replays of resolve must name it with the same bearer and org.
+const MEDIA_SESSION_HEADER = 'x-attachment-media-session';
 // LiveKit roots as fi-collector clickhouse25exporter/converter.go liveKitJobRoot (and
 // tracer/utils/otel.py resolve_observation_type) map them: an untyped, parentless
 // job_entrypoint carrying lk.job_id is the conversation root; traceai_livekit binds
@@ -212,6 +230,24 @@ function expectedOccurrences(items: Seeded[], traceId: string) {
 
 const isResolve = (projectId: string) => (response: Response) =>
   new URL(response.url()).pathname === F01.resolve(projectId) && response.request().method() === 'POST';
+/** The browser's own resolve credentials: bearer, org, workspace and its media-session handle. */
+const browserResolveHeaders = async (response: Response, origin: string) => {
+  const sent = await response.request().allHeaders();
+  expect(response.status()).toBe(200);
+  expect(sent.authorization).toMatch(/^Bearer \S+$/);
+  expect(sent.origin).toBe(origin);
+  expect(sent[MEDIA_SESSION_HEADER]).toMatch(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+  expect(sent[MEDIA_SESSION_HEADER]).not.toBe('00000000-0000-0000-0000-000000000000');
+  const grants = await response.json() as { items: Grant[] };
+  for (const grant of grants.items.filter(item => item.status === 'ready')) {
+    expect(gatewayIds(grant.gateway_path!).slice(0, 2))
+      .toStrictEqual([sent[MEDIA_SESSION_HEADER], grant.occurrence_id]);
+  }
+  const headers: Record<string, string> = { Origin: origin, 'Content-Type': 'application/json' };
+  for (const key of ['authorization', 'x-organization-id', 'x-workspace-id', MEDIA_SESSION_HEADER])
+    if (sent[key]) headers[key] = sent[key];
+  return headers;
+};
 const dashed = (hex32: string) =>
   `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-${hex32.slice(16, 20)}-${hex32.slice(20)}`;
 type Grant = { occurrence_id: string; status: string; gateway_path?: string; expires_at?: string };
@@ -244,8 +280,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // Seeding, bounded binding/CH polls, browser playback and a deletion poll.
-  // Keep the per-flow ceiling; each eventual store uses its named budget.
+  // 2*ASYNC_JOB (binding + tombstone) + SPAN_VISIBLE + 6*UI_READY +
+  // 105 s provisioning/API/headroom = 600 s. No suite-wide timeout or retries.
   test.setTimeout(600_000);
   const api = await request.newContext({ baseURL: E2E.apiUrl });
   const anonymous = await request.newContext({ baseURL: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
@@ -326,13 +362,16 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
     }) });
 
     await test.step('storage: PG occurrences bound and ready with placement', async () => {
+      // All readiness reads share one ASYNC_JOB budget without dropping any row check.
       await expect.poll(async () => [
-        ...await readyOccurrences(probe, voiceProject, [livekitRecording]),
-        ...await readyOccurrences(probe, voiceProject, [pipecatRecording]),
+        await readyOccurrences(probe, voiceProject, [livekitRecording]),
+        await readyOccurrences(probe, voiceProject, [pipecatRecording]),
+        await readyOccurrences(probe, traceProject, traced.seeded),
       ], POLL.ASYNC_JOB).toStrictEqual([
-        ...expectedOccurrences([livekitRecording], livekitTraceId), ...expectedOccurrences([pipecatRecording], pipecatTraceId)]);
-      await expect.poll(() => readyOccurrences(probe, traceProject, traced.seeded), POLL.ASYNC_JOB)
-        .toStrictEqual(expectedOccurrences(traced.seeded, traceId));
+        expectedOccurrences([livekitRecording], livekitTraceId),
+        expectedOccurrences([pipecatRecording], pipecatTraceId),
+        expectedOccurrences(traced.seeded, traceId),
+      ]);
     });
 
     await test.step('storage: CH spans FINAL carry the refs; both voice roots are conversation roots', async () => {
@@ -343,15 +382,17 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const roots = (traceKey: string) => probe.ch<{ id: string; name: string; observation_type: string }>(
         `SELECT id, name, observation_type FROM spans FINAL
           WHERE trace_id={t:String} AND is_deleted=0 AND (parent_span_id IS NULL OR parent_span_id = '') ORDER BY id`, { t: traceKey });
-      await expect.poll(() => refs(livekitTraceId), POLL.SPAN_VISIBLE)
-        .toStrictEqual([{ id: livekitSession, occurrences: [livekitRecording.occurrenceId] }]);
-      await expect.poll(() => refs(pipecatTraceId), POLL.SPAN_VISIBLE)
-        .toStrictEqual([{ id: pipecatRoot, occurrences: [pipecatRecording.occurrenceId] }]);
-      await expect.poll(() => refs(traceId), POLL.SPAN_VISIBLE)
-        .toStrictEqual([{ id: llmSpan, occurrences: traced.seeded.map(item => item.occurrenceId).sort() }]);
-      await expect.poll(async () => [...await roots(livekitTraceId), ...await roots(pipecatTraceId)], POLL.SPAN_VISIBLE)
-        .toStrictEqual([{ id: livekitRoot, name: LIVEKIT_ROOT, observation_type: CONVERSATION },
-          { id: pipecatRoot, name: PIPECAT_ROOT, observation_type: CONVERSATION }]);
+      // Collector refs and roots share one SPAN_VISIBLE budget, retaining exact sets.
+      await expect.poll(async () => [
+        await refs(livekitTraceId), await refs(pipecatTraceId), await refs(traceId),
+        [...await roots(livekitTraceId), ...await roots(pipecatTraceId)],
+      ], POLL.SPAN_VISIBLE).toStrictEqual([
+        [{ id: livekitSession, occurrences: [livekitRecording.occurrenceId] }],
+        [{ id: pipecatRoot, occurrences: [pipecatRecording.occurrenceId] }],
+        [{ id: llmSpan, occurrences: traced.seeded.map(item => item.occurrenceId).sort() }],
+        [{ id: livekitRoot, name: LIVEKIT_ROOT, observation_type: CONVERSATION },
+          { id: pipecatRoot, name: PIPECAT_ROOT, observation_type: CONVERSATION }],
+      ]);
     });
 
     await test.step('API: voice detail projects each call\'s recording on its own parent span', async () => {
@@ -391,9 +432,9 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
       { timeout: UI_READY }).toStrictEqual([true, true]);
       await testInfo.attach(name, { body: await page.screenshot(), contentType: 'image/png' });
-      const sent = await response.request().allHeaders();
-      const headers: Record<string, string> = { Origin: E2E.attachmentsAppUrl, 'Content-Type': 'application/json' };
-      for (const key of ['authorization', 'x-organization-id', 'x-workspace-id']) if (sent[key]) headers[key] = sent[key];
+      const headers = await browserResolveHeaders(response, E2E.attachmentsAppUrl);
+      // The grant names exactly the session this resolve selected.
+      expect(gatewayIds(grants.items[0].gateway_path!)[0]).toBe(headers[MEDIA_SESSION_HEADER]);
       return { grant: grants.items[0], headers };
     };
 
@@ -406,7 +447,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         .toStrictEqual([{ id: livekitSession, name: LIVEKIT_SESSION, attachments: [[livekitRecording.occurrenceId, 'ready']] }]);
       await drawer.getByText(LIVEKIT_SESSION, { exact: true }).first().click({ timeout: UI_READY });
       ({ grant: livekitGrant, headers: viewerHeaders } = await playRecording(drawer, livekitRecording, 'livekit-player'));
-    });
+    }, { timeout: UI_READY });
 
     const viewer = page.context().request;
     const gateway = (path: string) => `${E2E.attachmentsAppUrl}${path}`;
@@ -415,7 +456,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         parent: { trace_id: traceKey, span_id: item.parentSpanId }, representation: 'original' }] } });
     await test.step('API: the gateway serves the whole recording, Range, HEAD and a renewed grant; no session is denied', async () => {
       const path = livekitGrant.gateway_path!;
-      expect(path.startsWith(`${GATEWAY_PREFIX}${livekitRecording.occurrenceId}/`)).toBe(true);
+      expect(gatewayIds(path).slice(0, 2))
+        .toStrictEqual([viewerHeaders[MEDIA_SESSION_HEADER], livekitRecording.occurrenceId]);
       const whole = await viewer.get(gateway(path));
       expect(whole.status()).toBe(200);
       expect(whole.headers()['content-type']).toBe('audio/ogg');
@@ -432,6 +474,8 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       expect([renewed.occurrence_id, renewed.status]).toStrictEqual([livekitRecording.occurrenceId, 'ready']);
       expect(renewed.gateway_path).not.toBe(path);
       const renewedPath = renewed.gateway_path!;
+      expect(gatewayIds(renewedPath).slice(0, 2))
+        .toStrictEqual([viewerHeaders[MEDIA_SESSION_HEADER], livekitRecording.occurrenceId]);
       const middle = Math.floor(RECORDING_OGG.length / 2);
       const resumed = await viewer.get(gateway(renewedPath), { headers: { Range: `bytes=${middle}-` } });
       expect(resumed.status()).toBe(206);
@@ -455,7 +499,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         attachments: s.attachments!.map(a => [a.reference.occurrence_id, a.status]) })))
         .toStrictEqual([{ id: pipecatRoot, name: PIPECAT_ROOT, attachments: [[pipecatRecording.occurrenceId, 'ready']] }]);
       await playRecording(drawer, pipecatRecording, 'pipecat-player');
-    });
+    }, { timeout: UI_READY });
 
     await test.step('UI: the model span shows the image in user message 2', async () => {
       const { spans, drawer } = await openTrace(traceProject, traceId);
@@ -472,7 +516,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         { timeout: UI_READY }).toStrictEqual([true, 8, 6]);
       await expect(drawer.getByLabel('Message images').getByRole('img')).toHaveCount(1);
       await testInfo.attach('inline-image', { body: await page.screenshot(), contentType: 'image/png' });
-    });
+    }, { timeout: UI_READY });
 
     await test.step('UI: the span lists exactly the WAV and the download-only PDF', async () => {
       const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
@@ -496,11 +540,12 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const saved = await download.path();
       expect(sha256(readFileSync(saved!))).toBe(sha256(document.bytes));
       await testInfo.attach('span-attachments', { body: await page.screenshot(), contentType: 'image/png' });
-    });
+    }, { timeout: UI_READY });
 
     // dashboard.jsx VoiceFullPage -> VoiceDetailDrawerV2 -> AudioPlayerCustom
     // selects RecordingAttachmentPlayer from the authorized recording_attachment.
     // SDK projects do not need a simulator-only Voice list to open this route.
+    const voiceHeaders: Record<string, Record<string, string>> = {};
     for (const [callId, item, label] of [
       [livekitTraceId, livekitRecording, 'livekit'], [pipecatTraceId, pipecatRecording, 'pipecat'],
     ] as const) {
@@ -512,9 +557,13 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         expect((await detail).status()).toBe(200);
         const recording = page.getByLabel('Attachment recording', { exact: true });
         await expect(recording).toBeVisible({ timeout: UI_READY });
-        const projection = await (await resolved).json() as { items: Grant[] };
+        const resolvedResponse = await resolved;
+        const projection = await resolvedResponse.json() as { items: Grant[] };
         expect(projection.items.map(g => [g.occurrence_id, g.status]))
           .toStrictEqual([[item.occurrenceId, 'ready']]);
+        // Capture this operation's exact identity, not whichever exchange completed
+        // last. The later Pipecat page must not invalidate LiveKit's matching grant.
+        voiceHeaders[label] = await browserResolveHeaders(resolvedResponse, E2E.attachmentsAppUrl);
         const player = recording.locator('audio');
         await expect(player).toHaveCount(1, { timeout: UI_READY });
         // StreamingPlayback deliberately does not fetch media until Play.
@@ -525,7 +574,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
           [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
         { timeout: UI_READY }).toStrictEqual([true, true]);
         await testInfo.attach(`${label}-voice-player`, { body: await page.screenshot(), contentType: 'image/png' });
-      });
+      }, { timeout: UI_READY });
     }
 
     await test.step('API: deleting the LiveKit session denies its media but preserves Pipecat', async () => {
@@ -545,14 +594,17 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await testInfo.attach('deleted-session', { contentType: 'application/json', body: JSON.stringify({
         livekitSessionId, pipecatSessionId, skipDelete: SKIP_DELETE, pgTraceRows: 0,
       }) });
-      // Voice playback may exchange a new media session. Renew under the CURRENT
-      // cookie, then keep this exact grant and cookie across the deletion.
-      const fresh = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
+      // Renew using the exact handle/bearer/scope captured from LiveKit's Voice
+      // resolve, even though Pipecat subsequently loaded another page. Keep that
+      // operation's matching cookie and unexpired grant unchanged across deletion.
+      const deletionHeaders = voiceHeaders.livekit;
+      const fresh = await resolveAs(deletionHeaders, livekitRecording, livekitTraceId);
       expect(fresh.status()).toBe(200);
       const [current] = (await fresh.json() as { items: Grant[] }).items;
       expect([current.occurrence_id, current.status]).toStrictEqual([livekitRecording.occurrenceId, 'ready']);
       const path = current.gateway_path!;
-      expect(path.startsWith(`${GATEWAY_PREFIX}${livekitRecording.occurrenceId}/`)).toBe(true);
+      expect(gatewayIds(path).slice(0, 2))
+        .toStrictEqual([deletionHeaders[MEDIA_SESSION_HEADER], livekitRecording.occurrenceId]);
       const beforeRange = await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } });
       const beforeHead = await viewer.head(gateway(path));
       expect([beforeRange.status(), beforeHead.status()]).toStrictEqual([206, 200]);
@@ -560,18 +612,19 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       // playback.py grants live for 60 s. Denial must precede their expiry;
       // only the independent PG cleanup poll may use the full ASYNC_JOB budget.
       expect(grantExpiry - Date.now()).toBeGreaterThan(5_000);
-      // playback.py COOKIE_NAME. Never attach or print the credential value.
+      // playback.py COOKIE_NAME, scoped to this session's own gateway path. Never
+      // attach or print the credential value.
       const sessionCookie = async () => (await page.context().cookies(gateway(path)))
-        .find(cookie => cookie.name === 'fi_media_session')?.value;
+        .find(cookie => cookie.name === 'fi_media_session_v2')?.value;
       const cookieBefore = await sessionCookie();
       expect(Boolean(cookieBefore)).toBe(true);
       if (!SKIP_DELETE) {
         // The attachment gateway proxies media routes, not the general session API.
-        const deleted = await viewer.delete(`${E2E.apiUrl}${SESSION(livekitSessionId)}`, { headers: viewerHeaders });
+        const deleted = await viewer.delete(`${E2E.apiUrl}${SESSION(livekitSessionId)}`, { headers: deletionHeaders });
         expect(deleted.status(), await deleted.text()).toBe(204);
       }
       // Immediate read denial is separate from the bounded tombstone cleanup poll.
-      const denied = await resolveAs(viewerHeaders, livekitRecording, livekitTraceId);
+      const denied = await resolveAs(deletionHeaders, livekitRecording, livekitTraceId);
       expect(denied.status()).toBe(200);
       expect((await denied.json() as { items: Grant[] }).items.map(g => [g.occurrence_id, g.status]))
         .toStrictEqual([[livekitRecording.occurrenceId, 'not_found']]);
@@ -582,10 +635,12 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await expect.poll(async () => (await readyOccurrences(probe, voiceProject, [livekitRecording]))
         .map(row => [row.occurrence, row.deleted]), POLL.ASYNC_JOB)
         .toStrictEqual([[livekitRecording.occurrenceId, true]]);
-      const survivor = await resolveAs(viewerHeaders, pipecatRecording, pipecatTraceId);
+      const survivor = await resolveAs(voiceHeaders.pipecat, pipecatRecording, pipecatTraceId);
       expect(survivor.status()).toBe(200);
       const [remaining] = (await survivor.json() as { items: Grant[] }).items;
       expect([remaining.occurrence_id, remaining.status]).toStrictEqual([pipecatRecording.occurrenceId, 'ready']);
+      expect(gatewayIds(remaining.gateway_path!).slice(0, 2))
+        .toStrictEqual([voiceHeaders.pipecat[MEDIA_SESSION_HEADER], pipecatRecording.occurrenceId]);
       const survivorBytes = await viewer.get(gateway(remaining.gateway_path!));
       expect(survivorBytes.status()).toBe(200);
       expect(sha256(Buffer.from(await survivorBytes.body()))).toBe(sha256(RECORDING_OGG));
@@ -595,7 +650,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
 
     await test.step('API: every media request the page made went through the gateway (zero legacy requests)', async () => {
       expect(media.every(path => path.startsWith(GATEWAY_PREFIX)), JSON.stringify(media)).toBe(true);
-      expect([...new Set(media.map(path => path.slice(GATEWAY_PREFIX.length).split('/')[0]))].sort())
+      expect([...new Set(media.map(path => gatewayIds(path)[1]))].sort())
         .toStrictEqual([livekitRecording.occurrenceId, pipecatRecording.occurrenceId, audio.occurrenceId].sort());
     });
   } finally {

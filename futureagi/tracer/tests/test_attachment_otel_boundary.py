@@ -1,10 +1,13 @@
 """Exercise the actual legacy-media and trace/Voice response boundaries."""
 
 import json
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import pytest
 
 from tracer.services.attachments.binding import Parent, Scope
 from tracer.services.attachments.reads import AuthorizedStatus, ReadTarget
@@ -521,7 +524,7 @@ def test_voice_detail_segments_of_one_recording_are_one_recording():
         _segment_status(C, state="validating"),
     ]
     result = _real_voice_detail(reader)
-    # Multi-segment recordings need server derivatives, so never ready here.
+    # Ready bytes from only one segment do not complete the recording.
     assert result["recording_attachment"]["state"] == "validating"
     reader.recording_manifest.assert_not_called()
     reader.list_authorized.return_value = [
@@ -529,6 +532,141 @@ def test_voice_detail_segments_of_one_recording_are_one_recording():
         _segment_status(C, recording_id=A),
     ]
     assert _real_voice_detail(reader)["recording_attachment"] == {"state": "rejected"}
+
+
+def _multisegment_manifest(durations=(30000, 6467)):
+    # Preserve the observed >30 s Pipecat timeline; do not reduce it to one file.
+    segments, start = [], 0
+    for index, duration in enumerate(durations):
+        segments.append(
+            {
+                "occurrence_id": (B, C, A)[index],
+                "index": index,
+                "start_ms": start,
+                "duration_ms": duration,
+            }
+        )
+        start += duration
+    return {**_manifest(segments=segments), "duration_ms": start}
+
+
+@pytest.mark.parametrize("durations", [(30000, 6467), (30000, 30000, 6467)])
+@pytest.mark.parametrize("span_id", [ROOT, CHILD])
+def test_voice_projects_entire_completed_recording_in_timeline_order(
+    durations, span_id
+):
+    manifest = _multisegment_manifest(durations)
+    reader = Mock()
+    # The database orders occurrences by identity, not by segment start time.
+    reader.list_authorized.return_value = [
+        replace(
+            _segment_status(segment["occurrence_id"]),
+            target=ReadTarget(Scope(A, B, C), Parent(A, span_id)),
+        )
+        for segment in reversed(manifest["segments"])
+    ]
+    reader.recording_manifest.return_value = manifest
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection == {
+        "occurrence_id": B,
+        "parent": {"trace_id": A, "span_id": span_id},
+        "state": "ready",
+        "manifest": manifest,
+    }
+    assert projection["manifest"]["duration_ms"] == sum(durations)
+    assert len(projection["manifest"]["segments"]) == len(durations)
+    assert [s["duration_ms"] for s in projection["manifest"]["segments"]] == list(
+        durations
+    )
+    assert projection["manifest"]["codec"] == "pcm"
+    assert projection["manifest"]["tracks"][0]["direction"] == "mixed"
+    _, target, recording_id = reader.recording_manifest.call_args.args
+    assert (target.parent, recording_id) == (Parent(A, span_id), RECORDING_ID)
+    reader.standalone_recording.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "unfinished",
+        "gap",
+        "overlap",
+        "out_of_order",
+        "index",
+        "duration",
+        "over_limit",
+        "duplicate",
+        "wrong_recording",
+        "wrong_codec",
+        "direction",
+    ],
+)
+def test_voice_rejects_incomplete_or_corrupt_multisegment_timeline(corruption):
+    manifest = deepcopy(_multisegment_manifest())
+    first, last = manifest["segments"]
+    if corruption == "unfinished":
+        manifest["capture_complete"] = False
+    elif corruption == "gap":
+        manifest["capture_complete"] = False
+        manifest["gaps"] = [
+            {"start_ms": 30000, "duration_ms": 6467, "reason": "incomplete"}
+        ]
+        manifest["segments"] = [first]
+    elif corruption == "overlap":
+        last["start_ms"] -= 1
+    elif corruption == "out_of_order":
+        manifest["segments"].reverse()
+    elif corruption == "index":
+        last["index"] = 2
+    elif corruption == "duration":
+        manifest["duration_ms"] += 1
+    elif corruption == "over_limit":
+        first["duration_ms"] += 1
+        last["start_ms"] += 1
+        manifest["duration_ms"] += 1
+    elif corruption == "duplicate":
+        last["occurrence_id"] = B
+    elif corruption == "wrong_recording":
+        manifest["recording_id"] = A
+    elif corruption == "wrong_codec":
+        manifest["codec"] = "not-a-codec"
+    elif corruption == "direction":
+        manifest["tracks"][0]["direction"] = "input"
+    reader = Mock()
+    reader.list_authorized.return_value = [_segment_status(B), _segment_status(C)]
+    reader.recording_manifest.return_value = manifest
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection["state"] == "pending"
+    assert "manifest" not in projection
+
+
+@pytest.mark.parametrize(
+    "state", ["denied", "deleted", "expired", "rejected", "validating"]
+)
+def test_voice_never_projects_only_the_allowed_half_of_a_recording(state):
+    reader = Mock()
+    reader.list_authorized.return_value = [_segment_status(B)]
+    if state != "denied":  # Denied rows are absent, not returned as statuses.
+        reader.list_authorized.return_value.append(_segment_status(C, state=state))
+    reader.recording_manifest.return_value = _multisegment_manifest()
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection["state"] != "ready"
+    assert "manifest" not in projection
+
+
+def test_voice_does_not_combine_recording_segments_across_parents():
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        _segment_status(B),
+        replace(
+            _segment_status(C), target=ReadTarget(Scope(A, B, C), Parent(A, CHILD))
+        ),
+    ]
+    reader.recording_manifest.return_value = _multisegment_manifest()
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection["state"] == "pending"
+    assert "manifest" not in projection
+    reader.recording_manifest.assert_not_called()
 
 
 def _livekit_root(name="job_entrypoint", parent=None, **attributes):

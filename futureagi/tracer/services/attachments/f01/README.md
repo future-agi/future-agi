@@ -1,8 +1,13 @@
 # Vendored F01 attachment contract schema
 
 `contract.schema.json` is copied byte-for-byte from the public traceAI
-repository, branch `feat/attachments-contract`, commit `f3b0923c62`,
+repository, branch `feat/attachments-contract`, commit `f0d52e7a409858677c6911a2ac051f38905ac074`,
 path `spec/attachments/v1/contract.schema.json`.
+
+SHA-256: `06961c5dd40ea61e056e32df5963b664eb562274f07169cab773331666f00240`.
+Obtain the pinned bytes on the authorized remote generator with
+`git show f0d52e7a409858677c6911a2ac051f38905ac074:spec/attachments/v1/contract.schema.json`,
+then copy them unchanged and verify that hash.
 
 The HTTP layer (`tracer/services/attachments/wire.py`) validates request
 bodies against these `$defs` and the API tests validate every response body
