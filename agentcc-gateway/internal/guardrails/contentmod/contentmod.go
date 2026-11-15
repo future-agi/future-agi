@@ -76,11 +76,9 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 
 	// Build category checkers.
 	allCategories := defaultCategories()
-	// Keep numeric accumulation deterministic and aligned with selected-config
-	// validation in the control plane. Map iteration can otherwise move a strict
-	// score > threshold boundary by one ULP. The scoring rules are unchanged.
-	for _, name := range []string{"toxicity", "hate_speech", "violence", "sexual", "self_harm"} {
-		phrases := allCategories[name]
+	// Preserve legacy constructor ordering for org/static evaluation. Selected
+	// policies obtain their own deterministic copy in SelectedPolicyGuardrail.
+	for name, phrases := range allCategories {
 		if enabledSet != nil && !enabledSet[name] {
 			continue
 		}
@@ -105,6 +103,22 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 		}
 	}
 	return g
+}
+
+// SelectedPolicyGuardrail returns a separately owned deterministic evaluator.
+// The original may be shared by static/org checks and must never be reordered.
+// Readiness and execution use this same copy, matching control-plane arithmetic.
+func (g *ContentModerationGuardrail) SelectedPolicyGuardrail() guardrails.Guardrail {
+	selected := *g
+	selected.categories = make([]categoryChecker, 0, len(g.categories))
+	for _, name := range []string{"toxicity", "hate_speech", "violence", "sexual", "self_harm"} {
+		for _, cat := range g.categories {
+			if cat.name == name {
+				selected.categories = append(selected.categories, cat)
+			}
+		}
+	}
+	return &selected
 }
 
 // ValidateConfig reports constructor-time configuration errors for selected policies,

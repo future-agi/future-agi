@@ -123,6 +123,11 @@ func validateSelectedKeyPolicyCheck(name string, g Guardrail, check *tenant.Guar
 	if g == nil || check == nil || name != "content-moderation" {
 		return g
 	}
+	// A shared static fallback must retain its legacy numeric evaluation order.
+	// Only this selected caller receives the builtin's independently owned copy.
+	if selector, ok := g.(interface{ SelectedPolicyGuardrail() Guardrail }); ok {
+		g = selector.SelectedPolicyGuardrail()
+	}
 	if validator, ok := g.(interface{ ValidateSelectedThreshold(float64) error }); ok &&
 		validator.ValidateSelectedThreshold(check.ConfidenceThreshold) != nil {
 		if stage := g.Stage(); stage == StagePre || stage == StagePost {

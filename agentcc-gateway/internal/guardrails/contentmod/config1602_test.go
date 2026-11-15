@@ -183,7 +183,7 @@ func TestConfig1602ModerationJSONNumericParity(t *testing.T) {
 	const maximum = 0x1.b3b3b3b3b3b3bp-1
 	order := []string{"toxicity", "hate_speech", "violence", "sexual", "self_harm"}
 	for i := 0; i < 50; i++ {
-		g := New(cfg)
+		g := New(cfg).SelectedPolicyGuardrail().(*ContentModerationGuardrail)
 		if g.ValidateConfig() != nil || len(g.categories) != len(defaultCategories()) {
 			t.Fatal("JSON numeric configuration or catalog lost")
 		}
