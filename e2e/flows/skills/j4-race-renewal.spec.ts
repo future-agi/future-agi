@@ -118,7 +118,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await ownerPage.goto('/dashboard/skills');
     await ownerPage.getByRole('tab', { name: 'Agent contexts', exact: true }).click();
     await ownerPage.getByRole('button', { name, exact: true }).click();
-    await ownerPage.getByRole('tab', { name: 'Consumers', exact: true }).click();
+    await ownerPage.getByRole('tab', { name: 'Connected apps', exact: true }).click();
     await ownerPage.getByRole('button', { name: 'Connect an app', exact: true }).click();
     const dialog = ownerPage.getByRole('dialog');
     await dialog.getByLabel('Target name', { exact: true }).fill('Refund agent');

@@ -68,16 +68,16 @@ it('requires one explicit acknowledgement, applies only previewed plans, and ren
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
   const apply = await screen.findByRole('button', { name: 'Apply selected updates to 2 context drafts' });
   expect(apply).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 2 contexts.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 2 context drafts.' }));
   fireEvent.click(apply);
-  await screen.findByRole('link', { name: 'Review a draft' });
+  await screen.findByRole('link', { name: 'Open a draft' });
   expect(state.apply.mock.calls[0][0].map((item) => item.plan.fingerprint)).toEqual(['plan-a', 'plan-b']);
   expect(screen.getByText(/upstream skill changed after this plan was previewed/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Preview again for 1 context that did not update' }));
   await screen.findByRole('button', { name: 'Apply selected updates to 1 context draft' });
   expect(state.prepare.mock.calls[1][0]).toEqual([{ contextId: 'b', name: 'b', version: 1 }]);
-  expect(screen.getByRole('link', { name: 'Review a draft' })).toBeVisible();
-  expect(screen.getByRole('checkbox', { name: /Accept these linked-skill versions/ })).not.toBeChecked();
+  expect(screen.getByRole('link', { name: 'Open a draft' })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /Accept these skill versions/ })).not.toBeChecked();
 });
 
 it('shows the pinned row with a disabled checkbox, a lock mark and Production as a name', () => {
@@ -103,7 +103,7 @@ it('keeps Prepare off after every selected context is updated, and on again once
   state.apply.mockResolvedValue([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2 }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'applied', revision: 2 }]);
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these skill versions/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
   await screen.findByText('a draft updated. Production unchanged.');
   expect(screen.getByText('b draft updated. Production unchanged.')).toBeVisible();
@@ -120,7 +120,7 @@ it('keeps Prepare available after a partial apply so the rejected context can be
   state.apply.mockResolvedValue([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2 }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'error', code: 'stale_plan', httpStatus: 409 }]);
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these skill versions/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
   await screen.findByText(/upstream skill changed after this plan was previewed/);
   expect(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' })).toBeEnabled();
@@ -138,11 +138,16 @@ it('shows a different-origin draft as an exception and never selects an unavaila
 it('keeps superseded references available in a disclosure without duplicating the live table', () => {
   mount();
   expect(screen.queryByRole('combobox', { name: /Reference scope/ })).not.toBeInTheDocument();
-  expect(within(screen.getByRole('table', { name: 'Published context dependents' })).getByText('a · v1')).toBeVisible();
+  const live = within(screen.getByRole('table', { name: 'Published context dependents' }));
+  expect(live.getByText('a')).toBeVisible();
+  expect(live.getByRole('columnheader', { name: 'Agent context' })).toBeVisible();
+  expect(live.queryByRole('columnheader', { name: 'Context release' })).not.toBeInTheDocument();
+  expect(screen.getByText(/agent contexts? uses? this skill/)).toBeVisible();
+  expect(screen.queryByText(/\d references?\b/)).not.toBeInTheDocument();
   expect(screen.queryByRole('table', { name: 'Historical context references' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Show superseded releases' }));
   const history = screen.getByRole('table', { name: 'Historical context references' });
-  expect(within(history).getByText('retired · v0')).toBeVisible();
+  expect(within(history).getByText('retired')).toBeVisible();
   expect(within(history).queryByRole('checkbox')).not.toBeInTheDocument();
 });
 
@@ -150,7 +155,7 @@ it('invalidates the prepared set and acknowledgement when selection changes, inc
   state.prepare.mockResolvedValue([plan('a'), plan('b')]);
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these skill versions/ }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
   expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
@@ -167,7 +172,7 @@ it('discards an in-flight preparation for an earlier selection', async () => {
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
   resolve([plan('a'), plan('b')]);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' })).toBeEnabled());
-  expect(screen.queryByRole('checkbox', { name: /Accept these linked-skill versions/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: /Accept these skill versions/ })).not.toBeInTheDocument();
 });
 
 it('invalidates reviewed plans when the source release changes', async () => {
@@ -175,7 +180,7 @@ it('invalidates reviewed plans when the source release changes', async () => {
   const targets = [{ contextId: 'a', name: 'a', version: 1 }];
   const view = render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} sourceRelease="v8" /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these skill versions/ }));
   view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} sourceRelease="v9" /></MemoryRouter>);
   expect(screen.getByText('Selection changed — prepare again.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Apply selected updates', exact: true })).toBeDisabled();
@@ -203,7 +208,7 @@ it('clears a prepared selection silently when no context remains and never resto
   const targets = [{ contextId: 'a', name: 'a', version: 1 }];
   const view = render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={targets} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these skill versions/ }));
   view.rerender(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={[]} /></MemoryRouter>);
   expect(screen.getByText('Select at least one context to prepare updates.')).toBeVisible();
   expect(screen.queryByText('Selection changed — prepare again.')).not.toBeInTheDocument();
@@ -232,9 +237,9 @@ it('shows confirmed draft status and a review action without exposing revision n
   state.apply.mockResolvedValue([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 42, lock: { links: [{ skillId: 'child', version: 8 }] } }]);
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 2 contexts.' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Accept these skill versions and update rules into 2 context drafts.' }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
-  expect(await screen.findByRole('link', { name: 'Review a draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/a/review');
+  expect(await screen.findByRole('link', { name: 'Open a draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/a/review');
   expect(screen.getByText('a draft now uses refund-policy v8. Production unchanged.')).toBeVisible();
   expect(screen.getByText('Draft ready')).toBeVisible();
   expect(screen.queryByText(/revision 42/)).not.toBeInTheDocument();

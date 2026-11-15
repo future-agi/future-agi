@@ -20,22 +20,23 @@ function Navigation() {
   const navigate = useNavigate();
   return <><output aria-label="URL parameters">{params.toString()}</output><button type="button" onClick={() => navigate(-1)}>Back</button><button type="button" onClick={() => navigate(1)}>Forward</button></>;
 }
-it('derives one header release action from state: contained where the body has no primary, outlined where it does, absent on Versions', () => {
+it('keeps every header button outlined: the release action is absent on Versions and Tests, where the body owns the step', () => {
   const latest = { id: 'v2', number: 2, digest: `sha256:${'b'.repeat(64)}` };
   const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version], sections: { ...detail.sections, versions: <button type="button">Request release review</button> } };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
   const release = screen.getByRole('link', { name: 'Request release review for v2' });
-  expect(release).toHaveClass('MuiButton-contained');
+  expect(release).toHaveClass('MuiButton-outlined');
   expect(new URL(release.href).searchParams.get('candidate')).toBe('v2');
   expect(new URL(release.href).searchParams.get('digest')).toBe(latest.digest);
-  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
+  expect(document.querySelectorAll('.MuiButton-contained')).toHaveLength(0);
   fireEvent.click(screen.getByRole('tab', { name: 'Versions' }));
   expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Request release review', exact: true })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   fireEvent.click(screen.getByRole('tab', { name: 'Tests' }));
-  expect(screen.getByRole('link', { name: 'Request release review for v2' })).toHaveClass('MuiButton-outlined');
-  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   expect(document.querySelectorAll('.MuiButton-contained')).toHaveLength(0);
   fireEvent.click(screen.getByRole('tab', { name: 'Rollback' }));
   expect(screen.getByRole('link', { name: 'Request release review for v2' })).toHaveClass('MuiButton-outlined');
@@ -45,15 +46,15 @@ it('offers the first release from the header before any production label exists'
   const first = { ...version, id: 'v1' };
   const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, labels: [] }, latest: first } } };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
-  expect(screen.getByRole('link', { name: 'Request release review for v1' })).toHaveClass('MuiButton-contained');
-  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release review for v1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Edit latest v1' })).toHaveClass('MuiButton-outlined');
   expect(screen.queryByText(/Production is still/)).not.toBeInTheDocument();
 });
 it('shows release unavailable rather than loading in the linked-skills error preview', () => {
   render(<MemoryRouter initialEntries={['/?tab=links']}><ContextDetailView {...detail} state="error" /></MemoryRouter>);
   expect(screen.getByRole('combobox', { name: 'Viewed release' })).toHaveTextContent('Release unavailable');
   expect(screen.queryByText('Loading release…')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Edit viewed version' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Edit latest version' })).toBeDisabled();
 });
 it('uses the shared missing-object pattern with a separate subtitle and way back', () => {
   render(<MemoryRouter><ContextDetailView {...detail} query={{ scopeKey, error: { status: 404 } }} /></MemoryRouter>);
@@ -157,14 +158,14 @@ it('defaults markdown to preview and remembers the per-viewer source choice', ()
 it('does not expose stale release identity or editing after a failed release request', () => {
   render(<MemoryRouter initialEntries={['/?version=1']}><ContextDetailView {...detail} versionQuery={{ ...detail.versionQuery, error: new Error('offline') }} /></MemoryRouter>);
   expect(screen.getByText("Couldn't load v1")).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Edit viewed version' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Edit latest version' })).toBeDisabled();
   expect(screen.queryByText(/Digest/)).not.toBeInTheDocument();
 });
 it('offers draft work rather than editing an absent release', () => {
   render(<MemoryRouter><ContextDetailView {...detail} query={{ scopeKey, data: { context: { name: 'new-agent', latestVersion: null }, ownDraft: { revision: 1 } } }} versionQuery={{ scopeKey }} fileQuery={{ scopeKey }} onResumeDraft={vi.fn()} /></MemoryRouter>);
   expect(screen.getByText('No releases yet')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Resume your draft' })).toBeEnabled();
-  expect(screen.queryByRole('button', { name: /Edit viewed/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Edit latest/ })).not.toBeInTheDocument();
 });
 it('removes inaccessible library actions and filters, and offers a way back from a denied detail', () => {
   const view = render(<ContextLibraryView {...library} state="denied" />);
@@ -236,25 +237,37 @@ it('opens one full-width detail row per linked skill with a named expand button,
   fireEvent.click(expand);
   expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
 });
-it('says what a draft from an older version loses, and offers the latest when it can', () => {
+it('edits from latest by default and keeps the viewed version one text click away', () => {
   const latest = { id: 'v2', number: 2, digest: `sha256:${'b'.repeat(64)}` };
   const edit = vi.fn();
   const props = { ...detail, onEditViewed: edit, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version] };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
-  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toBeVisible();
-  expect(screen.getByText("Your draft starts from v1 and won't include v2's changes.")).toBeVisible();
+  expect(screen.getByText("Editing starts from latest v2, not the v1 you're viewing.")).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   fireEvent.click(screen.getByRole('button', { name: 'Edit latest v2' }));
-  expect(edit).toHaveBeenCalledWith(latest);
+  expect(edit).toHaveBeenLastCalledWith(latest);
+  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit viewed v1' }));
+  expect(edit).toHaveBeenLastCalledWith(expect.objectContaining({ number: 1 }));
 });
-it('hides Edit latest when the latest version lacks the fields the editor reads', () => {
+it('edits latest by number alone when the latest carries no other fields, and names the origin once', () => {
   const latest = { id: 'v2', number: 2 };
-  const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version] };
+  const edit = vi.fn();
+  const props = { ...detail, onEditViewed: edit, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version] };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
-  expect(screen.getByText("Your draft starts from v1 and won't include v2's changes.")).toBeVisible();
-  expect(screen.queryByRole('button', { name: /Edit latest/ })).not.toBeInTheDocument();
+  expect(screen.getByText("Editing starts from latest v2, not the v1 you're viewing.")).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit latest v2' }));
+  expect(edit).toHaveBeenCalledWith(expect.objectContaining({ number: 2 }));
 });
-it('does not add the origin line when the viewed version is the latest', () => {
+it('does not add the origin line or the Edit viewed button when the viewed version is the latest', () => {
   render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
-  expect(screen.queryByText(/Your draft starts from/)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Edit latest/ })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Editing starts from latest/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Edit viewed/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit latest v1' })).toBeVisible();
+});
+it('renames the Consumers tab to Connected apps and drops the dangling delivery link', () => {
+  render(<MemoryRouter><ContextDetailView {...detail} sections={{ ...detail.sections, consumers: <p>apps</p> }} /></MemoryRouter>);
+  expect(screen.getByRole('tab', { name: 'Connected apps' })).toBeVisible();
+  expect(screen.queryByRole('tab', { name: 'Consumers' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Delivery: see Consumers')).not.toBeInTheDocument();
 });

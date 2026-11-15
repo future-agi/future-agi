@@ -159,7 +159,7 @@ test('SKILLS-E2E-061: recover a persisted refund checkpoint through the real reg
     await testInfo.attach('j6-runtime-observations', { body: JSON.stringify({ receipt, providerLedger, sessions, before, after, authorityFault, credentialExpiresAt: credential.expires_at }), contentType: 'application/json' });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/dashboard/skills/contexts/${created.context_id}?version=1`);
-    await page.getByRole('tab', { name: 'Consumers', exact: true }).click({ timeout: UI_READY });
+    await page.getByRole('tab', { name: 'Connected apps', exact: true }).click({ timeout: UI_READY });
     const table = page.getByRole('table', { name: 'Context delivery observations' });
     for (const binding of bindings) {
       const row = table.getByRole('row').filter({ hasText: binding.name });

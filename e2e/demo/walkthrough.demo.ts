@@ -327,7 +327,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       });
       await point(page.getByText(/ draft now uses .+\. Production unchanged\./));
       await caption('Accepting writes a draft. The published context is unchanged until reviewed.');
-      const openDraft = page.getByRole('link', { name: 'Open draft for support-agent' }).or(page.getByRole('button', { name: 'Open draft for support-agent' })).first();
+      const openDraft = page.getByRole('link', { name: 'Open draft for support-agent' }).or(page.getByRole('button', { name: 'Open draft for support-agent' })).or(page.getByRole('link', { name: 'Open support-agent draft', exact: true })).first();
       await settle();
       const deps = page.locator('#review-dependencies');
       await quick(async () => {

@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink, useSearchParams } from 'react-router-dom';
-import { Box, Button, Link, MenuItem, Skeleton, Stack, Tab, TextField, Typography, useMediaQuery } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
+import { Box, Button, MenuItem, Skeleton, Stack, Tab, TextField, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import EmptyState from 'src/components/empty-state';
@@ -20,14 +19,10 @@ import ContextIdentityStrip from './ContextIdentityStrip';
 import ContextLinksPanel from './ContextLinksPanel';
 
 // URL owns section identity; version/file loading never replaces the object shell.
-// Below sm the header actions share the title row (they wrap under it only when they cannot fit), so Edit adds no row.
-const PHONE_TITLE_ROW = { '@media (max-width:599.95px)': { '& > .MuiStack-root:has(h1)': { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 1 }, '& > .MuiStack-root:last-of-type': { flex: '1 1 0', minWidth: 'min-content', justifyContent: 'flex-end' } } };
-const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Rollback'], ['use', 'Install']];
+const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Connected apps'], ['recovery', 'Rollback'], ['use', 'Install']];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
   const { isViewer, canWrite, ready } = useSkillsAccess();
-  const theme = useTheme();
-  const phone = useMediaQuery(theme.breakpoints.down('sm'));
   const [fileMode, setFileMode] = useState(() => { try { return localStorage.getItem('context-file-view') === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } });
   const unpublished = query.data?.context?.latestVersion == null && !params.get('version');
   const tabs = TABS.filter(([value]) => unpublished ? value === 'context' : ['context', 'links'].includes(value) || sections[value]);
@@ -50,46 +45,42 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const selected = manifest.find((file) => file.path === selectedPath);
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
-  // The tab body owns the primary on these two, so the header never competes with it.
-  const bodyPrimary = ['tests', 'recovery'].includes(tab);
   const cannotEdit = !canWrite || query.data.releaseState?.permissions?.canPublish === false;
   const editReason = isViewer ? "Viewers can't edit. Ask a workspace admin for edit access." : ready && cannotEdit ? "You don't have permission to edit this agent context. Ask a workspace admin for edit access." : '';
   const production = context.labels?.find((label) => label.name === 'production')?.version;
   const latest = query.data.latest || versions.find((row) => row.number === context.latestVersion);
   const latestReady = Boolean(latest?.id && latest?.digest && latest?.number != null);
   const newerPublished = production != null && latestReady && latest.number > production;
-  // First release or a newer publication: one header action on every tab but Versions, where the row action is the control.
+  // First release or a newer publication: one outlined header action, except on Versions and Tests, whose bodies own the release step.
+  // Header buttons are always outlined; the tab body owns at most one contained button.
   const releasable = latestReady && (production == null || latest.number > production);
-  const headerRelease = releasable && tab !== 'versions';
-  const editContained = !headerRelease && !bodyPrimary;
+  const headerRelease = releasable && !['versions', 'tests'].includes(tab);
   const releaseError = Boolean(versionQuery.error) || state === 'error';
-  // Contexts edit from the viewed version (not from latest), so say so whenever the two differ.
+  // The main button edits from latest (same as skills); the viewed version stays one text click away.
   const behindLatest = !noRelease && viewed && context.latestVersion != null && viewed.number !== context.latestVersion;
-  const originNote = behindLatest ? `Your draft starts from v${viewed.number} and won't include v${context.latestVersion}'s changes.` : '';
+  const originNote = behindLatest ? `Editing starts from latest v${context.latestVersion}, not the v${viewed.number} you're viewing.` : '';
   const editFrom = (version) => (query.data.ownDraft ? onPreserveDraft?.(version) : onEditViewed(version));
   const editBlocked = cannotEdit || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error);
-  // Only offer the latest version when it carries the same fields the viewed version hands to the editor.
-  const canEditLatest = behindLatest && latestReady && latest.number === context.latestVersion && viewed.id && viewed.digest && viewed.number != null;
+  // The editor route reads only the version number, so the latest needs nothing else.
+  const editLatest = () => editFrom(latest ?? { number: context.latestVersion });
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
-    <ObjectHeader sx={PHONE_TITLE_ROW} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={phone ? undefined : (descriptor?.description || context.description)}
+    <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: { xs: 'flex-end', sm: 'flex-start' } }}>
-        {query.data.ownDraft && <Button color="primary" variant={editContained ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+        {query.data.ownDraft && <Button color="primary" variant="outlined" disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
         {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
         {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}
-        {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editContained ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={editBlocked || !viewed} onClick={() => editFrom(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
-        {headerRelease && <Button component={RouterLink} color="primary" variant={bodyPrimary ? 'outlined' : 'contained'} to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
+        {!noRelease && <Button color="primary" variant="outlined" {...reasonProps("context-edit-reason", editReason)} disabled={editBlocked || !viewed} onClick={editLatest}>{viewed ? `Edit latest v${context.latestVersion}` : 'Edit latest version'}</Button>}
+        {headerRelease && <Button component={RouterLink} color="primary" variant="outlined" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
       </Stack>}
       identity={<Stack spacing={1}>
-        {phone && (descriptor?.description || context.description) && <Typography variant="s3" color="text.secondary">{descriptor?.description || context.description}</Typography>}
         <ActionReason id="context-edit-reason" reason={editReason} sx={{ flexBasis: 'auto' }} />
-        {originNote && !cannotEdit && <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Typography variant="s3" color="text.secondary">{originNote}</Typography>{canEditLatest && <Button variant="text" size="small" disabled={editBlocked} sx={{ ml: -1 }} onClick={() => editFrom(latest)}>Edit latest v{latest.number}</Button>}</Stack>}
-        {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">Editing {viewed ? `v${viewed.number}` : 'a release'} first saves and suspends your current draft.</Typography>}
+        {originNote && !cannotEdit && <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Typography variant="s3" color="text.secondary">{originNote}</Typography><Button variant="text" size="small" disabled={editBlocked} sx={{ ml: -1 }} onClick={() => editFrom(viewed)}>Edit viewed v{viewed.number}</Button></Stack>}
+        {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">{behindLatest ? 'Editing' : `Editing v${context.latestVersion}`} first saves and suspends your current draft.</Typography>}
         <ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === 'production')?.version} draft={query.data.ownDraft}
         releaseControl={noRelease ? <Typography variant="s3">No releases yet</Typography> : <TextField select size="small" value={viewed?.number || ''} disabled={!onSelectVersion || versionQuery.isLoading || releaseError} SelectProps={{ displayEmpty: true, inputProps: { 'aria-label': 'Viewed release' } }} onChange={(event) => onSelectVersion(Number(event.target.value))} sx={{ minWidth: 88 }}>
           {!viewed && <MenuItem value="">{releaseError ? 'Release unavailable' : <Skeleton width={48} aria-label="Loading release" />}</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
         </TextField>}
         extra={<>
-          {sections.consumers && <Link component={RouterLink} to={`?${new URLSearchParams({ ...Object.fromEntries(params), tab: 'consumers' })}`} variant="s3" underline="always">Delivery: see Consumers</Link>}
           {(query.isFetching || versionQuery.isFetching) && !versionQuery.isLoading && <StatusBadge status="checking" label="Updating…" />}
         </>} />
       </Stack>}

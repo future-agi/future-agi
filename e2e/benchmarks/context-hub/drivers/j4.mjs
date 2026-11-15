@@ -104,7 +104,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await navigate(target, 'skills-home', '/dashboard/skills', operator);
         await operator.transition('context-library', () => operator.click(target.getByRole('tab', { name: 'Agent contexts', exact: true }), 'open-context-library'));
         await operator.transition(name, () => operator.click(target.getByRole('button', { name: input.contextName, exact: true }), 'open-context'));
-        await expect(target.getByRole('tab', { name: 'Consumers', exact: true })).toBeVisible();
+        await expect(target.getByRole('tab', { name: 'Connected apps', exact: true })).toBeVisible();
       };
       const choose = async (target, label, option, name, operator = op) => {
         await operator.click(target.getByLabel(label, { exact: true }), `${name}-open`);
@@ -217,7 +217,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(admin.getByRole('option', { name: 'Workspace Admin', exact: true }), 'grant-workspace-admin');
           requireValue((await roleResponse).ok(), 'Reviewer authority not granted');
           await openContext(admin, 'context-detail');
-          await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Consumers', exact: true }), 'open-consumers'));
+          await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Connected apps', exact: true }), 'open-consumers'));
           await op.click(admin.getByRole('button', { name: 'Connect an app', exact: true }), 'open-target-registration');
           const dialog = admin.getByRole('dialog');
           const chooser = admin.waitForEvent('filechooser');

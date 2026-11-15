@@ -126,12 +126,12 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'light' })); });
     for (const parent of parents.slice(0, 2)) {
       await page.goto(`${UI}/${parent.id}?version=1`);
-      await page.getByRole('button', { name: 'Edit viewed v1', exact: true }).click();
+      await page.getByRole('button', { name: 'Edit latest v1', exact: true }).click();
       await page.getByRole('button', { name: 'Start selected draft', exact: true }).click();
       await page.getByRole('checkbox', { name: `Check update for ${prefix}-leaf-0`, exact: true }).check();
       const before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       await page.getByRole('button', { name: 'Preview dependency changes', exact: true }).click();
-      await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 1 context draft.', exact: true }).check();
       await page.getByRole('button', { name: 'Apply selected updates to draft', exact: true }).click();
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).resolved_lock.links.find((l: any) => l.skill_id === childId).version, { timeout: UI_READY }).toBe(8);
       parent.before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
@@ -344,7 +344,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         expect([fresh.history_mode, fresh.version_id]).toEqual(['fresh', i < 2 ? await versionId(parent.id, 2) : runtime.v1]);
         await deliver(runtime, fresh, clean.incarnation_id, i < 2 ? reviewedRoot : initialRoot);
         await page.goto(`${UI}/${parent.id}`);
-        await page.getByRole('tab', { name: 'Consumers', exact: true }).click();
+        await page.getByRole('tab', { name: 'Connected apps', exact: true }).click();
         const row = page.getByRole('table', { name: 'Context delivery observations' }).getByRole('row').filter({ hasText: `${parent.name}-runtime` });
         const state = wrong === 'session-ui' ? 'Matches target' : i < 2 ? 'Old thread retained' : 'Pinned as intended';
         await expect(row.getByText(state, { exact: true })).toBeVisible();

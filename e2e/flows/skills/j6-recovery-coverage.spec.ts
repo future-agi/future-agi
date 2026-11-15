@@ -115,7 +115,7 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
 
     await test.step('Open the declared consumer table', async () => {
       await page.goto(`${UI}${created.context_id}`);
-      await page.getByRole('tab', { name: 'Consumers', exact: true }).click({ timeout: UI_READY });
+      await page.getByRole('tab', { name: 'Connected apps', exact: true }).click({ timeout: UI_READY });
       await expect(page.getByRole('table', { name: 'Context delivery observations' })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     await test.step('Inspect each recovery state', async () => {

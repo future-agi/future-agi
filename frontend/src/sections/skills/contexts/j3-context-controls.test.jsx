@@ -129,7 +129,7 @@ it('hides viewer creation and import actions in both empty and populated librari
 it.each([true, false])('disables editing for viewer or denied server permission (viewer=%s)', (viewer) => {
   state.isViewer = viewer;
   mount(<ContextDetailView scopeKey="scope" query={{ scopeKey: 'scope', data: { context: { id: 'c', name: 'support-agent', latestVersion: 2 }, releaseState: { permissions: { canPublish: viewer } } } }} versionQuery={{ scopeKey: 'scope', data: { version } }} fileQuery={{ scopeKey: 'scope' }} versions={[version]} onEditViewed={vi.fn()} />);
-  expect(screen.getByRole('button', { name: 'Edit viewed v2' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Edit latest v2' })).toBeDisabled();
   if (viewer) expect(screen.getByText("Viewers can't edit. Ask a workspace admin for edit access.")).toBeVisible();
 });
 it('keeps a return link for a missing context (the shared not-found recipe)', () => {

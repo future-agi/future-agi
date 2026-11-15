@@ -28,7 +28,7 @@ it.each([false, true])('recovers a real queued mutation through its visible cont
   const previewLabel = head ? 'Review against current latest' : 'Preview dependency changes';
   const applyLabel = head ? 'Acknowledge reviewed head' : 'Apply selected updates to draft';
   fireEvent.click(screen.getByRole('button', { name: previewLabel }));
-  const confirmation = await screen.findByRole('checkbox', { name: head ? 'I reviewed both comparisons and the new-latest consequence.' : 'Accept these linked-skill versions and update rules for 1 context.' });
+  const confirmation = await screen.findByRole('checkbox', { name: head ? 'I reviewed both comparisons and the new-latest consequence.' : 'Accept these skill versions and update rules into 1 context draft.' });
   fireEvent.click(confirmation);
   fireEvent.click(screen.getByRole('button', { name: applyLabel }));
   const retry = await screen.findByRole('button', { name: head ? 'Retry head acknowledgment' : 'Retry dependency update' });

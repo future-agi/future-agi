@@ -115,7 +115,7 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
     </Stack>)}
     {phase === 'previewed' && failed.length > 0 && ready.length === 0 && <Typography variant="s1">No context can be updated from this preview.</Typography>}
     {(phase === 'previewed' || phase === 'applying') && ready.length > 0 && <>
-      <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these linked-skill versions and update rules for ${ready.length} ${ready.length === 1 ? 'context' : 'contexts'}.`} />
+      <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these skill versions and update rules into ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}.`} />
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}
     {done.length > 0 && <Alert severity="success" role="status"><Stack spacing={1}>
@@ -123,7 +123,7 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
         const version = item.lock?.links?.find((link) => link.skillId === skillId)?.version;
         return <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
           <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{item.target.name} draft {skillName && version != null ? `now uses ${skillName} v${version}` : 'updated'}. Production unchanged.</Typography>
-          <Button color="primary" variant={ready.length || index > 0 ? 'outlined' : 'contained'} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Review {item.target.name} draft</Button>
+          <Button color="primary" variant={ready.length || index > 0 ? 'outlined' : 'contained'} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Open {item.target.name} draft</Button>
         </Stack>;
       })}
     </Stack></Alert>}

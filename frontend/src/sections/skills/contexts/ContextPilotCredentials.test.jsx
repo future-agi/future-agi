@@ -85,6 +85,11 @@ describe("ContextPilotCredentials", () => {
   it("shows revoked credentials as revoked and disables a second revoke", () => {
     hooks.list = { data: { results: [credential(CONTEXT, CONTEXT, { revokedAt: "2026-11-10T01:00:00Z" })] }, isLoading: false, isError: false };
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+    // Revoked keys are history: folded away behind a text button, with the step asking for an active key.
+    expect(screen.queryByText("Revoked")).not.toBeInTheDocument();
+    expect(screen.getByText("No active keys yet.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create key" })).toHaveClass("MuiButton-contained");
+    fireEvent.click(screen.getByRole("button", { name: "Show revoked keys (1)" }));
     expect(screen.getByText("Revoked")).toBeInTheDocument();
     // A revoked key keeps no expiry text: it reads "Revoked" only.
     expect(screen.queryByText(/^Expires in|^Expired/)).not.toBeInTheDocument();
@@ -153,6 +158,8 @@ it('stacks keys below sm with the key ID in a tooltip and no expiry on a revoked
     hooks.list.data.results = [credential(CONTEXT, CONTEXT, { expiresAt: '2099-01-01T00:00:00.000Z' }), credential(OTHER, CONTEXT, { revokedAt: '2026-11-10T01:00:00Z', grants: [{ kind: 'agent_context', resourceId: CONTEXT, labels: [], versionIds: [VERSION] }] })];
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Show revoked keys (1)' }));
     const rows = screen.getAllByRole('listitem');
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent(/Read-only key · created .+ · v1 · /);
@@ -162,4 +169,33 @@ it('stacks keys below sm with the key ID in a tooltip and no expiry on a revoked
     expect(rows[1]).not.toHaveTextContent(/Expires in|Expired/);
     expect(screen.getByRole('button', { name: 'Actions for credential 22222222' })).toBeVisible();
   } finally { vi.unstubAllGlobals(); }
+});
+
+it('lists only active keys by default and folds every revoked key behind a counted text button', () => {
+  const revokedAt = '2026-11-10T01:00:00Z';
+  hooks.list.data.results = [credential('aaaaaaaa-0000-4000-8000-000000000000', CONTEXT), ...['b', 'c', 'd', 'e'].map((c) => credential(`${c.repeat(8)}-0000-4000-8000-000000000000`, CONTEXT, { revokedAt }))];
+  render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+  expect(screen.getAllByRole('row')).toHaveLength(2);
+  expect(screen.queryByText('Revoked')).not.toBeInTheDocument();
+  expect(screen.queryByText('No active keys yet.')).not.toBeInTheDocument();
+  const toggle = screen.getByRole('button', { name: 'Show revoked keys (4)' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(toggle);
+  expect(screen.getAllByRole('row')).toHaveLength(6);
+  expect(screen.getAllByText('Revoked')).toHaveLength(4);
+  fireEvent.click(screen.getByRole('button', { name: 'Hide revoked keys (4)' }));
+  expect(screen.getAllByRole('row')).toHaveLength(2);
+});
+it('keeps a key you just revoked on its row for this visit so the action is confirmed', () => {
+  hooks.list.data.results = [credential(CONTEXT, CONTEXT)];
+  hooks.revoke.mutate = vi.fn((_input, options) => options.onSuccess());
+  const view = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for credential 11111111' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Revoke' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+  hooks.list.data.results = [credential(CONTEXT, CONTEXT, { revokedAt: '2026-11-10T01:00:00Z' })];
+  view.rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+  expect(screen.getByText('Revoked')).toBeVisible();
+  expect(screen.getByText('No active keys yet.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: /revoked keys/ })).not.toBeInTheDocument();
 });

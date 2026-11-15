@@ -150,7 +150,7 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
         )}
       </TableCell>
       <TableCell>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} {...(status === "revoked" ? { role: "neutral", variant: "badge" } : {})} />
       </TableCell>
       <TableCell align="right">
         <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
@@ -190,7 +190,7 @@ function CredentialStackRow({ credential, versionLabel, onRevoke }) {
           </>
         )}
       </Typography>
-      <StatusBadge status={status} />
+      <StatusBadge status={status} {...(status === "revoked" ? { role: "neutral", variant: "badge" } : {})} />
       <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
     </Stack>
   );
@@ -212,6 +212,10 @@ export default function ContextPilotCredentials({
   const [issueKey, setIssueKey] = useState(newKey);
   const [copyState, setCopyState] = useState("");
   const [revoking, setRevoking] = useState(null);
+  // Revoked keys stay out of the way (they are history). One you revoke here stays listed for this visit, so the
+  // action you just took is confirmed on the row; after a reload it folds into the collapsed group.
+  const [showRevoked, setShowRevoked] = useState(false);
+  const [justRevoked, setJustRevoked] = useState([]);
   const list = useContextCredentials(
     { page: 1, pageSize: 100 },
     { enabled: canIssue },
@@ -223,6 +227,8 @@ export default function ContextPilotCredentials({
     grantsContext(row, contextId) && row.grants.some((grant) => grant.kind === "agent_context" && grant.resourceId === contextId && grant.versionIds?.includes(snapshot.versionId)),
   );
   const hasKey = !list.isError && rows.some((row) => credentialStatus(row) === 'active');
+  const folded = rows.filter((row) => credentialStatus(row) === 'revoked' && !justRevoked.includes(row.id));
+  const visible = showRevoked ? rows : rows.filter((row) => !folded.includes(row));
   useEffect(() => { onAvailabilityChange?.(hasKey); }, [hasKey, onAvailabilityChange]);
   const versionLabel = (credential) => {
     const ids = credential.grants.flatMap((grant) => grant.versionIds);
@@ -329,6 +335,9 @@ export default function ContextPilotCredentials({
             </Stack>
           </Alert>
         )}
+        {!list.isError && !list.isLoading && !hasKey && (
+          <Typography variant="s3">No active keys yet.</Typography>
+        )}
         {list.isError ? (
           <Alert severity="error">
             Could not load keys.{" "}
@@ -336,9 +345,9 @@ export default function ContextPilotCredentials({
               Retry
             </Button>
           </Alert>
-        ) : rows.length > 0 && phone ? (
+        ) : visible.length > 0 && phone ? (
           <Stack role="list" aria-label="Pilot credentials for this context" sx={{ minWidth: 0 }}>
-            {rows.map((row) => (
+            {visible.map((row) => (
               <CredentialStackRow
                 key={row.id}
                 credential={row}
@@ -347,7 +356,7 @@ export default function ContextPilotCredentials({
               />
             ))}
           </Stack>
-        ) : rows.length > 0 ? (
+        ) : visible.length > 0 ? (
           <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
             <TableHead>
               <TableRow>
@@ -359,7 +368,7 @@ export default function ContextPilotCredentials({
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map((row) => (
+              {visible.map((row) => (
                 <CredentialRow
                   key={row.id}
                   credential={row}
@@ -369,12 +378,18 @@ export default function ContextPilotCredentials({
               ))}
             </TableBody>
           </Table></TableContainer>
-        ) : (
-          !list.isLoading && (
-            <Typography variant="s3">
-              No read-only key for this version yet.
-            </Typography>
-          )
+        ) : null}
+        {!list.isError && folded.length > 0 && (
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            aria-expanded={showRevoked}
+            sx={{ alignSelf: "flex-start" }}
+            onClick={() => setShowRevoked((current) => !current)}
+          >
+            {showRevoked ? `Hide revoked keys (${folded.length})` : `Show revoked keys (${folded.length})`}
+          </Button>
         )}
         {revoke.isError && (
           <Alert severity="error">
@@ -399,7 +414,7 @@ export default function ContextPilotCredentials({
             onClick={() =>
               revoke.mutate(
                 { credentialId: revoking.id },
-                { onSuccess: () => setRevoking(null) },
+                { onSuccess: () => { setJustRevoked((current) => [...current, revoking.id]); setRevoking(null); } },
               )
             }
           >

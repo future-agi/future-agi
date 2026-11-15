@@ -78,7 +78,8 @@ describe("immutable detail and recovery", () => {
   it("never labels absent observations as delivered", () => {
     renderDetail(<ContextDetailView {...detail} sections={{ consumers: <p>Consumer observations</p> }} />);
     expect(screen.queryByText(/Delivered: Not observed/)).not.toBeInTheDocument();
-    expect(screen.getByText("Delivery: see Consumers")).toBeVisible();
+    expect(screen.queryByText("Delivery: see Consumers")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Connected apps" })).toBeVisible();
   });
   it("keeps a blocked compatibility member in the inventory", () => {
     render(<CompatibilityInventory items={[{ key: "binary", root: "assets/", kind: "skill", blocked: true, blockers: ["Binary dependency"] }]} closure={{ fileCount: 201, totalBytes: 500, linkCount: 1, blocked: true }} />);

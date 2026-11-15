@@ -87,7 +87,7 @@ describe("accepted dependency review", () => {
     check("Check update for refunds"); click("Preview dependency changes");
     await screen.findByText(/Compiled candidate/);
     expect(preview).toHaveBeenCalledWith({ revision: 12, links: session.contextSpec.links, refreshSkillIds: ["child"] });
-    check("Accept these linked-skill versions and update rules for 1 context."); click("Apply selected updates to draft");
+    check("Accept these skill versions and update rules into 1 context draft."); click("Apply selected updates to draft");
     await waitFor(() => expect(apply).toHaveBeenCalledOnce());
     expect(apply.mock.calls[0][0].expectedFingerprint).toBe("plan");
     expect(session.mutateDraft).toHaveBeenCalledOnce();
@@ -103,7 +103,7 @@ describe("accepted dependency review", () => {
     const session = draft(); const props = { scopeKey, session, onPreview: async () => ({ revision: 12, fingerprint: "plan", checks: { summary: { errors: 1 } } }), onApply: vi.fn() };
     const view = render(<ContextLinksPanel {...props} />);
     click("Preview dependency changes"); await screen.findByText(/blocking checks/);
-    check("Accept these linked-skill versions and update rules for 1 context.");
+    check("Accept these skill versions and update rules into 1 context draft.");
     expect(button("Apply selected updates to draft")).toBeDisabled();
     view.rerender(<ContextLinksPanel {...props} session={{ ...session, revision: 13 }} />);
     expect(screen.getByText(/draft changed/)).toBeVisible();
@@ -151,16 +151,45 @@ describe("lifecycle authority and exact consequences", () => {
   const review = { subjectId: "original-uuid", releaseRevision: 7, reviewFingerprint: digest, labels: [{ name: "production", version: 4, isProtected: true }] };
   it("denies recovery without current authority and displays retained protected labels", () => {
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} onApply={vi.fn()} />);
-    expect(screen.getByText("Retained production → v4 · protected")).toBeVisible();
-    expect(button("Recover original identity")).toBeDisabled();
+    expect(screen.getByText("Production will point at v4 again · protected. Apps following production pick it up on their next fetch.")).toBeVisible();
+    expect(button("Restore skill")).toBeDisabled();
+  });
+  it("explains a restore in plain words, with the ID folded away and no required note", async () => {
+    const apply = vi.fn(async () => ({ id: resource.id }));
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={{ ...review, blockers: ["A skill named refunds already exists."] }} canAct onApply={apply} />);
+    expect(screen.getByRole("heading", { name: "Restore skill" })).toBeVisible();
+    expect(screen.getByText("refunds")).toBeVisible();
+    expect(screen.queryByText(/original-uuid/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Technical details")); expect(screen.getByText("ID original-uuid")).toBeVisible();
+    expect(screen.getByText("Restoring brings back refunds with all its versions, labels and history. Agents can fetch it again, including through its labels.")).toBeVisible();
+    expect(screen.getByText("A skill named refunds already exists.")).toBeVisible();
+    expect(screen.queryByText(/Affected retained parents/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Note (optional)")).not.toBeRequired();
+    expect(screen.getByRole("checkbox", { name: "I've checked which labels come back with this skill." })).not.toBeChecked();
+  });
+  it("lets an unblocked restore go ahead without a note once the labels are acknowledged, and never before", async () => {
+    const apply = vi.fn(async () => ({ id: resource.id }));
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} canAct onApply={apply} />);
+    expect(button("Restore skill")).toBeDisabled();
+    check("I've checked which labels come back with this skill.");
+    expect(button("Restore skill")).not.toBeDisabled(); click("Restore skill");
+    await waitFor(() => expect(apply).toHaveBeenCalledOnce());
+    expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 7, expectedReviewFingerprint: digest, note: "" });
+  });
+  it("still requires a reason to archive", () => {
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="archive" resource={resource} review={{ subjectId: resource.id, releaseRevision: 7, impactFingerprint: "impact" }} canAct onApply={vi.fn()} />);
+    check("I reviewed this exact identity and its retained-label and load consequences.");
+    expect(button("Archive context")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "No longer used" } });
+    expect(button("Archive context")).not.toBeDisabled();
   });
   it("binds unarchive to reviewed release revision and refuses a namesake review", async () => {
     const apply = vi.fn(async () => ({ id: resource.id })); const props = { scopeKey, open: true, onClose: vi.fn(), action: "unarchive", resource, review, canAct: true, onApply: apply };
     const view = render(<ContextSafetyDialog {...props} review={{ ...review, subjectId: "namesake" }} />);
     expect(screen.getByRole("checkbox")).toBeDisabled();
     view.rerender(<ContextSafetyDialog {...props} />);
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover reviewed policy" } });
-    check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
+    fireEvent.change(screen.getByLabelText("Note (optional)"), { target: { value: "Recover reviewed policy" } });
+    check("I've checked which labels come back with this skill."); click("Restore skill");
     await waitFor(() => expect(apply).toHaveBeenCalledOnce());
     expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 7, expectedReviewFingerprint: digest, note: "Recover reviewed policy" });
   });
@@ -175,8 +204,8 @@ describe("lifecycle authority and exact consequences", () => {
   it("retries an unknown mutation using the original operation key", async () => {
     const apply = vi.fn().mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ id: resource.id });
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} canAct onApply={apply} />);
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover" } }); check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
-    await screen.findByText(/could not be confirmed/); click("Recover original identity");
+    fireEvent.change(screen.getByLabelText("Note (optional)"), { target: { value: "Recover" } }); check("I've checked which labels come back with this skill."); click("Restore skill");
+    await screen.findByText(/could not be confirmed/); click("Restore skill");
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(2));
     expect(apply.mock.calls[0]).toEqual(apply.mock.calls[1]);
   });
@@ -198,7 +227,7 @@ describe("additional recovery boundaries", () => {
   it("keeps the dialog close control visible but does not dismiss an in-flight mutation", async () => {
     const pending = deferred(); const close = vi.fn();
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={close} action="unarchive" resource={{ id: "resource", name: "policy" }} review={{ subjectId: "resource", releaseRevision: 1, reviewFingerprint: digest }} canAct onApply={() => pending.promise} />);
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover" } }); check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
+    fireEvent.change(screen.getByLabelText("Note (optional)"), { target: { value: "Recover" } }); check("I've checked which labels come back with this skill."); click("Restore skill");
     expect(button("Close")).toBeVisible(); click("Close"); expect(close).not.toHaveBeenCalled();
     await act(async () => pending.resolve({ id: "resource" }));
   });
