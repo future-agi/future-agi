@@ -49,6 +49,32 @@ PASSED_CHECKS = {
     "world_isolation": "passed",
 }
 BUNDLE_DIGEST = "sha256:" + "d" * 64
+# A world actor with no channel: it never speaks, it acts in the world (approves refunds).
+WORLD_ACTOR = {
+    "id": "claims_supervisor",
+    "name": "Dana Brooks",
+    "role": "claims supervisor who approves refunds",
+    "kind": "approver",
+    "permitted_actions": ["approvals.put"],
+}
+# What a finished trial left in World changes: the agent read the order, then committed one refund.
+TRIAL_STATE = {
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "attempted": 2,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["issue_refund"],
+            "read": 1,
+            "read_actions": ["lookup_order"],
+            "no_change": False,
+        }
+    ]
+}
 
 
 def _payload(count):
@@ -107,6 +133,20 @@ def _scenario(key, tools):
     }
 
 
+def _with_actor(documents):
+    """Each refund includes the world actor, brought in once a refund approval is asked for."""
+    for document in documents:
+        if document["scenario_key"].startswith("refund-"):
+            document["actors"] = [
+                {
+                    "id": WORLD_ACTOR["id"],
+                    "instruction": "Approve the refund when the agent asks.",
+                    "trigger": {"kind": "conditional", "collection": "approvals", "where": {"kind": "refund"}},
+                }
+            ]
+    return documents
+
+
 def _documents(refunds, lookups, suffix):
     """``refunds`` cases that issue a refund on their only path, then ``lookups`` that
     only look the order up; numbered in that order."""
@@ -117,7 +157,7 @@ def _documents(refunds, lookups, suffix):
     ]
 
 
-def _authoring(documents, *, certified, production_only):
+def _authoring(documents, *, certified, production_only, actors=False):
     contract = {"agent": "support", "tools": list(TOOLS)}
     if production_only:
         contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
@@ -136,6 +176,8 @@ def _authoring(documents, *, certified, production_only):
         "schema.sql": "create table orders(id int);",
         "handlers/lookup.py": "def handle(db):\n    return {}\n",
     }
+    if actors:
+        files["actors.json"] = {"schema": "futureagi.actors.v1", "actors": [WORLD_ACTOR]}
     for document in documents:
         files[f"scenarios/{document['name']}/scenario.json"] = document
         files[f"scenarios/{document['name']}/ready.py"] = (
@@ -185,8 +227,12 @@ def seed_environment(
     certified=True,
     production_only=None,
     failed_check=None,
+    actors=False,
+    trial=False,
 ):
-    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios."""
+    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; with ``actors`` its refunds
+    include a world actor with no channel, with ``trial`` one finished trial whose World changes hold a committed
+    write and a read."""
     from simulate.models import (
         AgentDefinition,
         AgentVersion,
@@ -203,6 +249,8 @@ def seed_environment(
     from simulate.services.hosted_harness_gateway import authoring_content_digest
 
     documents = _documents(refunds, lookups, suffix)
+    if actors:
+        documents = _with_actor(documents)
     environment, _ = create_hosted_job(
         organization,
         _payload(len(documents)),
@@ -231,8 +279,22 @@ def seed_environment(
             ],
         },
     )
+    if actors:
+        # The scenario rows carry each case's actors, as indexing the built suite writes them.
+        from simulate.models import HostedHarnessScenario
+        from simulate.services.harness_scenarios import call_actor_entries
+
+        for document in documents:
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, scenario_key=document["scenario_key"]
+            ).update(actors=call_actor_entries(document.get("actors")))
     body = archives.pack_archive(
-        _authoring(documents, certified=certified, production_only=production_only)
+        _authoring(
+            documents,
+            certified=certified,
+            production_only=production_only,
+            actors=actors,
+        )
     )
     object_key = archives.pair_key(organization.id, environment.id, body)
     archives.put_archive(object_key, body)
@@ -283,7 +345,9 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
+    trial_ids = _finished_trial(environment, definition, documents[0]) if trial else {}
     return {
+        **trial_ids,
         "environmentId": str(environment.id),
         "agentVersionId": str(environment.agent_version_id),
         "environmentVersionId": str(environment.environment_version_id),
@@ -291,6 +355,43 @@ def seed_environment(
         "scenarioKeys": [document["scenario_key"] for document in documents],
         "refundKeys": [d["scenario_key"] for d in documents[:refunds]],
         "lookupKeys": [d["scenario_key"] for d in documents[refunds:]],
+    }
+
+
+def _finished_trial(environment, definition, document):
+    """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
+    harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+    from simulate.models import HostedHarnessScenario
+    from simulate.models.test_execution import CallExecution, TestExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    # A call belongs to the scenario its trial ran, as a real run's calls do.
+    provisioned = HostedHarnessScenario.no_workspace_objects.get(
+        job=environment, scenario_key=document["scenario_key"]
+    )
+
+    execution = TestExecution.objects.create(
+        run_test_id=environment.run_test_id,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        total_calls=1,
+        agent_definition=definition,
+    )
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario_id=provisioned.scenario_id,
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={
+            "harness_scenario_key": document["scenario_key"],
+            "harness_trial_index": 0,
+            TRIAL_STATE_KEY: TRIAL_STATE,
+        },
+    )
+    return {
+        "runTestId": str(environment.run_test_id),
+        "testExecutionId": str(execution.id),
+        "callExecutionId": str(call.id),
     }
 
 
