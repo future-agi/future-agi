@@ -558,6 +558,66 @@ def test_a_post_build_turn_that_cannot_be_priced_keeps_its_usage_and_bills_nothi
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"models": 7},
+        {"models": [None, {}]},
+        {"usd": "a lot"},
+        {"unpriced_turns": [1]},
+    ],
+    ids=[
+        "models not a list",
+        "model not a string",
+        "usd not a number",
+        "unpriced list",
+    ],
+)
+def test_a_post_build_turn_with_a_malformed_usage_keeps_the_row_and_bills_nothing(
+    organization, monkeypatch, django_capture_on_commit_callbacks, bad
+):
+    """The chat process sends the six fields of ``_TURN_USAGE``; any other shape bills nothing."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    usage = {**_TURN_USAGE, **bad}
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "malformed-turn"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": usage},
+        )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == usage
+    assert turn.report is None
+    assert billed == []
+    # The shape the chat process sends is still billed.
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "well-formed-turn"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+    assert len(billed) == 1
+
+
+@pytest.mark.django_db
 def test_an_oss_post_build_turn_keeps_its_usage_unpriced(
     organization, monkeypatch, django_capture_on_commit_callbacks
 ):
