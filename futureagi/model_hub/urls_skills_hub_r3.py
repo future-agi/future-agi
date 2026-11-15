@@ -3,6 +3,9 @@
 from django.urls import path
 
 from model_hub.views.skills_hub_r3 import (
+    ArchivedSkillRestoreReviewView,
+    ArchivedSkillRestoreView,
+    ArchivedSkillsView,
     DraftCheckpointRestoreView,
     DraftCheckpointsView,
     SpendPolicyView,
@@ -27,6 +30,17 @@ from model_hub.views.skills_workflows import (
 
 # J1 retained migration: no source writes or release-label movement.
 urlpatterns = [
+    path("archived/", ArchivedSkillsView.as_view(), name="skills-archived"),
+    path(
+        "archived/<uuid:resource_id>/restore-review/",
+        ArchivedSkillRestoreReviewView.as_view(),
+        name="skills-archived-restore-review",
+    ),
+    path(
+        "archived/<uuid:resource_id>/restore/",
+        ArchivedSkillRestoreView.as_view(),
+        name="skills-archived-restore",
+    ),
     path(
         "intake/langfuse/preview/",
         LangfusePreviewView.as_view(),
