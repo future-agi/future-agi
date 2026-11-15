@@ -20,7 +20,7 @@ import CapabilityNotice from './CapabilityNotice';
 import ActionReason, { reasonProps } from './ActionReason';
 import { ScrollTable, stackedTableSx } from './responsiveTable';
 import When from './When';
-import { markTabFade } from './tabStrip';
+import { markTabFade, scrollTabsSx } from './tabStrip';
 import CodeBlock from 'src/components/code-block/CodeBlock';
 import { createTheme } from '@mui/material/styles';
 import { coverageText, evidenceCoverage, evidenceOutcome, outcomeBadge, outcomeLabel } from '../utils/review-display';
@@ -31,8 +31,11 @@ const people = [
   { id: 'reviewer-1', name: 'Noor', email: 'noor@example.invalid' },
   { id: 'reviewer-2', name: 'Alex', email: 'alex@example.invalid' },
 ];
-beforeEach(() => vi.clearAllMocks());
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+// restoreAllMocks below also empties setupTests' matchMedia mock, which ObjectHeader's
+// phone check reads; each test starts with a plain desktop matchMedia instead.
+const desktopMedia = (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('matchMedia', desktopMedia); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('IdentityChip', () => {
   it('shortens presentation but copies the full original digest with a labelled action', async () => {
@@ -261,6 +264,31 @@ it('renders object navigation, purpose, identity and tabs in hierarchy order', (
   expect(screen.getByText('Handle refunds')).toBeVisible();
   expect(screen.getByRole('tablist', { name: 'Skill sections' })).toBeInTheDocument();
 });
+// UX iteration 5, SH3: one phone layout for skill and context headers.
+describe('ObjectHeader on a phone', () => {
+  const header = () => <MemoryRouter><ObjectHeader crumbs={[{ label: 'Skills', to: '/dashboard/skills' }, { label: 'refund-policy' }]} title="refund-policy" purpose="Use when a customer asks for a refund on a damaged, defective or unwanted order." identity={<p>Viewing v2</p>} actions={<><button type="button">Edit latest v2</button><button type="button">Skill actions</button></>} tabs={<div role="tablist" aria-label="Skill sections" />} /></MemoryRouter>;
+  const follows = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  it('orders title, purpose (two lines), identity, then the actions on their own left-aligned row', () => {
+    vi.stubGlobal('matchMedia', (query) => ({ matches: /max-width/.test(query), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+    render(header());
+    const order = [screen.getByRole('heading', { level: 1 }), screen.getByText(/^Use when a customer/), screen.getByText('Viewing v2'), screen.getByRole('button', { name: 'Edit latest v2' }), screen.getByRole('button', { name: 'Skill actions' }), screen.getByRole('tablist')];
+    order.slice(1).forEach((node, index) => expect(follows(order[index], node)).toBe(true));
+    const row = screen.getByRole('button', { name: 'Edit latest v2' }).closest('[data-object-actions]');
+    expect(row).toContainElement(screen.getByRole('button', { name: 'Skill actions' }));
+    expect(row).toHaveStyle({ justifyContent: 'flex-start', flexWrap: 'wrap' });
+    // The purpose keeps to two lines; its full text stays available.
+    const purpose = screen.getByText(/^Use when a customer/);
+    expect(purpose).toHaveAttribute('title', 'Use when a customer asks for a refund on a damaged, defective or unwanted order.');
+    const css = [...document.querySelectorAll('style')].map((node) => node.textContent).join('\n');
+    expect(css).toMatch(/-webkit-line-clamp:\s*2/);
+  });
+  it('keeps the desktop header unchanged: actions beside the title, before the identity row', () => {
+    const { container } = render(header());
+    expect(follows(screen.getByRole('button', { name: 'Edit latest v2' }), screen.getByText('Viewing v2'))).toBe(true);
+    expect(container.querySelector('[data-object-actions]')).toBeNull();
+    expect(screen.getByText(/^Use when a customer/)).not.toHaveAttribute('title');
+  });
+});
 it('treats capability off as neutral information, with optional details', () => {
   render(<CapabilityNotice title="Repository rollouts are off" description="Existing records stay readable." actions={<button>Open records</button>} details="Technical configuration" />);
   expect(screen.getByRole('heading', { name: 'Repository rollouts are off' })).toBeVisible();
@@ -276,6 +304,8 @@ it('adds the shared vocabulary without merging approval, release or delivery', (
   expect(RUN_STATUS.not_observed).toEqual({ role: 'neutral', label: 'Not observed', shape: 'hollow' });
   expect(RUN_STATUS.checking).toEqual({ role: 'info', label: 'Checking', shape: 'live' });
   for (const key of ['pinned', 'stale', 'superseded', 'held', 'excluded', 'update_available', 'up_to_date', 'unavailable', 'private']) expect(RUN_STATUS[key]).toBeDefined();
+  // A revoked key ended normally (UX iteration 5, SH7): neutral grey, never the error red.
+  expect(RUN_STATUS.revoked).toEqual({ role: 'neutral', label: 'Revoked' });
 });
 
 describe('ActionReason', () => {
@@ -323,6 +353,13 @@ describe('When', () => {
     await user.tab();
     expect(screen.getByText('12 min ago')).toHaveFocus();
     expect(await screen.findByRole('tooltip')).toHaveTextContent('14 Nov 2026, 00:36 UTC');
+  });
+  it('reads a short expiry under an Expires header, with the full UTC time kept for the tooltip', () => {
+    const now = Date.parse('2026-11-14T00:00:00Z');
+    render(<><When value="2026-12-13T00:00:00Z" kind="expiry-short" now={now} /><When value="2026-11-12T00:00:00Z" kind="expiry-short" now={now} /><When value="2026-12-13T00:00:00Z" kind="expiry" now={now} /></>);
+    expect(screen.getByText('in 29 days')).toHaveAttribute('datetime', '2026-12-13T00:00:00.000Z');
+    expect(screen.getByText('expired 2 days ago')).toBeVisible();
+    expect(screen.getByText('Expires in 29 days')).toBeVisible();
   });
   it('says Not reported for a missing time instead of inventing one', () => {
     render(<When value={undefined} />);
@@ -416,7 +453,7 @@ describe('evidence rows in a narrow container', () => {
     expect(screen.getByRole('checkbox', { name: 'Attach Application test' })).toBeDisabled();
     expect(screen.queryByText(/Text comparison|Application verification/)).not.toBeInTheDocument();
   });
-  it('stacks rows under 720px: title and result, coverage, then visibility and expiry with an outlined Inspect', () => {
+  it('stacks rows under 720px: title and result, coverage, then visibility and expiry with a text Inspect', () => {
     withBoxWidth(390, () => {
       const inspect = vi.fn();
       render(<EvidenceSummary items={items} selectable onToggle={vi.fn()} onInspect={inspect} />);
@@ -430,7 +467,8 @@ describe('evidence rows in a narrow container', () => {
       for (const node of list.querySelectorAll('p, span')) expect(node.textContent.trimStart().startsWith('·')).toBe(false);
       expect(first).toHaveTextContent(/Workspace · Expire[sd] /);
       const button = within(first).getByRole('button', { name: 'Inspect' });
-      expect(button).toHaveClass('MuiButton-outlined');
+      expect(button).toHaveClass('MuiButton-text');
+      expect(button).toHaveClass('MuiButton-sizeSmall');
       fireEvent.click(button);
       expect(inspect).toHaveBeenCalledWith(items[0]);
       // Same controls and names as the table, including the share rule.
@@ -442,12 +480,80 @@ describe('evidence rows in a narrow container', () => {
       expect(within(second).getByText('Coverage not reported')).toBeVisible();
     });
   });
-  it('keeps the table from 720px, with Inspect outlined there too', () => {
+  it('keeps the table from 720px, with Inspect as a small text row action there too', () => {
     withBoxWidth(900, () => {
       render(<EvidenceSummary items={items} onInspect={vi.fn()} />);
       expect(screen.getByRole('table', { name: 'Test evidence' })).toBeVisible();
-      expect(screen.getAllByRole('button', { name: 'Inspect' })[0]).toHaveClass('MuiButton-outlined');
+      expect(screen.getAllByRole('button', { name: 'Inspect' })[0]).toHaveClass('MuiButton-text');
+      expect(screen.getAllByRole('button', { name: 'Inspect' })[0]).toHaveClass('MuiButton-sizeSmall');
     });
+  });
+  // UX iteration 5, SH5: no header word repeated in every cell, and no sentence repeated on every private row.
+  it('reads short cells under their headers: "in 7 days" under Expires, and no visible text over the Inspect buttons', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-14T00:00:00Z'));
+    withBoxWidth(900, () => {
+      render(<EvidenceSummary items={[items[0], { ...items[0], id: 'run-9', expiresAt: '2026-11-12T00:00:00Z' }]} onInspect={vi.fn()} />);
+      const headers = screen.getAllByRole('columnheader');
+      expect(headers.map((cell) => cell.textContent)).toEqual(['Evidence', 'Result', 'Coverage', 'Visibility', 'Expires', '']);
+      expect(headers.at(-1)).toHaveAccessibleName('Actions');
+      expect(screen.queryByRole('columnheader', { name: 'Inspect' })).not.toBeInTheDocument();
+      expect(screen.getByText('in 7 days')).toBeVisible();
+      expect(screen.getByText('expired 2 days ago')).toBeVisible();
+      expect(screen.queryByText(/^Expires in|^Expired/)).not.toBeInTheDocument();
+    });
+  });
+  it('keeps the long expiry in stacked rows, where no header names it', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-14T00:00:00Z'));
+    withBoxWidth(390, () => {
+      render(<EvidenceSummary items={[items[0]]} onInspect={vi.fn()} />);
+      expect(screen.getByText('Expires in 7 days')).toBeVisible();
+    });
+  });
+  it('marks a private row with the Private badge only; the caller explains sharing once', () => {
+    withBoxWidth(900, () => {
+      render(<EvidenceSummary items={[{ ...items[0], visibility: 'private' }, { ...items[0], id: 'run-10', visibility: 'private' }]} selectable onToggle={vi.fn()} onInspect={vi.fn()} />);
+      expect(screen.getAllByText('Private')).toHaveLength(2);
+      expect(screen.queryByText(/Only you can see this result/)).not.toBeInTheDocument();
+      // A private result still can't be attached until it is shared.
+      screen.getAllByRole('checkbox', { name: 'Attach Answer check' }).forEach((box) => expect(box).toBeDisabled());
+    });
+  });
+});
+
+// UX iteration 5, SH4: the arrows show only while the tabs really overflow the strip.
+describe('tab strip arrows', () => {
+  // A Tabs root holding [arrow] scroller [arrow]; each shown arrow is `arrow` px wide and takes that from the scroller.
+  function stripWith({ content, width, arrowsShown }) {
+    const root = document.createElement('div');
+    const scroller = document.createElement('div');
+    const arrow = () => Object.assign(document.createElement('div'), { className: 'MuiTabs-scrollButtons', getBoundingClientRect: () => ({ width: arrowsShown ? 32 : 0 }) });
+    root.append(arrow(), scroller, arrow());
+    Object.defineProperty(scroller, 'scrollWidth', { value: content, configurable: true });
+    Object.defineProperty(scroller, 'clientWidth', { value: width - (arrowsShown ? 64 : 0), configurable: true });
+    Object.defineProperty(scroller, 'scrollLeft', { value: 0, configurable: true });
+    scroller.getBoundingClientRect = () => ({ left: 0, right: scroller.clientWidth });
+    return { root, scroller };
+  }
+  it('hides the arrows when every tab fits, as on rollout detail at 1440', () => {
+    const { root, scroller } = stripWith({ content: 342, width: 1100, arrowsShown: true });
+    markTabFade(scroller);
+    expect(root).toHaveAttribute('data-tab-overflow', 'false');
+  });
+  it('does not let a shown arrow keep itself showing, nor count a sub-pixel difference', () => {
+    const shown = stripWith({ content: 500, width: 500, arrowsShown: true });
+    markTabFade(shown.scroller);
+    expect(shown.root).toHaveAttribute('data-tab-overflow', 'false');
+    const subpixel = stripWith({ content: 501, width: 500, arrowsShown: false });
+    markTabFade(subpixel.scroller);
+    expect(subpixel.root).toHaveAttribute('data-tab-overflow', 'false');
+  });
+  it('keeps the arrows while the tabs overflow, as on a phone', () => {
+    const { root, scroller } = stripWith({ content: 520, width: 326, arrowsShown: false });
+    markTabFade(scroller);
+    expect(root).toHaveAttribute('data-tab-overflow', 'true');
+  });
+  it('hides the arrows only through the measured flag', () => {
+    expect(scrollTabsSx['&[data-tab-overflow="false"] > .MuiTabs-scrollButtons']).toEqual({ display: 'none' });
   });
 });
 

@@ -101,7 +101,8 @@ export const RUN_STATUS = {
   healthy: { role: "success", label: "Healthy" },
   degraded: { role: "warning", label: "Degraded" },
   unreachable: { role: "danger", label: "Unreachable" },
-  revoked: { role: "danger", label: "Revoked" },
+  // Revoking a key is a normal end of its life, not an error: grey, like stopped or cancelled.
+  revoked: { role: "neutral", label: "Revoked" },
   expired: { role: "warning", label: "Expired" },
   delivered: { role: "success", label: "Delivered" },
   dead_letter: { role: "neutral", label: "Dead letter" },

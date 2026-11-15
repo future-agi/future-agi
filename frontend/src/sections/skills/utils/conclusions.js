@@ -89,9 +89,10 @@ export function nativeConclusion({ candidate, reference, passed, total, result, 
     : `the recorded failure ${result.reproduction === 'not_reproduced' ? 'did not reproduce' : 'was not verified'}`;
   return `${result.repair_verified ? 'Repair verified' : 'Repair not verified'}: ${lead}; ${reproduction}.`;
 }
-const CHECK_NAMES = { selection: 'skill selection', delivery: 'file delivery', tools: 'business tool', answer: 'answer' };
+// The same check names the Tests table uses, so a failing case reads the same everywhere.
+const CHECK_NAMES = { selection: 'Skill selected', delivery: 'File delivered', tools: 'Business tool', answer: 'Answer' };
 const GRADED = new Set(['pass', 'fail', 'not_applicable']);
-// One line per reviewed case, per context version: "v1 failed business tool". Ungraded work says so.
+// One line per reviewed case, per context version: "v1 failed: Business tool, Answer". Ungraded work says so.
 export function nativeCaseLines(cases = []) {
   const byCase = new Map();
   cases.forEach((cell) => byCase.set(cell.caseId, [...(byCase.get(cell.caseId) || []), cell]));
@@ -103,7 +104,7 @@ export function nativeCaseLines(cases = []) {
       const failed = Object.keys(CHECK_NAMES).filter((key) => cell[key] === 'fail');
       const ungraded = cell.status !== 'completed' || Object.keys(CHECK_NAMES).some((key) => !GRADED.has(cell[key]));
       const name = `${cell.version ? `v${cell.version}` : cell.variant}${cells.filter((other) => other.variant === cell.variant).length > 1 ? ` (run ${cell.repeatIndex + 1})` : ''}`;
-      return `${name} ${failed.length ? `failed ${failed.map((key) => CHECK_NAMES[key]).join(', ')}` : ungraded ? 'not fully graded' : 'passed every check'}`;
+      return `${name} ${failed.length ? `failed: ${failed.map((key) => CHECK_NAMES[key]).join(', ')}` : ungraded ? 'not fully graded' : 'passed every check'}`;
     }).join(' · '),
   }));
 }
@@ -119,13 +120,12 @@ export function nativeSummaryConclusion(summary) {
   }).length;
   return nativeConclusion({ candidate: candidate[0]?.version, reference: cases.find((cell) => cell.variant === 'reference')?.version, passed, total: ids.length, result: summary.result });
 }
-// Release impact in one sentence: "1 connected consumer follows this label and moves with it; 1 is pinned and stays put."
+// Release impact as short sentences: "2 connected apps move with this release. 1 is pinned and stays put."
 export function impactSentence({ following = 0, pinned = 0, unobserved = 0 }) {
-  const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
-  const parts = [
-    following ? `${plural(following, 'connected consumer follows this label and moves', 'connected consumers follow this label and move')} with it` : 'No connected consumer follows this label',
-    pinned ? `${plural(pinned, 'is', 'are')} pinned and stays put` : null,
-    unobserved ? `${plural(unobserved, 'registered application has', 'registered applications have')} not reported a version yet` : null,
-  ].filter(Boolean);
-  return `${parts.join('; ')}.`;
+  const moving = following === 0 ? 'No connected apps move' : following === 1 ? '1 connected app moves' : `${following} connected apps move`;
+  return [
+    `${moving} with this release.`,
+    pinned ? `${pinned} ${pinned === 1 ? 'is pinned and stays' : 'are pinned and stay'} put.` : null,
+    unobserved ? `${unobserved} ${unobserved === 1 ? "app hasn't" : "apps haven't"} reported a version yet.` : null,
+  ].filter(Boolean).join(' ');
 }

@@ -26,7 +26,7 @@ describe("application verification headline", () => {
     expect(nativeConclusion({ decision: "hold" })).toBe("Hold this release.");
   });
   it("names failed checks per version and never calls ungraded work a pass", () => {
-    expect(nativeCaseLines(repair.cases)).toEqual([{ caseId: "case-1", title: "Blender refund refunded shipping", text: "v7 passed every check · v4 failed business tool" }]);
+    expect(nativeCaseLines(repair.cases)).toEqual([{ caseId: "case-1", title: "Blender refund refunded shipping", text: "v7 passed every check · v4 failed: Business tool" }]);
     expect(nativeCaseLines([cell("candidate", 7, { answer: "unverifiable" })])[0].text).toBe("v7 not fully graded");
     expect(nativeCaseLines([cell("candidate", 7, {}, "error")])[0].text).toBe("v7 not fully graded");
     expect(nativeSummaryConclusion({ ...repair, cases: [cell("candidate", 7, { answer: "not_graded" }), repair.cases[1]], result: { ...repair.result, repair_verified: false } }))
@@ -40,7 +40,7 @@ describe("review packet evidence", () => {
     render(<MemoryRouter><ReleaseReviewBody packet={packet} changes={changes} capabilities={capability} summaries={[repair]} /></MemoryRouter>);
     const headline = screen.getByText("Repair verified: v7 passed 1 of 1 cases; the recorded failure reproduced on v4.");
     expect(headline).toBeVisible();
-    expect(screen.getByText("Blender refund refunded shipping: v7 passed every check · v4 failed business tool")).toBeVisible();
+    expect(screen.getByText("Blender refund refunded shipping: v7 passed every check · v4 failed: Business tool")).toBeVisible();
     // The row states the outcome once; exact grading counts and the evidence ID are read in Inspect.
     expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);

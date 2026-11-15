@@ -75,6 +75,16 @@ export function formatExpiry(value, { now = Date.now() } = {}) {
   return amount ? `Expired ${amount} ago` : 'Expired just now';
 }
 
+/** "in 7 days" / "expired 2 days ago": the expiry under an "Expires" column header. */
+export function formatExpiryShort(value, { now = Date.now() } = {}) {
+  const time = timestampOf(value);
+  if (time == null) return '';
+  const delta = time - now;
+  const amount = span(Math.abs(delta));
+  if (delta > 0) return amount ? `in ${amount}` : 'in less than a minute';
+  return amount ? `expired ${amount} ago` : 'expired just now';
+}
+
 /** "14 Nov 2026, 00:48 UTC": the exact time for tooltips and Details. */
 export function formatUtcFull(value) {
   const time = timestampOf(value);

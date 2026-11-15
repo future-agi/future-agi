@@ -141,7 +141,7 @@ it('states evidence, impact, permissions and files once in a key/value table, wi
   expect(summaryRows().getByText('1 file changed · 0 linked skills changed')).toBeVisible();
   // Nothing below restates a summary fact.
   expect(screen.getAllByText('No permission changes found.')).toHaveLength(1);
-  expect(screen.getAllByText(/connected consumer|follow/i).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/connected apps? moves? with this release/i).length).toBeGreaterThan(0);
   expect(screen.queryByText('Who is affected', { selector: 'h2,h3,h4,h5,h6,p,span' })).not.toBeInTheDocument();
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
   // Engineering words and raw hashes are not primary content.

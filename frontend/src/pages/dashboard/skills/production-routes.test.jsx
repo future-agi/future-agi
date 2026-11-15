@@ -331,7 +331,7 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   const acknowledge = await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ });
   await waitFor(() => expect(acknowledge).toBeEnabled());
   // The conclusion card and the Who is affected section both state the impact.
-  if (kind === 'agent_context') screen.getAllByText(/2 connected consumers follow this label and move with it; 1 is pinned and stays put/).forEach((node) => expect(node).toBeVisible());
+  if (kind === 'agent_context') screen.getAllByText(/2 connected apps move with this release\. 1 is pinned and stays put\./).forEach((node) => expect(node).toBeVisible());
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
