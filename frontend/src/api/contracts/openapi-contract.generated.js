@@ -68891,6 +68891,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 20,
           minimum: 1,
         },
+        seed: {
+          title: "Seed",
+          description:
+            "The same seed draws the same personas and variations again; absent keeps the environment's.",
+          type: "integer",
+          maximum: 9007199254740991,
+          minimum: 0,
+          "x-nullable": true,
+        },
         agent_version_id: {
           title: "Agent version id",
           type: "string",
@@ -113689,6 +113698,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           default: 1,
           minimum: 1,
+        },
+        seed: {
+          title: "Seed",
+          type: "integer",
+          "x-nullable": true,
         },
         agent_type: {
           title: "Agent type",

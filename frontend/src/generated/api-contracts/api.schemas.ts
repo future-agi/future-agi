@@ -20394,6 +20394,12 @@ export interface HarnessRunCreateApi {
    * @maximum 20
    */
   trials?: number;
+  /**
+   * The same seed draws the same personas and variations again; absent keeps the environment's.
+   * @minimum 0
+   * @maximum 9007199254740991
+   */
+  seed?: number;
   agent_version_id?: string | null;
   environment_version_id?: string | null;
   suite_version_id?: string | null;
@@ -26356,6 +26362,7 @@ export interface RunExecutionApi {
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
+  seed?: number;
   /** @minLength 1 */
   agent_type: string;
   resume: RunResumeApi;
