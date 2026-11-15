@@ -198,16 +198,6 @@ def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
     return found
 
 
-def same_drops(queryset: Any, documents: Mapping[str, Any] | None) -> Any:
-    """Only the suite versions holding the same dropped scenarios. The hash covers the scenarios
-    alone, so two versions that drop different ones can share it; reusing the other would lose
-    what a later rebuild restores from."""
-    drops = (documents or {}).get("dropped")
-    if drops:
-        return queryset.filter(documents__dropped=drops)
-    return queryset.filter(documents__dropped__isnull=True)
-
-
 def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     """The suite's scenarios, from its index or else from each folder's document."""
     listed = _json(suite, "scenarios.json")
@@ -352,8 +342,6 @@ def _land(
         hash_kind=hash_kind,
         status=VersionStatus.ACTIVE,
     )
-    if model is HarnessSuiteVersion:
-        found = same_drops(found, values.get("documents"))
     existing = found.order_by("-version_number").first()
     if existing is not None:
         return existing, False

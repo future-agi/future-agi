@@ -26,7 +26,6 @@ from simulate.services.harness_versioning.versions import (
     _stage_outputs,
     environment_change,
     prepare_pieces,
-    same_drops,
     suite_change,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -205,8 +204,6 @@ def active_twin(model: Any, locked: HostedHarnessJob, draft: Any) -> Any | None:
         hash_kind=draft.hash_kind,
         status=VersionStatus.ACTIVE,
     )
-    if model is HarnessSuiteVersion:
-        found = same_drops(found, draft.documents)
     return found.order_by("-version_number").first()
 
 
