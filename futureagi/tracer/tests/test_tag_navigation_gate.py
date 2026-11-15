@@ -117,3 +117,25 @@ def test_navigation_discovery_is_finite_and_empty_never_scans_assignments(
     assert limits["settings"]["max_result_rows"] == 513
     assert 0 < limits["server_execution_cap_ms"] <= 10000
     assert limits["settings"]["result_overflow_mode"] == "throw"
+
+
+def test_navigation_rejects_oversized_project_scope_before_source_read():
+    filters = window(leaf("tag", ["wanted"], "in"))
+    builder = SpanListQueryBuilderV2(project_id=PROJECT, filters=filters)
+    _, params = builder.build_filter_navigation_target_query(
+        target_id="current", result_limit=2
+    )
+    projects = tuple(
+        f"{index:08x}-0000-0000-0000-000000000000" for index in range(4096)
+    )
+    for key, value in list(params.items()):
+        if isinstance(value, effective_tags.EffectiveTagRelation):
+            params[key] = effective_tags.EffectiveTagRelation(projects, value.values)
+
+    def execute(*args, **kwargs):
+        pytest.fail("oversized authorized project scope must be rejected before SQL")
+
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.prepare_effective_tag_params(
+            execute, params, deadline=ReadDeadline.start(10000)
+        )

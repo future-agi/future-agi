@@ -1135,12 +1135,21 @@ def prepare_effective_tag_params(
     # Reject oversized names before building PostgreSQL JSONB predicates. The
     # builder normally carries these arrays too; include relation-only callers
     # (e.g. graph scheduling preflight) without counting equal arrays twice.
-    name_params = {
+    request_scope_params = {
         f"__tag_names_{index}": list(request.values)
         for index, request in enumerate(pending.values())
         if request.values is not None
     }
-    if shared_tag_parameter_bytes({**bound, **name_params}) > MAX_TAG_OVERLAY_BYTES:
+    request_scope_params.update(
+        {
+            f"__tag_projects_{index}": request.project_ids
+            for index, request in enumerate(pending.values())
+        }
+    )
+    if (
+        shared_tag_parameter_bytes({**bound, **request_scope_params})
+        > MAX_TAG_OVERLAY_BYTES
+    ):
         raise TagReadUnavailable("tag_overlay_budget_exceeded")
     empty_navigation_target = False
     if not ids and "candidate_span_ids" in params:
@@ -1231,7 +1240,10 @@ def prepare_effective_tag_params(
     # including all leaves and authorized project branches. Multiplying by an
     # assumed number of subqueries both rejected valid batches and undercounted
     # the real SQL. The final rendered statement is checked separately there.
-    if shared_tag_parameter_bytes({**bound, **name_params}) > MAX_TAG_OVERLAY_BYTES:
+    if (
+        shared_tag_parameter_bytes({**bound, **request_scope_params})
+        > MAX_TAG_OVERLAY_BYTES
+    ):
         raise TagReadUnavailable("tag_overlay_budget_exceeded")
     deadline.remaining_ms()
     return bound
