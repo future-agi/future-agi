@@ -17,6 +17,10 @@ from tracer.tests.test_derived_metric_backfill_clickhouse import (  # noqa: F401
     fields,
     history_writer,
 )
+from tracer.tests.test_derived_metric_changes_clickhouse import (  # noqa: F401
+    NOW,
+    store,
+)
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     live_writer,
     metric_ch,
@@ -171,3 +175,34 @@ def test_partial_repair_then_overflow_matches_latest_source(
     buckets = metric_bucket_rows(writer, head, definition)
     assert sum(row[3] for row in buckets) == sum(truth.values())
     assert sum(row[2] for row in buckets) == len(truth)
+
+
+@pytest.mark.integration
+def test_owner_probe_checks_truncation_before_dropping_empty_ids(store, monkeypatch):
+    store.client.execute("SYSTEM STOP MERGES spans")
+    for version, session in enumerate((None, changes.NIL_UUID, store.a), start=1):
+        store.client.execute(
+            "INSERT INTO spans (project_id, org_id, trace_id, id, start_time, "
+            "trace_session_id, _version) VALUES",
+            [
+                (
+                    store.project,
+                    store.org,
+                    store.trace,
+                    store.span,
+                    NOW,
+                    session,
+                    version,
+                )
+            ],
+        )
+    monkeypatch.setattr(changes, "MAX_KEYS", 1)
+    # The two-row sentinel contains at most one nonempty id. Filtering first
+    # would hide truncation and permit cursor progress over an incomplete set.
+    with pytest.raises(changes.arrivals.ContinuousCandidateOverflow, match="owner cap"):
+        changes._physical_units(
+            store.analytics,
+            (changes.SourceKey(store.trace, store.span),),
+            {"project_id": str(store.project), "org_id": str(store.org)},
+            changes.MetricReadBudget(),
+        )

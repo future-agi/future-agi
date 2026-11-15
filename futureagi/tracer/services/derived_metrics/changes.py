@@ -445,6 +445,12 @@ def _physical_units(analytics, keys, params, budget):
             },
             budget,
         )
+        # Check the sentinel BEFORE normalizing away NULL/nil ids. Otherwise
+        # a truncated page containing those rows could look within the cap.
+        if len(rows) > MAX_KEYS:
+            raise arrivals.ContinuousCandidateOverflow(
+                "metric physical owner cap exceeded"
+            )
         sessions.update(_nonempty(row["raw_session_id"]) for row in rows)
         sessions.discard("")
         _limit(sessions)
