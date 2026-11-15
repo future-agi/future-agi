@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from django.conf import settings as django_settings
 from django.core.cache import CacheHandler, caches
 from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
@@ -108,7 +109,8 @@ def test_standard_redis_startup_permits_storage_readiness_without_cache_io(
         side_effect=AssertionError("no cache I/O at startup"),
     ):
         SdkConfig("tracer", tracer).ready()
-    factory.assert_called_once_with(settings)
+    factory.assert_called_once_with(django_settings)
+    assert django_settings.CACHES["default"] == config
     factory.return_value.verify_readiness.assert_called_once_with()
 
 
