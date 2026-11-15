@@ -12,30 +12,40 @@ from django.core.management import call_command
 from django.db import connection
 
 from tracer.management.commands import reconcile_legacy_trace_tags as reconcile
+from tracer.models.entity_tag_assignment import EntityTagAssignment
+from tracer.services.clickhouse.read_budget import ReadDeadline
 from tracer.services.clickhouse.v2 import get_v2_config
+from tracer.services.clickhouse.v2.entity_tag_targets import (
+    TRACE_ASSIGNMENT_HOUR,
+    TagTarget,
+)
+from tracer.services.entity_tag_assignments import _save_assignment
 from tracer.services.entity_tag_reads import attach_legacy_trace_tags
+from tracer.services.entity_tags import effective_tags
 from tracer.tests.test_entity_tag_assignment_postgres import assignment_schema  # noqa: F401
 from tracer.tests.test_entity_tag_target import PROJECT
 from tracer.tests.test_entity_tag_targets_ch25 import OTHER_PROJECT
 
 
-def test_upgrade_docs_run_second_reconcile_immediately_after_rollout():
+def test_upgrade_docs_require_stopped_writers_and_review_before_editor_start():
     guide = (Path(__file__).resolve().parents[3] / "deploy/README.md").read_text()
     upgrade = guide.split("### Upgrading a production install", 1)[1].split("### ", 1)[
         0
     ]
     steps = (
+        "$COMPOSE --profile '*' stop $WRITERS",
         "reconcile_legacy_trace_tags --dry-run",
+        "STOP for human review",
         "reconcile_legacy_trace_tags\n",
+        "reconcile_legacy_trace_tags --dry-run",
+        "Only after final reconciliation is complete",
         "$COMPOSE up -d",
-        "reconcile_legacy_trace_tags\n",
-        "If it reports rows changed during the scan",
     )
     position = 0
     for step in steps:
         position = upgrade.index(step, position) + len(step)
-    assert "run the second apply immediately after" in upgrade
-    assert "there is no mechanism to gate the new editor" in upgrade
+    assert "Two online passes are unsafe" in upgrade
+    assert "old tabs to close/reload" in upgrade
     assert "collector's root-span writes" in upgrade
     assert "tags DEFAULT '[]'" in upgrade
 
@@ -166,6 +176,89 @@ def stores(request, django_db_blocker, monkeypatch):
         with django_db_blocker.unblock(), connection.cursor() as cursor:
             cursor.execute("DROP TABLE tracer_trace")
             cursor.execute("ALTER TABLE tracer_project DROP COLUMN organization_id")
+
+
+def _legacy_write(trace, tags, django_db_blocker):
+    # Model the acknowledged legacy PATCH: only PostgreSQL trace tags change.
+    with django_db_blocker.unblock(), connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE tracer_trace SET tags = %s::jsonb WHERE id = %s",
+            [json.dumps(tags), trace],
+        )
+
+
+def _first_assignment(trace, tags, django_db_blocker):
+    target = TagTarget((PROJECT, "trace", trace, "", TRACE_ASSIGNMENT_HOUR, "", ""), {})
+    with django_db_blocker.unblock():
+        revision = _save_assignment(
+            target,
+            {"expected_tag_revision": 0, "tags": [{"name": name} for name in tags]},
+            ReadDeadline.start(3000),
+        )
+        saved = EntityTagAssignment.objects.using("default").get(trace_id=trace)
+    assert revision == saved.revision == 1
+    return saved.manual_tags
+
+
+@pytest.mark.parametrize("save_after_final_pass", [False, True])
+def test_online_passes_and_stale_first_save_are_explicitly_unsupported(
+    stores, django_db_blocker, save_after_final_pass
+):
+    """L4-1 witness: command success is NOT an editor-exposure barrier.
+
+    No application-level gate is claimed. The documented stopped-writer protocol
+    excludes this sequence; doc/command-order tests verify that exclusion.
+    """
+    seed, latest, version, legacy_tags = stores
+    trace = seed(PROJECT, ["A"], ["stale"])
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    stale_grid = legacy_tags(trace)
+    assert stale_grid == ["A"]
+    _legacy_write(trace, ["A", "B"], django_db_blocker)
+    if save_after_final_pass:
+        call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    manual = _first_assignment(trace, stale_grid + ["C"], django_db_blocker)
+    if not save_after_final_pass:
+        call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    assert latest(trace) == ["A", "B"]
+    before = version(trace)
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    assert version(trace) == before
+    # Repeated reconciliation cannot repair an assignment made from stale state.
+    assert effective_tags({}, manual_tags=manual, legacy_tags=legacy_tags(trace))[
+        "tags"
+    ] == [{"name": "A"}, {"name": "C"}]
+
+
+def test_final_reconciliation_then_fresh_read_preserves_last_legacy_edit(
+    stores, django_db_blocker
+):
+    seed, latest, version, legacy_tags = stores
+    trace = seed(PROJECT, ["A"], ["stale"])
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())  # rehearsal only
+    stale_grid = legacy_tags(trace)
+    _legacy_write(trace, ["A", "B"], django_db_blocker)
+    # The supported protocol stops ALL writers here. No new assignment/save or
+    # editor read is exposed until the final pass and its review are complete.
+    with django_db_blocker.unblock():
+        assert not EntityTagAssignment.objects.filter(trace_id=trace).exists()
+    output = StringIO()
+    call_command("reconcile_legacy_trace_tags", "--dry-run", stdout=output)
+    assert "would mirror 1 trace(s)" in output.getvalue()
+    assert latest(trace) == ["A"]  # dry-run really does not apply
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    verification = StringIO()
+    call_command("reconcile_legacy_trace_tags", "--dry-run", stdout=verification)
+    assert "would mirror 0 trace(s)" in verification.getvalue()
+    assert "no CH trace row 0; changed during scan 0" in verification.getvalue()
+    fresh_grid = legacy_tags(trace)  # required reload/refetch, NOT stale_grid
+    assert fresh_grid == ["A", "B"] and stale_grid == ["A"]
+    before = version(trace)
+    manual = _first_assignment(trace, fresh_grid + ["C"], django_db_blocker)
+    assert effective_tags({}, manual_tags=manual, legacy_tags=legacy_tags(trace))[
+        "tags"
+    ] == [{"name": "A"}, {"name": "B"}, {"name": "C"}]
+    assert latest(trace) == ["A", "B"] and version(trace) == before
 
 
 def test_dry_run_reconcile_and_second_run_do_not_duplicate(stores):
@@ -380,6 +473,13 @@ def test_dual_write_between_pg_tags_and_full_ch_read_is_skipped(
         assert (
             "would mirror 0 trace(s)" if dry_run else "mirrored 0 trace(s)"
         ) in lines[-2]
+        # The logged cursor is not permission to ignore skipped earlier rows.
+        # Once writers stop, a full repeat verifies the final PG/CH state.
+        repeat = StringIO()
+        call_command("reconcile_legacy_trace_tags", "--dry-run", stdout=repeat)
+        assert "scanned 1 trace(s); would mirror 0 trace(s)" in repeat.getvalue()
+        assert "changed during scan 0" in repeat.getvalue().splitlines()[-1]
+        assert latest(trace) == ["fresh"] and version(trace) == 2
     finally:
         ch.close()
 
@@ -427,6 +527,55 @@ def test_resume_after_id_skips_earlier_traces(stores):
         stdout=StringIO(),
     )
     assert [latest(trace) for trace in traces] == [["ch"], ["ch"], ["pg"]]
+
+
+def test_interrupted_apply_resumes_same_pass_then_verifies_from_start(
+    stores, monkeypatch
+):
+    seed, latest, _, _ = stores
+    traces = sorted(seed(PROJECT, ["pg"], ["ch"]) for _ in range(3))
+    original_get_client = clickhouse_connect.get_client
+    inserts = 0
+
+    class InterruptedClient:
+        def __init__(self, client):
+            self.client = client
+
+        def insert(self, *args, **kwargs):
+            nonlocal inserts
+            inserts += 1
+            if inserts == 2:
+                raise RuntimeError("synthetic interruption before second batch")
+            return self.client.insert(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.client, name)
+
+    monkeypatch.setattr(
+        clickhouse_connect,
+        "get_client",
+        lambda **kwargs: InterruptedClient(original_get_client(**kwargs)),
+    )
+    first = StringIO()
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        call_command("reconcile_legacy_trace_tags", "--batch-size", "1", stdout=first)
+    cursor = first.getvalue().split("resume with --after-id ", 1)[1].strip()
+    assert cursor == traces[0]
+    assert [latest(trace) for trace in traces] == [["pg"], ["ch"], ["ch"]]
+    resumed = StringIO()
+    call_command(
+        "reconcile_legacy_trace_tags",
+        "--batch-size",
+        "1",
+        "--after-id",
+        cursor,
+        stdout=resumed,
+    )
+    assert "scanned 2 trace(s); mirrored 2 trace(s)" in resumed.getvalue()
+    assert [latest(trace) for trace in traces] == [["pg"]] * 3
+    verification = StringIO()
+    call_command("reconcile_legacy_trace_tags", "--dry-run", stdout=verification)
+    assert "scanned 3 trace(s); would mirror 0 trace(s)" in verification.getvalue()
 
 
 def test_reconcile_reads_pg_page_and_tags_from_primary(stores, monkeypatch):

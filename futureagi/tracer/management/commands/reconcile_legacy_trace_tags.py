@@ -4,6 +4,12 @@ The tag grid, picker and filters read legacy tags from CH traces.tags, with a
 saved EntityTagAssignment (including an explicit clear) taking precedence.
 Keeping this copy in sync preserves that precedence without manufacturing an
 assignment for a user who has never edited tags in the new grid.
+
+Cutover requires the operator's cold writer barrier: stop all legacy/new editor,
+request and ingestion writers, complete/review reconciliation, then expose the
+new editor only with fresh client state. This command cannot enforce that barrier
+or repair an assignment saved from stale legacy state. Two online passes are not
+a safe handoff. See deploy/helm/futureagi/UPGRADING.md.
 """
 
 from __future__ import annotations
@@ -25,7 +31,11 @@ def _matches_tags(raw_tags, pg_tags):
 
 
 class Command(BaseCommand):
-    help = "Reconcile PG-only trace editor tags with the CH curated trace replica."
+    help = (
+        "Reconcile PG-only trace editor tags with the CH curated trace replica. "
+        "For cutover, stop all writers and review the final pass before exposing "
+        "the new editor; this command cannot enforce the maintenance barrier."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--batch-size", type=int, default=500)
@@ -44,6 +54,13 @@ class Command(BaseCommand):
         size = opts["batch_size"]
         if not 1 <= size <= 1000:
             raise CommandError("--batch-size must be between 1 and 1000")
+
+        self.stdout.write(
+            "Cutover requires all legacy/new editor, request and ingestion writers "
+            "stopped until final reconciliation is reviewed. Keep editor access "
+            "closed and discard stale client state; this command does not enforce "
+            "the barrier or repair existing assignments."
+        )
 
         import clickhouse_connect
 
@@ -81,8 +98,9 @@ class Command(BaseCommand):
                     "projects": tuple({str(project_id) for _, project_id, _ in page}),
                     "ids": tuple(str(trace_id) for trace_id, _, _ in page),
                 }
-                # Read the narrow CH state before PG tags: a new editor write
-                # between these reads must not be undone with stale PG values.
+                # Read narrow CH state before PG tags to avoid reverting a
+                # concurrent legacy/ingestion dual write. This is not a guard
+                # against PG-only writes or new manual-assignment races.
                 states = client.query(
                     """SELECT project_id, id,
                     argMax(tuple(tags, is_deleted), _version) AS state,
@@ -171,14 +189,14 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS(
                     f"DRY RUN — scanned {scanned} trace(s); would mirror {different} trace(s); "
-                    f"changed during scan {changed}."
+                    f"no CH trace row {missing}; changed during scan {changed}."
                 )
             )
         else:
             self.stdout.write(
                 self.style.SUCCESS(
                     f"scanned {scanned} trace(s); mirrored {written} trace(s); "
-                    f"changed during scan {changed}."
+                    f"no CH trace row {missing}; changed during scan {changed}."
                 )
             )
         if changed:
