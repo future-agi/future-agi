@@ -570,3 +570,68 @@ it.each([
     expect(enqueueSnackbar).not.toHaveBeenCalled();
   },
 );
+
+// `manual_tags` is the backend's complete replacement-editable set: legacy
+// labels before the first assignment, and the assignment thereafter. It is
+// never recovered by subtracting SDK names from the bounded display preview.
+describe("explicit legacy editing contract", () => {
+  it.each(["popover", "pane"])(
+    "preserves rich legacy labels and SDK overlap through the real %s editor",
+    async (kind) => {
+      const legacy = [
+        { name: "A", color: "#123456" },
+        { name: "B", color: "#abcdef" },
+        { name: "sdk-overlap", color: "#112233" },
+      ];
+      const original = {
+        ...row("root-a", ["sdk-only", "sdk-overlap"]),
+        tag_assignment_exists: false,
+        manual_tags: legacy,
+        tags: [{ name: "sdk-only" }, ...legacy],
+      };
+      const server = serverFor([original]);
+      const { view, add } = editor(kind);
+      render(view(original));
+      add("C");
+      const method = kind === "pane" ? post : patch;
+      await waitFor(() => expect(method).toHaveBeenCalledTimes(1));
+      expect(method.mock.calls[0][1].tags).toEqual([
+        legacy[2], legacy[0], legacy[1], { name: "C" },
+      ]);
+      expect(method.mock.calls[0][1].expected_tag_revision).toBe(0);
+      expect(server.read(original).manual_tags).toEqual([
+        legacy[2], legacy[0], legacy[1], { name: "C" },
+      ]);
+    },
+  );
+
+  it("requires an explicit assignment-presence discriminator even for revision zero", async () => {
+    const original = row("root-a", ["sdk"], ["A"]);
+    const entity = { ...original, tag_assignment_exists: undefined };
+    const { view } = editor();
+    render(view(entity));
+    expect(screen.getByText("Add test tag")).toBeDisabled();
+    const { result } = renderHook(() => useSaveEntityTags());
+    await expect(result.current({ entity, tags: [{ name: "C" }] }))
+      .rejects.toMatchObject({ code: "tag_scope_required" });
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect legacy labels after an explicitly empty assignment", async () => {
+    const original = {
+      ...row("root-a", ["sdk"], [], 2),
+      tag_assignment_exists: true,
+      // A stale preview is never an editing authority.
+      tags: [{ name: "sdk" }, { name: "A" }, { name: "B" }],
+    };
+    const server = serverFor([original]);
+    const { view, add } = editor();
+    render(view(original));
+    expect(screen.queryByText("A")).not.toBeInTheDocument();
+    expect(screen.queryByText("B")).not.toBeInTheDocument();
+    add("C");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1].tags).toEqual([{ name: "C" }]);
+    expect(server.read(original).manual_tags).toEqual([{ name: "C" }]);
+  });
+});
