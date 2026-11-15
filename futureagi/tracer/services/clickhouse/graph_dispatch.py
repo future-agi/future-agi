@@ -56,6 +56,9 @@ from tracer.services.clickhouse.graph_read_cost import (
     user_graph_scan_window,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
     graph_cost_flags_sql,
@@ -953,6 +956,7 @@ def _read_or_refresh_exact_graph(
     workspace_id: str | None = None,
     schedule_on_miss: bool = True,
     revalidate_open_window: bool = False,
+    raise_cached_tag_error: bool = True,
 ) -> Any:
     """Return immediately while a deduplicated exact refresh runs out of band.
 
@@ -968,7 +972,7 @@ def _read_or_refresh_exact_graph(
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
     metric_id = identity.get("metric_id")
-    return read_or_schedule_exact_snapshot(
+    result = read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
@@ -981,6 +985,19 @@ def _read_or_refresh_exact_graph(
             and _snapshot_has_monetary_coverage(namespace, metric_id, payload)
         ),
     )
+    # A tag edit can cross the limit after preflight, or an old request may
+    # already be running. Preserve the worker's sanitized deterministic error
+    # instead of presenting it as a retryable failed refresh. Explicit-refresh
+    # probes ignore the old failure so the changed assignment set can be retried.
+    if raise_cached_tag_error:
+        payloads = result if isinstance(result, list) else [result]
+        if any(
+            isinstance(payload, dict)
+            and payload.get("query_error_code") == GraphTagFilterTooBroadError.code
+            for payload in payloads
+        ):
+            raise GraphTagFilterTooBroadError()
+    return result
 
 
 def _pending_graph_payload(metric_id: str, **extra: Any) -> dict[str, Any]:
@@ -2039,6 +2056,8 @@ def _schedule_unaffordable_graph_read(
             # still retries; until then this read has a terminal answer and
             # the user is owed it.
             logger.info("graph_unaffordable_refresh_already_failed")
+        except GraphTagFilterTooBroadError:
+            raise
         except Exception:
             # Cache/worker transport availability must not turn a routing
             # decision into a raw API exception.
@@ -2243,6 +2262,7 @@ def fetch_system_metric_graph_ch(
         workspace_id=workspace_id,
         schedule_on_miss=False,
         revalidate_open_window=not refresh,
+        raise_cached_tag_error=not refresh,
     )
     if (
         isinstance(cached, dict)
@@ -2338,6 +2358,8 @@ def fetch_system_metric_graph_ch(
                 organization_id=organization_id,
                 workspace_id=workspace_id,
             )
+        except GraphTagFilterTooBroadError:
+            raise
         except Exception:
             # The direct failure is already sanitized. Cache/worker transport
             # availability must not turn it into a raw API exception.
@@ -2361,30 +2383,47 @@ def fetch_agent_graph_ch(
     """
 
     project_id = _validated_project_id(project_id)
-    normalized_filters = list(filters or [])
-    return _read_or_refresh_exact_graph(
+    identity = {
+        "project_id": project_id,
+        "filters": list(filters or []),
+        "payload_version": AGENT_GRAPH_PAYLOAD_VERSION,
+    }
+    pending_payload = {
+        "nodes": [],
+        "edges": [],
+        "path_edges": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+        "query_refreshing": True,
+    }
+    cached = _read_or_refresh_exact_graph(
         namespace="observe-agent-graph",
-        identity={
-            "project_id": project_id,
-            "filters": normalized_filters,
-            "payload_version": AGENT_GRAPH_PAYLOAD_VERSION,
-        },
-        refresh=bool(refresh),
-        pending_payload={
-            "nodes": [],
-            "edges": [],
-            "path_edges": [],
-            "query_complete": False,
-            "query_status": "pending",
-            "query_sampled": False,
-            "query_refreshing": True,
-        },
+        identity=dict(identity),
+        refresh=False,
+        pending_payload=pending_payload,
         organization_id=organization_id,
         workspace_id=workspace_id,
-        # The toolbar window is hour-stable, so a revisit replays this
-        # identity: an old open-window hit is served and refreshed in the
-        # background. An explicit refresh already schedules.
+        schedule_on_miss=False,
         revalidate_open_window=not refresh,
+        raise_cached_tag_error=not refresh,
+    )
+    if isinstance(cached, dict) and not refresh and (
+        cached.get("query_status") == "complete"
+        or cached.get("query_refresh_failed") is True
+    ):
+        return cached
+    if not (isinstance(cached, dict) and cached.get("query_refreshing") is True):
+        _preflight_scheduled_graph_tags(identity)
+    # Running polls still reconcile a terminal dispatch as before; that is the
+    # existing job, not a new graph, and does not need another tag scan.
+    return _read_or_refresh_exact_graph(
+        namespace="observe-agent-graph",
+        identity=dict(identity),
+        refresh=bool(refresh),
+        pending_payload=pending_payload,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
 
 
@@ -2614,6 +2653,7 @@ def fetch_user_system_metric_graph_ch(
             workspace_id=workspace_id,
             schedule_on_miss=False,
             revalidate_open_window=not refresh,
+            raise_cached_tag_error=not refresh,
         )
         if (
             isinstance(cached, dict)
@@ -2621,6 +2661,7 @@ def fetch_user_system_metric_graph_ch(
             and graph_payload_is_publishable(cached, allow_sampled=False)
         ):
             if refresh:
+                _preflight_user_graph_tags(identity, analytics)
                 return _read_or_refresh_exact_graph(
                     namespace="observe-user-system-graph",
                     identity=dict(identity),
