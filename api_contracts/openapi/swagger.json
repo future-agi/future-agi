@@ -144695,6 +144695,12 @@
                     ],
                     "x-nullable": true
                 },
+                "saved_without_check": {
+                    "title": "Saved without check",
+                    "description": "Saved while the check was unavailable; its pairings read Untested until checked.",
+                    "type": "boolean",
+                    "default": false
+                },
                 "stale": {
                     "title": "Stale",
                     "description": "Whether the default moved since the draft started; Save refuses it.",
@@ -145454,6 +145460,12 @@
                         "expired"
                     ],
                     "x-nullable": true
+                },
+                "saved_without_check": {
+                    "title": "Saved without check",
+                    "description": "Saved while the check was unavailable; its pairings read Untested until checked.",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },

@@ -611,7 +611,10 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        if row["stale_because"] == "built_with_unknown" or row["blocked_by"]:
+        if (
+            row["stale_because"] in ("built_with_unknown", "saved_without_check")
+            or row["blocked_by"]
+        ):
             return "untested"
         return "stale" if row["stale_because"] else "supported"
     return row["status"]

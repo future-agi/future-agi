@@ -76,6 +76,14 @@ const saveDraftsPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/save/", {
     id: envId,
   });
+const draftReviewPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/review/", {
+    id: envId,
+  });
+const validateDraftsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/validate/", {
+    id: envId,
+  });
 const discardDraftPath = (envId, piece) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/{piece}/", {
     id: envId,
@@ -192,6 +200,42 @@ export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
   (
     await axios.post(saveDraftsPath(envId), {
       drafts,
+      idempotency_key: idempotencyKey,
+    })
+  ).data;
+
+export const getDraftReview = async (envId) =>
+  (await axios.get(draftReviewPath(envId))).data;
+
+// Build candidate versions from the reviewed drafts and start validating them.
+export const validateDrafts = async (
+  envId,
+  { expectedRevisions, expectedReviewDigest },
+) =>
+  (
+    await axios.post(validateDraftsPath(envId), {
+      expected_revisions: expectedRevisions,
+      ...(expectedReviewDigest
+        ? { expected_review_digest: expectedReviewDigest }
+        : {}),
+    })
+  ).data;
+
+// Save the versions Validate built, once their validation is ready.
+export const saveCandidates = async (
+  envId,
+  { candidates, expectedReviewDigest, name, idempotencyKey },
+) =>
+  (
+    await axios.post(saveDraftsPath(envId), {
+      candidates: {
+        environment_version_id: candidates.environmentVersionId,
+        suite_version_id: candidates.suiteVersionId,
+      },
+      ...(expectedReviewDigest
+        ? { expected_review_digest: expectedReviewDigest }
+        : {}),
+      ...(name ? { name } : {}),
       idempotency_key: idempotencyKey,
     })
   ).data;
@@ -353,6 +397,7 @@ export const versionFromApi = (item = {}) => ({
   requestedHere: Boolean(item.requested_here),
   pickable: Boolean(item.pickable),
   discardable: Boolean(item.discardable),
+  savedWithoutCheck: Boolean(item.saved_without_check),
 });
 
 // A check still pending after this long is stuck: offered again, not polled.
@@ -757,6 +802,19 @@ export const toDrafts = (data = {}) => {
     pieces,
     any: pieces.length > 0,
     stale: pieces.some((piece) => drafts[piece].stale),
+    // Where the validation of the reviewed changes stands, and what it built.
+    validation: data?.validation
+      ? {
+          state: data.validation.state,
+          affectedScenarios: data.validation.affected_scenarios ?? [],
+        }
+      : null,
+    candidates: data?.candidates
+      ? {
+          environmentVersionId: data.candidates.environment_version_id,
+          suiteVersionId: data.candidates.suite_version_id,
+        }
+      : null,
   };
 };
 
@@ -769,7 +827,68 @@ export function useDrafts(envId, { enabled = true } = {}) {
     select: toDrafts,
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
+    // Only a running validation moves on its own.
+    refetchInterval: (query) =>
+      query.state.data?.validation?.state === "validating" ? 5000 : false,
     meta: { errorHandled: true },
+  });
+}
+
+export const draftReviewKey = (envId) => ["harness-draft-review", envId];
+
+// What the open drafts change and the decisions taken on them.
+export function useDraftReview(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: draftReviewKey(envId),
+    queryFn: () => getDraftReview(envId),
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+// Validate the reviewed drafts; the drafts read again carry its state.
+export function useValidateDrafts(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (vars) => validateDrafts(envId, vars),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      queryClient.invalidateQueries({ queryKey: draftReviewKey(envId) });
+    },
+  });
+}
+
+// Save the validated candidates. A click keeps its key while the same
+// candidates are sent again after a failure the server may not have seen.
+export function useSaveCandidates(envId) {
+  const queryClient = useQueryClient();
+  const pending = useRef(null);
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (vars) => {
+      const signature = JSON.stringify(vars.candidates);
+      if (pending.current?.signature !== signature) {
+        pending.current = { signature, key: harnessIdempotencyKey() };
+      }
+      return saveCandidates(envId, {
+        ...vars,
+        idempotencyKey: pending.current.key,
+      });
+    },
+    onSuccess: (data) => {
+      pending.current = null;
+      if (data?.versions) {
+        queryClient.setQueryData(environmentVersionsKey(envId), data.versions);
+      }
+      refreshFollowers(queryClient, envId);
+    },
+    onError: (error) => {
+      const status = errorStatus(error);
+      if (status >= 400 && status < 500) pending.current = null;
+      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+    },
   });
 }
 

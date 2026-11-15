@@ -1535,6 +1535,66 @@ def test_a_check_unavailable_on_our_side_lets_the_validated_changes_save_uncerti
     )
 
 
+def test_promotion_while_unavailable_marks_uncertified(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services import harness_readiness
+
+    environment = _with_world(user, workspace, "cand-uncertified", storage)
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    first = _result(_validate(auth_client, environment, digest))
+    _check_unavailable_on_our_side(environment, monkeypatch)
+
+    saved = _save(auth_client, environment, first["candidates"], digest=digest)
+
+    assert saved.status_code == 200, saved.content
+    environment.refresh_from_db()
+    assert environment.environment_version.documents["uncertified"] is True
+    versions = auth_client.get(
+        f"/simulate/api/harness-environments/{environment.id}/versions/"
+    ).json()
+    saved_item = next(
+        one
+        for one in versions["environment"]
+        if one["id"] == str(environment.environment_version_id)
+    )
+    assert saved_item["saved_without_check"] is True
+    # Its pairing has no certificate of its own: every measured row reads Untested.
+    report = harness_readiness.readiness_report(
+        harness_readiness.resolve_pairing(environment)
+    )
+    start = next(row for row in report["rows"] if row["id"] == "start")
+    assert (start["status"], start["reason_code"]) == (
+        "untested",
+        "saved_without_check",
+    )
+    assert start["reason"] == (
+        "Saved while the check was unavailable. Re-check before relying on this pairing"
+    )
+    assert start["fix"]["type"] == "recheck"
+
+
+def test_a_certified_promotion_is_not_marked(user, workspace, storage, auth_client):
+    environment = _with_world(user, workspace, "cand-certified-mark", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+
+    saved = _save(auth_client, environment, candidates, digest=digest)
+
+    assert saved.status_code == 200, saved.content
+    environment.refresh_from_db()
+    assert "uncertified" not in (environment.environment_version.documents or {})
+
+
 def test_a_check_that_failed_on_our_side_under_an_older_template_still_reads_retry(
     user, workspace, storage, auth_client, monkeypatch
 ):

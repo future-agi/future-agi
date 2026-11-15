@@ -3,7 +3,16 @@ import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The hooks are stubbed; tests set the drafts and each mutation's state.
-const state = { drafts: undefined, save: {}, discard: {} };
+const state = {
+  drafts: undefined,
+  save: {},
+  discard: {},
+  review: undefined,
+  validate: {},
+  saveValidated: {},
+};
+const validateMutate = vi.fn();
+const saveValidatedMutate = vi.fn();
 const saveMutate = vi.fn();
 const discardMutate = vi.fn();
 const saveReset = vi.fn();
@@ -30,6 +39,19 @@ vi.mock("src/api/simulate-environments/versions", async () => {
       isPending: false,
       error: null,
       ...state.discard,
+    })),
+    useDraftReview: vi.fn(() => ({ data: state.review })),
+    useValidateDrafts: vi.fn(() => ({
+      mutate: validateMutate,
+      isPending: false,
+      error: null,
+      ...state.validate,
+    })),
+    useSaveCandidates: vi.fn(() => ({
+      mutate: saveValidatedMutate,
+      isPending: false,
+      error: null,
+      ...state.saveValidated,
     })),
   };
 });
@@ -76,6 +98,11 @@ beforeEach(() => {
   state.drafts = both();
   state.save = {};
   state.discard = {};
+  state.review = undefined;
+  state.validate = {};
+  state.saveValidated = {};
+  validateMutate.mockReset();
+  saveValidatedMutate.mockReset();
   saveMutate.mockReset();
   discardMutate.mockReset();
   saveReset.mockReset();
@@ -183,7 +210,7 @@ describe("DraftBar", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(text);
   });
 
-  it("says how to get past a save that needs Validate, which this page has no button for", () => {
+  it("offers Validate when a save is refused for needing it", () => {
     state.save = {
       error: {
         statusCode: 409,
@@ -193,9 +220,129 @@ describe("DraftBar", () => {
       },
     };
     render(<DraftBar env={ENV} />);
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent(DRAFTS_COPY.errors.validation_required);
-    expect(alert).not.toHaveTextContent("Validate the reviewed changes first");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      DRAFTS_COPY.errors.validation_required,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+    ).toBeEnabled();
+  });
+
+  describe("validate before save", () => {
+    const DIGEST = "sha256:review";
+    const decided = () => {
+      state.review = {
+        review_digest: DIGEST,
+        counts: { total: 3, accepted: 1, rejected: 1, undecided: 1 },
+      };
+    };
+    const withValidation = (validation, candidates = null) => {
+      state.drafts = { ...both(), validation, candidates };
+    };
+
+    it("asks to validate decided changes, sending the revisions and digest reviewed", async () => {
+      decided();
+      render(<DraftBar env={ENV} />);
+
+      expect(
+        screen.queryByRole("button", { name: DRAFTS_COPY.save }),
+      ).toBeNull();
+      await userEvent.click(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      );
+
+      expect(validateMutate).toHaveBeenCalledWith({
+        expectedRevisions: { environment: 3, suite: 1 },
+        expectedReviewDigest: DIGEST,
+      });
+    });
+
+    it("keeps Save off while validating", () => {
+      decided();
+      withValidation({ state: "validating" });
+      render(<DraftBar env={ENV} />);
+
+      expect(
+        screen.getByRole("button", { name: DRAFTS_COPY.validating }),
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: DRAFTS_COPY.save }),
+      ).toBeNull();
+    });
+
+    it("saves the validated candidates once ready", async () => {
+      decided();
+      withValidation(
+        { state: "ready" },
+        { environment_version_id: "e9", suite_version_id: "s9" },
+      );
+      render(<DraftBar env={ENV} />);
+
+      // The new version needs a name before it can be saved.
+      expect(saveButton()).toBeDisabled();
+      await userEvent.type(
+        screen.getByRole("textbox", { name: DRAFTS_COPY.versionName }),
+        " Finance controller ",
+      );
+      await userEvent.click(saveButton());
+
+      expect(saveValidatedMutate).toHaveBeenCalledWith({
+        candidates: { environmentVersionId: "e9", suiteVersionId: "s9" },
+        expectedReviewDigest: DIGEST,
+        name: "Finance controller",
+      });
+      expect(saveMutate).not.toHaveBeenCalled();
+    });
+
+    it("names the scenarios a failed validation needs changed and keeps Save off", () => {
+      decided();
+      withValidation({
+        state: "failed",
+        affected_scenarios: ["refund-1", "refund-2"],
+      });
+      render(<DraftBar env={ENV} />);
+
+      expect(
+        screen.getByText(DRAFTS_COPY.validation.failed(2)),
+      ).toBeInTheDocument();
+      expect(screen.getByText("refund-1")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: DRAFTS_COPY.save }),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["retry", DRAFTS_COPY.validation.retry],
+      ["superseded", DRAFTS_COPY.validation.superseded],
+    ])("offers Validate again after %s", (state_, copy) => {
+      decided();
+      withValidation({ state: state_ });
+      render(<DraftBar env={ENV} />);
+
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      ).toBeEnabled();
+    });
+
+    it("saves without a check when the check is unavailable on our side, saying so", async () => {
+      decided();
+      withValidation(
+        { state: "check_unavailable" },
+        { environment_version_id: "e9", suite_version_id: "s9" },
+      );
+      render(<DraftBar env={ENV} />);
+
+      expect(
+        screen.getByText(DRAFTS_COPY.validation.check_unavailable),
+      ).toBeInTheDocument();
+      await userEvent.type(
+        screen.getByRole("textbox", { name: DRAFTS_COPY.versionName }),
+        "v10",
+      );
+      expect(saveButton()).toBeEnabled();
+    });
   });
 
   it("explains a stale refusal with the piece it names", () => {

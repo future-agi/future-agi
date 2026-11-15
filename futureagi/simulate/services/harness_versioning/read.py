@@ -201,7 +201,17 @@ def _piece_item(
         "discardable": None,
         "release_checks": None,
         "candidate_state": _candidate_state(version, candidate_states or {}),
+        "saved_without_check": _saved_without_check(version),
     }
+
+
+def _saved_without_check(version: Any) -> bool:
+    """Whether ``version`` was saved while the check was unavailable on our side. A
+    list reads the flag as an annotation and never loads the documents for it."""
+    flag = getattr(version, "uncertified_flag", None)
+    if flag is None and "documents" not in version.get_deferred_fields():
+        flag = (version.documents or {}).get("uncertified")
+    return flag in (True, "true")
 
 
 def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
@@ -512,6 +522,7 @@ def _agent_item(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
         "candidate_state": None,
+        "saved_without_check": False,
     }
 
 
@@ -535,11 +546,13 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     suites = _newest_first(
         HarnessSuiteVersion.no_workspace_objects.filter(job=job)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     from simulate.services.harness_agent_versions import _default_lineage
     from simulate.services.harness_readiness.release import release_checks_for

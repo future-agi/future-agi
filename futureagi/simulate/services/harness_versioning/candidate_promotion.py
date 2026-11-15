@@ -74,12 +74,22 @@ def _not_validated() -> HostedHarnessError:
     )
 
 
+# A version saved while the check was unavailable on our side carries this in its documents.
+UNCERTIFIED = "uncertified"
+
+
 def _promote(
-    locked: HostedHarnessJob, piece: str, version: Any, *, environment_version: Any
+    locked: HostedHarnessJob,
+    piece: str,
+    version: Any,
+    *,
+    environment_version: Any,
+    uncertified: bool = False,
 ) -> tuple[Any, bool]:
     """A candidate becomes an active version numbered next; an active version with its content, if one appeared
     meanwhile, is used instead. An active version (the piece nothing changed) stays as it is; anything else, such as a
-    candidate set aside meanwhile, is refused."""
+    candidate set aside meanwhile, is refused. A version saved while its check was unavailable is marked
+    ``uncertified``."""
     if version.status == VersionStatus.ACTIVE:
         return version, False
     if version.status != VersionStatus.CANDIDATE:
@@ -97,6 +107,8 @@ def _promote(
     version.version_number = next_number(model, locked)
     if piece == "suite":
         version.authored_against = environment_version
+    if uncertified:
+        version.documents = {**(version.documents or {}), UNCERTIFIED: True}
     version.save()
     return version, True
 
@@ -200,10 +212,18 @@ def _promote_set(
         raise review.review_stale()
     built = set_versions(locked, entry)
     environment_version, created_environment = _promote(
-        locked, "environment", built["environment"], environment_version=None
+        locked,
+        "environment",
+        built["environment"],
+        environment_version=None,
+        uncertified=not certified,
     )
     suite_version, created_suite = _promote(
-        locked, "suite", built["suite"], environment_version=environment_version
+        locked,
+        "suite",
+        built["suite"],
+        environment_version=environment_version,
+        uncertified=not certified,
     )
     if created_suite:
         # Paired while the old suite is still the default, as a recorded save pairs.

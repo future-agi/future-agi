@@ -1,14 +1,24 @@
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef, useState } from "react";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
 import {
   useDiscardDraft,
+  useDraftReview,
   useDrafts,
+  useSaveCandidates,
   useSaveDrafts,
+  useValidateDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
@@ -58,7 +68,14 @@ export default function DraftBar({
   const save = useSaveDrafts(env?.id);
   const { enqueueSnackbar } = useSnackbar();
   const discard = useDiscardDraft(env?.id);
+  const validate = useValidateDrafts(env?.id);
+  const saveValidated = useSaveCandidates(env?.id);
+  const { data: review } = useDraftReview(env?.id, {
+    enabled: enabled && Boolean(drafts?.any),
+  });
   const [confirming, setConfirming] = useState(false);
+  // A validated save makes a new version, and the server asks for its name.
+  const [versionName, setVersionName] = useState("");
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
@@ -86,11 +103,47 @@ export default function DraftBar({
   const latest = open.reduce((a, b) =>
     new Date(b.updatedAt || 0) > new Date(a.updatedAt || 0) ? b : a,
   );
-  const pending = save.isPending || discard.isPending;
+  // A change accepted or rejected in review makes a new version: it is
+  // validated before it can be saved.
+  const decided =
+    (review?.counts?.accepted ?? 0) + (review?.counts?.rejected ?? 0) > 0;
+  const validation = drafts.validation;
+  const needsValidate =
+    decided ||
+    save.error?.error === "validation_required" ||
+    Boolean(validation);
+  const validationState = validation?.state ?? null;
+  const validating = validationState === "validating" || validate.isPending;
+  const canSaveValidated =
+    ["ready", "check_unavailable"].includes(validationState) &&
+    Boolean(drafts.candidates);
+  const pending =
+    save.isPending ||
+    discard.isPending ||
+    saveValidated.isPending ||
+    validating;
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 
+  const onValidate = () => {
+    discard.reset();
+    save.reset();
+    validate.mutate({
+      expectedRevisions: Object.fromEntries(
+        drafts.pieces.map((piece) => [piece, drafts[piece].revision]),
+      ),
+      expectedReviewDigest: review?.review_digest,
+    });
+  };
+  const onSaveValidated = () => {
+    discard.reset();
+    saveValidated.mutate({
+      candidates: drafts.candidates,
+      expectedReviewDigest: review?.review_digest,
+      name: versionName.trim(),
+    });
+  };
   const onSave = () => {
     discard.reset();
     save.mutate(draftSaveRequests(drafts), {
@@ -108,9 +161,74 @@ export default function DraftBar({
   };
 
   let error = null;
-  if (save.error) error = errorText(save.error, drafts, COPY.saveError);
-  else if (discard.error) {
+  if (saveValidated.error) {
+    error = errorText(saveValidated.error, drafts, COPY.saveError);
+  } else if (validate.error) {
+    error = errorText(validate.error, drafts, COPY.validateError);
+  } else if (save.error && !needsValidate) {
+    error = errorText(save.error, drafts, COPY.saveError);
+  } else if (discard.error) {
     error = errorText(discard.error, drafts, COPY.discardError);
+  }
+  const failedScenarios =
+    validationState === "failed" ? validation.affectedScenarios : [];
+  let validationNote = null;
+  if (needsValidate && !validationState && !error) {
+    validationNote = COPY.errors.validation_required;
+  } else if (validationState === "failed") {
+    validationNote = COPY.validation.failed(failedScenarios.length);
+  } else if (COPY.validation[validationState]) {
+    validationNote = COPY.validation[validationState];
+  }
+
+  let primary;
+  if (!needsValidate) {
+    primary = (
+      <Button
+        size="small"
+        variant="contained"
+        disabled={saveReasons.length > 0 || pending}
+        aria-describedby={saveReasons.join(" ") || undefined}
+        onClick={onSave}
+      >
+        {save.isPending ? COPY.saving : COPY.save}
+      </Button>
+    );
+  } else if (validating) {
+    primary = (
+      <Button
+        size="small"
+        variant="contained"
+        disabled
+        startIcon={<CircularProgress size={12} color="inherit" />}
+      >
+        {COPY.validating}
+      </Button>
+    );
+  } else if (canSaveValidated) {
+    primary = (
+      <Button
+        size="small"
+        variant="contained"
+        disabled={saveReasons.length > 0 || pending || !versionName.trim()}
+        aria-describedby={saveReasons.join(" ") || undefined}
+        onClick={onSaveValidated}
+      >
+        {saveValidated.isPending ? COPY.saving : COPY.save}
+      </Button>
+    );
+  } else {
+    primary = (
+      <Button
+        size="small"
+        variant="contained"
+        disabled={saveReasons.length > 0 || pending}
+        aria-describedby={saveReasons.join(" ") || undefined}
+        onClick={onValidate}
+      >
+        {COPY.validate}
+      </Button>
+    );
   }
 
   return (
@@ -160,16 +278,42 @@ export default function DraftBar({
         >
           {discard.isPending ? COPY.discarding : COPY.discard}
         </Button>
-        <Button
-          size="small"
-          variant="contained"
-          disabled={saveReasons.length > 0 || pending}
-          aria-describedby={saveReasons.join(" ") || undefined}
-          onClick={onSave}
-        >
-          {save.isPending ? COPY.saving : COPY.save}
-        </Button>
+        {canSaveValidated && !validating && (
+          <TextField
+            size="small"
+            value={versionName}
+            onChange={(event) => setVersionName(event.target.value)}
+            placeholder={COPY.versionName}
+            inputProps={{ "aria-label": COPY.versionName, maxLength: 80 }}
+            sx={{ width: 200 }}
+          />
+        )}
+        {primary}
       </Stack>
+      {validationNote && (
+        <Typography
+          role="status"
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          {validationNote}
+        </Typography>
+      )}
+      {failedScenarios.length > 0 && (
+        <Box
+          component="ul"
+          sx={{
+            m: 0,
+            mt: 0.25,
+            pl: 2,
+            typography: "s3",
+            color: "text.secondary",
+          }}
+        >
+          {failedScenarios.map((key) => (
+            <li key={key}>{key}</li>
+          ))}
+        </Box>
+      )}
       {staleReason && (
         <Typography
           id={staleId}

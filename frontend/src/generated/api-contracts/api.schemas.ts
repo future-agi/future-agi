@@ -20483,6 +20483,8 @@ export interface HarnessDraftItemApi {
   release_checks?: HarnessReleaseChecksApi;
   /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
   candidate_state: HarnessDraftItemApiCandidateState | null;
+  /** Saved while the check was unavailable; its pairings read Untested until checked. */
+  saved_without_check?: boolean;
   /** Whether the default moved since the draft started; Save refuses it. */
   stale: boolean;
   /** Bumped on every edit to the draft. */
@@ -20854,6 +20856,8 @@ export interface HarnessVersionApi {
   release_checks?: HarnessReleaseChecksApi;
   /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
   candidate_state: HarnessVersionApiCandidateState | null;
+  /** Saved while the check was unavailable; its pairings read Untested until checked. */
+  saved_without_check?: boolean;
 }
 
 /**

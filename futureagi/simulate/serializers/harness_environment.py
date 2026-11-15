@@ -716,6 +716,11 @@ class HarnessVersionSerializer(serializers.Serializer):
             " null for every other version."
         ),
     )
+    saved_without_check = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Saved while the check was unavailable; its pairings read Untested until checked.",
+    )
 
 
 class HarnessAgentCredentialsResponseSerializer(serializers.Serializer):

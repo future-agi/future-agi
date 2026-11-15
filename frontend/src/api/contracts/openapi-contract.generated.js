@@ -104640,6 +104640,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
           "x-nullable": true,
         },
+        saved_without_check: {
+          title: "Saved without check",
+          description:
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     HarnessAgentPayloadChange: {
@@ -106057,6 +106064,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "expired",
           ],
           "x-nullable": true,
+        },
+        saved_without_check: {
+          title: "Saved without check",
+          description:
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          type: "boolean",
+          default: false,
         },
         stale: {
           title: "Stale",
