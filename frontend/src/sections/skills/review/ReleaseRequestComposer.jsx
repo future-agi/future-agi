@@ -238,7 +238,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
           </Stack>}
           {options.data && <TextField select size="small" label="Application target" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }} value={targetId} disabled={busy} onChange={(event) => { targetTouched.current = true; setTargetId(event.target.value); setSelected([]); }}>
             <MenuItem value="">No application target — text-only decision</MenuItem>
-            {options.data.targets.map((item) => <MenuItem key={item.target.bindingId} value={item.target.bindingId}>{item.name.replace(/\s+application$/i, ' app')}</MenuItem>)}
+            {options.data.targets.map((item) => <MenuItem key={item.target.bindingId} value={item.target.bindingId}>{(item.name || 'Application').replace(/\s+application$/i, ' app')}</MenuItem>)}
           </TextField>}
         </Box>
         {options.isFetching && !options.data && <ReviewState state="loading" />}

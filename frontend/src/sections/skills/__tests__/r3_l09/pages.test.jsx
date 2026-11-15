@@ -136,23 +136,23 @@ it('unticks the boxes and says the draft changed when the acknowledgment loses i
 });
 
 it('also unticks when the 409 arrives after the head step, once the review has remounted with carried ticks', async () => {
-  const operation = { current: null };
+  // The publish stays in flight while the head acknowledgment reloads the review, then the server refuses it.
+  let refuse;
+  const onPublish = vi.fn(() => new Promise((_, reject) => { refuse = reject; }));
+  const host = { review: { ...draftReview, headAcknowledged: false, note: '' } };
   function Host() {
     const held = useReviewedOperation();
-    operation.current = held;
-    return <MemoryRouter><ContextReleaseReview {...publishProps({ onPublish: vi.fn(), publishOperation: held })} draftReview={host.review} /></MemoryRouter>;
+    return <MemoryRouter><ContextReleaseReview {...publishProps({ onPublish, publishOperation: held })} draftReview={host.review} /></MemoryRouter>;
   }
-  const host = { review: { ...draftReview, headAcknowledged: false, note: '' } };
-  const onPublish = vi.fn().mockRejectedValue(Object.assign(new Error('stale'), { statusCode: 409 }));
   const { rerender } = render(<Host />);
   fireEvent.click(screen.getByRole('checkbox', { name: REVIEWED }));
-  // The click records the ticks, runs the chain, and the controller-held operation outlives the remount.
   fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
-  expect(operation.current).not.toBeNull();
+  await waitFor(() => expect(onPublish).toHaveBeenCalledTimes(1));
+  // The controller-held operation outlives the remount, and the ticks are carried across it.
   host.review = { ...host.review, headAcknowledged: true, revision: 9, reviewFingerprint: 'confirmed' };
   rerender(<Host />);
   expect(screen.getByRole('checkbox', { name: REVIEWED })).toBeChecked();
-  await act(async () => { await operation.current.run(onPublish, { revision: 9 }); });
+  await act(async () => { refuse(Object.assign(new Error('The publication head or candidate changed; review again.'), { statusCode: 409 })); });
   expect(await screen.findByText('The draft changed since you reviewed it. Review the changes again.')).toBeVisible();
   expect(screen.getByRole('checkbox', { name: REVIEWED })).not.toBeChecked();
 });
