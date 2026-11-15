@@ -241,6 +241,8 @@ export function seedHarnessEnvironment(opts: {
   failedCheck?: 'lookup_order' | 'issue_refund';
   // Two separately wired workers, with the world door's worker limits sealed or, as an old seal, without.
   workers?: 'sealed' | 'old_seal';
+  // Each refund case gives the refund worker a budget, so the case relies on that worker.
+  refundWorkerBudget?: boolean;
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -258,6 +260,7 @@ export function seedHarnessEnvironment(opts: {
         production_only: opts.productionOnly ?? null,
         failed_check: opts.failedCheck ?? null,
         workers: opts.workers ?? null,
+        refund_worker_budget: opts.refundWorkerBudget ?? false,
       }),
     },
   ) as HarnessEnvironmentSeed;

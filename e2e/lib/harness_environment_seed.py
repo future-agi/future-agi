@@ -107,11 +107,13 @@ def _scenario(key, tools):
     }
 
 
-def _documents(refunds, lookups, suffix):
+def _documents(refunds, lookups, suffix, *, refund_worker_budget=False):
     """``refunds`` cases that issue a refund on their only path, then ``lookups`` that
-    only look the order up; numbered in that order."""
+    only look the order up; numbered in that order. ``refund_worker_budget`` gives each
+    refund case a budget for the refund worker, so it relies on that worker."""
+    budget = {"worker_budget_seconds": {"refund": 30}} if refund_worker_budget else {}
     return [
-        _scenario(f"refund-{suffix}-{n:03d}", TOOLS) for n in range(1, refunds + 1)
+        {**_scenario(f"refund-{suffix}-{n:03d}", TOOLS), **budget} for n in range(1, refunds + 1)
     ] + [
         _scenario(f"status-{suffix}-{n:03d}", TOOLS[:1]) for n in range(1, lookups + 1)
     ]
@@ -236,6 +238,7 @@ def seed_environment(
     production_only=None,
     failed_check=None,
     workers=None,
+    refund_worker_budget=False,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios."""
     from simulate.models import (
@@ -253,7 +256,7 @@ def seed_environment(
     )
     from simulate.services.hosted_harness_gateway import authoring_content_digest
 
-    documents = _documents(refunds, lookups, suffix)
+    documents = _documents(refunds, lookups, suffix, refund_worker_budget=refund_worker_budget)
     environment, _ = create_hosted_job(
         organization,
         _payload(len(documents)),

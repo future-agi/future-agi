@@ -3060,3 +3060,22 @@
 
 - the sealed pairing reads both workers Partial held_at_world_cooperative, the lookup worker's lookup_order Allowed and issue_refund Blocked, and no worker Supported
 - the old seal reads both workers Blocked sealed_before_worker_limits with a rebuild fix and every tool Not enforced
+
+### SIM-E2E-021 — a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it
+
+**Goal:** A developer testing a multi-agent app who selects only the cases a blocked worker holds back is told which worker holds them and why, instead of a refusal that names nothing
+
+**Spec:** `flows/simulate/worker-hold-names-the-worker.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers sealed before worker limits, 2 refund cases that give the refund worker a budget and 2 lookups (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness (GET capabilities)
+3. start a run of only the refund cases (POST run)
+
+**Backend state verified:**
+
+- readiness counts 2 cases held back by the refund worker and 2 eligible
+- the run is refused all_cases_blocked, and the message names the Refund worker with its reason
