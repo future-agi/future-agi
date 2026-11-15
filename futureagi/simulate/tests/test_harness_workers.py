@@ -3452,3 +3452,82 @@ def test_a_job_whose_run_key_matches_no_launch_stays_unknown():
         one.get("launch") == "async"
         for one in worker_timeline(partial, [], run_key=RUN)["events"]
     )
+
+
+# Sealed rows as a served LangGraph run wrote them (local run 30b2b327, 15 Nov): the coder job's hand-off names the
+# coordinator's start_async_task call as its parent event, while the span tree left its own place unknown.
+_LAUNCHED_JOB_ROWS = [
+    {
+        "at": 1.0,
+        "ok": True,
+        "kind": "tool_call",
+        "name": "start_async_task",
+        "agent": "agent",
+        "span_id": "a9",
+        "ended_at": 1.1,
+        "worker_id": "agent",
+        "worker_label": "agent",
+        "relationship": "unknown",
+        "parent_span_id": "",
+        "runtime_ids": {"event_id": "a9"},
+        "result": "Launched async subagent. task_id: 01a1",
+    },
+    {
+        "at": 1.7,
+        "ok": True,
+        "kind": "delegated",
+        "name": "start_async_task",
+        "agent": "agent",
+        "span_id": "e4",
+        "ended_at": 78.5,
+        "worker_id": "agent",
+        "worker_label": "agent",
+        "delegated_to": "coder",
+        "relationship": "unknown",
+        "parent_span_id": "",
+        "runtime_ids": {"event_id": "e4", "parent_event_id": "a9"},
+        "result": "Here is the implementation",
+    },
+    {
+        "at": 36.0,
+        "ok": True,
+        "kind": "tool_call",
+        "name": "run_code_check",
+        "agent": "coder",
+        "span_id": "48",
+        "ended_at": 36.1,
+        "worker_id": "coder",
+        "worker_label": "coder",
+        "relationship": "observed",
+        "parent_span_id": "e4",
+        "runtime_ids": {"event_id": "48"},
+    },
+]
+
+
+def test_a_sealed_job_hand_off_joined_to_its_launch_is_asynchronous_not_unknown():
+    from simulate.services.harness_worker_steps import worker_steps
+
+    declared = [
+        {"id": "coder", "name": "coder"},
+        {"id": "researcher", "name": "researcher"},
+    ]
+    events = worker_timeline(
+        [], declared, run_key=RUN, traced_calls=_LAUNCHED_JOB_ROWS
+    )["events"]
+    (hand_off,) = [one for one in events if one["type"] == "delegated"]
+    assert (hand_off.get("launch"), hand_off.get("relationship")) == ("async", None)
+    # The job's own call still sits in its hand-off, and the launching call stays the coordinator's.
+    (check,) = [one for one in events if one.get("tool") == "run_code_check"]
+    assert check["delegation_id"] == hand_off["delegation_id"]
+    assert [one["tool"] for one in events if one.get("tool") == "start_async_task"] == [
+        "start_async_task"
+    ]
+    assert worker_steps(events)["asynchronous"] == 1
+
+
+def test_a_hand_off_whose_parent_event_is_another_hand_off_is_not_a_launch():
+    rows = [dict(one) for one in _LAUNCHED_JOB_ROWS]
+    rows[0] = {**rows[0], "delegated_to": "researcher"}
+    events = worker_timeline([], [], run_key=RUN, traced_calls=rows)["events"]
+    assert not any(one.get("launch") == "async" for one in events)

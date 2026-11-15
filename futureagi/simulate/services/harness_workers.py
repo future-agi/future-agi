@@ -837,6 +837,27 @@ def worker_timeline(
                     "delegation_id"
                 ) == span_event.get("delegation_id"):
                     one["row"] = index
+    # A background job the runtime joined to the tool call that launched it: the hand-off row names that call as its
+    # parent event while its own place is unknown. It is a hand-off made by that launch, as a job read from spans is.
+    by_event = {
+        str((row.get("runtime_ids") or {}).get("event_id")): index
+        for index, row in enumerate(rows)
+        if (row.get("runtime_ids") or {}).get("event_id")
+    }
+    launched_by: dict[int, int] = {}
+    for index, call in enumerate(rows):
+        launch = by_event.get(
+            str((call.get("runtime_ids") or {}).get("parent_event_id") or "")
+        )
+        if (
+            launch is not None
+            and launch not in shown
+            and index not in shown
+            and str(call.get("delegated_to") or "").strip()
+            and not str(rows[launch].get("delegated_to") or "").strip()
+            and placed_in(call).get("relationship") == "unknown"
+        ):
+            launched_by[index] = launch
     for index, call in enumerate(rows):
         by = by_of(call)
         if (not by and not call.get("delegated_to")) or index in shown:
@@ -910,6 +931,10 @@ def worker_timeline(
                 argument=True,
             )
             delegation_id = own_id(call, index)
+            place = placed_in(call)
+            if index in launched_by:
+                # Made by the coordinator's launching call, so its place is known; the job outlives that call.
+                place = {"launch": "async"}
             events.append(
                 {
                     "type": "delegated",
@@ -920,7 +945,7 @@ def worker_timeline(
                     "at": started(call),
                     "attribution": "reported",
                     "row": index,
-                    **placed_in(call),
+                    **place,
                 }
             )
             if when(call.get("ended_at")):
