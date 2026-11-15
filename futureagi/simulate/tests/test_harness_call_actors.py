@@ -689,16 +689,19 @@ def test_a_built_bundle_s_call_actor_list_is_stored_once_and_an_empty_one_is_not
             ).values_list("title", "summary", "data")
         )
 
-    # The bundle has one actors.json; the stage output keeps the actors in it who speak in the conversation.
+    # The bundle has one actors.json; the stage output keeps every actor in it, one who only acts in the world too.
     world_only = {
         "id": "manager",
         "name": "Mia",
         "permitted_actions": ["deals.approve"],
     }
     assert persisted("bundle-one", {"actors": [*one["call_actors"], world_only]}) == [
-        ("Actors", "1 actor", one)
+        ("Actors", "2 actors", {"call_actors": [*one["call_actors"], world_only]})
     ]
-    assert persisted("bundle-empty", {"actors": [world_only]}) == []
+    assert persisted("bundle-world-only", {"actors": [world_only]}) == [
+        ("Actors", "1 actor", {"call_actors": [world_only]})
+    ]
+    assert persisted("bundle-empty", {"actors": []}) == []
     assert persisted("bundle-none", None) == []
 
 
