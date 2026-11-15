@@ -196,6 +196,27 @@ def test_the_rebuild_report_keeps_restored_and_failed_restores_masked():
     assert value[:8] not in report["restore_failed"][0]["why"]
 
 
+def test_the_rebuild_card_reads_the_stored_reason_and_lists_a_restore():
+    nudge = SimpleNamespace(target="suite", draft_snapshot={})
+    both = [_scenario(NAMES[0]), _scenario(CANCEL)]
+    drops = {
+        _key(CANCEL): {**_record(CANCEL), "capabilities": {"tools": ["cancel_booking"]}}
+    }
+    dropped = SimpleNamespace(
+        documents={"scenarios": [_scenario(NAMES[0])], "dropped": drops}
+    )
+
+    removed = rebuild._buckets(
+        nudge, SimpleNamespace(documents={"scenarios": both}), dropped
+    )
+    back = rebuild._buckets(
+        nudge, dropped, SimpleNamespace(documents={"scenarios": both})
+    )
+
+    assert removed[0]["update"]["removed"][0]["reason"] == REASON
+    assert back[0]["update"]["restored"] == [_key(CANCEL)]
+
+
 def test_a_suite_rebuild_names_the_agent_its_environment_was_built_for():
     agent = SimpleNamespace(version_name=None, version_number=5)
     nudge = SimpleNamespace(
