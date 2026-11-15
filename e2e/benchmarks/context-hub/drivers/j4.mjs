@@ -268,7 +268,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // sent); the author still inspects and attests it below.
           // Preselected only when exactly one authorized reviewer exists.
           if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
-          const attach = author.getByRole('checkbox', { name: /^Attach Text comparison/ });
+          const attach = author.getByRole('checkbox', { name: /^Attach Answer check/ });
           await expect(attach).toHaveCount(input.evidenceIds.length);
           await expect(author.getByText('No matching test evidence. Not tested is not a pass.', { exact: true })).toHaveCount(0);
           await expect(author.getByRole('button', { name: 'Share and attach', exact: true })).toHaveCount(input.evidenceIds.length);

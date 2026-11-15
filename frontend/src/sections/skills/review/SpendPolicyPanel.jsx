@@ -18,6 +18,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { IdentityValue } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 import TechnicalDetails from "../components/TechnicalDetails";
+import SavedFeedback from "../components/OperationFeedback";
 import CapabilityNotice from "../components/CapabilityNotice";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 import { periodLabel, usd } from "../utils/conclusions";
@@ -26,7 +27,7 @@ import { allowanceInput } from "../utils/format";
 const DECIMAL = /^(?:0|[1-9]\d{0,9})(?:\.\d{1,8})?$/;
 const SAVE_REASON_ID = "allowance-save-reason";
 
-function PolicyForm({ policy, canManage, onSave, onRefresh }) {
+function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
   const [revision, setRevision] = useState(policy.revision);
   const initialAmount = allowanceInput(policy.periodLimitUsd);
   const [amount, setAmount] = useState(initialAmount);
@@ -48,11 +49,14 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
   const limit = inForce ? usd(policy.periodLimitUsd) : null;
   const uncertain = Number(policy.unknownReservedUsd) > 0 ? usd(policy.unknownReservedUsd) : null;
   const amountError = amount === "" ? null : !wellFormed ? "Enter an amount such as 25 or 25.50." : !valid ? "Enter an amount above $0.00 to allow paid runs." : null;
-  // Empty is never saved (a saved allowance always has a limit), so the hint is
-  // literal only while nothing is in force; otherwise it points at the box.
-  const emptyHint = inForce
-    ? "Monthly limit in USD. To block paid runs, untick the box below."
-    : "Monthly limit in USD. Leave empty to block paid runs.";
+  // The box below is the only "off" control; the field only takes the amount.
+  const emptyHint = "Monthly limit in USD.";
+  const left = limit ? usd(policy.remainingUsd) : null;
+  // One summary line: limit, use, what's left and the period, then the caveat once.
+  const facts = limit
+    ? [`${limit} limit`, `${used} used`, left ? `${left} left` : null, period ? `${period} (UTC)` : null]
+    : [Number(policy.knownEstimateUsd) > 0 ? `${used} used` : null, Number(policy.knownEstimateUsd) > 0 && period ? `${period} (UTC)` : null];
+  const summary = facts.filter(Boolean).join(" · ");
   const saveReason = locked || !onSave ? null
     : stale ? "Review the current allowance first."
       : amount === "" ? "Enter an amount."
@@ -63,13 +67,18 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
     // The page title names the setting; this block carries no second heading.
     <Section>
       <Stack spacing={1.5}>
-        {/* Conclusion first: what is allowed now and what has been used this period. */}
-        <Typography variant="m3" role="status">
-          {limit ? `Paid test runs are allowed up to ${limit} this period. ${used} used.` : "Paid test runs are off for this workspace."}
-        </Typography>
-        <Typography variant="s3" color="text.secondary">
-          {[period ? `Period ${period} (UTC)` : null, limit && usd(policy.remainingUsd) ? `${usd(policy.remainingUsd)} left` : null, !limit && Number(policy.knownEstimateUsd) > 0 ? `${used} used` : null, "Amounts are estimates, not invoices."].filter(Boolean).join(" · ")}
-        </Typography>
+        {/* Conclusion first, once: what is allowed now and what has been used this period. */}
+        {limit ? (
+          <Typography variant="m3" role="status">
+            {summary}.{" "}
+            <Typography component="span" variant="s1" color="text.secondary">Estimates, not invoices.</Typography>
+          </Typography>
+        ) : (
+          <Stack spacing={0.5}>
+            <Typography variant="m3" role="status">Paid test runs are off for this workspace.</Typography>
+            {summary && <Typography variant="s3" color="text.secondary">{summary}. Estimates, not invoices.</Typography>}
+          </Stack>
+        )}
         {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}
         {!canManage && <Typography variant="s1">Only workspace admins can change this.</Typography>}
         {canManage && <>
@@ -111,9 +120,9 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
           )}
           <OperationFeedback operation={operation} />
           {operation.result && (
-            <Alert severity="success">
-              Allowance saved. Spending already recorded is unchanged.
-            </Alert>
+            <SavedFeedback success="Allowance saved. Spending already recorded is unchanged.">
+              {savedAction}
+            </SavedFeedback>
           )}
         </>}
         <Stack direction="row" spacing={1} useFlexGap alignItems="center" sx={{ flexWrap: "wrap" }}>
@@ -188,6 +197,7 @@ PolicyForm.propTypes = {
   canManage: PropTypes.bool,
   onSave: PropTypes.func,
   onRefresh: PropTypes.func,
+  savedAction: PropTypes.node,
 };
 // The allowance page's own states; never the release-review wording.
 export default function SpendPolicyPanel({

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link as MuiLink, TextField } from '@mui/material';
 import SkillsWorkspaceLayout from './SkillsWorkspaceLayout';
 import { iconExists } from '@iconify/react';
 import FileTree from './FileTree';
@@ -173,11 +174,12 @@ it('registers shared controls and tree arrows locally for offline use', () => {
   for (const icon of [SKILLS_NAV_ICON, 'solar:alt-arrow-right-linear', 'solar:alt-arrow-down-linear', 'solar:copy-linear', 'solar:menu-dots-bold', 'solar:info-circle-linear', 'solar:wallet-linear', 'solar:archive-linear']) expect(iconExists(icon)).toBe(true);
 });
 
-const navigation = vi.hoisted(() => ({ bindings: {}, enabled: true, campaigns: false, contract: true, allowance: true }));
+const navigation = vi.hoisted(() => ({ bindings: {}, enabled: true, campaigns: false, contract: true, allowance: true, role: { ready: false, isViewer: false } }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ enabled: navigation.enabled, identity: 'workspace-a' }) }));
 vi.mock('src/api/skills/r3-spend', () => ({ spendPolicyReady: () => navigation.allowance }));
 vi.mock('src/api/skills/context-campaigns', () => ({ campaignsContractReady: () => navigation.contract, useContextCampaignAvailability: () => ({ data: { enabled: navigation.campaigns } }) }));
 vi.mock('../contexts/ContextLibraryView', () => ({ useContextAuthoring: () => ({ bindings: navigation.bindings }) }));
+vi.mock('../utils/access', () => ({ useSkillsAccess: () => navigation.role }));
 // The assistant's open action needs the app's capability query; its own behaviour is covered in production-routes.test.jsx.
 const assistant = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('src/sections/falcon-ai/components/FalconAIFab', () => ({ useOpenFalconAI: () => assistant.open, FalconIcon: () => null }));
@@ -202,7 +204,7 @@ function mountNavigation(path = '/dashboard/skills', child = <p>Skills content</
 
 describe('Skills workspace navigation', () => {
   beforeEach(() => {
-    Object.assign(navigation, { bindings: { library: true, detail: true, editor: true, reviews: true, archived: true }, enabled: true, campaigns: false, contract: true, allowance: true });
+    Object.assign(navigation, { bindings: { library: true, detail: true, editor: true, reviews: true, archived: true }, enabled: true, campaigns: false, contract: true, allowance: true, role: { ready: true, isViewer: false } });
   });
   it('shows only primary enabled destinations and keeps secondary pages in More', async () => {
     const user = userEvent.setup();
@@ -222,8 +224,8 @@ describe('Skills workspace navigation', () => {
     await user.tab();
     expect(screen.getByRole('tab', { name: 'Skills' })).toHaveFocus();
     await user.tab();
-    // From sm up the assistant sits just left of More (UX iteration 3, SH2).
-    expect(screen.getByRole('button', { name: 'Falcon AI (⌘K)' })).toHaveFocus();
+    // The assistant sits just left of More at every width (UX iteration 4, SH1).
+    expect(screen.getByRole('button', { name: 'Ask Falcon AI' })).toHaveFocus();
     await user.keyboard('{Enter}');
     expect(assistant.open).toHaveBeenCalledOnce();
     await user.tab();
@@ -258,6 +260,44 @@ describe('Skills workspace navigation', () => {
     mountNavigation('/dashboard/skills/contexts/rollouts');
     expect(screen.getByText('Rollout direct route')).toBeVisible();
     expect(screen.queryByRole('tab', { selected: true })).not.toBeInTheDocument();
+  });
+  it('hides the Reviews tab from viewers once the role is known; the direct route still renders', () => {
+    navigation.role = { ready: true, isViewer: true };
+    const { unmount } = mountNavigation();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Skills', 'Agent contexts']);
+    unmount();
+    // Until the role is known nothing is hidden, so the tab never flickers away for members.
+    navigation.role = { ready: false, isViewer: false };
+    mountNavigation();
+    expect(screen.getByRole('tab', { name: 'Reviews' })).toBeVisible();
+  });
+  it('shows the assistant as a 32px icon button with its shortcut in the tooltip', async () => {
+    const user = userEvent.setup();
+    mountNavigation();
+    const button = within(screen.getByRole('navigation', { name: 'Skills navigation' })).getByRole('button', { name: 'Ask Falcon AI' });
+    expect(button).toHaveStyle({ width: '32px', height: '32px' });
+    await user.hover(button);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Falcon AI (⌘K)');
+  });
+  // jsdom applies stylesheet rules in source order, without specificity or complex :not(), so these
+  // read the rules the frame emits; the 390/dark captures check the rendered result in Chromium.
+  const frameRules = () => [...document.querySelectorAll('style')].map((node) => node.textContent).join('\n').replace(/\s+/g, ' ');
+  it('gives inline links the link look, but leaves breadcrumbs, table-row and opted-out links alone', () => {
+    mountNavigation('/dashboard/skills', <MuiLink href="/guide">Read the rollout setup guide</MuiLink>);
+    expect(screen.getByRole('link', { name: 'Read the rollout setup guide' })).toHaveStyle({ textDecoration: 'underline' });
+    const rule = frameRules().match(/[^{}]*\.MuiLink-root:not\(\.MuiLink-underlineNone\)[^{}]*\{[^}]*\}/)?.[0] ?? '';
+    for (const excluded of ['.MuiBreadcrumbs-root .MuiLink-root', '.MuiTableRow-root .MuiLink-root', '.MuiButtonBase-root .MuiLink-root']) expect(rule).toContain(`:not(${excluded})`);
+    expect(rule).toMatch(/text-decoration:\s*underline/);
+    expect(rule).toMatch(/font-weight:\s*400/);
+    expect(rule).toMatch(/text-decoration-color:\s*rgba\(/);
+    expect(rule).not.toMatch(/(^|[\s,}])a\[href\]/);
+  });
+  it('insets multiline field text like single-line fields', () => {
+    mountNavigation('/dashboard/skills', <TextField multiline minRows={2} label="Question" />);
+    const css = frameRules();
+    expect(css).toMatch(/\.MuiInputBase-multiline\s*\{[^}]*padding-left:\s*12px;\s*padding-right:\s*12px/);
+    expect(css).toMatch(/\.MuiInputBase-multiline textarea\s*\{[^}]*padding-left:\s*0/);
+    expect(screen.getByRole('textbox', { name: 'Question' })).toBeVisible();
   });
   it('keeps the shell mounted while a lazy destination loads', async () => {
     let resolve;
@@ -344,9 +384,8 @@ describe('object tab alignment', () => {
     const fade = scroller.style.getPropertyValue('--tab-fade');
     // Left edge on a tab boundary: nothing faded there.
     expect(fade).toMatch(/^linear-gradient\(to right, black 0px, /);
-    // The last tab (420 to 500) shows 70px: the whole fragment sits under the fade.
-    expect(fade).toContain('black calc(100% - 70px)');
-    expect(fade).toContain('transparent 100%');
+    // The last tab (420 to 500) shows 70px: the whole fragment is transparent, after an 8px ramp.
+    expect(fade).toContain('black calc(100% - 78px), transparent calc(100% - 70px), transparent 100%');
   });
   it('snaps tabs to their start edge', () => {
     expect(scrollTabsSx['& .MuiTabs-scroller']).toMatchObject({ scrollSnapType: 'x mandatory' });

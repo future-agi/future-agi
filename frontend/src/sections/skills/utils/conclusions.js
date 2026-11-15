@@ -78,7 +78,7 @@ export const recipientsOf = (options) => (options?.recipients ?? []).filter((per
 export const httpStatus = (error) => error?.response?.status ?? error?.statusCode ?? error?.status;
 // A finished run whose review record does not exist yet has no human reviews; only a real failure is an error.
 export const noReviewsYet = (query) => (query.isError && httpStatus(query.error) === 404 ? { ...query, isError: false, error: null, data: { results: [] } } : query);
-// Application verification headline. A plain regression run (no recorded failure selected) says
+// Application test headline. A plain regression run (no recorded failure selected) says
 // what passed; only a run that carried a recorded failure speaks about a repair.
 export function nativeConclusion({ candidate, reference, passed, total, result, decision }) {
   if (!result) return decision === 'release_ready' ? 'Application checks passed for these cases.' : 'Hold this release.';

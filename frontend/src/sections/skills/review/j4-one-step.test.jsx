@@ -82,8 +82,8 @@ it('carries the published candidate forward, preselects the only target and shar
   expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
   expect(screen.getByLabelText('Type')).toHaveAttribute('aria-disabled', 'true');
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
-  expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
-  screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
+  expect(screen.getAllByRole('checkbox', { name: /^Attach Answer check/ })).toHaveLength(2);
+  screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
   // The confirmation names every record it shares by title with a Private badge; IDs sit under Details.
   expect(within(screen.getByRole('dialog')).getAllByText('Private', { exact: true })).toHaveLength(2);
@@ -166,7 +166,7 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   fireEvent.click(screen.getByRole('button', { name: 'External pipeline (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
   expect(screen.queryByRole('button', { name: 'Attach 1 result' })).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Text comparison/ })).toBeChecked());
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Answer check/ })).toBeChecked());
   expect(prepare).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
 });
@@ -309,7 +309,7 @@ it('marks and lists the carried private run first, never ticks it, and warns bes
   expect(within(rows[1]).queryByText('From your test')).not.toBeInTheDocument();
   // Private: offered for sharing, never pre-ticked.
   expect(within(rows[0]).getByRole('button', { name: 'Share and attach' })).toBeVisible();
-  screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((box) => expect(box).not.toBeChecked());
+  screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((box) => expect(box).not.toBeChecked());
   expect(screen.getByText("2 passing results aren't attached. The reviewer will see no test evidence.")).toBeVisible();
   expect(screen.getByRole('button', { name: 'Attach results' })).toBeVisible();
   // Prepare stays one click.

@@ -5,7 +5,9 @@ import { useSkillLabels, useSkillVersions } from 'src/api/skills';
 
 // `annotate` (opt-in): list each version once, with its label names appended
 // ("v2 · production · latest"). Values stay version numbers; label aliases are
-// not offered, so callers resolve a `label:` value to its number first.
+// not offered, so callers resolve a `label:` value to its number first. The
+// closed field shows only "v2": the row beside it already names production and
+// latest (UX iteration 4, SH9), so the menu alone carries the labels.
 // `ariaLabel` (opt-in): no visible field label; the surrounding text labels it.
 export default function VersionSelect({ skillId, value, onChange, includeDraft = false, includeLabels = true, label = "Version", annotate = false, ariaLabel }) {
   const [page, setPage] = useState(1);
@@ -28,8 +30,10 @@ export default function VersionSelect({ skillId, value, onChange, includeDraft =
   // Keep a controlled value visible even when paging through older versions.
   if (value != null && value !== '' && !options.some((option) => option.value === value)) options.unshift({ value, label: typeof value === 'number' ? `v${value}` : value === 'draft' ? 'Your draft' : value.replace(/^label:/, '') });
   const failed = versions.isError || ((includeLabels || annotate) && labels.isError);
+  const shortValue = annotate ? (selected) => (typeof selected === 'number' ? `v${selected}` : options.find((option) => option.value === selected)?.label ?? '') : undefined;
+  const selectProps = { ...(ariaLabel ? { inputProps: { 'aria-label': ariaLabel } } : {}), ...(shortValue ? { renderValue: shortValue } : {}) };
   return <TextField select fullWidth size="small" label={ariaLabel ? undefined : label} value={value ?? ''} error={failed}
-    SelectProps={ariaLabel ? { inputProps: { 'aria-label': ariaLabel } } : undefined}
+    SelectProps={Object.keys(selectProps).length ? selectProps : undefined}
     helperText={failed ? 'Could not load versions. Open the menu to retry.' : versions.isPending ? 'Loading versions…' : undefined}
     onChange={(event) => {
       if (event.target.value === '__next') setPage((current) => current + 1);

@@ -176,15 +176,16 @@ it('exposes rollouts only after the server capability is enabled', async () => {
   mount('/dashboard/skills/contexts');
   expect(await screen.findByRole('tab', { name: 'Repository rollouts' })).not.toBeDisabled();
 });
-it('shortens the rollouts tab on phones without changing its accessible name, and keeps tabs scrollable', async () => {
+it('keeps the full rollouts label on phones and keeps tabs scrollable', async () => {
   identity.campaigns = true;
   const original = window.matchMedia;
   // Every max-width query matches: the viewport is below sm.
   window.matchMedia = (query) => ({ matches: /max-width/.test(query), media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false });
   try {
     mount('/dashboard/skills/contexts');
+    // One label at every width (UX iteration 4, SH8); the strip scrolls and fades a cut tab.
     const tab = await screen.findByRole('tab', { name: 'Repository rollouts' });
-    await waitFor(() => expect(tab).toHaveTextContent(/^Rollouts$/));
+    expect(tab).toHaveTextContent(/^Repository rollouts$/);
     const tablist = screen.getByRole('tablist', { name: 'Skills views' });
     expect(tablist.closest('.MuiTabs-scrollableX')).not.toBeNull();
     expect(screen.getByRole('tab', { name: 'Agent contexts' })).toHaveAttribute('aria-selected', 'true');
@@ -192,15 +193,15 @@ it('shortens the rollouts tab on phones without changing its accessible name, an
     window.matchMedia = original;
   }
 });
-// The assistant on Skills routes (UX iteration 3, SH2): from sm up it sits in the navigation row and
-// nothing floats over content; on a phone the floating button stays but steps aside while a field has focus.
+// The assistant on Skills routes (UX iteration 4, SH1): at every width it sits in the navigation row
+// and nothing floats over content; Cmd+K keeps working. Other pages keep the floating button.
 function Where() { return <output aria-label="Current path">{useLocation().pathname}</output>; }
 const mountWithAssistant = (path) => render(<QueryClientProvider client={client}><HelmetProvider><ThemeProvider theme={theme}><MemoryRouter initialEntries={[path]}><Routes /><FalconAIFab /><Where /></MemoryRouter></ThemeProvider></HelmetProvider></QueryClientProvider>);
 it('puts the assistant in the Skills navigation row instead of a floating button, and keeps Cmd+K', async () => {
   mountWithAssistant('/dashboard/skills/contexts');
   await screen.findByRole('button', { name: 'policy-context' });
   const nav = screen.getByRole('navigation', { name: 'Skills navigation' });
-  const assistant = within(nav).getByRole('button', { name: 'Falcon AI (⌘K)' });
+  const assistant = within(nav).getByRole('button', { name: 'Ask Falcon AI' });
   // Just left of More.
   expect(assistant.compareDocumentPosition(within(nav).getByRole('button', { name: 'More Skills pages' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(document.querySelector('.MuiFab-root')).toBeNull();
@@ -213,24 +214,23 @@ it('puts the assistant in the Skills navigation row instead of a floating button
   fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
   await waitFor(() => expect(screen.getByRole('status', { name: 'Current path' })).toHaveTextContent('/dashboard/falcon-ai'));
 });
-it('keeps the floating assistant on phones, out of the way while a field has focus', async () => {
+it('shows no floating assistant on Skills routes on phones either, only the navigation-row button', async () => {
   const original = window.matchMedia;
   window.matchMedia = (query) => ({ matches: /max-width/.test(query), media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false });
   try {
     mountWithAssistant('/dashboard/skills/contexts');
     await screen.findByRole('button', { name: 'policy-context' });
-    expect(within(screen.getByRole('navigation', { name: 'Skills navigation' })).queryByRole('button', { name: /Falcon AI/ })).not.toBeInTheDocument();
-    await waitFor(() => expect(document.querySelector('.MuiFab-root')).not.toBeNull());
-    const field = document.createElement('input');
-    document.body.appendChild(field);
-    act(() => field.focus());
-    await waitFor(() => expect(document.querySelector('.MuiFab-root')).toBeNull());
-    act(() => field.blur());
-    await waitFor(() => expect(document.querySelector('.MuiFab-root')).not.toBeNull());
-    field.remove();
+    expect(within(screen.getByRole('navigation', { name: 'Skills navigation' })).getByRole('button', { name: 'Ask Falcon AI' })).toBeVisible();
+    expect(document.querySelector('.MuiFab-root')).toBeNull();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Current path' })).toHaveTextContent('/dashboard/falcon-ai'));
   } finally {
     window.matchMedia = original;
   }
+});
+it('keeps the floating assistant on pages outside Skills', () => {
+  render(<QueryClientProvider client={client}><HelmetProvider><ThemeProvider theme={theme}><MemoryRouter initialEntries={['/dashboard/settings/integrations']}><FalconAIFab /></MemoryRouter></ThemeProvider></HelmetProvider></QueryClientProvider>);
+  expect(document.querySelector('.MuiFab-root')).not.toBeNull();
 });
 it('starts editing from the explicitly viewed release, recognizing normalized missing-draft errors', async () => {
   mount(`/dashboard/skills/contexts/${id}?version=4`);

@@ -1,6 +1,7 @@
 import { Suspense, useId, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Box, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tab, useMediaQuery, useTheme } from '@mui/material';
+import { Box, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tab } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import CustomTooltip from 'src/components/tooltip';
 import { FalconIcon, useOpenFalconAI } from 'src/sections/falcon-ai/components/FalconAIFab';
 import { useContextAuthoring } from '../contexts/ContextLibraryView';
@@ -11,20 +12,52 @@ import { paths } from 'src/routes/paths';
 import { spendPolicyReady } from 'src/api/skills/r3-spend';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { campaignsContractReady, useContextCampaignAvailability } from 'src/api/skills/context-campaigns';
+import { useSkillsAccess } from '../utils/access';
 import SkillsProductionProvider from './SkillsProductionProvider';
 import { scrollTabsProps, scrollTabsSx, useActiveTabInView } from './tabStrip';
 import { skillsRouteSx } from './routeGutter';
 import './skillIcons';
 
-// The assistant, from sm up, as a quiet icon in the navigation row instead of
-// a button floating over content (UX iteration 3, SH2). Same icon, name and
-// action as the floating button; Cmd+K still opens it from anywhere.
+// The assistant as a quiet 32px icon in the navigation row, at every width,
+// instead of a button floating over content (UX iteration 4, SH1). Same icon
+// and action as the floating button elsewhere; Cmd+K still opens it.
 function AssistantButton() {
   const open = useOpenFalconAI();
   return <CustomTooltip title="Falcon AI (⌘K)" show placement="bottom" arrow>
-    <IconButton size="small" onClick={open} sx={{ flexShrink: 0, color: 'text.secondary' }}><FalconIcon sx={{ fontSize: 20 }} /></IconButton>
+    <IconButton size="small" aria-label="Ask Falcon AI" onClick={open} sx={{ flexShrink: 0, width: 32, height: 32, color: 'text.secondary' }}><FalconIcon sx={{ fontSize: 20 }} /></IconButton>
   </CustomTooltip>;
 }
+
+// Inline links and multiline fields inside Skills (UX iteration 4, SH5, SH6).
+// - Links: the DS dark palette maps primary.main to near-white (#EFEFF1) and the
+//   app theme's MuiLink default is underline="hover", so in dark mode an inline
+//   Link read as plain white text. Inside Skills an inline link always shows the
+//   DS link colour (text.link) at normal weight with a soft underline. Links that
+//   opted out (underline="none"), breadcrumbs, table-row links and links inside
+//   buttons keep their own look.
+// - Multiline fields: the root kept MUI's 14px side padding and the textarea added
+//   the theme's 12px, so their text sat ~24px in while single-line text sat 12px.
+//   The root now carries the single-line padding and the textarea none.
+const INLINE_LINK = '& .MuiLink-root:not(.MuiLink-underlineNone):not(.MuiBreadcrumbs-root .MuiLink-root):not(.MuiTableRow-root .MuiLink-root):not(.MuiButtonBase-root .MuiLink-root)';
+const workspaceSx = (theme) => {
+  const link = theme.palette.text.link ?? theme.palette.primary.main;
+  return {
+    [INLINE_LINK]: {
+      color: link,
+      fontWeight: theme.typography.fontWeightRegular,
+      textDecoration: 'underline',
+      textDecorationColor: alpha(link, 0.4),
+      textUnderlineOffset: '2px',
+      '&:hover, &:focus-visible': { textDecorationColor: link },
+    },
+    '& .MuiInputBase-multiline': {
+      paddingLeft: '12px',
+      paddingRight: '12px',
+      '&.MuiInputBase-sizeSmall': { paddingLeft: '10px', paddingRight: '10px' },
+      '& textarea': { paddingLeft: 0, paddingRight: 0 },
+    },
+  };
+};
 
 // Local navigation within Skills. Destination visibility never grants access:
 // direct routes and their existing authorization remain unchanged.
@@ -35,8 +68,7 @@ function SkillsNavigation() {
   const campaigns = useContextCampaignAvailability();
   const [menu, setMenu] = useState(null);
   const menuId = useId();
-  const theme = useTheme();
-  const narrow = useMediaQuery(theme.breakpoints.down('sm'));
+  const role = useSkillsAccess();
   const tabsRef = useRef(null);
   const bindings = composition?.bindings;
   const available = {
@@ -44,7 +76,9 @@ function SkillsNavigation() {
     [paths.dashboard.skills.contextRollouts]: access.enabled && campaignsContractReady() && campaigns.data?.enabled === true,
     [paths.dashboard.skills.allowance]: access.enabled && spendPolicyReady(),
     [paths.dashboard.skills.contexts]: Boolean(bindings?.library && bindings?.detail && bindings?.editor),
-    [paths.dashboard.skills.reviews]: Boolean(bindings?.reviews),
+    // Viewers can't act on reviews, so the tab would only lead to "You don't have access".
+    // The direct URL still renders that explanation; only the tab is hidden.
+    [paths.dashboard.skills.reviews]: Boolean(bindings?.reviews) && !(role.ready && role.isViewer),
     [paths.dashboard.skills.archived]: Boolean(bindings?.archived),
   };
   const tabs = [
@@ -66,18 +100,17 @@ function SkillsNavigation() {
   const menuOpen = Boolean(menu && menu.identity === access.identity && menu.pathname === pathname);
   const closeMenu = () => setMenu(null);
   useActiveTabInView(tabsRef, tabValue);
-  // Phones show the short visible label; the accessible name stays the full one.
-  const shortLabels = { [paths.dashboard.skills.contextRollouts]: 'Rollouts' };
 
-  // Phones keep the floating assistant, so the end of the page clears it; from sm up it sits in this row.
+  // No floating assistant in Skills, so the page end needs no extra clearance at any width.
   // The workspace never grows wider than the content panel, so nothing in it can scroll the app frame sideways.
-  return <Stack key={access.identity} data-skills-workspace sx={{ minWidth: 0, maxWidth: '100%', width: '100%', minHeight: 0, flex: 1, pb: { xs: 9, sm: 3 } }}>
+  return <Stack key={access.identity} data-skills-workspace sx={[{ minWidth: 0, maxWidth: '100%', width: '100%', minHeight: 0, flex: 1, pb: 3 }, workspaceSx]}>
     <Box component="nav" aria-label="Skills navigation" sx={{ px: { xs: 2, md: 3 }, pt: 1.5, minWidth: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
         <CustomTabs ref={tabsRef} value={tabValue} {...scrollTabsProps} aria-label="Skills views" sx={{ ...scrollTabsSx, flex: 1 }}>
-          {tabs.map(([path, label]) => <Tab key={path} value={path} label={narrow && shortLabels[path] ? shortLabels[path] : label} aria-label={shortLabels[path] ? label : undefined} component={NavLink} to={path} end />)}
+          {/* One label at every width; the strip scrolls and fades a cut tab. */}
+          {tabs.map(([path, label]) => <Tab key={path} value={path} label={label} component={NavLink} to={path} end />)}
         </CustomTabs>
-        {!narrow && <AssistantButton />}
+        <AssistantButton />
         {more.length > 0 && <>
           <IconButton
             id={`${menuId}-trigger`} size="small" aria-label="More Skills pages"

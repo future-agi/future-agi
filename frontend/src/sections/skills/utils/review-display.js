@@ -8,11 +8,11 @@ export function relativeReviewTime(value, now = Date.now()) {
 }
 
 export const reviewPersonName = (name, deleted) => name || (deleted ? 'Former member' : 'Name not available');
-export const evidenceTitle = (ref, candidate, baseline) => ref.name || `${ref.source === 'skills_text' ? 'Text comparison' : 'Application verification'}${candidate != null ? ` · v${candidate}` : ''}${baseline != null ? ` vs v${baseline}` : ''}`;
-export const outcomeLabel = (value) => ({ works_on_examples: 'Passed on examples', not_observed: 'Not observed', cannot_assess: 'Cannot assess' }[value] || value?.replaceAll('_', ' '));
+export const evidenceTitle = (ref, candidate, baseline) => ref.name || `${ref.source === 'skills_text' ? 'Answer check' : 'Application test'}${candidate != null ? ` · v${candidate}` : ''}${baseline != null ? ` vs v${baseline}` : ''}`;
+export const outcomeLabel = (value) => ({ works_on_examples: 'Passed on test cases', not_observed: 'Not observed', cannot_assess: 'Cannot assess' }[value] || value?.replaceAll('_', ' '));
 // StatusBadge props for a recorded outcome. "works_on_examples" is a pass the
-// server established on the saved examples, so it reads "Passed on examples".
-export const outcomeBadge = (value) => (value === 'works_on_examples' ? { status: 'passed', label: 'Passed on examples' } : { status: value });
+// server established on the saved test cases, so it reads "Passed on test cases".
+export const outcomeBadge = (value) => (value === 'works_on_examples' ? { status: 'passed', label: 'Passed on test cases' } : { status: value });
 
 const reported = (value) => value ?? 'Not reported';
 const counted = (value, one, many) => (value == null ? `Not reported ${many}` : `${value} ${value === 1 ? one : many}`);
@@ -38,7 +38,7 @@ export function coverageText(counts) {
 // Native outcomes and the text-comparison decision.state values from
 // model_hub/services/skills_hub/v11/grading.py map to one badge each.
 const EVIDENCE_OUTCOMES = {
-  works_on_examples: { status: 'passed', label: 'Passed on examples' },
+  works_on_examples: { status: 'passed', label: 'Passed on test cases' },
   needs_changes: { status: 'failed', label: 'Needs changes' },
   inconclusive: { status: 'incomplete', label: 'Inconclusive' },
   diagnostic: { status: 'diagnostic', role: 'neutral', label: 'Diagnostic only' },

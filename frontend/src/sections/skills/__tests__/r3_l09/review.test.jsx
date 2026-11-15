@@ -94,8 +94,8 @@ describe("typed release evidence", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Text comparison · v7 vs v4")).toBeVisible();
-    expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Answer check · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Application test · v7 vs v4")).toBeVisible();
     // The evidence row itself names grading completeness; Inspect adds the full record.
     expect(
       screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
@@ -690,7 +690,12 @@ describe("publication and explicit spending", () => {
     ).toBeDisabled();
     // The lead says what is true now, in currency, not accounting fields.
     expect(screen.getByText("Paid test runs are off for this workspace.")).toBeVisible();
-    expect(screen.getByText(/Period Nov 1–30 \(UTC\) · \$2\.12 used/)).toBeVisible();
+    // One summary line under it, with the caveat once (UX iteration 4, SH7).
+    expect(screen.getByText("$2.12 used · Nov 1–30 (UTC). Estimates, not invoices.")).toBeVisible();
+    // The box below is the only "off" control; the field hint only describes the amount.
+    expect(screen.getByText("Monthly limit in USD.")).toBeVisible();
+    expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Allow paid test runs up to this amount" })).not.toBeChecked();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
       { target: { value: "12.00000001" } },
