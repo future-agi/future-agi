@@ -213,6 +213,8 @@ export interface ParticipantsSeed {
   traceId: string;
   // A second call the user stopped mid-call: a worker cut short as cancelled, its run's sandbox removed.
   cancelledCallExecutionId: string;
+  // A third call whose refund worker, served as its own process, the harness stopped when its deadline passed.
+  stoppedWorkerCallExecutionId: string;
 }
 
 const PARTICIPANTS_SEED_SCRIPT = `
@@ -334,8 +336,16 @@ def main():
         payload={"source": {"kind": "archive"}, "metadata": {"name": f"e2e-participants-env-{suffix}"}},
     )
     # A built environment: its run detail shows calls rather than the build overview.
+    # The contract snapshot declares the two workers, as the Contract tab's Workers card reads them.
+    contract = {"workers": [
+        {"id": "order_lookup", "name": "Order-lookup worker", "tools": ["get_order", "list_refunds", "update_order_status"],
+         "allowed_tools": ["get_order", "list_refunds"], "binding": "separate", "address_env": "ORDER_LOOKUP_API_URL"},
+        {"id": "refund", "name": "Refund worker", "tools": ["list_refunds", "issue_refund"], "allowed_tools": [],
+         "binding": "shared", "process": "refund-worker"},
+    ]}
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-        state=HostedHarnessJob.State.COMPLETED, current_stage="completed"
+        state=HostedHarnessJob.State.COMPLETED, current_stage="completed",
+        stage_outputs=[{"kind": "contract", "data": contract}],
     )
     run = f"run-{suffix}"
     record = {
@@ -421,6 +431,23 @@ def main():
         completed_at=timezone.now(),
         call_metadata={"harness_workers": stopped},
     )
+    # The refund worker runs as its own process: past its deadline the harness ended it (sealed as stopped_workers).
+    past_deadline = {
+        **record,
+        "workers": [
+            record["workers"][0],
+            {**record["workers"][1], "state": "deadline_passed", "stopped_at": 1763200000.0},
+        ],
+        "events": record["events"][:4],
+    }
+    stopped_worker = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        completed_at=timezone.now(),
+        call_metadata={"harness_workers": past_deadline},
+    )
     print(json.dumps({
         "environmentId": str(environment.id),
         "runTestId": str(run_test.id),
@@ -428,6 +455,7 @@ def main():
         "callExecutionId": str(call.id),
         "traceId": trace_id,
         "cancelledCallExecutionId": str(cancelled.id),
+        "stoppedWorkerCallExecutionId": str(stopped_worker.id),
     }))
 
 

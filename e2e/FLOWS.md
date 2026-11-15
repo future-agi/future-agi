@@ -2976,3 +2976,27 @@
 - World changes lists the worker's refused attempt with its reason
 - World changes lists the order two workers named, with its committed writes
 - the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox
+
+### SIM-E2E-011 — the Contract tab lists the declared workers, and a worker the harness stopped at its deadline says so
+
+**Goal:** A developer reviews which workers the app declares before a run, and after a run sees that a worker past its deadline was stopped, not only refused
+
+**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment whose contract declares two workers, with a call whose refund worker the harness stopped at its deadline
+2. open its Contract tab
+3. open that call and its Participants tab
+
+**Backend state verified:**
+
+- the environment detail serves both declared workers with their binding and allowed tools
+- the workers API serves the stopped worker as past its deadline with cleanup stopped
+
+**Browser observations:**
+
+- the Workers card lists each worker with its channel, and allowed tools only where narrower than its code holds
+- the stopped call says the refund worker was stopped when its deadline passed
