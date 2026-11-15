@@ -2404,3 +2404,34 @@ def test_a_draft_write_with_a_fault_mode_the_world_does_not_know_is_refused(
         drafts.record_draft(environment, _authoring(**edited), origin="chat", user=user)
     assert raised.value.code == "scenario_faults_invalid"
     assert drafts.fresh_draft(environment, "suite") is None
+
+
+def test_a_huge_record_change_is_cut_at_ingestion_and_says_how_much():
+    from simulate.services.hosted_harness_ingestion import (
+        MAX_CHANGE_VALUE_CHARS,
+        _world_change_fields,
+    )
+
+    body = "x" * 5_000_000
+    change = {
+        "table": "docs",
+        "key": {"id": 1},
+        "kind": "changed",
+        "before": {"id": 1, "body": body, "meta": {"text": body}},
+        "after": {"id": 1, "body": body + "y", "meta": {"text": body}},
+        "fields": ["body"],
+    }
+
+    kept = _world_change_fields({"records": {"changes": [change]}})
+
+    [shown] = kept["records"]["changes"]
+    assert len(json.dumps(kept)) < 20_000
+    assert shown["after"]["body"].endswith(
+        f"({len(body) + 1 - MAX_CHANGE_VALUE_CHARS} more characters)"
+    )
+    assert shown["before"]["meta"].startswith('{"text": "xxx')
+    assert (shown["after"]["id"], shown["fields"], shown["key"]) == (
+        1,
+        ["body"],
+        {"id": 1},
+    )
