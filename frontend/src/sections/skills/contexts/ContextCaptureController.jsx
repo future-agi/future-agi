@@ -43,7 +43,7 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeConte
     const params = new URLSearchParams({ tab: 'tests', reproduce: caseId, ...(latest ? { version: String(latest) } : {}), ...(recorded ? { reference: String(recorded) } : {}) });
     return {
       notice: unrecorded ? <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert> : null,
-      action: <Button variant="contained" color="primary" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>,
+      action: <Button variant="contained" color="primary" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Set up application test</Button>,
     };
   };
   // Provenance in words: which context and version the trace recorded. Identifiers stay in details.

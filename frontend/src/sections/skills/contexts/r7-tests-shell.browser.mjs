@@ -54,7 +54,7 @@ try {
   await expect(page.getByText('No matching test runs', { exact: true })).toBeVisible();
   await shot('tests-filtered-empty');
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
-  const inspect = page.getByRole('button', { name: /Inspect Original refund failure Candidate repeat 1/ });
+  const inspect = page.getByRole('button', { name: /Inspect Original refund failure Version tested repeat 1/ });
   if (await inspect.count()) {
     await inspect.focus(); await page.keyboard.press('Enter');
     await expect(page.getByText('Observed by the application', { exact: true })).toBeVisible();
@@ -74,7 +74,7 @@ try {
   const ceiling = page.getByRole('checkbox', { name: /I accept up to/ });
   if (await ceiling.count()) {
     await ceiling.check();
-    await expect(page.getByRole('button', { name: 'Run on the application', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Run application test', exact: true })).toBeEnabled();
     await shot('tests-application-run-enabled');
     await ceiling.uncheck();
   }
@@ -121,7 +121,7 @@ try {
   await page.getByRole('textbox', { name: 'Expected answer contains', exact: true }).fill('receipt');
   await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('0.50');
   await page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check();
-  const preview = page.getByRole('button', { name: 'Preview whole-context test', exact: true });
+  const preview = page.getByRole('button', { name: 'Preview answer check', exact: true });
   await expect(preview).toBeEnabled();
   await shot('tests-answer-preview-enabled');
   await preview.click();
@@ -135,7 +135,7 @@ try {
   await expect(view).toBeFocused();
   await page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check();
   await page.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.', exact: true }).check();
-  await expect(page.getByRole('button', { name: 'Run whole-context test', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Run answer check', exact: true })).toBeEnabled();
   await shot('tests-answer-run-enabled');
 } finally {
   await writeFile(resolve(output, 'checks.json'), JSON.stringify(checks, null, 2));

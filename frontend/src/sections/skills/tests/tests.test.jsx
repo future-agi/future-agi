@@ -50,6 +50,12 @@ vi.mock("src/api/skills", () => ({
 vi.mock("src/api/skills/r3-spend", () => ({
   useSkillsSpendPolicy: () => api.spend ?? {},
 }));
+// A test can stand in an admin (TST6); every other test uses the real access rules.
+const accessOverride = vi.hoisted(() => ({ value: null }));
+vi.mock("../utils/access", async (original) => {
+  const actual = await original();
+  return { ...actual, useSkillsAccess: () => { const real = actual.useSkillsAccess(); return accessOverride.value ?? real; } };
+});
 vi.mock("src/api/skills/testing", () => ({
   useSkillV11Scope: () => api.scope,
   useSkillTestSuite: () => ({ ...api.suite, refetch: api.refetch }),
@@ -1348,5 +1354,22 @@ it("shows a missing allowance before consent and disables the paid run with its 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   } finally {
     api.spend = undefined;
+  }
+});
+
+it("links Set allowance back to the blocked test so the admin can return after saving", () => {
+  api.spend = { data: { enabled: false, periodLimitUsd: null } };
+  accessOverride.value = { ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: true };
+  window.history.pushState({}, "", "/dashboard/skills/skill?tab=tests");
+  try {
+    mount(setup());
+    const link = screen.getByRole("link", { name: "Set allowance" });
+    const url = new URL(link.href);
+    expect(url.pathname).toBe("/dashboard/skills/allowance");
+    expect(url.searchParams.get("returnTo")).toBe("/dashboard/skills/skill?tab=tests");
+  } finally {
+    api.spend = undefined;
+    accessOverride.value = null;
+    window.history.pushState({}, "", "/");
   }
 });

@@ -106,7 +106,7 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await expect(page.getByRole('table', { name: 'Context regression cases' })).toContainText(requestText);
   // The captured case sits beside the application target; text capture alone is never native evidence.
   // With no application registered the answer check is the default, so choose the application test first.
-  await page.getByRole('radio', { name: /^Verify on the application/ }).check();
+  await page.getByRole('radio', { name: /^Test on the application/ }).check();
   await expect(page.getByText('Application target', { exact: true })).toBeVisible();
   await expect(page.getByText('Test cases', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests.png'), animations: 'disabled' });

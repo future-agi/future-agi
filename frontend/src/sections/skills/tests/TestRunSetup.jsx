@@ -32,6 +32,11 @@ import CapabilityNotice from "../components/CapabilityNotice";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 import { useSkillsAccess } from "../utils/access";
 
+// "Set allowance" carries the way back to this test: the allowance page reads ?returnTo= and offers
+// "Back to tests" after saving (SH7). Read from the window so this works with or without a router.
+const allowanceHref = () =>
+  `${paths.dashboard.skills.allowance}?returnTo=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`;
+
 async function draftCandidate(draft) {
   return { kind: 'draft', revision: draft.revision, digest: await skillFilesDigest(draft.files) };
 }
@@ -491,7 +496,7 @@ export default function TestRunSetup({
               <Button
                 variant="outlined"
                 size="small"
-                href={paths.dashboard.skills.allowance}
+                href={allowanceHref()}
               >
                 Set allowance
               </Button>

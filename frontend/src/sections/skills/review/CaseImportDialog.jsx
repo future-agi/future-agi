@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   DialogActions,
@@ -26,6 +27,25 @@ import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
+const humanizeKey = (key) => { const text = String(key).replace(/[_-]+/g, " ").trim(); return text ? text.charAt(0).toUpperCase() + text.slice(1) : "Value"; };
+// A structured tool result reads as named values ("Age days: 10 · Amount: 25"); the raw JSON stays one
+// toggle away for redaction. A result shaped { "<tool>": { ... } } is named after its tool. Plain text is
+// not structured, so it stays an open text field.
+function toolStructure(text) {
+  let value;
+  try { value = JSON.parse(text); } catch { return null; }
+  if (!value || typeof value !== "object") return null;
+  const keys = Array.isArray(value) ? [] : Object.keys(value);
+  const named = keys.length === 1 && value[keys[0]] && typeof value[keys[0]] === "object";
+  const leaves = [];
+  const walk = (node, path) => {
+    if (node && typeof node === "object") Object.entries(node).forEach(([key, child]) => walk(child, path ? `${path} ${key}` : key));
+    else leaves.push(`${humanizeKey(path)}: ${node === null ? "empty" : String(node)}`);
+  };
+  walk(named ? value[keys[0]] : value, "");
+  // Every value is listed: the share acknowledgment covers all of it, so nothing hides behind "more".
+  return { name: named ? keys[0] : null, summary: leaves.length ? leaves.join(" · ") : "No values" };
+}
 function ReviewedExample({
   preview,
   suiteRevision,
@@ -38,18 +58,24 @@ function ReviewedExample({
   describeSource,
   targetName,
   onSavedChange,
+  onBack,
+  initialDraft,
 }) {
-  const [title, setTitle] = useState("");
-  const [behavior, setBehavior] = useState({ skillId: "", action: "" });
+  // Back keeps every typed field: the same snapshot restores all of them; a new snapshot (a changed
+  // selection) keeps only what the reviewer wrote (name, expected answer, behavior) and re-reads the
+  // request and tool results from it. Acknowledgments always start unticked.
+  const sameSnapshot = initialDraft?.snapshot === (preview.captureId ?? preview.planId);
+  const [title, setTitle] = useState(initialDraft?.title ?? "");
+  const [behavior, setBehavior] = useState(initialDraft?.behavior ?? { skillId: "", action: "" });
   const [expectedSuiteRevision] = useState(suiteRevision);
   const suiteChanged = expectedSuiteRevision !== suiteRevision;
-  const [prompt, setPrompt] = useState(() =>
+  const [prompt, setPrompt] = useState(() => sameSnapshot ? initialDraft.prompt :
     preview.segments
       .filter((item) => item.kind === "request")
       .map((item) => item.text)
       .join("\n\n"),
   );
-  const [fixtures, setFixtures] = useState(() =>
+  const [fixtures, setFixtures] = useState(() => sameSnapshot ? initialDraft.fixtures :
     preview.segments
       .filter((item) => item.kind === "tool_result")
       .map((item, index) => ({
@@ -58,7 +84,10 @@ function ReviewedExample({
         text: item.text,
       })),
   );
-  const [expectation, setExpectation] = useState("");
+  const [expectation, setExpectation] = useState(initialDraft?.expectation ?? "");
+  // Which tool results are structured is decided once, from the snapshot, so editing the raw text
+  // never moves the field.
+  const [structured] = useState(() => Object.fromEntries(preview.segments.filter((item) => item.kind === "tool_result").map((item, index) => [index, Boolean(toolStructure(item.text))])));
   const [reviewed, setReviewed] = useState(false);
   const [shared, setShared] = useState(false);
   const [ids] = useState(() => ({
@@ -117,7 +146,7 @@ function ReviewedExample({
           <Alert severity="success" role="status">
             {targetName ? `Test case saved to ${targetName}` : "Test case saved"}: {title}. Nothing was run or published.
           </Alert>
-          {saved?.action && <Typography variant="s1">Next, reproduce it on the application to confirm the failure and test a fix.</Typography>}
+          {saved?.action && <Typography variant="s1">Next, set up an application test to confirm the failure and test a fix.</Typography>}
           {saved?.notice}
         </Stack>
       </DialogContent>
@@ -135,10 +164,20 @@ function ReviewedExample({
           {/* Readable provenance first; fingerprints and exact identities are details. */}
           <Typography variant="s1">{describeSource?.(preview) || (preview.recordedContext ? "From a recorded trace" : "From a trace with no recorded context version")}</Typography>
           <Typography variant="s3" color="text.secondary">
-            {targetName ? "Step 2 of 2 · " : ""}Saving this case doesn&apos;t run a model or tools. An answer
-            check replays the selected text{applicationBehavior ? "; application verification checks the skills and business actions you specify below" : ""}.
-            Set the expected answer from your policy, not from the failed answer.
+            {targetName ? "Step 2 of 2 · " : ""}Saving doesn&apos;t run anything. Set the expected answer from your policy, not from the failed answer.
           </Typography>
+          <TechnicalDetails title="What are these checks?">
+            <Stack spacing={0.5}>
+              <Typography variant="s3">
+                An answer check replays the selected text{applicationBehavior ? "; an application test checks the skills and business actions you specify below" : ""}.
+              </Typography>
+              {preview.omitted?.length > 0 && (
+                <Typography variant="s3">
+                  Left out of this case: {preview.omitted.map((item) => item.reason).join("; ")}
+                </Typography>
+              )}
+            </Stack>
+          </TechnicalDetails>
           <TechnicalDetails title="Source details">
             <Stack spacing={1}>
               <IdentityValue label="Source fingerprint" value={preview.sourceFingerprint} />
@@ -162,11 +201,6 @@ function ReviewedExample({
               preserved but can&apos;t be saved against the changed list. Reopen
               this capture after reviewing the current test cases.
             </Alert>
-          )}
-          {preview.omitted?.length > 0 && (
-            <Typography variant="s3">
-              Omitted: {preview.omitted.map((item) => item.reason).join("; ")}
-            </Typography>
           )}
           {preview.outboundFindings?.map((finding) => (
             <Alert key={finding.findingId} severity="warning">
@@ -193,28 +227,42 @@ function ReviewedExample({
             error={bytes(prompt) > 16384}
             helperText="Remove private or irrelevant text. Up to 16 KB of text. Put the expected answer in the check below, not here."
           />
-          {fixtures.map((fixture, index) => (
-            <TextField
-              key={fixture.id}
-              label={`Redacted tool result ${index + 1}`}
-              size="small"
-              multiline
-              minRows={2}
-              value={fixture.text}
-              disabled={locked}
-              onChange={(event) => {
-                setFixtures((items) =>
-                  items.map((item) =>
-                    item.id === fixture.id
-                      ? { ...item, text: event.target.value }
-                      : item,
-                  ),
-                );
-                setReviewed(false);
-                setShared(false);
-              }}
-            />
-          ))}
+          {fixtures.map((fixture, index) => {
+            const field = (
+              <TextField
+                label={`Redacted tool result ${index + 1}`}
+                size="small"
+                multiline
+                minRows={2}
+                fullWidth
+                value={fixture.text}
+                disabled={locked}
+                onChange={(event) => {
+                  setFixtures((items) =>
+                    items.map((item) =>
+                      item.id === fixture.id
+                        ? { ...item, text: event.target.value }
+                        : item,
+                    ),
+                  );
+                  setReviewed(false);
+                  setShared(false);
+                }}
+              />
+            );
+            if (!structured[index]) return <Box key={fixture.id}>{field}</Box>;
+            const shape = toolStructure(fixture.text);
+            const name = shape?.name || `Tool result ${index + 1}`;
+            return (
+              <Stack key={fixture.id} spacing={0.5} role="group" aria-label={name} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 1, minWidth: 0 }}>
+                <Typography variant="s1" sx={{ fontWeight: 500, overflowWrap: "anywhere" }}>{name}</Typography>
+                <Typography variant="s3" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                  {shape ? shape.summary : "Edited text; see the raw data."}
+                </Typography>
+                <TechnicalDetails title="Show raw data">{field}</TechnicalDetails>
+              </Stack>
+            );
+          })}
           {fixtures.reduce((sum, item) => sum + bytes(item.text), 0) >
             49152 && (
             <Alert severity="error">
@@ -270,6 +318,15 @@ function ReviewedExample({
         </Stack>
       </DialogContent>
       <DialogActions sx={{ flexWrap: "wrap", gap: 1 }}>
+        {onBack && !operation.result && (
+          <Button
+            variant="text"
+            disabled={operation.busy || operation.uncertain}
+            onClick={() => onBack({ snapshot: preview.captureId ?? preview.planId, title, prompt, fixtures, expectation, behavior })}
+          >
+            Back
+          </Button>
+        )}
         {!operation.result && (
           <Stack sx={{ mr: "auto", minWidth: 0 }} spacing={0.25}>
             <ActionReason id="save-case-reason" reason={saveReason} />
@@ -281,7 +338,7 @@ function ReviewedExample({
           </Stack>
         )}
         <Button disabled={operation.busy} onClick={onClose}>
-          Close
+          Cancel
         </Button>
         {!operation.result && <Button
           variant="contained"
@@ -335,6 +392,8 @@ ReviewedExample.propTypes = {
   describeSource: PropTypes.func,
   targetName: PropTypes.string,
   onSavedChange: PropTypes.func,
+  onBack: PropTypes.func,
+  initialDraft: PropTypes.object,
 };
 
 export default function CaseImportDialog({
@@ -352,6 +411,8 @@ export default function CaseImportDialog({
   renderSaved,
   describeSource,
   targetName,
+  onBack,
+  initialDraft,
 }) {
   const [saved, setSaved] = useState(false);
   return (
@@ -368,7 +429,7 @@ export default function CaseImportDialog({
       {open && scopeKey && state === "ready" && preview ? (
         <ReviewedExample
           key={`${scopeKey}:${preview.captureId ?? preview.planId}`}
-          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved, describeSource, targetName }}
+          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved, describeSource, targetName, onBack, initialDraft }}
           onSavedChange={setSaved}
         />
       ) : (
@@ -397,4 +458,6 @@ CaseImportDialog.propTypes = {
   renderSaved: PropTypes.func,
   describeSource: PropTypes.func,
   targetName: PropTypes.string,
+  onBack: PropTypes.func,
+  initialDraft: PropTypes.object,
 };

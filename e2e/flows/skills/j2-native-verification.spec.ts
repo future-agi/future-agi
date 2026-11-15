@@ -162,12 +162,12 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect((await accepted).ok()).toBe(true);
 
     // The saved example hands off to its reproduction: the recorded version is carried, not chosen.
-    await dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Set up application test', exact: true }).click();
     await expect(page).toHaveURL(/tab=tests/);
     await expect(page).toHaveURL(/reproduce=/);
     await expect(page).toHaveURL(/reference=4/);
     await page.getByRole('button', { name: 'Add application target' }).click();
-    await page.getByRole('button', { name: 'Review runtime configuration' }).click();
+    await page.getByRole('button', { name: 'Show app configuration' }).click();
     await expect(page.getByText('Pin the application configuration')).toBeVisible();
     await shot('J2-pin-configuration');
     await page.getByRole('button', { name: 'Pin this configuration' }).click();
@@ -184,7 +184,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await expect(page.getByText(/Up to 9 runs/)).toBeVisible();
     await shot('J2-native-preview');
     await page.getByRole('checkbox', { name: /I accept up to/ }).check();
-    await page.getByRole('button', { name: 'Run on the application', exact: true }).click();
+    await page.getByRole('button', { name: 'Run application test', exact: true }).click();
     await expect(page.getByText(/Repair verified:|Repair not verified:|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
     await expect(page.getByText(/Repair verified: v7 passed all 3 cases/)).toBeVisible();
     await shot('J2-native-result');
@@ -219,7 +219,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(credentials[0].n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.
-    await page.getByRole('row', { name: /Original refund failure.*Recorded v/ }).first().click();
+    await page.getByRole('row', { name: /Original refund failure.*Was failing on v/ }).first().click();
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record review' }).click();

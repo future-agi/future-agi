@@ -100,18 +100,19 @@ it('does not grant capture rights from a context list entry alone', () => {
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite /></MemoryRouter>);
   expect(screen.getByText('Test cases')).toBeVisible();
-  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
-  expect(screen.getByText(/Application verification is off/)).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: /^Test on the application/ }));
+  expect(screen.getByText('Application tests are off')).toBeVisible();
+  expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
   expect(screen.getByText('No test cases yet')).toBeVisible();
 });
-it('offers application verification only when the deployment has a hosted runtime', () => {
+it('offers the application test only when the deployment has a hosted runtime', () => {
   state.runtime = true;
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite /></MemoryRouter>);
-  expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
+  expect(screen.queryByText(/Application tests are off/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('radio', { name: /^Test on the application/ }));
   expect(screen.getByText('Application target')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add application target' })).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Runtime details' }));
+  fireEvent.click(screen.getByRole('button', { name: 'App version info' }));
   expect(screen.getByText(/synthetic fixture/)).toBeVisible();
 });
 it('does not turn an inaccessible suite into empty successful coverage', () => {

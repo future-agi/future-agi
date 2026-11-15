@@ -375,18 +375,18 @@ test('skills walkthrough', async ({ browser, request }) => {
         await page.getByRole('option', { name: 'gpt-4o-mini', exact: true }).click();
         await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('2');
         await page.getByRole('textbox', { name: 'Historical reference version (optional)', exact: true }).fill('1');
-        await page.getByRole('button', { name: 'Preview whole-context test', exact: true }).click();
+        await page.getByRole('button', { name: 'Preview answer check', exact: true }).click();
         for (const name of ['I know of no bundled answer keys or evaluation material', 'I reviewed the entire inventory and outbound inputs', 'I acknowledge provider processing of this reviewed context and test request.']) {
           const box = page.getByRole('checkbox', { name, exact: true });
           await box.first().waitFor({ timeout: 30_000 }).catch(() => undefined);
           if (await box.count()) await box.check();
         }
-        await page.getByRole('button', { name: 'Run whole-context test', exact: true }).scrollIntoViewIfNeeded();
+        await page.getByRole('button', { name: 'Run answer check', exact: true }).scrollIntoViewIfNeeded();
         await page.waitForTimeout(300);
       });
       await glide(page.getByRole('textbox', { name: 'Test request', exact: true }));
       await caption('One request, expected answer "$25", on a simulated model.');
-      await click(page.getByRole('button', { name: 'Run whole-context test', exact: true }), 600);
+      await click(page.getByRole('button', { name: 'Run answer check', exact: true }), 600);
       await waitCut('whole-context-run', async () => { await expect(page.getByText(/^Answer: (pass|fail)$/).first()).toBeVisible({ timeout: 240_000 }); await noPlaceholders(); });
       const result = page.getByText('Whole-context result', { exact: true });
       await scrollTo(result, 400);
@@ -394,13 +394,13 @@ test('skills walkthrough', async ({ browser, request }) => {
 
       // Application test
       await settle();
-      const verify = page.getByRole('radio', { name: /^Verify on the application/ });
+      const verify = page.getByRole('radio', { name: /^Test on the application/ });
       await quick(async () => { await scrollTo(verify, 300); await click(verify, 500); });
       // The pin dialog lists the demo application's measured identities (package entrypoint, "fixture_only"
       // side effects). The review-and-pin step is cut from the take and described in chapters.md instead.
       await hide(async () => {
         await page.getByRole('button', { name: 'Add application target' }).click();
-        await page.getByRole('button', { name: 'Review runtime configuration' }).click();
+        await page.getByRole('button', { name: 'Show app configuration' }).click();
         await expect(page.getByText('Pin the application configuration')).toBeVisible();
         await page.getByRole('button', { name: 'Pin this configuration' }).click();
         await expect(page.getByText('Configuration pinned')).toBeVisible();
@@ -416,7 +416,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await point(page.getByText('Configuration pinned').first());
       await scrollTo(page.getByRole('group', { name: 'Examples to run' }), 400);
       await caption('Next, the demo application runs three reviewed cases on each version.');
-      const run = page.getByRole('button', { name: 'Run on the application', exact: true });
+      const run = page.getByRole('button', { name: 'Run application test', exact: true });
       await expect(run).toBeEnabled({ timeout: 30_000 });
       await settle();
       await click(run, 600);
@@ -477,8 +477,8 @@ test('skills walkthrough', async ({ browser, request }) => {
       await settle();
       await quick(async () => {
         await click(dialog.getByRole('button', { name: 'Save test case', exact: true }), 700);
-        await glide(dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }));
-        await dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }).click();
+        await glide(dialog.getByRole('button', { name: 'Set up application test', exact: true }));
+        await dialog.getByRole('button', { name: 'Set up application test', exact: true }).click();
         await page.getByRole('group', { name: 'Examples to run' }).waitFor({ timeout: 90_000 });
       });
       await expect(page).toHaveURL(/reproduce=/);
@@ -495,7 +495,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       const plan = page.getByText(/Up to \d+ runs/);
       await scrollTo(plan, 300);
       await caption('Reproduce it on the application: candidate v2 against the recorded v1.');
-      await click(page.getByRole('button', { name: 'Run on the application', exact: true }), 600);
+      await click(page.getByRole('button', { name: 'Run application test', exact: true }), 600);
       await waitCut('reproduction run', async () => {
         await expect(page.getByText(/^Repair (not )?verified:|The run stopped/).first()).toBeVisible({ timeout: 360_000 });
         await noPlaceholders();
@@ -514,7 +514,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       const packet = page.getByText('Release packet', { exact: true });
       await hide(async () => {
         await page.getByRole('textbox', { name: 'CI run link', exact: true }).fill('https://ci.acme-support.example/runs/1842');
-        await page.getByRole('textbox', { name: 'CI configuration ID', exact: true }).fill('support-agent-release');
+        await page.getByRole('textbox', { name: 'CI pipeline name', exact: true }).fill('support-agent-release');
         await page.getByRole('textbox', { name: 'CI result (pass or hold)', exact: true }).fill('pass');
         await packet.scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
