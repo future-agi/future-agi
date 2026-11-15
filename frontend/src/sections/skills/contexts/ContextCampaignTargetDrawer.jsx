@@ -102,16 +102,23 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         })}</Stack>}
       </Section>
     </Stack>}
-    {target && <Stack ref={setFooter} spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">{readOnly ? 'This target is read-only while rollouts are off.' : 'Decisions are saved to this draft for this review session.'}</Typography><Stack direction="row" spacing={1}>
-      {!target.plan && !readOnly && <Button color="primary" variant="contained" onClick={async () => {
-        try {
-          if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-          await navigator.clipboard.writeText(planCommand(target.desiredVersion));
-          setCopyState({ id: target.bindingId, message: 'Copied plan command.' });
-        } catch { setCopyState({ id: target.bindingId, message: "Couldn't copy. Select the plan command above." }); }
-      }}>Copy plan command</Button>}
-      {onNext && <Button color="primary" variant={target.plan ? 'contained' : 'outlined'} onClick={onNext}>{target.plan ? 'Next target needing review' : 'Next target'}</Button>}
-    </Stack>{copyState?.id === target.bindingId && <Typography variant="s3" role="status">{copyState.message}</Typography>}</Stack>}
+    {target && <Stack ref={setFooter} direction="row" spacing={1.5} useFlexGap flexWrap="wrap" alignItems="center" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}>
+      {/* The note sits at the left; the actions sit at the right, with the primary last. */}
+      <Stack spacing={0.5} sx={{ flex: 1, minWidth: { xs: '100%', sm: 160 } }}>
+        <Typography variant="s3" color="text.secondary">{readOnly ? 'This target is read-only while rollouts are off.' : 'Decisions are saved to this draft for this review session.'}</Typography>
+        {copyState?.id === target.bindingId && <Typography variant="s3" role="status">{copyState.message}</Typography>}
+      </Stack>
+      <Stack direction="row" spacing={1} sx={{ ml: 'auto' }}>
+        {onNext && <Button color="primary" variant={target.plan ? 'contained' : 'outlined'} onClick={onNext}>{target.plan ? 'Next target needing review' : 'Next target'}</Button>}
+        {!target.plan && !readOnly && <Button color="primary" variant="contained" onClick={async () => {
+          try {
+            if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+            await navigator.clipboard.writeText(planCommand(target.desiredVersion));
+            setCopyState({ id: target.bindingId, message: 'Copied plan command.' });
+          } catch { setCopyState({ id: target.bindingId, message: "Couldn't copy. Select the plan command above." }); }
+        }}>Copy plan command</Button>}
+      </Stack>
+    </Stack>}
   </Drawer>;
 }
 ContextCampaignTargetDrawer.propTypes = {

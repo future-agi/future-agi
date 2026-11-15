@@ -1,3 +1,4 @@
+import { useId, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Box, Button, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import PageHeader from 'src/components/page-header';
@@ -11,6 +12,18 @@ import RolloutInstructions from './RolloutInstructions';
 import TechnicalDetails from '../components/TechnicalDetails';
 import CapabilityNotice from '../components/CapabilityNotice';
 import RolloutsOffNotice from './RolloutsOffNotice';
+
+// The empty state offers a button, not a bare command: it reveals the one command that reads the
+// repositories (and changes no files), with its copy control and guide.
+function EmptyRollouts() {
+  const [open, setOpen] = useState(false);
+  const panel = useId();
+  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+    <EmptyState title="No repository rollouts yet" description="Start by reading the repositories you want to update."
+      action={<Button variant="outlined" aria-expanded={open} aria-controls={panel} onClick={() => setOpen((value) => !value)}>Prepare a repository inventory</Button>} />
+    <Box id={panel} hidden={!open} sx={{ maxWidth: 720, width: 1, mx: 'auto' }}>{open && <RolloutInstructions inventory />}</Box>
+  </Stack>;
+}
 
 export default function ContextCampaignList({ query, availability, enabled = false, state, onOpen, page, onPageChange, onCreate, access }) {
   const data = query.data;
@@ -29,13 +42,13 @@ export default function ContextCampaignList({ query, availability, enabled = fal
           {query.isFetching && data && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
           {query.isLoading && !data ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={5} label="Loading repository rollouts" />
             : query.isError ? <ErrorState detail="Nothing was changed. Existing rollouts are unaffected." title="Couldn't load rollouts." onRetry={query.refetch} />
-              : records.length === 0 ? (!off && <Stack spacing={1.5}><EmptyState title="No repository rollouts yet" description="Start by reading the repositories you want to update." /><RolloutInstructions inventory /></Stack>)
+              : records.length === 0 ? (!off && <EmptyRollouts />)
                 : <Box sx={{ minWidth: 0 }}>
                   <TableContainer><Table size="small" aria-label="Repository rollouts">
                     <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Rollout</TableCell><TableCell>Targets</TableCell><TableCell>State</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
                     <TableBody>{records.map((campaign) => <TableRow hover key={campaign.id} sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
                       <TableCell sx={{ gridColumn: '1 / -1', overflowWrap: 'anywhere' }}><Typography variant="s1">{campaign.name}</Typography>{campaign.parentCampaignId && <Typography component="div" variant="s3" color="text.secondary">Follows an earlier rollout</Typography>}<TechnicalDetails title="Rollout details"><Typography variant="s3">Revision {campaign.revision}</Typography></TechnicalDetails></TableCell>
-                      <TableCell><Typography variant="s1">{campaign.targetCount}<Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}> targets</Box></Typography></TableCell><TableCell><StatusBadge status={campaign.status} /></TableCell>
+                      <TableCell><Typography variant="s1">{campaign.targetCount}<Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}> targets</Box></Typography></TableCell><TableCell><StatusBadge status={campaign.status} variant="badge" /></TableCell>
                       <TableCell sx={{ gridColumn: '1 / -1' }}><Button size="small" variant="outlined" onClick={() => onOpen(campaign.id)} aria-label={`Review ${campaign.name}, revision ${campaign.revision}`}>Open</Button></TableCell>
                     </TableRow>)}</TableBody>
                   </Table></TableContainer>

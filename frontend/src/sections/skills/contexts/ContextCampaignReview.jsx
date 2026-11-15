@@ -75,7 +75,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     setDecisions({}); setAcknowledged(false); setError('');
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <ObjectHeader crumbs={[{ label: 'Repository rollouts', to: '/dashboard/skills/contexts/rollouts' }, { label: campaign.name }]} title={campaign.name} purpose={campaign.status === 'settled' ? 'Repository work finished · delivery tracked separately' : 'Review repository changes'} badge={<StatusBadge status={campaign.status} />} />
+    <ObjectHeader crumbs={[{ label: 'Repository rollouts', to: '/dashboard/skills/contexts/rollouts' }, { label: campaign.name }]} title={campaign.name} purpose={campaign.status === 'settled' ? 'Repository work finished · delivery tracked separately' : 'Review repository changes'} badge={<StatusBadge status={campaign.status} variant="badge" />} />
     <Typography variant="s1" role="status">{conclusion}</Typography>
     {campaign.enabled && campaign.status === 'draft' && missingPlans > 0 && <RolloutInstructions version={planVersion} />}
     <Typography variant="s1">{campaign.targetCount} targets · {outstanding.length} need review · <Link component="button" type="button" variant="s1" color="inherit" onClick={() => setFilter('blocked')}>{targets.filter(blocked).length} blocked</Link> · {targets.filter((target) => decisionFor(target) === 'exclude').length} excluded</Typography>
@@ -85,14 +85,12 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     {!complete && <Alert severity="warning">The complete target inventory has not loaded. Authorization is unavailable.</Alert>}
     {stale && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={reset}>Review changed state</Button>}>This review is stale. No preconditions were refreshed automatically.</Alert>}
     {error && <Alert severity="error" role="alert">{error}</Alert>}
-    <Box sx={{ bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider', py: 1 }}>
-    {campaign.status === 'draft' && <Section title="Authorize pull requests"><Stack spacing={1} alignItems="flex-start">
+    {campaign.status === 'draft' && <Section variant="panel" title="Authorize pull requests"><Stack spacing={1} alignItems="flex-start">
       <Typography variant="s3">Reviewed {targets.length - outstanding.length} of {campaign.targetCount}</Typography>
       <FormControlLabel control={<Checkbox checked={acknowledged} disabled={!editable} onChange={(event) => setAcknowledged(event.target.checked)} />} label="I reviewed every included patch and authorize only the listed repository writes, not merge or deployment." />
       <Button color="primary" variant="contained" disabled={!editable || !ready || !acknowledged} {...reasonProps(authorizeReasonId, authorizeReason)} onClick={() => setConfirm('authorize')}>Authorize pull requests</Button>
       <ActionReason id={authorizeReasonId} reason={authorizeReason} />
     </Stack></Section>}
-    </Box>
     <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
       <FormSearchField label="Search repositories" searchQuery={search} onChange={(event) => setSearch(event.target.value)} />
       <TextField select size="small" label="Target status" value={filter} onChange={(event) => setFilter(event.target.value)}>
@@ -110,7 +108,6 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
         <TableCell><Button variant="outlined" size="small" onClick={(event) => { event.stopPropagation(); onSelectTarget(target.bindingId); }} aria-label={`Review target ${target.name}`}>Open</Button></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableContainer>
-    <Typography variant="s3" color="text.secondary">A merged pull request does not mean apps are updated. Check their delivery reports; pinned versions stay unchanged.</Typography><TechnicalDetails title="Delivery details"><Typography variant="s3">PR open → merged → installed → delivered are independent observations. Unobserved consumers remain unknown. A rollout does not advance deliberate pins.</Typography></TechnicalDetails>
     <TextField label="Reason for rollout change" size="small" fullWidth value={reason} onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 500 }} helperText="Required before pausing, resuming or cancelling. Existing PRs are never changed." />
     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
       {['authorized', 'running'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('pause')}>Pause new claims</Button>}

@@ -184,10 +184,58 @@ it('leads missing plans with a local command and keeps authorization blocked', (
   expect(within(screen.getByRole('dialog')).getByRole('link', { name: 'Plan and submit repository changes' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/campaigns');
 });
 
-it('provides an inventory command instead of a dead-end empty state', () => {
+it('offers a button, not a bare command, in the empty state and reveals the inventory command on request', () => {
   render(<ContextCampaignList query={{ data: { count: 0, results: [] } }} enabled onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
-  expect(screen.getByText('python -m fi.context inventory --repositories repositories.json')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Prepare a repository inventory' })).toBeVisible();
+  const button = screen.getByRole('button', { name: 'Prepare a repository inventory' });
+  expect(button).toHaveClass('MuiButton-outlined');
+  expect(button).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('python -m fi.context inventory --repositories repositories.json')).toBeNull();
+  fireEvent.click(button);
+  expect(button).toHaveAttribute('aria-expanded', 'true');
+  const command = screen.getByText('python -m fi.context inventory --repositories repositories.json');
+  expect(command).toBeVisible();
+  expect(command.closest('pre')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Copy inventory command' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Read the inventory guide' })).toBeVisible();
+});
+
+it('shows a rollout state as a status badge in the list and the header', () => {
+  const view = render(<ContextCampaignList query={{ data: { count: 1, results: [campaign] } }} enabled onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
+  const draft = within(screen.getByRole('table', { name: 'Repository rollouts' })).getByText('Draft');
+  // A tinted badge (4px radius, filled), not a bare dot with text.
+  expect(getComputedStyle(draft.parentElement).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+  view.unmount();
+  render(<Harness />);
+  const header = screen.getAllByText('Draft')[0];
+  expect(getComputedStyle(header.parentElement).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+it('says a merged pull request is not delivery only in the target drawer, and leads the authorize panel as a bordered card', () => {
+  render(<Harness targets={[{ ...target, plan: null }]} />);
+  expect(screen.queryByText(/A merged pull request does not mean apps are updated/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Delivery details' })).toBeNull();
+  expect(screen.queryByText(/merged PR doesn.t mean/)).toBeNull();
+  // The panel is one card: its title, acknowledgment and button share a single boxed section.
+  const checkbox = screen.getByRole('checkbox');
+  let card = screen.getByText('Authorize pull requests', { selector: 'p' });
+  while (card && !card.contains(checkbox)) card = card.parentElement;
+  expect(card).toContainElement(screen.getByRole('button', { name: 'Authorize pull requests' }));
+  expect(card).not.toContainElement(screen.getByRole('table', { name: 'Fixed rollout targets' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Review target synthetic-repository' }));
+  expect(within(screen.getByRole('dialog')).getAllByText(/A merged PR doesn.t mean the app has the change/)).toHaveLength(1);
+});
+
+it('puts the note at the left of the target drawer footer, then the outlined Next target, then the contained Copy plan command', () => {
+  render(<ContextCampaignTargetDrawer target={{ ...target, plan: null }} open onClose={vi.fn()} onDecision={vi.fn()} onNext={vi.fn()} />);
+  const note = screen.getByText('Decisions are saved to this draft for this review session.');
+  const next = screen.getByRole('button', { name: 'Next target', exact: true });
+  const copy = screen.getByRole('button', { name: 'Copy plan command' });
+  const inOrder = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(inOrder(note, next)).toBe(true);
+  expect(inOrder(next, copy)).toBe(true);
+  expect(next).toHaveClass('MuiButton-outlined');
+  expect(copy).toHaveClass('MuiButton-contained');
+  expect(copy.parentElement).toBe(next.parentElement);
 });
 
 it.each([

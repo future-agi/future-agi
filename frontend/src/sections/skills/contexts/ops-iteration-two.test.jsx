@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ContextConsumersView from './ContextConsumersView';
 import ContextTargetRegistration from './ContextTargetRegistration';
@@ -19,19 +19,21 @@ it('hides empty-consumer filters and makes registration the primary without chan
   expect(screen.queryByLabelText('Search consumers')).toBeNull();
   expect(screen.queryByLabelText('Verification')).toBeNull();
   expect(screen.queryByLabelText('Observation window')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Register application target' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Connect an app' })).toHaveClass('MuiButton-contained');
   view.rerender(<ContextConsumersView onWindowChange={vi.fn()} onPageChange={vi.fn()} scopeKey="workspace" state="ready" data={{ ...data, count: 1, results: [{ binding: { id: 'app', name: 'Support app', kind: 'runtime', selector: { label: 'production' } }, states: ['unknown'] }] }} registrationAction={action} />);
   expect(screen.getByLabelText('Search consumers')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Register application target' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Connect an app' })).toHaveClass('MuiButton-outlined');
 });
 
-it('explains where the build manifest comes from without changing production', () => {
+it('has one helper line, a setup link and a footer note, without manifest wording', () => {
   render(<ContextTargetRegistration contextId="ctx" canRegister />);
-  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
-  expect(screen.getByText(/It is the manifest your app reports on startup/)).toBeVisible();
-  expect(screen.getByText(/Connecting doesn't change production/)).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Runtime setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/reviewed-releases');
-  expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getAllByText(/config file/i).length).toBeGreaterThan(0);
+  expect(within(dialog).queryByText(/manifest/i)).toBeNull();
+  expect(within(dialog).queryByText(/Choose the JSON file your app build produces/)).toBeNull();
+  expect(within(dialog).getByRole('link', { name: 'Runtime setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/reviewed-releases');
+  expect(within(dialog).getByRole('button', { name: 'Connect app' })).toBeDisabled();
 });
 
 it('requires a nonblank cancellation reason before opening confirmation', () => {
