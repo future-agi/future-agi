@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1270,
+  endpointCount: 1273,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -25966,6 +25966,167 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SkillsChecksError",
           },
           428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/archived/": {
+      get: {
+        operationId: "model-hub_skills_archived_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              default: 1,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 25,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsArchivedSkillPageResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/archived/{resource_id}/restore-review/": {
+      get: {
+        operationId: "model-hub_skills_archived_restore-review_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsRestoreReviewResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/archived/{resource_id}/restore/": {
+      post: {
+        operationId: "model-hub_skills_archived_restore_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SkillsContextRestoreInput",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsArchivedSkillSummaryResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
             $ref: "#/definitions/SkillsError",
           },
           default: {
@@ -93911,6 +94072,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsArchivedSkillPageResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextArchivedSkillPage",
+        },
+      },
+    },
+    SkillsArchivedSkillSummaryResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextArchivedSkillSummary",
+        },
+      },
+    },
     SkillsAssistAckResponse: {
       required: ["status", "result"],
       type: "object",
@@ -95914,6 +96101,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextRestoreInput: {
+      required: ["expected_release_revision", "expected_review_fingerprint"],
+      type: "object",
+      properties: {
+        expected_release_revision: {
+          title: "Expected release revision",
+          type: "integer",
+          minimum: 0,
+        },
+        expected_review_fingerprint: {
+          title: "Expected review fingerprint",
+          type: "string",
+          minLength: 1,
+        },
+        note: {
+          title: "Note",
+          type: "string",
+          default: "",
+          maxLength: 2000,
+        },
+      },
+    },
     SkillsContextRevision: {
       required: ["revision"],
       type: "object",
@@ -97820,6 +98029,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SkillsContextRequestReceipt",
+        },
+      },
+    },
+    SkillsRestoreReviewResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextRestoreReview",
         },
       },
     },
@@ -126750,6 +126972,109 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextArchivedSkillPage: {
+      required: ["results", "count", "page", "page_size", "total_pages"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextArchivedSkill",
+          },
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          minimum: 1,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          maximum: 100,
+          minimum: 1,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    SkillsContextArchivedSkillSummary: {
+      required: [
+        "id",
+        "kind",
+        "name",
+        "description",
+        "tags",
+        "latest_version",
+        "release_revision",
+        "security_revision",
+        "protected_label_names",
+        "archived",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "agent_context"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        latest_version: {
+          title: "Latest version",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        release_revision: {
+          title: "Release revision",
+          type: "integer",
+          minimum: 0,
+        },
+        security_revision: {
+          title: "Security revision",
+          type: "integer",
+          minimum: 0,
+        },
+        protected_label_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        archived: {
+          title: "Archived",
+          type: "boolean",
+        },
+      },
+    },
     SkillsHubV11AssistAck: {
       required: [
         "id",
@@ -132537,6 +132862,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    SkillsContextRestoreReview: {
+      required: [
+        "resource",
+        "retained_labels",
+        "review_fingerprint",
+        "name_collision",
+      ],
+      type: "object",
+      properties: {
+        resource: {
+          $ref: "#/definitions/SkillsContextArchivedSkillSummary",
+        },
+        retained_labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextRetainedLabel",
+          },
+        },
+        review_fingerprint: {
+          title: "Review fingerprint",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        name_collision: {
+          title: "Name collision",
+          type: "boolean",
         },
       },
     },
@@ -147677,6 +148032,90 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextArchivedSkill: {
+      required: [
+        "id",
+        "kind",
+        "name",
+        "description",
+        "tags",
+        "latest_version",
+        "release_revision",
+        "security_revision",
+        "protected_label_names",
+        "archived",
+        "archived_at",
+        "labels",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "agent_context"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        latest_version: {
+          title: "Latest version",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        release_revision: {
+          title: "Release revision",
+          type: "integer",
+          minimum: 0,
+        },
+        security_revision: {
+          title: "Security revision",
+          type: "integer",
+          minimum: 0,
+        },
+        protected_label_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        archived: {
+          title: "Archived",
+          type: "boolean",
+        },
+        archived_at: {
+          title: "Archived at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextArchivedSkillLabel",
+          },
+        },
+      },
+    },
     SkillsHubV11AssistAllowance: {
       required: [
         "input_bytes",
@@ -151315,6 +151754,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "After",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    SkillsContextRetainedLabel: {
+      required: ["name", "version", "version_id", "digest", "is_protected"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        is_protected: {
+          title: "Is protected",
+          type: "boolean",
         },
       },
     },
@@ -156132,6 +156602,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Last at",
           type: "string",
           format: "date-time",
+        },
+      },
+    },
+    SkillsContextArchivedSkillLabel: {
+      required: ["name", "version"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
         },
       },
     },

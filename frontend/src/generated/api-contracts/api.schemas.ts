@@ -16100,6 +16100,129 @@ export interface SkillsSkillDetailResponseApi {
   result: SkillsHubSkillDetailApi;
 }
 
+export type SkillsContextArchivedSkillApiKind =
+  (typeof SkillsContextArchivedSkillApiKind)[keyof typeof SkillsContextArchivedSkillApiKind];
+
+export const SkillsContextArchivedSkillApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextArchivedSkillLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  version: number;
+}
+
+export interface SkillsContextArchivedSkillApi {
+  id: string;
+  kind: SkillsContextArchivedSkillApiKind;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  tags: string[];
+  /** @minimum 1 */
+  latest_version: number | null;
+  /** @minimum 0 */
+  release_revision: number;
+  /** @minimum 0 */
+  security_revision: number;
+  protected_label_names: string[];
+  archived: boolean;
+  archived_at: string | null;
+  labels: SkillsContextArchivedSkillLabelApi[];
+}
+
+export interface SkillsContextArchivedSkillPageApi {
+  results: SkillsContextArchivedSkillApi[];
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+}
+
+export interface SkillsArchivedSkillPageResponseApi {
+  status: boolean;
+  result: SkillsContextArchivedSkillPageApi;
+}
+
+export type SkillsContextArchivedSkillSummaryApiKind =
+  (typeof SkillsContextArchivedSkillSummaryApiKind)[keyof typeof SkillsContextArchivedSkillSummaryApiKind];
+
+export const SkillsContextArchivedSkillSummaryApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextArchivedSkillSummaryApi {
+  id: string;
+  kind: SkillsContextArchivedSkillSummaryApiKind;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  tags: string[];
+  /** @minimum 1 */
+  latest_version: number | null;
+  /** @minimum 0 */
+  release_revision: number;
+  /** @minimum 0 */
+  security_revision: number;
+  protected_label_names: string[];
+  archived: boolean;
+}
+
+export interface SkillsContextRetainedLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  version: number;
+  version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  is_protected: boolean;
+}
+
+export interface SkillsContextRestoreReviewApi {
+  resource: SkillsContextArchivedSkillSummaryApi;
+  retained_labels: SkillsContextRetainedLabelApi[];
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  review_fingerprint: string;
+  name_collision: boolean;
+}
+
+export interface SkillsRestoreReviewResponseApi {
+  status: boolean;
+  result: SkillsContextRestoreReviewApi;
+}
+
+export interface SkillsContextRestoreInputApi {
+  /** @minimum 0 */
+  expected_release_revision: number;
+  /** @minLength 1 */
+  expected_review_fingerprint: string;
+  /** @maxLength 2000 */
+  note?: string;
+}
+
+export interface SkillsArchivedSkillSummaryResponseApi {
+  status: boolean;
+  result: SkillsContextArchivedSkillSummaryApi;
+}
+
 export interface SkillsHubFileInputApi {
   path: string;
   content: string;
@@ -46438,6 +46561,18 @@ export const ModelHubSkillsListOrder = {
   asc: "asc",
   desc: "desc",
 } as const;
+
+export type ModelHubSkillsArchivedListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
 
 export type ModelHubSkillsConsumptionResolveListParams = {
   /**

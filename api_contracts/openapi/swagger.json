@@ -46794,6 +46794,329 @@
             },
             "parameters": []
         },
+        "/model-hub/skills/archived/": {
+            "get": {
+                "operationId": "model-hub_skills_archived_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsArchivedSkillPageResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/archived/{resource_id}/restore-review/": {
+            "get": {
+                "operationId": "model-hub_skills_archived_restore-review_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "resource_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsRestoreReviewResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "resource_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/archived/{resource_id}/restore/": {
+            "post": {
+                "operationId": "model-hub_skills_archived_restore_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsContextRestoreInput"
+                        }
+                    },
+                    {
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "resource_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsArchivedSkillSummaryResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "resource_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/model-hub/skills/checks/": {
             "post": {
                 "operationId": "model-hub_skills_checks_create",
@@ -151822,6 +152145,364 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SkillsHubSkillDetail"
+                }
+            }
+        },
+        "SkillsContextArchivedSkillLabel": {
+            "required": [
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "SkillsContextArchivedSkill": {
+            "required": [
+                "id",
+                "kind",
+                "name",
+                "description",
+                "tags",
+                "latest_version",
+                "release_revision",
+                "security_revision",
+                "protected_label_names",
+                "archived",
+                "archived_at",
+                "labels"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "agent_context"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "release_revision": {
+                    "title": "Release revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "security_revision": {
+                    "title": "Security revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "protected_label_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "archived": {
+                    "title": "Archived",
+                    "type": "boolean"
+                },
+                "archived_at": {
+                    "title": "Archived at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsContextArchivedSkillLabel"
+                    }
+                }
+            }
+        },
+        "SkillsContextArchivedSkillPage": {
+            "required": [
+                "results",
+                "count",
+                "page",
+                "page_size",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsContextArchivedSkill"
+                    }
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SkillsArchivedSkillPageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextArchivedSkillPage"
+                }
+            }
+        },
+        "SkillsContextArchivedSkillSummary": {
+            "required": [
+                "id",
+                "kind",
+                "name",
+                "description",
+                "tags",
+                "latest_version",
+                "release_revision",
+                "security_revision",
+                "protected_label_names",
+                "archived"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "agent_context"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "release_revision": {
+                    "title": "Release revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "security_revision": {
+                    "title": "Security revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "protected_label_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "archived": {
+                    "title": "Archived",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsContextRetainedLabel": {
+            "required": [
+                "name",
+                "version",
+                "version_id",
+                "digest",
+                "is_protected"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "is_protected": {
+                    "title": "Is protected",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsContextRestoreReview": {
+            "required": [
+                "resource",
+                "retained_labels",
+                "review_fingerprint",
+                "name_collision"
+            ],
+            "type": "object",
+            "properties": {
+                "resource": {
+                    "$ref": "#/definitions/SkillsContextArchivedSkillSummary"
+                },
+                "retained_labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsContextRetainedLabel"
+                    }
+                },
+                "review_fingerprint": {
+                    "title": "Review fingerprint",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "name_collision": {
+                    "title": "Name collision",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsRestoreReviewResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextRestoreReview"
+                }
+            }
+        },
+        "SkillsContextRestoreInput": {
+            "required": [
+                "expected_release_revision",
+                "expected_review_fingerprint"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_release_revision": {
+                    "title": "Expected release revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "expected_review_fingerprint": {
+                    "title": "Expected review fingerprint",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                }
+            }
+        },
+        "SkillsArchivedSkillSummaryResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextArchivedSkillSummary"
                 }
             }
         },

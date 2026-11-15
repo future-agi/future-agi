@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1270,
+  endpointCount: 1273,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -753,6 +753,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/secrets/": ["get", "post"],
       "/model-hub/secrets/{id}/": ["delete", "get", "patch", "put"],
       "/model-hub/skills/": ["get", "post"],
+      "/model-hub/skills/archived/": ["get"],
+      "/model-hub/skills/archived/{resource_id}/restore-review/": ["get"],
+      "/model-hub/skills/archived/{resource_id}/restore/": ["post"],
       "/model-hub/skills/checks/": ["post"],
       "/model-hub/skills/consumption/resolve/": ["get"],
       "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
@@ -2324,6 +2327,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/secrets/": ["get", "post"],
   "/model-hub/secrets/{id}/": ["delete", "get", "patch", "put"],
   "/model-hub/skills/": ["get", "post"],
+  "/model-hub/skills/archived/": ["get"],
+  "/model-hub/skills/archived/{resource_id}/restore-review/": ["get"],
+  "/model-hub/skills/archived/{resource_id}/restore/": ["post"],
   "/model-hub/skills/checks/": ["post"],
   "/model-hub/skills/consumption/resolve/": ["get"],
   "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":

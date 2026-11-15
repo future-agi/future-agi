@@ -2619,6 +2619,30 @@
 - before acceptance the context draft has no links; after publication version 1 links exactly the three skills pinned at v1 and its digest is the previewed candidate
 - the pilot credential is consume-only and bound to that one context version
 
+### SKILLS-E2E-014 — an admin archives a skill and restores it with its versions and production label
+
+**Goal:** A workspace admin archives a published skill from the library, finds it under Archived skills and restores it, and the same versions and production label come back
+
+**Spec:** `flows/skills/archived-restore.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish a skill with production and archive it from the library row menu
+2. open More, then Archived skills, and review the labels that come back
+3. tick the acknowledgment and restore the skill
+4. open the restored skill from the library
+5. confirm a workspace member cannot list archived skills and has no menu item
+
+**Backend state verified:**
+
+- archiving removes the skill from the live library list and lists it under archived skills
+- restoring makes the skill live again and raises release_revision by exactly one
+- production points at the same version id and digest after restore
+- the version count is unchanged by archive and restore
+- a workspace member gets 403 on the archived list
+
 ### SKILLS-E2E-020 — preserve unrelated personal work before editing historical v4
 
 **Goal:** An incident responder starts a repair from recorded v4 while latest is unrelated v6, without losing another personal draft or changing publication
