@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -87,6 +86,9 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 	defer cancel()
 	fetched, err := s.fetch(ctx)
 	if err != nil {
+		// Whatever the error carries of the URL is a credential in the logs and
+		// in the admin endpoint's last_error.
+		err = errors.New(models.RedactCredentials(err.Error()))
 		s.catalogue.recordFailure(err)
 		slog.Warn("model catalogue sync failed; keeping the last good catalogue",
 			"url", s.logURL, "error", err, "source", s.catalogue.Info().Source)
@@ -103,12 +105,6 @@ func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		// A *url.Error carries the whole URL, and this error reaches the logs
-		// and the admin endpoint's last_error.
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			ue.URL = s.logURL
-		}
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
