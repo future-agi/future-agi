@@ -286,19 +286,19 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   expect(await screen.findByText('Reviewer: Sam Rivera')).toBeVisible();
   expect(screen.queryByRole('combobox', { name: 'Assigned reviewer' })).not.toBeInTheDocument();
   expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ evidence: [{ source: 'skills_text', sourceId: 'carried', annotationRevision: 1 }] }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." }));
   fireEvent.click(screen.getByRole('button', { name: 'Edit request' }));
   expect(screen.getByRole('combobox', { name: 'Assigned reviewer' })).toHaveTextContent('Sam Rivera');
   expect(screen.getByText('1 result attached from your test')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
-  expect(await screen.findByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
+  expect(await screen.findByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).not.toBeChecked();
   expect(submit).not.toHaveBeenCalled();
   // Step 2 is titled for what it does; step 1 kept "Request release review".
   expect(screen.getByRole('heading', { name: 'Confirm release request' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: 'Request release review' })).not.toBeInTheDocument();
   // One footer layout: the acknowledgment on the left; Edit request, Cancel, the reason, then the primary, all in one row.
   const before = (a, b) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const ack = screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' });
+  const ack = screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." });
   const edit = screen.getByRole('button', { name: 'Edit request' });
   const cancel = screen.getByRole('button', { name: 'Cancel' });
   const reason = screen.getByText('Tick the acknowledgment to send');

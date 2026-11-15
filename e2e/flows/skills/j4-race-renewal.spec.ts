@@ -13,7 +13,7 @@ import { SkillsFixtures, answerRule } from '../../lib/skills-fixtures';
 // public-API prerequisites. The assigned reviewer then works only in the UI.
 // Races are injected through public APIs and the E2E-image retention clock.
 const B = '/model-hub/skills/';
-const ACK = 'I reviewed this exact candidate, target, evidence and release consequence.';
+const ACK = "I've checked this version, where it's going, the evidence and what the release will change.";
 const fallible = (name: string) => process.env.J4_FALLIBILITY === name;
 
 test('SKILLS-E2E-041: an approved context packet is refused after each race and released only after explicit reviewer renewal', {
@@ -181,7 +181,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await expect(dialog).toBeVisible();
     for (const row of before.changes) await expect(dialog.locator(`tr[data-field="${row.item}"]`)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/renew-${label}.png` });
-    await dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }).check();
+    await dialog.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again.", exact: true }).check();
     await dialog.getByRole('button', { name: 'Renew and decide later', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     const after = await api(reviewer, 'GET', `release-requests/${requestId}/`);
@@ -200,7 +200,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     for (const row of before.changes) await expect(dialog.locator(`tr[data-field="${row.item}"]`)).toBeVisible();
     const approveRenewed = dialog.getByRole('button', { name: 'Approve again', exact: true });
     await expect(approveRenewed).toBeDisabled();
-    await dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }).check();
+    await dialog.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again.", exact: true }).check();
     await approveRenewed.click();
     await expect(dialog).toHaveCount(0);
     const after = await api(reviewer, 'GET', `release-requests/${requestId}/`);

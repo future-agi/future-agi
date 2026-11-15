@@ -77,7 +77,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     const preparedResponse = authorPage.waitForResponse(res => res.url().endsWith('/release-requests/preview/') && res.request().method() === 'POST');
     await authorPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
     preview = (await (await preparedResponse).json()).result;
-    await authorPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
+    await authorPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true }).check();
     await expect(authorPage.getByRole('button', { name: 'Send review request', exact: true })).toBeEnabled();
     await authorPage.screenshot({ path: `${output}/shots/00-author-packet.png` });
     const submission = authorPage.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
@@ -114,7 +114,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/01-inbox.png` });
     await page.getByRole('button', { name, exact: true }).click();
-    const acknowledged = page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+    const acknowledged = page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
     await expect(acknowledged).toBeEnabled();
     await expect(page.getByText('Candidate policy requiring independent approval.', { exact: false }).first()).toBeVisible();
     const otherChecks = page.getByRole('button', { name: 'Other checks', exact: true });
@@ -176,7 +176,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
       await renewalPage.getByLabel('Assigned reviewer').click();
       await renewalPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
       await renewalPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
-      await renewalPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();
+      await renewalPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true }).check();
       const renewed = renewalPage.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
       await renewalPage.getByRole('button', { name: 'Send review request', exact: true }).click();
       const renewal = (await (await renewed).json()).result;

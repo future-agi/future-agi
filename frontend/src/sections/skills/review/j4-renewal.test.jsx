@@ -41,7 +41,7 @@ it('shows every changed precondition and removed evidence before creating the ne
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
   const create = screen.getByRole('button', { name: 'Approve again' });
   expect(create).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(create);
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request', revision: 2, expectedFingerprint: 'renewed' }));
@@ -79,7 +79,7 @@ it('approves exactly the renewed revision it created, bound to the inspected fin
   expect(screen.getByText(/renewed request keeps no evidence/)).toBeVisible();
   const approve = screen.getByRole('button', { name: 'Approve again' });
   expect(approve).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(approve);
   await waitFor(() => expect(onApproved).toHaveBeenCalledWith({ revision: 3, fingerprint: 'renewed' }));
   expect(onClose).toHaveBeenCalled();
@@ -94,7 +94,7 @@ it('never approves when the server renews to an unexpected revision', async () =
   mutateAsync.mockResolvedValue({ id: 'request', revision: 5, status: 'pending' });
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} onApproved={onApproved} />);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   expect(await screen.findByText(/couldn't confirm whether this went through/)).toBeVisible();
   expect(decideAsync).not.toHaveBeenCalled();
@@ -105,10 +105,10 @@ it('keeps a reviewer attestation only for the same revision and fingerprint', ()
   const props = { scopeKey: 'org:ws:reviewer', state: 'ready', preview: { packet, fingerprint: 'fp', current: true },
     request: { id: 'request', revision: 2, status: 'approved' }, review: { complete: true }, permissions: { canDecide: true, canExecute: true }, onExecute: vi.fn(), onDecide: vi.fn() };
   const { rerender } = render(<ReleaseRequestPanel {...props} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
-  expect(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).toBeChecked();
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
   rerender(<ReleaseRequestPanel {...props} request={{ ...props.request, revision: 3 }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
-  expect(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
+  expect(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
 });
 
@@ -132,7 +132,7 @@ it('lets the same mounted dialog renew a later revision after an earlier renewal
   const onClose = vi.fn();
   const onApproved = vi.fn();
   const { rerender } = render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   rerender(<ReleaseRenewalDialog open={false} requestId="request" onClose={onClose} onApproved={onApproved} />);
@@ -143,7 +143,7 @@ it('lets the same mounted dialog renew a later revision after an earlier renewal
   rerender(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
   const approve = screen.getByRole('button', { name: 'Approve again' });
   expect(approve).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   expect(approve).toBeEnabled();
   fireEvent.click(approve);
   await waitFor(() => expect(onApproved).toHaveBeenCalledWith({ revision: 4, fingerprint: 'renewed-again' }));
@@ -152,7 +152,7 @@ it('lets the same mounted dialog renew a later revision after an earlier renewal
 it('blocks a second submit for the revision it already renewed', async () => {
   useRenewalPreview.mockReturnValue({ data: preview, isLoading: false, isError: false });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(screen.getByRole('button', { name: 'Approve again' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Approve again' })).toBeDisabled());
@@ -165,7 +165,7 @@ it('renews without approval only after acknowledgment and retains the fingerprin
   expect(screen.getByText('The security policy changed after this request was made, so the approval no longer applies. See what changed and approve again.')).toBeVisible();
   const renewOnly = screen.getByRole('button', { name: 'Renew and decide later' });
   expect(renewOnly).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
   fireEvent.click(renewOnly);
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ revision: 2, expectedFingerprint: 'renewed' })));
   expect(decideAsync).not.toHaveBeenCalled();

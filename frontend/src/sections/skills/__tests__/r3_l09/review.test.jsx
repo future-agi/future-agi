@@ -52,7 +52,7 @@ afterEach(() => {
 const click = (name) => fireEvent.click(screen.getByRole("button", { name }));
 const acknowledge = () =>
   fireEvent.click(
-    screen.getByRole("checkbox", { name: /I reviewed this exact candidate/ }),
+    screen.getByRole("checkbox", { name: /I've checked this version/ }),
   );
 const panelProps = {
   scopeKey: "org:workspace:reviewer",
@@ -659,14 +659,14 @@ describe("publication and explicit spending", () => {
     const { rerender } = render(<ContextReleaseReview {...props} draftReview={warned} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Version note" }), { target: { value: "Cap refunds" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /these changes against the current published version/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /static warnings/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /check warnings/ }));
     click("Confirm review");
     await waitFor(() => expect(acknowledgeHead).toHaveBeenCalledTimes(1));
     // The reloaded review is for the same candidate, head and warnings with a new fingerprint.
     const acknowledged = { ...warned, headAcknowledged: true, revision: 9, reviewFingerprint: CONFIG };
     rerender(<ContextReleaseReview {...props} draftReview={acknowledged} />);
     expect(screen.getByRole("checkbox", { name: /these changes against the current published version/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /static warnings/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /check warnings/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Version note" })).toHaveValue("Cap refunds");
     expect(screen.getByRole("button", { name: "Publish version" })).toBeEnabled();
     // A candidate or warning change after the head step starts the review over.

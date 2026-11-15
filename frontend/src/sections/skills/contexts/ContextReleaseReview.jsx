@@ -252,7 +252,7 @@ function DraftPublication({
                     }
                   />
                 }
-                label="I acknowledge the static warnings for this exact candidate."
+                label="I've read the check warnings for this version."
               />
             )}
             {draftReview.headAcknowledged ? (

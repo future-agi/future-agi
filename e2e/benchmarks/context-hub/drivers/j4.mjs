@@ -82,7 +82,7 @@ export async function createDriver({ jobId, runId, registration }) {
     return page;
   };
   const page = async (role) => { pages[role] = pages[role] || await open(input[role]); return pages[role]; };
-  const ack = (target) => target.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+  const ack = (target) => target.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
   const responseFor = (target, suffix, method = 'POST') => {
     const pending = target.waitForResponse((res) => new URL(res.url()).pathname.endsWith(suffix) && res.request().method() === method, { timeout: 60_000 });
     pending.catch(() => {});
@@ -171,7 +171,7 @@ export async function createDriver({ jobId, runId, registration }) {
           if (kept.length) await reveal(dialog, 'Technical details');
           for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
-        await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
+        await operator.click(dialog.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again.", exact: true }), `${name}-acknowledge-changes`);
         const renewed = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
         const decided = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
         await operator.approve(`${name}-renewed-approve`, ['release-packet'], () => dialog.getByRole('button', { name: 'Approve again', exact: true }).click(), decision);
@@ -247,7 +247,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const draft = await read(`contexts/${input.contextId}/draft/`, signal, input.author);
           await op.review('candidate-against-origin', ['AGENTS.md'], [], () => expect(author.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible());
           await op.click(author.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true }), 'acknowledge-candidate');
-          const warnings = author.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+          const warnings = author.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
           if (await warnings.count()) await op.click(warnings, 'acknowledge-warnings');
           // One step: the same reviewed identity acknowledges the head,
           // publishes the immutable candidate and opens the review request

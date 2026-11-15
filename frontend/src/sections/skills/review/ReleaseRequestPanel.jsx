@@ -288,7 +288,7 @@ function PacketActions({
                   onChange={(_, value) => setAckValue(value ? ackKey : null)}
                 />
               }
-              label="I reviewed this exact candidate, target, evidence and release consequence."
+              label="I've checked this version, where it's going, the evidence and what the release will change."
             />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ minWidth: 0, ml: { sm: 'auto' } }}>
               {!request && onEdit && <><Button variant="outlined" disabled={locked} onClick={onEdit}>Edit request</Button><Button disabled={locked} onClick={onCancel}>Cancel</Button></>}

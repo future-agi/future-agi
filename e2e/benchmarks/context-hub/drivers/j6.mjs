@@ -382,7 +382,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await authorPage.screenshot({ path: resolve(output, 'shots', '03-review-link.png') });
         await navigate(admin, ledger, stage, reviewerPage, reviewLink, 'open-review-link');
         await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
-        const ack = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+        const ack = reviewerPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
         await expect(ack).toBeEnabled();
         await admin.click(ack, 'acknowledge-fresh-packet');
         await admin.approve('approve-fresh-packet', ['packet'], () => reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);

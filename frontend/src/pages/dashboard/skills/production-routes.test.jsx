@@ -328,15 +328,15 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   installRequest(kind);
   mount('/dashboard/skills/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  const acknowledge = await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ });
+  const acknowledge = await screen.findByRole('checkbox', { name: /I've checked this version/ });
   await waitFor(() => expect(acknowledge).toBeEnabled());
   // The conclusion card and the Who is affected section both state the impact.
   if (kind === 'agent_context') screen.getAllByText(/2 connected consumers follow this label and move with it; 1 is pinned and stays put/).forEach((node) => expect(node).toBeVisible());
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ })).not.toBeChecked());
-  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ }));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /I've checked this version/ })).not.toBeChecked());
+  fireEvent.click(screen.getByRole('checkbox', { name: /I've checked this version/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production', exact: true }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/execute/'))).toBe(true));
@@ -345,7 +345,7 @@ it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map
   installRequest(kind, { current: false, status });
   mount('/dashboard/skills/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  expect(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ })).toBeDisabled();
+  expect(await screen.findByRole('checkbox', { name: /I've checked this version/ })).toBeDisabled();
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
     // A paused request keeps its release action in place, disabled until renewed and approved.
@@ -360,7 +360,7 @@ it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map
   installRequest(kind, { canMove: false, authorId: 'author', status });
   mount('/dashboard/skills/reviews');
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked this version/ }));
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();

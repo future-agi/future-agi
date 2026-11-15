@@ -212,7 +212,7 @@ export default function ReleaseRenewalDialog({
                   }
                 />
               }
-              label="I inspected every change. Approval is required again."
+              label="I've checked every change since the last approval, and it needs approving again."
             />
           </>
         )}
