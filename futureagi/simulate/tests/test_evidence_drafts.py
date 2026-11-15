@@ -34,6 +34,7 @@ from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
     create_transcript_import,
+    discard_evidence_import,
 )
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.hosted_harness import HostedHarnessError
@@ -384,6 +385,36 @@ class TestAddToSuite:
         )
         assert drafted.scenario_key in keys
         assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
+
+    def test_an_add_that_waited_on_a_discard_adds_nothing(
+        self, environment, cases, storage, user
+    ):
+        drafted, _blocked = _landed(environment, cases, storage)
+        # The add read its import before the discard, and takes the environment's
+        # lock only once the discard has committed.
+        read_before = drafted.evidence_import
+        assert discard_evidence_import(
+            EvidenceImport.no_workspace_objects.get(id=read_before.id)
+        )
+        suite_before = environment.suite_version_id
+
+        with _certifies(), pytest.raises(HostedHarnessError) as refused:
+            add_to_suite(
+                read_before,
+                [str(drafted.id)],
+                expected={},
+                idempotency_key="add-after-discard",
+                user=user,
+            )
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "evidence_import_not_found",
+            404,
+        )
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite_before
+        assert drafts.open_draft(environment, "suite") is None
+        assert EvidenceImportCase.objects.get(id=drafted.id).status == "drafted"
 
     def test_beside_other_edits_it_joins_the_draft_and_saves_nothing(
         self, environment, cases, storage, user

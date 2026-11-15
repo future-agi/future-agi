@@ -502,7 +502,11 @@ def add_to_suite(
     joins the draft only, since nobody else's changes are made live for them. A
     refused save leaves everything as it was. The same ``idempotency_key`` repeats
     the first answer, so a retry after a lost response is not refused. Returns
-    whether it was saved."""
+    whether it was saved.
+
+    The import is read again under the lock: a discard that committed while this
+    add waited for it deletes the import and leaves its cases drafted, and nothing
+    of a discarded import is added."""
     wanted = {str(case_id) for case_id in case_ids}
     with transaction.atomic():
         locked = (
@@ -510,6 +514,14 @@ def add_to_suite(
             .select_related("environment_version", "suite_version")
             .get(id=evidence_import.environment_id)
         )
+        if not EvidenceImport.no_workspace_objects.filter(
+            id=evidence_import.id, deleted=False
+        ).exists():
+            raise HostedHarnessError(
+                "evidence_import_not_found",
+                "Evidence import not found",
+                status_code=404,
+            )
         earlier = _earlier_add(locked, evidence_import, wanted, idempotency_key)
         if earlier is not None:
             return earlier
