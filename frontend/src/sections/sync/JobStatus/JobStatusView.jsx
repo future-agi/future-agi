@@ -1,11 +1,4 @@
-import {
-  Box,
-  InputAdornment,
-  LinearProgress,
-  Tab,
-  Tabs,
-  TextField,
-} from "@mui/material";
+import { Box, InputAdornment, Tab, Tabs, TextField } from "@mui/material";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import Label from "src/components/label";
@@ -16,6 +9,7 @@ import Iconify from "src/components/iconify";
 import JobListTable from "./JobListTable";
 import JobDetailDrawer from "./JobDetailDrawer";
 import DeleteJobModal from "./DeleteJobModal";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const JobStatusView = () => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,7 +50,7 @@ const JobStatusView = () => {
   });
 
   if (isLoadingCount) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (
@@ -166,7 +160,7 @@ function CustomTabPanel(props) {
       role="tabpanel"
       {...other}
     >
-      {loading ? <LinearProgress /> : null}
+      {loading ? <LoadingScreen compact /> : null}
       {value === panelValue && !loading && children}
     </div>
   );

@@ -152,7 +152,8 @@ class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if self.instance is not None and self.instance.api_format in (
-            "systemone", "typesafe"
+            "systemone",
+            "typesafe",
         ):
             credentials = CredentialManager.decrypt(
                 bytes(self.instance.encrypted_credentials)

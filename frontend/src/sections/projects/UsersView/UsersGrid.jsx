@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import useUsersStore from "./Store/usersStore";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -648,7 +649,7 @@ const UsersGrid = React.memo(
         suppressHeaderContextMenu: true,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "13px",
+          fontSize: "12px",
           height: "100%",
           display: "flex",
           alignItems: "center",

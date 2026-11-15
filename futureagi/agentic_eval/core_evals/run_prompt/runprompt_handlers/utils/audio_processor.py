@@ -19,6 +19,7 @@ import structlog
 from tfc.utils.lazy_extras import av
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from tfc.utils.media_tools import MediaToolUnavailable
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     convert_to_mp3,
@@ -26,6 +27,7 @@ from tfc.utils.storage import (
     get_audio_duration,
     upload_audio_to_s3,
 )
+
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
@@ -343,6 +345,11 @@ class AudioProcessor:
         # Detect format
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
+        except MediaToolUnavailable as exc:
+            # No ffmpeg in this image: send the audio unconverted and let the
+            # provider decode it, as before, but say why it was not converted.
+            logger.warning("stt_audio_not_converted", reason=str(exc))
+            detected = ""
         except Exception:
             detected = ""
 

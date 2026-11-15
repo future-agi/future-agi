@@ -31,7 +31,10 @@ import ChipsInput from "../../../../components/ChipsInput/ChipsInput";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { LoadingButton } from "@mui/lab";
-import { useCreateAlertMutation } from "../useCreateAlertMutation";
+import {
+  alertEventFields,
+  useCreateAlertMutation,
+} from "../useCreateAlertMutation";
 import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
@@ -362,11 +365,7 @@ export default function AlertSettingsForm({
         variant: "success",
       });
       trackEvent(Events.createAlertConfirmed, {
-        [PropertyName.formFields]: {
-          ...variables,
-          metricType,
-          thresholdType: variables?.threshold_type,
-        },
+        [PropertyName.formFields]: alertEventFields(variables, metricType),
       });
       handleCloseCreateAlert();
       refreshGrid();
@@ -1159,7 +1158,9 @@ export default function AlertSettingsForm({
                   />
                 </Stack>
               </ShowComponent>
-              <ShowComponent condition={selectedNotificationMethod === "webhook"}>
+              <ShowComponent
+                condition={selectedNotificationMethod === "webhook"}
+              >
                 <Stack
                   sx={{
                     padding: 3,
