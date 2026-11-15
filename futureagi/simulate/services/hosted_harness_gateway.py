@@ -2240,25 +2240,33 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
 
 
 class HostedHarnessGateway:
-    def __init__(self) -> None:
+    def __init__(self, *, require_provider: bool = True) -> None:
+        self._provider_error: HostedHarnessError | None = None
         try:
             self.client = get_sandbox_provider()
         except SandboxProviderUnavailableError as exc:
             # The provider SDK is the optional `sandbox` extra. Retrying cannot
             # install it, so this is neither a 503 nor retryable.
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_sdk_missing",
                 str(exc),
                 status_code=501,
                 retryable=False,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            self.client, self._provider_error = None, error
         except SandboxProviderConfigurationError as exc:
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_provider_not_configured",
                 str(exc),
                 status_code=503,
                 retryable=True,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            # Raised on first sandbox use instead: a run whose sandbox was never created can still be cancelled.
+            self.client, self._provider_error = None, error
 
     # TODO: no caller since the authoring activity was removed; delete with its
     # sandbox helpers.
@@ -4302,7 +4310,10 @@ class HostedHarnessGateway:
                     attempt.id,
                     provider_ref="",
                     verified_absent=True,
-                    details={"provider": self.client.name, "sandbox_created": False},
+                    details={
+                        "provider": getattr(self.client, "name", ""),
+                        "sandbox_created": False,
+                    },
                 )
             from simulate.models import CallExecution, TestExecution
 
@@ -4338,6 +4349,8 @@ class HostedHarnessGateway:
                 )
             return job
 
+        if self.client is None:
+            raise self._provider_error
         # Hang up the PSTN leg before any provider call. Reconnecting to or
         # deleting a remote sandbox can take tens of seconds, while Stop must
         # disconnect the caller promptly. This pass is best effort because the

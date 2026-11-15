@@ -210,3 +210,33 @@ def test_a_call_still_reading_pending_counts_as_in_flight(monkeypatch, clock):
         CallExecution.CallStatus.ONGOING,
     }
     assert seen[0]["receipt__isnull"] is True
+
+
+@pytest.mark.django_db
+def test_stop_closes_a_run_whose_sandbox_never_started_with_no_sandbox_provider_configured(
+    organization, monkeypatch
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+    from simulate.services.hosted_sandbox import SandboxProviderConfigurationError
+    from simulate.tests.test_hosted_harness_gateway import _payload
+
+    def unconfigured():
+        raise SandboxProviderConfigurationError("DAYTONA_API_KEY is required")
+
+    monkeypatch.setattr(gateway_module, "get_sandbox_provider", unconfigured)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="cancel-no-provider"
+    )
+
+    # Anything that needs a sandbox still refuses up front.
+    with pytest.raises(HostedHarnessError, match="DAYTONA_API_KEY"):
+        HostedHarnessGateway()
+
+    canceled = HostedHarnessGateway(require_provider=False).cancel(
+        job, reason="user_canceled"
+    )
+    assert (canceled.state, canceled.cancel_reason) == (
+        HostedHarnessJob.State.CANCELED,
+        "user_canceled",
+    )
