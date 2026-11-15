@@ -333,8 +333,11 @@ jobs:
             # An opt-in diagnostic, never a substitute for the PR's full gate.
             uv run pytest -q -ra \
               tracer/tests/test_attachment_session_deletion.py \
+              tracer/tests/test_attachment_session_delete_integration.py \
               tracer/tests/test_attachment_lifecycle.py \
               tracer/tests/test_trace_session.py \
+              tracer/tests/test_trace_session_delete_scope.py \
+              tracer/tests/test_analysis_retention_locks.py \
               tracer/tests/test_analysis_retention.py \
               --junitxml=junit-${{ matrix.group }}.xml
             exit $?
@@ -365,7 +368,8 @@ jobs:
             tracer/services/attachments/authority.py \
             tracer/services/attachments/lifecycle.py \
             tracer/services/attachments/session_deletion.py \
-            tracer/tests/test_attachment_session_deletion.py
+            tracer/tests/test_attachment_session_deletion.py \
+            tracer/tests/test_attachment_session_delete_integration.py
 
       - name: Upload JUnit results
         # Skip when the shard never ran: a missing-file error here would bury
