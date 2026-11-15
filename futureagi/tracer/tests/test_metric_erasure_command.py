@@ -14,22 +14,25 @@ from model_hub.apps import (
 )
 
 
-@pytest.mark.parametrize("service", ["backend", "worker", "temporal-worker", "bootstrap"])
+@pytest.mark.parametrize(
+    "service", ["backend", "worker", "temporal-worker", "bootstrap"]
+)
 @pytest.mark.parametrize("mode", ["disabled", "operator"])
 def test_erase_requires_explicit_operator_pair(monkeypatch, service, mode):
     monkeypatch.setenv("ENV_TYPE", "production")
     monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
     monkeypatch.setenv("SERVICE_TYPE", service)
     monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", mode)
-    assert explicit_management_mutation_authorized(["manage.py", "erase_metric_data"]) is (
-        service == "bootstrap" and mode == "operator"
-    )
+    assert explicit_management_mutation_authorized(
+        ["manage.py", "erase_metric_data"]
+    ) is (service == "bootstrap" and mode == "operator")
     assert "erase_metric_data" not in STARTUP_SAFE_MANAGEMENT_COMMANDS
 
 
 @pytest.mark.django_db(transaction=True)
 def test_real_erase_command_queues_durable_request(workspace):
     from django.db import connection
+
     from tracer.models.derived_metric import MetricErasureRequest
 
     backend = Path(__file__).resolve().parents[2]
@@ -41,9 +44,20 @@ def test_real_erase_command_queues_durable_request(workspace):
         "NO_STARTUP_DB_MUTATIONS": "true",
     }
     result = subprocess.run(
-        [sys.executable, str(backend / "manage.py"), "erase_metric_data",
-         "--organization", str(workspace.organization_id), "--scope", "organization"],
-        cwd=backend, env=env, text=True, capture_output=True, timeout=90,
+        [
+            sys.executable,
+            str(backend / "manage.py"),
+            "erase_metric_data",
+            "--organization",
+            str(workspace.organization_id),
+            "--scope",
+            "organization",
+        ],
+        cwd=backend,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=90,
     )
     assert result.returncode == 0, result.stderr
     assert "Queued erasure" in result.stdout
@@ -55,12 +69,25 @@ def test_real_erase_command_queues_durable_request(workspace):
 def test_real_erase_command_rejects_ordinary_process():
     backend = Path(__file__).resolve().parents[2]
     result = subprocess.run(
-        [sys.executable, str(backend / "manage.py"), "erase_metric_data",
-         "--organization", str(uuid4()), "--scope", "organization"],
+        [
+            sys.executable,
+            str(backend / "manage.py"),
+            "erase_metric_data",
+            "--organization",
+            str(uuid4()),
+            "--scope",
+            "organization",
+        ],
         cwd=backend,
-        env={**os.environ, "NO_STARTUP_DB_MUTATIONS": "true",
-             "SERVICE_TYPE": "backend", "STARTUP_DB_MUTATION_MODE": "disabled"},
-        text=True, capture_output=True, timeout=90,
+        env={
+            **os.environ,
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "SERVICE_TYPE": "backend",
+            "STARTUP_DB_MUTATION_MODE": "disabled",
+        },
+        text=True,
+        capture_output=True,
+        timeout=90,
     )
     assert result.returncode != 0
     assert "erase_metric_data is disabled during mutation-free startup" in result.stderr

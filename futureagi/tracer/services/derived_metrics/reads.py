@@ -668,7 +668,9 @@ def require_calculated_window(
     if metric is not None:
         from tracer.services.derived_metrics.source_retention import require_window
 
-        require_window(metric.organization_id, window["window_start"], manifest=manifest)
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
     if not window_is_calculated(definition, window):
         raise MetricUnavailableError(
             "window_not_calculated",
@@ -724,18 +726,25 @@ def read_kpi(metric, data, *, store=None):
         # The previous period is compared only if it is wholly final.
         from tracer.services.derived_metrics.source_retention import window_retained
 
-        previous_final = window_retained(
-            metric.organization_id, previous["window_start"], manifest=manifest
-        ) and window_is_calculated(definition, previous) and (
-            finality is None
-            or (previous["window_end"] <= finality.settled and not open_buckets(
-                store,
-                metric,
-                definition,
-                manifest,
-                previous["window_start"],
-                previous["window_end"],
-            ))
+        previous_final = (
+            window_retained(
+                metric.organization_id, previous["window_start"], manifest=manifest
+            )
+            and window_is_calculated(definition, previous)
+            and (
+                finality is None
+                or (
+                    previous["window_end"] <= finality.settled
+                    and not open_buckets(
+                        store,
+                        metric,
+                        definition,
+                        manifest,
+                        previous["window_start"],
+                        previous["window_end"],
+                    )
+                )
+            )
         )
         if previous_final:
             current_row, previous_row = _aggregate_periods(
@@ -765,9 +774,13 @@ def read_kpi(metric, data, *, store=None):
             delta = None
         from tracer.services.derived_metrics.source_retention import require_window
 
-        require_window(metric.organization_id, window["window_start"], manifest=manifest)
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
         if previous_final:
-            require_window(metric.organization_id, previous["window_start"], manifest=manifest)
+            require_window(
+                metric.organization_id, previous["window_start"], manifest=manifest
+            )
         return {
             "provenance": provenance(
                 manifest, definition, calculated_through(manifest, definition)
@@ -891,7 +904,9 @@ def read_trend(metric, data, *, store=None):
         result.sort(key=lambda row: (row["window_start"], row["group_key"]))
         from tracer.services.derived_metrics.source_retention import require_window
 
-        require_window(metric.organization_id, window["window_start"], manifest=manifest)
+        require_window(
+            metric.organization_id, window["window_start"], manifest=manifest
+        )
         return {
             "provenance": provenance(
                 manifest, definition, calculated_through(manifest, definition)

@@ -96,7 +96,9 @@ def cleanup_derived_metric_snapshots() -> int:
             cleanup(limit=limit)
         except Exception as exc:
             # A policy-provider outage must not stop already-authorized erasure.
-            logger.warning("metric_source_expiry_pending", error_type=type(exc).__name__)
+            logger.warning(
+                "metric_source_expiry_pending", error_type=type(exc).__name__
+            )
     completed = sweep(limit=10)
     if metrics_enabled():
         # Never a completed namespace a (possibly failed) redaction reopened.

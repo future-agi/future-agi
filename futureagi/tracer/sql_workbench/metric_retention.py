@@ -19,13 +19,21 @@ def uses_metrics(sql):
 
 
 def erasures(organization_id, project_id):
-    return MetricErasureRequest.objects.filter(
-        organization_key=organization_id,
-    ).filter(Q(project_key=project_id) | Q(scope_kind="organization")).filter(
-        Q(store_payload__protocol__isnull=True)
-        | Q(store_payload__protocol__in=(
-            "metric_expiry", "metric_policy_replan", "metric_snapshot_redaction",
-        ))
+    return (
+        MetricErasureRequest.objects.filter(
+            organization_key=organization_id,
+        )
+        .filter(Q(project_key=project_id) | Q(scope_kind="organization"))
+        .filter(
+            Q(store_payload__protocol__isnull=True)
+            | Q(
+                store_payload__protocol__in=(
+                    "metric_expiry",
+                    "metric_policy_replan",
+                    "metric_snapshot_redaction",
+                )
+            )
+        )
     )
 
 
@@ -43,15 +51,29 @@ def invalidate(queryset):
     # until confirm_stopped, just like a user cancellation.
     now = timezone.now()
     active = queryset.filter(state="running").update(
-        state="cancelled", result={}, output_bytes=0, cache_key="", error=MESSAGE,
-        expires_at=now, finished_at=None,
+        state="cancelled",
+        result={},
+        output_bytes=0,
+        cache_key="",
+        error=MESSAGE,
+        expires_at=now,
+        finished_at=None,
     )
     active += queryset.filter(state="queued").update(
-        state="cancelled", result={}, output_bytes=0, cache_key="", error=MESSAGE,
-        expires_at=now, finished_at=now,
+        state="cancelled",
+        result={},
+        output_bytes=0,
+        cache_key="",
+        error=MESSAGE,
+        expires_at=now,
+        finished_at=now,
     )
     return active + queryset.exclude(state="running").update(
-        result={}, output_bytes=0, cache_key="", error=MESSAGE, expires_at=now,
+        result={},
+        output_bytes=0,
+        cache_key="",
+        error=MESSAGE,
+        expires_at=now,
     )
 
 
@@ -67,9 +89,12 @@ def invalidate_scope(organization_id, project_id=None):
 def result_allowed(job):
     if not uses_metrics(job.sql):
         return True
-    return window_retained(job.organization_id, job.start) and not erasures(
-        job.organization_id, job.project_id
-    ).filter(Q(requested_at__gte=job.created_at) | ~Q(status="done")).exists()
+    return (
+        window_retained(job.organization_id, job.start)
+        and not erasures(job.organization_id, job.project_id)
+        .filter(Q(requested_at__gte=job.created_at) | ~Q(status="done"))
+        .exists()
+    )
 
 
 def guard_result(job):

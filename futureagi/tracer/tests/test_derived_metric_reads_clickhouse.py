@@ -539,6 +539,7 @@ def test_m10_complete_service_budget_with_source_retained_parts(
     (METRICS_MAX_DELTAS_BEFORE_COMPACTION's default), under the same budget.
     """
     from ee.usage.models.usage import PlanEntitlement
+
     from tfc.capabilities import retention as policy_adapter
     from tfc.licensing.types import DeploymentFlavor
     from tracer.services.derived_metrics.publication import committed_rows_select
@@ -549,9 +550,13 @@ def test_m10_complete_service_budget_with_source_retained_parts(
         seed_fields_and_buckets,
     )
 
-    monkeypatch.setattr(policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD)
+    monkeypatch.setattr(
+        policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD
+    )
     policy, _ = PlanEntitlement.objects.get_or_create(
-        organization=workspace.organization, plan="free", feature="retention_traces_days",
+        organization=workspace.organization,
+        plan="free",
+        feature="retention_traces_days",
         defaults={"value_int": 900},
     )
     policy.value_int = 900
@@ -609,10 +614,13 @@ def test_m10_complete_service_budget_with_source_retained_parts(
         org_id=metric.organization_id,
         project_id=metric.project_id,
     )
-    assert writer.store.execute(
-        f"SELECT unit_count, weighted_n FROM ({retired}) WHERE is_deleted = 0",
-        params,
-    ) == []
+    assert (
+        writer.store.execute(
+            f"SELECT unit_count, weighted_n FROM ({retired}) WHERE is_deleted = 0",
+            params,
+        )
+        == []
+    )
     head = writer.compact()
     source, params = committed_rows_select(
         BUCKET_TOTALS,

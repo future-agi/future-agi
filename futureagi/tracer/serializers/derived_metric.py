@@ -848,10 +848,13 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
     )
     coverage_start = serializers.DateTimeField(allow_null=True, required=False)
     retention_floor = serializers.DateTimeField(
-        allow_null=True, required=False,
+        allow_null=True,
+        required=False,
         help_text="Permanent floor of the published retained-only state; current source policy can be stricter.",
     )
-    retention_policy = serializers.ChoiceField(choices=["follow_source"], required=False)
+    retention_policy = serializers.ChoiceField(
+        choices=["follow_source"], required=False
+    )
     calculated_through = serializers.DateTimeField(
         allow_null=True,
         required=False,

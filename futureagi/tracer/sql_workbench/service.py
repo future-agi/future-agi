@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from accounts.models.organization import Organization
 from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import BigIntegerField, Case, Count, F, Q, Sum, Value, When
 from django.utils import timezone
 
-from accounts.models.organization import Organization
 from tfc.temporal.queues import require_exact_aggregation_task_queue
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget

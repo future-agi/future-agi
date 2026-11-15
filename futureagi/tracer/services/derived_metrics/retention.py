@@ -472,10 +472,13 @@ def _classify_recovery(
                         "level",
                         "is_deleted",
                     }:
-                        result[part].append({
-                            key: value for key, value in entry.items()
-                            if key in {"bucket_start", "level"}
-                        })
+                        result[part].append(
+                            {
+                                key: value
+                                for key, value in entry.items()
+                                if key in {"bucket_start", "level"}
+                            }
+                        )
                 elif anchor is None and strict:
                     # Unknown is not retained. Persist only the blocked-work bit.
                     blocked = True
@@ -484,8 +487,7 @@ def _classify_recovery(
                         {
                             k: v
                             for k, v in entry.items()
-                            if k
-                            in {"bucket_start", "level"}
+                            if k in {"bucket_start", "level"}
                         }
                     )
     return result, blocked
@@ -666,10 +668,12 @@ def _span_proposal_cleanup_required(
 def _close_failed_attempts(function):
     @wraps(function)
     def guarded(writer, *args, **kwargs):
-        prior = set(MetricRefreshAttempt.objects.filter(
-            project_id=writer.lease.project_id,
-            state__in=MetricRefreshAttempt.OPEN_STATES,
-        ).values_list("id", flat=True))
+        prior = set(
+            MetricRefreshAttempt.objects.filter(
+                project_id=writer.lease.project_id,
+                state__in=MetricRefreshAttempt.OPEN_STATES,
+            ).values_list("id", flat=True)
+        )
         if function.__name__ == "retirement_plan":
             # This PG-only draft belongs to this invocation too; closing only
             # the successor leaves the failed original PREPARED indefinitely.
@@ -682,13 +686,20 @@ def _close_failed_attempts(function):
 
             # The next fenced writer carries this ledger, but no failed PREPARED
             # attempt remains eligible for publication or pins private state.
-            for attempt_id in MetricRefreshAttempt.objects.filter(
-                project_id=writer.lease.project_id,
-                fencing_epoch=writer.lease.grant.fencing_epoch,
-                state__in=MetricRefreshAttempt.OPEN_STATES,
-            ).exclude(id__in=prior).values_list("id", flat=True):
-                MetricRefreshAttempt.abort(attempt_id, reason=PASS_YIELD, **writer.lease.check())
+            for attempt_id in (
+                MetricRefreshAttempt.objects.filter(
+                    project_id=writer.lease.project_id,
+                    fencing_epoch=writer.lease.grant.fencing_epoch,
+                    state__in=MetricRefreshAttempt.OPEN_STATES,
+                )
+                .exclude(id__in=prior)
+                .values_list("id", flat=True)
+            ):
+                MetricRefreshAttempt.abort(
+                    attempt_id, reason=PASS_YIELD, **writer.lease.check()
+                )
             raise
+
     return guarded
 
 
@@ -699,8 +710,15 @@ def _expired_aggregates(writer, head, cutoff):
         sql, params = committed_rows_select(
             table, head, org_id=writer.org_id, project_id=writer.lease.project_id
         )
-        where = "1" if table == RETIRED_PARTS else "bucket_start < toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
-        if writer.store.execute(f"SELECT count() FROM ({sql}) WHERE {where}", {**params, "aggregate_cutoff": cutoff})[0][0]:
+        where = (
+            "1"
+            if table == RETIRED_PARTS
+            else "bucket_start < toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
+        )
+        if writer.store.execute(
+            f"SELECT count() FROM ({sql}) WHERE {where}",
+            {**params, "aggregate_cutoff": cutoff},
+        )[0][0]:
             return True
     return False
 
@@ -1206,7 +1224,13 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         # Preserve the existing core receipt shape; current-list stores get
         # their own verification count under the same quiescence barrier.
         core_table_count = len(tables)
-        tables = (*tables, RETIRED_PARTS, BUCKET_TOTALS, TABLES["metric_bucket_totals_checkpoint"], *LIST_CURRENT_TABLES)
+        tables = (
+            *tables,
+            RETIRED_PARTS,
+            BUCKET_TOTALS,
+            TABLES["metric_bucket_totals_checkpoint"],
+            *LIST_CURRENT_TABLES,
+        )
         # Prompt scrub, even while an old submission may still land.
         for table in tables:
             _delete(writer.store, table, predicate, params)
@@ -1215,9 +1239,12 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
             store_payload__protocol="metric_submission",
             store_payload__generation__lte=through,
         )
-        if submissions.exclude(
-            status="done", receipts__synchronous_response__drained=1
-        ).exists():
+        if (
+            submissions.count()
+            != submissions.filter(
+                status="done", receipts__synchronous_response__drained=1
+            ).count()
+        ):
             complete = False
             continue
         # Logical publication already aborted old writers under the lifecycle
@@ -1405,6 +1432,109 @@ def _expired_physical_payload(writer, head, cutoff):
     return False
 
 
+def finish_unpublished_replan(writer):
+    """Erase failed first-publication copies without creating an admission head.
+
+    The durable policy debt authorizes cleanup, not calculation. Fence every
+    existing draft, scrub the generation-bounded namespace, wait for synchronous
+    submission receipts, and verify a second scrub before discharging the debt.
+    """
+    project_id = writer.lease.project_id
+    with serialized_project(project_id):
+        writer.lease.check()
+        state = MetricProjectRefresh.for_project(project_id)
+        debts = MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            organization_key=writer.org_id,
+            store_payload__protocol="metric_policy_replan",
+        ).exclude(status="done")
+        ids = list(debts.values_list("id", flat=True))
+        if state.head_manifest_id or not ids:
+            return False
+        if MetricGenerationPin.objects.filter(
+            project_id=project_id,
+            invalidated_at__isnull=True,
+            expires_at__gt=writer.lease.clock(),
+            manifest__revoked_at__isnull=True,
+        ).exists():
+            raise MetricStateConflict("unpublished cleanup has a readable generation")
+        through = state.generation_high_water
+        MetricRefreshAttempt.objects.filter(
+            project_id=project_id,
+            generation__lte=through,
+            state__in=MetricRefreshAttempt.OPEN_STATES,
+        ).update(
+            state="aborted",
+            aborted_at=writer.lease.clock(),
+            abort_reason="retention_replan",
+        )
+        _purge_terminal_payloads(project_id, through_generation=through)
+        MetricProjectRefresh.objects.filter(project_id=project_id).update(
+            pending_repair=True
+        )
+    submissions = MetricErasureRequest.objects.filter(
+        project_key=project_id,
+        store_payload__protocol="metric_submission",
+        store_payload__generation__lte=through,
+    )
+    if (
+        submissions.count()
+        != submissions.filter(store_payload__shard=writer.store.identity()).count()
+    ):
+        raise MetricStateConflict("unpublished cleanup shard is not proven")
+    params = {
+        "erase_org": str(writer.org_id),
+        "erase_project": str(project_id),
+        "erase_through": through,
+    }
+    predicate = "org_id = toUUID(%(erase_org)s) AND project_id = toUUID(%(erase_project)s) AND generation <= %(erase_through)s"
+    for table in TABLES.values():
+        _delete(writer.store, table, predicate, params)
+    if (
+        submissions.count()
+        != submissions.filter(
+            status="done", receipts__synchronous_response__drained=1
+        ).count()
+    ):
+        return False
+    # Registration checks the attempt's open state under the lifecycle lock;
+    # no old writer can register after the abort above. Late ACKs are not enough
+    # without this second physical scrub of every old native namespace.
+    for table in TABLES.values():
+        _delete(writer.store, table, predicate, params)
+        if writer.store.execute(
+            f"SELECT count() FROM {table.name} WHERE {predicate}", params
+        ) != [(0,)]:
+            raise MetricStateConflict("unpublished cleanup is incomplete")
+    with serialized_project(project_id):
+        writer.lease.check()
+        _purge_terminal_payloads(project_id, through_generation=through)
+        if _terminal_payloads(project_id, through_generation=through).exists():
+            raise MetricStateConflict("unpublished private scrub is incomplete")
+        MetricErasureRequest.objects.filter(id__in=ids).update(
+            status="done",
+            completed_at=writer.lease.clock(),
+            receipts={
+                "final_scrub": {
+                    "through_generation": through,
+                    "verified_tables": len(TABLES),
+                    "remaining": 0,
+                }
+            },
+        )
+        submissions.delete()
+        MetricProjectRefresh.objects.filter(project_id=project_id).update(
+            pending_expiry=MetricErasureRequest.objects.filter(
+                project_key=project_id,
+                store_payload__protocol__in=["metric_expiry", "metric_policy_replan"],
+            )
+            .exclude(status="done")
+            .exists(),
+            pending_repair=True,
+        )
+    return True
+
+
 @_close_failed_attempts
 def expire_project(writer, definitions, *, retention_days, now=None, as_of=None):
     """Freeze retirement, publish a complete replacement, revoke, then purge.
@@ -1422,7 +1552,9 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     # at their permanent floor even if the current source policy is unlimited.
     project_id = writer.lease.project_id
     head = MetricProjectRefresh.for_project(project_id).head_manifest
-    inherited = head.published_by.source_ceilings.get("retention_floor") if head else None
+    inherited = (
+        head.published_by.source_ceilings.get("retention_floor") if head else None
+    )
     cutoff = physical_cutoff(_PolicyWriter(writer, retention_days), now=now)
     if inherited:
         inherited = datetime.fromisoformat(str(inherited))

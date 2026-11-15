@@ -250,7 +250,11 @@ def eligible_projects(now: datetime):
             | Q(last_started_at__isnull=True)
             | Q(last_started_at__lte=now - expiry_interval() - PAUSED_EXPIRY_SLACK)
         )
-        .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False) | Q(head_manifest_id__isnull=False))
+        .filter(
+            Q(simulation_agent_id__isnull=True)
+            | Q(cleanup_id__isnull=False)
+            | Q(head_manifest_id__isnull=False)
+        )
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .filter(
             Q(consecutive_failures=0)
@@ -490,7 +494,8 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
     count = 0
     for reservation in reserve_projects(clock=clock):
         with _project_admission(
-            reservation.grant.project_id, reservation.expiry_id,
+            reservation.grant.project_id,
+            reservation.expiry_id,
             privacy_only=reservation.purpose == "expiry",
         ) as admitted:
             if not admitted:
@@ -903,10 +908,14 @@ def run_due_expiry(writer, head) -> bool:
 def run_expiry_pass(writer) -> None:
     """Physical expiry only, nothing new calculated (paused or expiry due)."""
     from tracer.services.derived_metrics import backfill
-    from tracer.services.derived_metrics.retention import expire_project
+    from tracer.services.derived_metrics.retention import (
+        expire_project,
+        finish_unpublished_replan,
+    )
 
     head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
     if head is None:
+        finish_unpublished_replan(writer)
         return
     expire_project(
         writer,

@@ -95,7 +95,9 @@ def execute_sql(job_id):
 
         require_source(job.organization_id, job.project_id, job.start, job.sql)
         if not result_allowed(job):
-            raise QueryUnavailable("Metric source data changed or expired. Run the query again.")
+            raise QueryUnavailable(
+                "Metric source data changed or expired. Run the query again."
+            )
         completed_at = timezone.now()
         published = SQLExecution.objects.filter(
             id=job_id, state="running", deadline__gt=completed_at
@@ -155,7 +157,9 @@ def purge_expired_sql_results():
     try:
         expire_results(limit=1000)
     except Exception as exc:
-        logger.warning("Metric SQL expiry pending", extra={"error_type": type(exc).__name__})
+        logger.warning(
+            "Metric SQL expiry pending", extra={"error_type": type(exc).__name__}
+        )
     return purge_expired_results(batch_size=1000)
 
 

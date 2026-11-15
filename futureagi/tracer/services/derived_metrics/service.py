@@ -329,6 +329,7 @@ def _authorized_metric(metric: DerivedMetric) -> bool:
 def _requester_can_run(run: DerivedMetricRun) -> bool:
     from accounts.models.organization_membership import OrganizationMembership
     from accounts.models.workspace import WorkspaceMembership
+
     from tfc.constants.levels import Level
 
     metric = run.definition.metric
@@ -543,7 +544,9 @@ def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
     if run.deleted_at or not window_retained(
         run.definition.metric.organization_id, run.window_start
     ):
-        raise MetricInputError("This result is no longer available under source retention.")
+        raise MetricInputError(
+            "This result is no longer available under source retention."
+        )
     require_computable(run.definition)
     if (
         run.status in {DerivedMetricRun.Status.RUNNING, DerivedMetricRun.Status.QUEUED}

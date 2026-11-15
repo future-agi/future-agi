@@ -2642,7 +2642,9 @@ class RefreshWriter:
         floor = attempt.source_ceilings.get("retention_floor")
         if floor:
             floor = datetime.fromisoformat(str(floor))
-            dirty = {value for value in dirty if datetime.fromisoformat(str(value)) >= floor}
+            dirty = {
+                value for value in dirty if datetime.fromisoformat(str(value)) >= floor
+            }
         # The exhaustive physical-key scan and frozen/digest ceremony are per
         # bounded SET of dirty quarters, not per quarter. The same pre-fold
         # statistics keep bucket_start in their key, so folding remains exact.
@@ -2725,10 +2727,16 @@ class RefreshWriter:
                     if complete_fields and attempt.purpose == "compaction":
                         # A complete checkpoint has no older keys to mask. Drop
                         # departed group labels instead of preserving tombstones.
-                        replacement = f"SELECT * FROM ({replacement}) WHERE is_deleted = 0"
-                    vanished = [] if complete_fields and attempt.purpose == "compaction" else self.store.execute(
-                        f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
-                        p,
+                        replacement = (
+                            f"SELECT * FROM ({replacement}) WHERE is_deleted = 0"
+                        )
+                    vanished = (
+                        []
+                        if complete_fields and attempt.purpose == "compaction"
+                        else self.store.execute(
+                            f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
+                            p,
+                        )
                     )
                     self.append(
                         attempt,

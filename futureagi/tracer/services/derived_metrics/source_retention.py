@@ -87,7 +87,9 @@ def require_run(run):
         run.definition.metric.organization_id, run.window_start
     ):
         expire_run(run)
-        raise MetricInputError("This result is no longer available under source retention.")
+        raise MetricInputError(
+            "This result is no longer available under source retention."
+        )
 
 
 def expire_runs(*, limit=100):
@@ -95,18 +97,26 @@ def expire_runs(*, limit=100):
     from tracer.models.derived_metric import DerivedMetricRun
 
     # Scan organizations separately: an unlimited tenant must not starve another.
-    organizations = DerivedMetricRun.objects.filter(deleted_at__isnull=True).values_list(
-        "definition__metric__organization_id", flat=True
-    ).order_by().distinct()
+    organizations = (
+        DerivedMetricRun.objects.filter(deleted_at__isnull=True)
+        .values_list("definition__metric__organization_id", flat=True)
+        .order_by()
+        .distinct()
+    )
     count = 0
     for organization_id in organizations.iterator(chunk_size=100):
         cutoff = current_cutoff(organization_id)
         if cutoff is None:
             continue
-        runs = DerivedMetricRun.objects.filter(
-            definition__metric__organization_id=organization_id,
-            deleted_at__isnull=True, window_start__lt=cutoff,
-        ).select_related("definition__metric").order_by("window_start")[:limit - count]
+        runs = (
+            DerivedMetricRun.objects.filter(
+                definition__metric__organization_id=organization_id,
+                deleted_at__isnull=True,
+                window_start__lt=cutoff,
+            )
+            .select_related("definition__metric")
+            .order_by("window_start")[: limit - count]
+        )
         for run in runs:
             expire_run(run)
             count += 1

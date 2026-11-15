@@ -1147,7 +1147,9 @@ def test_shrink_then_expansion_never_reactivates_expiry_revoked_pins(
             with pinned_read(writer.store, writer.lease.project_id, pin=pin, now=now):
                 pytest.fail("horizon expansion restored an old capture")
     monkeypatch.setattr(retention, "_delete", deletion)
-    assert expire_project(writer, [definition], retention_days=lambda: 0, now=now)["unlimited"]
+    assert expire_project(writer, [definition], retention_days=lambda: 0, now=now)[
+        "unlimited"
+    ]
     writer.compact()
     writer.collect_garbage()
     assert all(not pin.is_usable(now) for pin in pins)
@@ -1329,9 +1331,9 @@ def test_physical_expiry_waits_for_delayed_insert_drain_and_final_scrub(
 ):
     from threading import Event, Thread
 
+    from conftest import _ch_test_native_client
     from django.db import close_old_connections
 
-    from conftest import _ch_test_native_client
     from tracer.models.derived_metric import (
         MetricAttemptBatch,
         MetricErasureRequest,
@@ -1592,7 +1594,9 @@ def test_retired_and_new_spans_with_identical_surviving_rows_require_admission_p
         scope,
         **kwargs,
     )
-    assert sum(r[2] for r in metric_bucket_rows(writer, head, definition)) == (1 if prior_retirement else 2)
+    assert sum(r[2] for r in metric_bucket_rows(writer, head, definition)) == (
+        1 if prior_retirement else 2
+    )
     # This assertion requires genuinely NEW S live in one history, but not the
     # corrected/reused previously retired S in the indistinguishable other one.
     deps, p = committed_rows_select(
