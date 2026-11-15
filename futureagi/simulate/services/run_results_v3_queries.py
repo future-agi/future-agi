@@ -1285,12 +1285,13 @@ def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
     database = router.db_for_read(calls.model)
     if connections[database].vendor != "postgresql":
         return _call_actor_facet_python(calls)
-    ids_sql, ids_params = calls.order_by().values("id").query.sql_with_params()
-    table = calls.model._meta.db_table
+    calls_sql, calls_params = (
+        calls.order_by().values("id", "call_metadata").query.sql_with_params()
+    )
     sql = f"""
         WITH summaries AS (
             SELECT c.id, c.call_metadata -> 'harness_call_actors' -> 'summary' AS summary
-            FROM "{table}" c WHERE c.id IN ({ids_sql})
+            FROM ({calls_sql}) c
         ), planned AS (
             SELECT s.id, e ->> 'actor' AS actor, e ->> 'name' AS name, {_DELIVERY_SQL} AS delivery
             FROM summaries s,
@@ -1303,10 +1304,10 @@ def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
         WHERE delivery <> 'not_drawn' GROUP BY actor, delivery
         UNION ALL
         SELECT NULL, NULL, NULL, count(*) FROM summaries s
-        WHERE NOT EXISTS (SELECT 1 FROM planned p WHERE p.id = s.id AND p.delivery <> 'not_drawn')
-    """  # noqa: S608 - the table is the model's own; every value is a parameter
+        WHERE s.id NOT IN (SELECT p.id FROM planned p WHERE p.delivery <> 'not_drawn')
+    """  # noqa: S608 - the calls' own query; every value is a parameter
     with connections[database].cursor() as cursor:
-        cursor.execute(sql, ids_params)
+        cursor.execute(sql, calls_params)
         found = cursor.fetchall()
     counts: Counter = Counter()
     deliveries: defaultdict[str, Counter] = defaultdict(Counter)

@@ -18,6 +18,7 @@ import {
   TIMEOUT_MODES,
   faultTargets,
   testConditionLine,
+  testConditionRoute,
 } from "./testConditions.constants";
 
 const EMPTY = {
@@ -77,9 +78,16 @@ export default function TestConditionsEditor({
           alignItems="center"
           spacing={1}
         >
-          <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
-            {testConditionLine(fault)}
-          </Typography>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ typography: "s1" }}>
+              {testConditionLine(fault, env)}
+            </Typography>
+            {testConditionRoute(fault, env) && (
+              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                {testConditionRoute(fault, env)}
+              </Typography>
+            )}
+          </Box>
           {!disabled && (
             <IconButton
               size="small"

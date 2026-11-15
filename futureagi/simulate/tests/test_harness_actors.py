@@ -2380,6 +2380,20 @@ def test_door_reach_reads_service_tools_only():
     )
 
 
+def test_door_reach_reads_the_build_s_word_that_the_door_cannot_reach_a_tool():
+    from simulate.services.harness_actors import door_reach
+
+    entry = {
+        "tool": "lookup",
+        "mode": "import",
+        "module": "agent",
+        "callable": "lookup",
+    }
+    assert door_reach({"tool_entrypoints": [entry]}) == {"lookup": True}
+    unreached = {**entry, "door_unreached": "the agent is started as a script"}
+    assert door_reach({"tool_entrypoints": [unreached]}) == {"lookup": False}
+
+
 def test_a_draft_write_with_a_fault_mode_the_world_does_not_know_is_refused(
     user, workspace, storage
 ):

@@ -66,11 +66,24 @@ export function faultTargets(env) {
     }));
 }
 
+// The contract tool a fault names: its action is a service route (`orders.refund`) or the tool's own name.
+function faultTool(fault, env) {
+  const action = String(fault?.action || "");
+  const target = faultTargets(env).find((one) => one.action === action);
+  return target?.tool || action;
+}
+
+// The route a fault holds, shown under its line, when it reads differently from the tool's name.
+export function testConditionRoute(fault, env) {
+  const action = String(fault?.action || "");
+  return faultTool(fault, env) === action ? "" : action;
+}
+
 // One line per fault: "{tool}: {mode label} on call {n}", with the delay for a timeout and the status for an error.
-export function testConditionLine(fault) {
+export function testConditionLine(fault, env) {
   const label = TEST_CONDITION_MODES[fault?.mode] || fault?.mode || "";
   const onCall = fault?.on_call ?? 1;
-  let line = `${fault?.action}: ${label} on call ${onCall}`;
+  let line = `${faultTool(fault, env)}: ${label} on call ${onCall}`;
   if (TIMEOUT_MODES.includes(fault?.mode)) {
     line += ` after ${fault?.delay_seconds ?? 30} s`;
   }
