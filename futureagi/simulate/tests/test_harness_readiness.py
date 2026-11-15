@@ -549,6 +549,44 @@ class TestRows:
         assert routing["reason_code"] != "production_only"
         assert routing["status"] != "blocked"
 
+    def test_state_the_agent_keeps_in_its_own_process_is_not_production(
+        self, user, workspace, storage
+    ):
+        # Tools that read and write dictionaries in the agent's process: nothing outside the test world is reached.
+        contract = {
+            "tool_entrypoints": [
+                {
+                    "tool": "get_order",
+                    "mode": "import",
+                    "module": "agent",
+                    "callable": "get_order",
+                },
+                {
+                    "tool": "issue_refund",
+                    "mode": "import",
+                    "module": "agent",
+                    "callable": "issue_refund",
+                },
+            ],
+            "dependencies": [
+                {
+                    "kind": "datastore",
+                    "name": "in_memory_store",
+                    "engine": "in_process",
+                    "reached": {"host": "", "port": None, "dsn_env": ""},
+                    "used_by": ["get_order", "issue_refund"],
+                }
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-in-process-store")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason_code"] != "production_only"
+        assert routing["status"] != "blocked"
+
     def test_a_named_host_outside_the_compose_app_is_still_production(
         self, user, workspace, storage
     ):

@@ -37,6 +37,12 @@ def _provisionable(dependency: Mapping[str, Any]) -> bool:
     return bool(dependency.get("engine")) and seam
 
 
+def _in_process(dependency: Mapping[str, Any]) -> bool:
+    """State the agent keeps in its own process (dictionaries, an in-memory store): it starts fresh with the agent
+    in the test world and reaches nothing outside it."""
+    return str(dependency.get("engine") or "").strip().lower() == "in_process"
+
+
 def _compose_sibling(dependency: Mapping[str, Any]) -> bool:
     """A service the agent reaches by a single-label host name: inside its own compose app that name can only be
     another service of the same file, which the build runs with the agent."""
@@ -87,6 +93,7 @@ def structural_findings(
             and not _provisionable(dependency)
             and str(dependency.get("name") or "") not in served
             and not (compose and _compose_sibling(dependency))
+            and not _in_process(dependency)
             for tool in dependency.get("used_by") or []
         }
     )
