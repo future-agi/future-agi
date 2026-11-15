@@ -136,7 +136,7 @@ export default function TestConditionsEditor({
                 {target.reachable ? (
                   target.tool
                 ) : (
-                  <Tooltip title={TEST_CONDITIONS_COPY.inProcess}>
+                  <Tooltip title={TEST_CONDITIONS_COPY.inProcess} describeChild>
                     <span>{target.tool}</span>
                   </Tooltip>
                 )}
