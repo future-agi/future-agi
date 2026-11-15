@@ -588,7 +588,8 @@ def _door_reach(pairing: Pairing) -> dict[str, bool]:
     """Whether the world's door stands in front of each contract tool, by tool name and by the world action a fault
     names: a tools-service tool is behind the tool proxy, a Python agent's module-level callable or method behind
     the door in its own process; anything else runs where no door stands. Empty when the contract names no
-    entrypoints (nothing to tell, nothing held back). The same rule as the actors' `harness_actors.door_reach`."""
+    entrypoints (nothing to tell, nothing held back). A tool the build found out of the door's reach says so
+    (`door_unreached`). The same rule as the actors' `harness_actors.door_reach`."""
     contract = (pairing.environment_version.documents or {}).get("contract")
     contract = contract if isinstance(contract, Mapping) else {}
     runtime = (
@@ -612,6 +613,7 @@ def _door_reach(pairing: Pairing) -> dict[str, bool]:
                 and mode in ("import", "construct")
                 and entry.get("module")
                 and entry.get("callable")
+                and not entry.get("door_unreached")
             )
         )
         reach[str(entry["tool"])] = reachable

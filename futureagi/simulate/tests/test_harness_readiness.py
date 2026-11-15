@@ -3286,3 +3286,28 @@ def test_a_fault_on_a_tool_behind_a_door_is_not_held_back_and_one_on_a_closure_i
         )
         is False
     )
+
+
+def test_a_fault_on_a_tool_the_build_found_out_of_the_door_s_reach_is_held_back():
+    from simulate.services.harness_readiness.selection import (
+        _door_reach,
+        _needs_a_missing_door,
+    )
+    from simulate.services.harness_scenario_needs import door_needs
+
+    entry = {
+        "tool": "lookup",
+        "mode": "import",
+        "module": "agent",
+        "callable": "lookup",
+    }
+    fault = _case(door_needs({"faults": [{"action": "lookup", "mode": "unavailable"}]}))
+    # An older build's contract carries no word: read by mode, as before.
+    assert (
+        _needs_a_missing_door(fault, _door_reach(_in_process_pairing([entry]))) is False
+    )
+    unreached = {**entry, "door_unreached": "the agent is started as a script"}
+    assert (
+        _needs_a_missing_door(fault, _door_reach(_in_process_pairing([unreached])))
+        is True
+    )
