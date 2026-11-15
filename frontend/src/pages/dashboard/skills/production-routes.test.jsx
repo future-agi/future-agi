@@ -266,6 +266,77 @@ it('loads the production draft review and sends the exact head acknowledgment, t
   expect(writes[1]).toMatch(/\/publish\/$/);
 });
 
+it.each(['Publish version', 'Publish and request review'])('replays %s with the exact post-acknowledgment body even after the server removed the draft', async (button) => {
+  const read = axios.get.getMockImplementation();
+  let removed = false;
+  let sends = 0;
+  const acknowledgedFingerprint = `sha256:${'b'.repeat(64)}`;
+  let draft = { id: 'draft', revision: 3, base_version: 4, files: [{ path: 'AGENTS.md', content: '# Candidate' }], context_spec: { schema: 1, description: 'Standing policy', links: [] }, resolved_lock: { schema: 1, links: [] }, digest, recovery_digest: digest, checks: { items: [], summary: { errors: 0, warnings: 0 } }, note: '', expected_head_version: 4, head_acknowledged: false, review_fingerprint: null };
+  axios.get.mockImplementation(async (url, config) => {
+    if (!url.endsWith('/draft/')) return read(url, config);
+    if (removed) throw { statusCode: 404, code: 'draft_not_found' };
+    return envelope(draft);
+  });
+  const diff = { from: 4, files: [], total_pages: 1 };
+  axios.post.mockImplementation(async (url) => {
+    if (url.endsWith('/release/review/')) {
+      const fingerprint = draft.review_fingerprint || digest;
+      return envelope({ candidate: { kind: 'draft', revision: draft.revision, digest }, base_version: 4, latest_version: 4, release_state: releaseState, changes: diff, head_changes: diff, checks: draft.checks, impact: {}, review_fingerprint: fingerprint, head_review: { subject_id: id, kind: 'agent_context', draft_revision: draft.revision, candidate_digest: digest, base_version: 4, expected_head_version: 4, head_digest: digest, review_fingerprint: fingerprint } });
+    }
+    if (url.endsWith('/acknowledge-head/')) {
+      if (removed) throw { statusCode: 404, code: 'draft_not_found' };
+      draft = { ...draft, revision: 4, head_acknowledged: true, review_fingerprint: acknowledgedFingerprint };
+      return envelope(draft);
+    }
+    if (url.endsWith('/publish/')) {
+      sends += 1;
+      // Both responses are lost: keep the review mounted and prove repeated
+      // reconciliation sends one frozen body, not a new acknowledgment or key.
+      throw new Error('The publication response was lost');
+    }
+    throw new Error(`Unexpected write ${url}`);
+  });
+  mount(`/dashboard/skills/contexts/${id}/review`);
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ }));
+  fireEvent.click(screen.getByRole('button', { name: button }));
+  const check = await screen.findByRole('button', { name: 'Check status' });
+  await waitFor(() => expect(sends).toBe(1));
+  removed = true;
+  fireEvent.click(check);
+  await waitFor(() => expect(sends).toBe(2));
+  const publications = axios.post.mock.calls.filter(([url]) => url.endsWith('/publish/'));
+  expect(publications[0][1]).toMatchObject({ revision: 4, expected_digest: digest, review_fingerprint: acknowledgedFingerprint, expected_head_version: 4 });
+  expect(publications[1][1]).toEqual(publications[0][1]);
+  expect(publications[1][2].headers['Idempotency-Key']).toBe(publications[0][2].headers['Idempotency-Key']);
+  expect(publications[0][2].headers['Idempotency-Key']).toEqual(expect.any(String));
+  expect(axios.post.mock.calls.filter(([url]) => url.endsWith('/acknowledge-head/'))).toHaveLength(1);
+  expect(await screen.findByRole('button', { name: 'Check status' })).toBeEnabled();
+});
+
+it('does not adopt a newly acknowledged same-bytes draft after an intervening revision change', async () => {
+  const read = axios.get.getMockImplementation();
+  const draft = { id: 'draft', revision: 3, base_version: 4, files: [{ path: 'AGENTS.md', content: '# Candidate' }], context_spec: { schema: 1, description: 'Standing policy', links: [] }, resolved_lock: { schema: 1, links: [] }, digest, recovery_digest: digest, checks: { items: [], summary: { errors: 0, warnings: 0 } }, note: '', expected_head_version: 4, head_acknowledged: false, review_fingerprint: null };
+  let moved = false;
+  axios.get.mockImplementation((url, config) => url.endsWith('/draft/')
+    ? Promise.resolve(envelope(moved ? { ...draft, revision: 6, head_acknowledged: true, review_fingerprint: `sha256:${'b'.repeat(64)}` } : draft))
+    : read(url, config));
+  const diff = { from: 4, files: [], total_pages: 1 };
+  axios.post.mockImplementation(async (url) => {
+    if (url.endsWith('/release/review/')) return envelope({ candidate: { kind: 'draft', revision: 3, digest }, base_version: 4, latest_version: 4, release_state: releaseState, changes: diff, head_changes: diff, checks: draft.checks, impact: {}, review_fingerprint: digest, head_review: { subject_id: id, kind: 'agent_context', draft_revision: 3, candidate_digest: digest, base_version: 4, expected_head_version: 4, head_digest: digest, review_fingerprint: digest } });
+    if (url.endsWith('/acknowledge-head/')) throw { statusCode: 409, code: 'draft_conflict' };
+    throw new Error(`Unexpected write ${url}`);
+  });
+  mount(`/dashboard/skills/contexts/${id}/review`);
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ }));
+  moved = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
+  expect(await screen.findByText('The draft changed since you reviewed it. Review the changes again.')).toBeVisible();
+  const ack = axios.post.mock.calls.find(([url]) => url.endsWith('/acknowledge-head/'));
+  expect(ack[1]).toMatchObject({ revision: 3, review_fingerprint: digest });
+  expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(false);
+  expect(screen.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ })).not.toBeChecked();
+});
+
 it('loads later-page dependencies and reads linked/generated saved bytes through the production editor', async () => {
   const read = axios.get.getMockImplementation();
   const draft = { id: 'draft', revision: 3, base_version: 4, files: [{ path: 'AGENTS.md', content: '# Owned instructions' }], context_spec: { schema: 1, description: 'Standing policy', links: [{ skill_id: 'linked', selector: { version: 1 } }] }, resolved_lock: { schema: 1, links: [{ skill_id: 'linked', mount: 'policy', version: 1, version_id: 'child-version', digest, requested: { version: 1 } }] }, digest, recovery_digest: digest, checks: { items: [], summary: { errors: 0, warnings: 0 } }, note: '', expected_head_version: 4, head_acknowledged: false, review_fingerprint: null };

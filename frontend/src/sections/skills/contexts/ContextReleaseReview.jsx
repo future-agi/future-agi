@@ -137,12 +137,15 @@ function DraftPublication({
     headDigest: draftReview.headDigest,
     warnings: draftReview.checks?.summary.warnings ?? null,
   });
-  const publishInput = { ...fields, headAcknowledged: draftReview.headAcknowledged === true, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings };
-  const fields = {
+  const publishInput = {
     revision: draftReview.revision,
     expectedDigest: draftReview.candidateDigest,
     expectedHeadVersion: draftReview.expectedHeadVersion,
     reviewFingerprint: draftReview.reviewFingerprint,
+    headAcknowledged: draftReview.headAcknowledged === true,
+    baseVersion: draftReview.baseVersion,
+    note,
+    acknowledgeWarnings: warnings,
   };
   return (
     <Stack spacing={3} sx={{ mt: 3, pb: "calc(var(--skills-sticky-footer-height, 0px) + 16px)" }}>

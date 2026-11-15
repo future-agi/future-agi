@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
@@ -147,22 +147,31 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
     complete: data.complete, changes: data.originChanges, headChanges: data.headChanges, acceptedLock: draft.data?.resolvedLock, checks: data.checks,
     headAcknowledged: draft.data?.headAcknowledged && draft.data?.reviewFingerprint === head.reviewFingerprint,
     note: draft.data?.note, productionVersion: data.releaseState.labels.find((label) => label.name === 'production')?.version };
-  // One chain for both publish buttons (A6): acknowledge the reviewed head only
-  // when the current draft still needs it (a retry after an unknown outcome
-  // reuses the earlier acknowledgment of the same bytes), then publish with the
-  // held idempotency key. The server rechecks digest, head and fingerprint on
-  // both writes, so a stale draft fails with a conflict and nothing is published.
+  // Hold the post-acknowledgment body as well as the operation key. A successful
+  // publish removes the draft: replaying an unknown outcome must go straight to
+  // publish's receipt lookup, not refetch/re-acknowledge a missing or newer draft.
+  const publication = useRef(null);
   const acknowledgeThenPublish = async ({ headAcknowledged, idempotencyKey, ...input }, options) => {
-    let fields = input;
-    if (!headAcknowledged) {
-      const current = (await draft.refetch()).data;
-      if (current?.headAcknowledged && current.digest === input.expectedDigest) fields = { ...input, revision: current.revision, reviewFingerprint: current.reviewFingerprint };
-      else {
-        const acked = await acknowledge.mutateAsync({ ...input, ...options });
-        fields = { ...input, revision: acked.revision, reviewFingerprint: acked.reviewFingerprint };
+    if (publication.current?.idempotencyKey !== idempotencyKey) {
+      let fields = input;
+      if (!headAcknowledged) {
+        const refreshed = await draft.refetch();
+        if (refreshed.isError) throw refreshed.error;
+        const current = refreshed.data;
+        // Recover an acknowledgment whose response was lost only across its
+        // single revision increment, never across a same-bytes edit/restore ABA.
+        if (current?.headAcknowledged && current.revision === input.revision + 1 &&
+          current.digest === input.expectedDigest && current.baseVersion === input.baseVersion &&
+          current.expectedHeadVersion === input.expectedHeadVersion && current.reviewFingerprint) {
+          fields = { ...input, revision: current.revision, reviewFingerprint: current.reviewFingerprint };
+        } else {
+          const acked = await acknowledge.mutateAsync({ ...input, ...options });
+          fields = { ...input, revision: acked.revision, reviewFingerprint: acked.reviewFingerprint };
+        }
       }
+      publication.current = { ...fields, idempotencyKey, ...options };
     }
-    return publish.mutateAsync({ ...fields, idempotencyKey, ...options });
+    return publish.mutateAsync(publication.current);
   };
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
     onRetry={refresh} onRefresh={refresh}
