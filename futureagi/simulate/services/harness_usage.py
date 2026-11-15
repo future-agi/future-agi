@@ -722,15 +722,12 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for attempt_id, attempt in attempts.items()
         if attempt.sandbox_runtime or attempt_id in legacy_runtimes
     }
-    # Builder turns after a build, each billed on its own outside any attempt.
-    turn_reports = (
-        []
-        if metadata.get("simulation_only")
-        else list(
-            HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
-                job_id=job.id, report__isnull=False
-            ).values_list("report", flat=True)
-        )
+    # Builder turns after a build, each billed on its own outside any attempt: a selected
+    # run's chat turn is billed too, so it is counted too.
+    turn_reports = list(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id=job.id, report__isnull=False
+        ).values_list("report", flat=True)
     )
     if (
         not reports
