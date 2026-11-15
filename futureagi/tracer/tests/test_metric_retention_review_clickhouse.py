@@ -203,7 +203,7 @@ def test_copy_cleanup_keeps_valid_sql_results(publication_store, tenants, scope)
     jobs = [
         create_job(actor, project, state=state, sql=sql, result=body)
         for state in ("running", "succeeded")
-        for sql in ("SELECT 1", "SELECT value FROM derived_metrics")
+        for sql in ("SELECT span_id FROM spans", "SELECT value FROM derived_metrics")
     ]
     job = _intent(
         organization_id=actor.organization_id,
@@ -222,7 +222,9 @@ def test_copy_cleanup_keeps_valid_sql_results(publication_store, tenants, scope)
 def test_subject_erasure_invalidates_only_metric_sql(tenants):
     (actor, project, _), _ = tenants
     body = {"rows": [[42]]}
-    ordinary = create_job(actor, project, state="running", sql="SELECT 1", result=body)
+    ordinary = create_job(
+        actor, project, state="running", sql="SELECT span_id FROM spans", result=body
+    )
     metric = create_job(
         actor,
         project,
@@ -317,7 +319,11 @@ def test_failed_erasure_closes_staged_attempt_and_bounds_automatic_retries(
 ):
     writer, now = live_writer, timezone.now()
     definition = numeric_definition(uuid4())
-    seed_fields_and_buckets(writer, definition, [("private", now, 7, "erase-user")])
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [("private", now, 7, "erase-user"), ("retained", now, 9, "keep-user")],
+    )
     request = erasure.erase_metric_data(
         organization_id=writer.org_id,
         project_id=writer.lease.project_id,
@@ -515,7 +521,7 @@ def test_real_history_collection_preserves_current_sql_jobs(
     jobs = [
         create_job(actor, observe_project, state=state, sql=sql, result={"rows": [[7]]})
         for state in ("running", "succeeded")
-        for sql in ("SELECT 1", "SELECT value FROM derived_metrics")
+        for sql in ("SELECT span_id FROM spans", "SELECT value FROM derived_metrics")
     ]
     intent = collect_history(observe_project.pk, now=now + timedelta(days=30))
     assert intent is not None and intent.scope_kind == "history"
