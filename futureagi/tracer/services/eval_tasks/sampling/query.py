@@ -92,6 +92,7 @@ class SamplingQuery:
         self.proof_row_ids: tuple[str, ...] | None = None
         self.proof_unit_ids: list[str] | None = None
         self.member_unit_ids: list[str] | None = None
+        self.assignment_trace_ids: tuple[str, ...] | None = None
         self.current_state = False
 
     def bind(self, value: object) -> str:
@@ -399,6 +400,14 @@ class SamplingQuery:
                     WHERE trace_session_id IN %(sp_current_ids)s OR trace_session_id IN (
                         SELECT any_id FROM ({aliases}) WHERE survivor_id IN %(sp_current_ids)s
                     ))"""
+        if self.assignment_trace_ids is not None:
+            self.params["sp_tag_traces"] = self.assignment_trace_ids
+            # Override the root-day seed as well as the main source: neither
+            # physical replay nor remap discovery may scan unrelated traces.
+            # Trace filters can depend on children outside the root's window.
+            scope = "project_id = %(sp_project)s AND trace_id IN %(sp_tag_traces)s"
+            if row_type == "spans":
+                scope += f" AND {hour_scope}"
         latest_builder = SpanListQueryBuilderV2(project_id=str(self.task.project_id))
         # Remap groups are expanded only for ids touched by this scope. ClickHouse
         # inlines a CTE at every reference, so discovering those ids from ``raw``
@@ -637,6 +646,43 @@ class SamplingQuery:
             self.params,
         )
 
+    def live_assignment_rows(self, trace_ids: list[str]) -> tuple[str, dict]:
+        """Replay a bounded assignment page, independent of telemetry arrivals.
+
+        A trace assignment is shared by all its physical roots. Child edits can
+        also change a trace's eligibility, so replay complete candidate traces
+        and let the normal row filters/event bounds select the affected rows.
+        Retain the telemetry snapshot; a temporarily excluded arrival is safely
+        retried by the next assignment sweep. First-admission unit proofs remain
+        separate and preserve their own full-history/lookback contract.
+        """
+        from tracer.services.eval_tasks.sampling.tag_discovery import (
+            ASSIGNMENT_PAGE_SIZE,
+        )
+
+        identities = tuple(dict.fromkeys(str(value) for value in trace_ids))
+        if (
+            self.policy["mode"] != "live"
+            or self.task.row_type not in {"spans", "traces"}
+            or not identities
+            or len(identities) > ASSIGNMENT_PAGE_SIZE
+            or any(not value or len(value) > 128 for value in identities)
+        ):
+            raise ValueError("Assignment discovery requires one bounded trace page.")
+        self.assignment_trace_ids = identities
+        self.scan_window = {
+            "start": self.policy["window"]["start"],
+            "end": self.params["sp_snapshot"].isoformat(),
+        }
+        self.params["sp_start"] = parse_time(self.scan_window["start"])
+        self.params["sp_end"] = self.params["sp_snapshot"]
+        statement = self.rows()
+        # Bind the effective-tag overlay to this same page, never a project-wide
+        # assignment/window scan for each replay. This does not restrict the
+        # subsequent full-unit first-admission proof.
+        self.params["candidate_trace_ids"] = identities
+        return statement
+
     def live_member_decisions(self, unit_ids: list[str]) -> tuple[str, dict]:
         """Classify only new candidate units across their full eligible snapshot.
 
@@ -836,6 +882,7 @@ def stream_query(
     from tracer.services.clickhouse.read_budget import ReadDeadline
     from tracer.services.clickhouse.v2.effective_tags import (
         EffectiveTagRelation,
+        bind_effective_tag_query,
         prepare_effective_tag_params,
     )
     from tracer.services.clickhouse.v2.query_service import (
@@ -896,9 +943,16 @@ def stream_query(
                     window_overlay=True,
                 )
                 timeout_ms = deadline.remaining_ms()
-            with client.execute_read_block_stream(
+            # Account for the exact wire values, including native timestamp
+            # microseconds, under this stream's existing finite parser setting.
+            sql, native_params = bind_effective_tag_query(
                 sql,
                 native_parameters(params),
+                max_query_size=cast(int, read_settings["max_query_size"]),
+            )
+            with client.execute_read_block_stream(
+                sql,
+                native_params,
                 timeout_ms=timeout_ms,
                 block_size=BATCH_SIZE,
                 settings=read_settings,

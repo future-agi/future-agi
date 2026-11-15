@@ -53,6 +53,7 @@ from tracer.services.eval_tasks.sampling.query import (
     sampling_clock,
     stream_query,
 )
+from tracer.services.eval_tasks.sampling.tag_discovery import STATE_KEY, assignment_page
 from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 
 if TYPE_CHECKING:
@@ -351,6 +352,8 @@ def _live_row_blocks(
     now: datetime,
     floor: datetime | None,
     windows: list[dict],
+    *,
+    assignment_trace_ids: tuple[str, ...] = (),
 ) -> Iterator[list[tuple]]:
     for window in windows:
         query = SamplingQuery(task, policy, version, now, scan_window=window)
@@ -370,6 +373,12 @@ def _live_row_blocks(
                 )
             else:
                 yield block
+    if assignment_trace_ids:
+        yield from stream_query(
+            *SamplingQuery(task, policy, version, now).live_assignment_rows(
+                list(assignment_trace_ids)
+            )
+        )
 
 
 def prepare_live_members(
@@ -381,6 +390,7 @@ def prepare_live_members(
     floor: datetime | None,
     *,
     write: WriteScope = transaction.atomic,
+    assignment_trace_ids: tuple[str, ...] = (),
 ) -> list[dict]:
     """Freeze new-unit decisions from full snapshots, not first-day witnesses.
 
@@ -394,7 +404,15 @@ def prepare_live_members(
     from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
 
     windows = list(live_scan_windows(task, policy, now, floor))
-    for block in _live_row_blocks(task, policy, version, now, floor, windows):
+    for block in _live_row_blocks(
+        task,
+        policy,
+        version,
+        now,
+        floor,
+        windows,
+        assignment_trace_ids=assignment_trace_ids,
+    ):
         for units in unit_batches(row[1] for row in block):
             existing = set(
                 EvalSamplingMember.objects.filter(
@@ -461,10 +479,17 @@ def iter_selected_row_blocks(
     floor: datetime | None,
     *,
     live_windows: list[dict] | None = None,
+    assignment_trace_ids: tuple[str, ...] = (),
 ) -> Iterator[list[tuple]]:
     if policy["mode"] == "live":
         yield from _live_row_blocks(
-            task, policy, version, now, floor, live_windows or []
+            task,
+            policy,
+            version,
+            now,
+            floor,
+            live_windows or [],
+            assignment_trace_ids=assignment_trace_ids,
         )
         return
     # Transfer only selected closed-cohort rows, not the unsampled population,
@@ -653,16 +678,34 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             # A dropped Recalculate replacement puts its previous result back,
             # as on every other reconciler drop path.
             result = ReconcileResult(dropped=drop_pending_entries(stale))
+        # Discovery is outside task/evaluator locks. A page is acknowledged only
+        # after admission, expansion and current pending revalidation all finish.
+        discovery = assignment_page(task, policy, cohort)
+        assignment_trace_ids = discovery.trace_ids if discovery is not None else ()
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
-                task, policy, version, cohort, now, floor, write=fence.write
+                task,
+                policy,
+                version,
+                cohort,
+                now,
+                floor,
+                write=fence.write,
+                assignment_trace_ids=assignment_trace_ids,
             )
             if policy["mode"] == "live"
             else None
         )
         for block in iter_selected_row_blocks(
-            task, policy, version, cohort, now, floor, live_windows=live_windows
+            task,
+            policy,
+            version,
+            cohort,
+            now,
+            floor,
+            live_windows=live_windows,
+            assignment_trace_ids=assignment_trace_ids,
         ):
             keys = [unit_key(str(row[1])) for row in block]
             members = {
@@ -713,6 +756,13 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
         )
         with fence.write() as locked:
             result.created = _live_count(locked) - before + result.dropped
+            if discovery is not None:
+                EvalSamplingCohort.objects.filter(pk=cohort.pk).update(
+                    selection_context={
+                        **cohort.selection_context,
+                        STATE_KEY: discovery.cursor,
+                    }
+                )
             if locked.run_type == RunType.CONTINUOUS:
                 from tracer.services.eval_tasks.cursor_policy import (
                     CONTINUOUS_CURSOR_OVERLAP,
