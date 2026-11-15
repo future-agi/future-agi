@@ -818,6 +818,111 @@ def test_compare_own_datasets_returns_rows(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("storage_error_code", ["NoSuchBucket", "AccessDenied"])
+def test_compare_build_write_failure_is_bad_request_not_empty_success(
+    auth_client,
+    organization,
+    workspace,
+    comparison_page_store,
+    comparison_cell_reads,
+    monkeypatch,
+    storage_error_code,
+):
+    from minio.error import S3Error
+
+    from model_hub.utils import compare_storage
+
+    # Identical source rows must reach the real page builder, not the legitimate
+    # empty-join path. Only PutObject fails; no read failure is injected.
+    base, peer = [
+        _compare_dataset(organization, workspace, name, [("alpha", "shared")])
+        for name in ("Build failure base", "Build failure peer")
+    ]
+    client = Mock()
+    client.put_object.side_effect = S3Error(
+        code=storage_error_code,
+        message="Synthetic comparison write failure",
+        resource="/synthetic-compare",
+        request_id="synthetic",
+        host_id="synthetic",
+        response=None,
+    )
+    monkeypatch.setattr(
+        compare_storage, "_client_and_bucket", lambda: (client, "synthetic-compare")
+    )
+    # The store fixture normally replaces this writer. Restore the production
+    # writer so the real build attempts serialization and the failing upload.
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.write_compare_json",
+        compare_storage.write_compare_json,
+    )
+
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/",
+        {
+            "dataset_ids": [str(peer.id)],
+            "base_column_name": "input",
+            "page_size": 10,
+            "current_page_index": 0,
+            "compare_id": None,
+        },
+        format="json",
+    )
+
+    # _prepare_compare_dataset_impl logs the write exception and leaves local
+    # metadata processing; the view must not return 200 with zero rows. Pin its
+    # actual 400 wire envelope, also consumed by CompareData's Axios regression.
+    message = "Unable to compare datasets. Please try again."
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert response.json() == {
+        "status": False,
+        "type": "validation_error",
+        "code": "invalid",
+        "detail": message,
+        "message": message,
+        "error": message,
+        "result": message,
+    }
+    client.put_object.assert_called_once()
+    upload = client.put_object.call_args.kwargs
+    assert upload["bucket_name"] == "synthetic-compare"
+    _, compare_id, page = upload["object_name"].split("/")
+    assert page == "page_1.json"
+    payload = json.loads(upload["data"].getvalue())
+    assert len(payload["table"]) == 1
+    input_column_id = str(Column.objects.get(dataset=base, name="input").id)
+    assert payload["table"][0][input_column_id]["cell_value"] == "alpha"
+    metadata = json.loads(
+        Path(get_compare_metadata_path(compare_id)).read_text(encoding="utf-8")
+    )
+    assert metadata["status"] == "processing"
+    assert metadata["total_rows"] == 1
+    assert comparison_cell_reads.count("prepare") == 1
+    assert comparison_page_store.reads == []
+    assert comparison_page_store == {}
+
+    # Positive control: a genuinely disjoint pair still returns metadata-only
+    # 200/zero while the same PutObject failure remains installed, without ever
+    # entering the writer. An error and an empty join are distinct outcomes.
+    Cell.objects.filter(dataset=peer, column__name="input").update(value="disjoint")
+    client.put_object.reset_mock()
+    comparison_cell_reads.clear()
+    empty = _compare_request(auth_client, base, peer)
+    assert empty.status_code == status.HTTP_200_OK, empty.content
+    result = empty.json()["result"]
+    empty_id = result["metadata"]["compare_id"]
+    assert empty_id != compare_id
+    assert str(uuid.UUID(empty_id)) == empty_id
+    assert result == {
+        "metadata": {"compare_id": empty_id, "total_rows": 0, "total_pages": 0}
+    }
+    client.put_object.assert_not_called()
+    assert "prepare" not in comparison_cell_reads
+    assert comparison_page_store.reads == []
+    assert comparison_page_store == {}
+
+
+@pytest.mark.django_db(transaction=True)
 def test_compare_cached_page_checks_dataset_scope(
     auth_client,
     user,

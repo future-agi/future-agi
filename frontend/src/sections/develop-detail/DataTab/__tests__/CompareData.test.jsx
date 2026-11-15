@@ -1,6 +1,6 @@
 import React from "react";
 import { act, render } from "src/utils/test-utils.jsx";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { grid, post, deleteCompare, snackbar, Null, Passthrough } = vi.hoisted(
   () => ({
@@ -42,6 +42,7 @@ vi.mock("src/api/develop/dataset-compare", async (importOriginal) => ({
   useDeleteCompare: () => ({ mutate: deleteCompare }),
 }));
 vi.mock("src/components/snackbar", () => snackbar);
+vi.mock("src/utils/Mixpanel", () => ({ resetUser: vi.fn() }));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
 vi.mock("src/hooks/use-local-storage", () => ({
   useLocalStorage: () => ({ state: { vals: [] }, update: vi.fn() }),
@@ -1226,7 +1227,7 @@ describe("CompareData expired comparison", () => {
     );
   });
 
-  it("does not start over for other failures", async () => {
+  it("reports other failures without starting over or emptying rows", async () => {
     const { api, props } = renderWithGrid();
     post.mockImplementationOnce(() =>
       Promise.resolve(withCompareId(EXPIRED_ID)),
@@ -1243,10 +1244,238 @@ describe("CompareData expired comparison", () => {
     const failed = await failPage(10);
 
     expect(api.refreshServerSide).not.toHaveBeenCalled();
-    expect(failed.success).toHaveBeenCalledExactlyOnceWith({
+    expect(failed.success).not.toHaveBeenCalled();
+    expect(failed.fail).toHaveBeenCalledTimes(1);
+    expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+    expect(props.compareId.current).toBe(EXPIRED_ID);
+    expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+      "Unable to compare datasets.",
+      { variant: "error" },
+    );
+  });
+});
+
+describe("CompareData real Axios build-failure envelope", () => {
+  const BASE_ID = "00000000-0000-4000-8000-000000000031";
+  const PEER_ID = "00000000-0000-4000-8000-000000000032";
+  const BUILD_FAILURE_MESSAGE = "Unable to compare datasets. Please try again.";
+  // Exact HTTP 400 body pinned by the backend API regression
+  // test_compare_build_write_failure_is_bad_request_not_empty_success. The
+  // shared Axios interceptor, not a mock error, must supply statusCode.
+  const buildFailure = {
+    status: false,
+    type: "validation_error",
+    code: "invalid",
+    detail: BUILD_FAILURE_MESSAGE,
+    message: BUILD_FAILURE_MESSAGE,
+    error: BUILD_FAILURE_MESSAGE,
+    result: BUILD_FAILURE_MESSAGE,
+  };
+  let realAxios;
+  let originalAdapter;
+  let adapter;
+
+  const replyWith = (body) => {
+    adapter.mockImplementation(async (config) => ({
+      config,
+      status: 200,
+      data: body,
+      headers: { "content-type": "application/json" },
+    }));
+  };
+  const rejectWith = (status, body) => {
+    adapter.mockImplementation((config) =>
+      Promise.reject({
+        config,
+        code: "ERR_BAD_RESPONSE",
+        response: { status, data: body, config },
+      }),
+    );
+  };
+  const setup = () => {
+    const api = {
+      refreshServerSide: vi.fn(),
+      refreshCells: vi.fn(),
+      showNoRowsOverlay: vi.fn(),
+      deselectAll: vi.fn(),
+    };
+    const props = renderCompare({
+      gridApiRef: { current: { api } },
+      selectedDatasetsValues: [BASE_ID, PEER_ID],
+    });
+    api.refreshServerSide.mockClear();
+    return { api, props };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    post.mockReset();
+    ({ default: realAxios } = await vi.importActual("src/utils/axios"));
+    originalAdapter = realAxios.defaults.adapter;
+    adapter = vi.fn();
+    realAxios.defaults.adapter = adapter;
+    // Keep the existing component harness, but run serialization, request
+    // validation and the real response interceptor; replace only the network.
+    post.mockImplementation((...args) => realAxios.post(...args));
+  });
+
+  afterEach(() => {
+    realAxios.defaults.adapter = originalAdapter;
+    post.mockReset();
+  });
+
+  it.each([false, true])(
+    "reports the backend build 400 without false empty or rebuild (loaded rows: %s)",
+    async (loaded) => {
+      const { api, props } = setup();
+      if (loaded) {
+        replyWith(response().data);
+        await getPage();
+        act(() => {
+          grid.props.onRowClicked({
+            data: rows[0],
+            rowIndex: 0,
+            event: { target: { closest: () => null } },
+          });
+        });
+        expect(
+          document.querySelector('[data-testid="compare-detail-drawer"]'),
+        ).not.toBeNull();
+      }
+      const pinnedBefore = grid.props.pinnedBottomRowData;
+      props.setColumns.mockClear();
+      props.setCompareColumnDefs.mockClear();
+      props.setCommonColumn.mockClear();
+      props.setDatasetInfo.mockClear();
+      adapter.mockClear();
+      rejectWith(400, buildFailure);
+
+      const failed = startPage(loaded ? 10 : 0);
+      await act(async () => {
+        await failed.pending;
+      });
+
+      expect(adapter).toHaveBeenCalledTimes(1);
+      const request = adapter.mock.lastCall[0];
+      expect(request.url).toBe(
+        `/model-hub/datasets/${BASE_ID}/compare-datasets/`,
+      );
+      expect(JSON.parse(request.data)).toEqual({
+        dataset_ids: [PEER_ID],
+        base_column_name: "input",
+        page_size: 10,
+        current_page_index: loaded ? 1 : 0,
+        compare_id: loaded ? COMPARE_ID : null,
+      });
+      expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+        BUILD_FAILURE_MESSAGE,
+        { variant: "error" },
+      );
+      expect(failed.fail).toHaveBeenCalledTimes(1);
+      expect(failed.success).not.toHaveBeenCalled();
+      // No success([], 0) and no explicit empty overlay: a failed build must
+      // never tell AG Grid that the datasets have "No Common rows".
+      expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+      expect(api.refreshServerSide).not.toHaveBeenCalled();
+      expect(api.deselectAll).not.toHaveBeenCalled();
+      expect(deleteCompare).not.toHaveBeenCalled();
+      expect(props.compareId.current).toBe(loaded ? COMPARE_ID : null);
+      expect(grid.props.pinnedBottomRowData).toBe(pinnedBefore);
+      expect(props.setColumns).not.toHaveBeenCalled();
+      expect(props.setCompareColumnDefs).not.toHaveBeenCalled();
+      expect(props.setCommonColumn).not.toHaveBeenCalled();
+      expect(props.setDatasetInfo).not.toHaveBeenCalled();
+      if (loaded) {
+        expect(
+          document.querySelector('[data-testid="compare-detail-drawer"]'),
+        ).not.toBeNull();
+      }
+    },
+  );
+
+  it("keeps a real metadata-only 200 as a legitimate empty comparison", async () => {
+    replyWith({
+      status: true,
+      result: {
+        metadata: { compare_id: COMPARE_ID, total_rows: 0, total_pages: 0 },
+      },
+    });
+    const { api, props } = setup();
+    const empty = startPage();
+    await act(async () => {
+      await empty.pending;
+    });
+
+    expect(empty.success).toHaveBeenCalledExactlyOnceWith({
       rowData: [],
       rowCount: 0,
     });
-    expect(props.compareId.current).toBe(EXPIRED_ID);
+    expect(empty.fail).not.toHaveBeenCalled();
+    expect(api.showNoRowsOverlay).toHaveBeenCalledTimes(1);
+    expect(props.compareId.current).toBe(COMPARE_ID);
+    expect(snackbar.enqueueSnackbar).not.toHaveBeenCalled();
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    // A refresh uses the terminal zero snapshot, not another build request.
+    expect(await getPage()).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    expect(adapter).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [
+      404,
+      "not_found",
+      "compare_not_found",
+      "This comparison was not found or has expired. Open the comparison again.",
+    ],
+    [
+      503,
+      "service_unavailable",
+      "compare_storage_unavailable",
+      "Comparison data is temporarily unavailable. Please try again.",
+    ],
+  ])(
+    "retains typed HTTP %i recovery through the real Axios interceptor",
+    async (status, type, code, message) => {
+      const { api, props } = setup();
+      replyWith(response().data);
+      await getPage();
+      const pinnedBefore = grid.props.pinnedBottomRowData;
+      rejectWith(status, {
+        status: false,
+        type,
+        code,
+        detail: message,
+        message,
+        error: message,
+        result: message,
+      });
+      const failed = startPage(10);
+      await act(async () => {
+        await failed.pending;
+      });
+
+      expect(adapter).toHaveBeenCalledTimes(2);
+      expect(failed.fail).toHaveBeenCalledTimes(1);
+      expect(failed.success).not.toHaveBeenCalled();
+      expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+      if (status === 404) {
+        expect(props.compareId.current).toBeNull();
+        expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+          purge: true,
+        });
+        expect(snackbar.enqueueSnackbar).not.toHaveBeenCalled();
+      } else {
+        expect(props.compareId.current).toBe(COMPARE_ID);
+        expect(api.refreshServerSide).not.toHaveBeenCalled();
+        expect(grid.props.pinnedBottomRowData).toBe(pinnedBefore);
+        expect(snackbar.enqueueSnackbar).toHaveBeenCalledExactlyOnceWith(
+          message,
+          { variant: "error" },
+        );
+      }
+    },
+  );
 });

@@ -33,7 +33,8 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-import { APP_CONSTANTS } from "src/utils/constants";
+import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 
 // Define status types that require refreshing
@@ -663,6 +664,19 @@ const CompareData = ({
             clearComparisonRows();
             params.fail?.();
             gridApiRef.current?.api?.refreshServerSide({ purge: true });
+            return;
+          }
+          if (error?.statusCode !== RESPONSE_CODES.NOT_FOUND) {
+            // A failed build is not an empty join. Keep any loaded rows and
+            // comparison ID; leave the existing not-found handling unchanged.
+            enqueueSnackbar(
+              getSafeActionErrorMessage(
+                error,
+                "Unable to compare datasets. Please try again.",
+              ),
+              { variant: "error" },
+            );
+            params.fail?.();
             return;
           }
           setHasData(false);
