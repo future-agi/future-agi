@@ -19,6 +19,12 @@ import Iconify from "src/components/iconify";
 // control in a 32px header row above the code instead, with the optional
 // `label` as a caption on its left: nothing floats over a line there, so the
 // code reserves no right padding and only the right-edge fade remains.
+// That fade ends at the code's own edge (UX iteration 5, SH2): the last 24px
+// of visible code fade out and nothing paints in the 12px padding, so a cut
+// line reads as "scroll for more" rather than as text clipped at the border.
+// A command never wraps (white-space: pre). A block shown with `wrap` breaks
+// only at spaces, so an unbroken token (a URL, a path) can still overflow;
+// it is measured and faded the same way.
 const COMPACT = 600;
 const EDGE = 6;
 const GAP = 8;
@@ -110,19 +116,26 @@ export default function CodeBlock({
     observer.observe(node);
     return () => observer.disconnect();
   }, [floating, compact]);
-  // Track whether more of a line lies to the right (unwrapped code only).
+  // Track whether more of a line lies to the right: on scroll, on resize and
+  // once the fonts have loaded (a wider monospace face changes scrollWidth
+  // without resizing the block).
   useEffect(() => {
     const pre = preRef.current;
-    if (wrap || !pre) return undefined;
-    const check = () => setMore(pre.scrollLeft + pre.clientWidth < pre.scrollWidth - 1);
+    if (!pre) return undefined;
+    let alive = true;
+    const check = () => {
+      if (alive) setMore(pre.scrollLeft + pre.clientWidth < pre.scrollWidth - 1);
+    };
     check();
     pre.addEventListener("scroll", check, { passive: true });
+    document.fonts?.ready?.then(check).catch(() => undefined);
     let observer;
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(check);
       observer.observe(pre);
     }
     return () => {
+      alive = false;
       pre.removeEventListener("scroll", check);
       observer?.disconnect();
     };
@@ -160,19 +173,20 @@ export default function CodeBlock({
       </Tooltip>
     );
 
-  const edgeFade = `linear-gradient(to right, black calc(100% - ${FADE}px), transparent)`;
+  // Fully shown until 24px before the code's right edge, transparent from that edge into the padding.
+  const edgeFade = `linear-gradient(to right, black calc(100% - ${PAD + FADE}px), transparent calc(100% - ${PAD}px))`;
   let codeSx;
   if (compact)
     codeSx = {
       pt: 0.5,
-      pr: 1.5,
-      ...(!wrap && more && { WebkitMaskImage: edgeFade, maskImage: edgeFade }),
+      pr: `${PAD}px`,
+      ...(more && { WebkitMaskImage: edgeFade, maskImage: edgeFade }),
     };
   else
     codeSx = {
       // The default icon keeps its 40px; a floating button reserves its measured width.
       pr: floating ? (reserve?.width ? `${reserve.width}px` : 11) : 5,
-      ...(!wrap && more && fadeMask(floating ? reserve?.width || 88 : 40, reserve?.band || PAD + 2 * LINE)),
+      ...(more && fadeMask(floating ? reserve?.width || 88 : 40, reserve?.band || PAD + 2 * LINE)),
     };
 
   return (
@@ -229,7 +243,7 @@ export default function CodeBlock({
         ref={preRef}
         aria-label={label}
         tabIndex={0}
-        data-fade-end={wrap ? undefined : String(more)}
+        data-fade-end={String(more)}
         sx={{
           m: 0,
           p: 1.5,

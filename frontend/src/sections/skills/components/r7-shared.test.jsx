@@ -627,6 +627,39 @@ describe('CodeBlock in a narrow container', () => {
       expect(within(root.querySelector('[data-code-header]')).getByRole('button', { name: 'Copy plan command' })).toBeVisible();
     });
   });
+  // UX iteration 5, SH2: a cut line fades out at the code's edge while more lies to the right, wrapped blocks included.
+  function withPreGeometry({ scrollWidth, clientWidth }, run) {
+    const proto = HTMLPreElement.prototype;
+    const saved = ['scrollWidth', 'clientWidth'].map((key) => [key, Object.getOwnPropertyDescriptor(proto, key)]);
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get: () => scrollWidth });
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get: () => clientWidth });
+    try { return run(); } finally { saved.forEach(([key, descriptor]) => (descriptor ? Object.defineProperty(proto, key, descriptor) : delete proto[key])); }
+  }
+  const css = () => [...document.querySelectorAll('style')].map((node) => node.textContent).join('\n').replace(/\s+/g, ' ');
+  it.each([[false, 'an unwrapped command'], [true, 'a wrapped block with an unbroken token']])('fades the last 24px of visible code while %s overflows', (wrap) => {
+    withBoxWidth(358, () => withPreGeometry({ scrollWidth: 720, clientWidth: 332 }, () => {
+      render(<CodeBlock wrap={wrap} label="Context install plan command" code={`export FI_CONTEXT_ORIGIN='https://api.acme-support.example/${'x'.repeat(60)}'`} copyLabel="Copy" ariaLabel="Copy plan command" />);
+      const code = screen.getByLabelText('Context install plan command');
+      expect(code).toHaveAttribute('data-fade-end', 'true');
+      expect(code).toHaveStyle({ overflowX: 'auto', whiteSpace: wrap ? 'pre-wrap' : 'pre' });
+      expect(css()).toContain('mask-image:linear-gradient(to right, black calc(100% - 36px), transparent calc(100% - 12px))');
+    }));
+  });
+  it('drops the fade once scrolled to the end, and never shows it when the code fits', () => {
+    withBoxWidth(358, () => withPreGeometry({ scrollWidth: 720, clientWidth: 332 }, () => {
+      render(<CodeBlock label="Context apply command" code={`python -m fi.context apply --plan '${'c'.repeat(80)}'`} copyLabel="Copy" ariaLabel="Copy apply command" />);
+      const code = screen.getByLabelText('Context apply command');
+      expect(code).toHaveAttribute('data-fade-end', 'true');
+      Object.defineProperty(code, 'scrollLeft', { configurable: true, value: 388 });
+      fireEvent.scroll(code);
+      expect(code).toHaveAttribute('data-fade-end', 'false');
+    }));
+    cleanup();
+    withBoxWidth(358, () => withPreGeometry({ scrollWidth: 332, clientWidth: 332 }, () => {
+      render(<CodeBlock label="Short command" code="echo hi" copyLabel="Copy" />);
+      expect(screen.getByLabelText('Short command')).toHaveAttribute('data-fade-end', 'false');
+    }));
+  });
   it('floats the control from 600px, as before', () => {
     withBoxWidth(800, () => {
       render(<CodeBlock label="Command" code="echo hi" />);
