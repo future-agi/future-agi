@@ -176,17 +176,6 @@ def test_partial_cutoff_all_revisions_and_horizon_expand_never_resurrects(
     )
     with pytest.raises(MetricStateConflict, match="retention_expired"):
         assert_capture_retained(pin, [old, retained], retention_days=lambda: 1, now=now)
-    # Snapshot store has old unit evidence; live retention must never touch it.
-    writer.store.execute(
-        "INSERT INTO derived_metric_inputs (org_id, workspace_id, project_id, snapshot_id, unit_id, input_values) VALUES (%(org)s, %(workspace)s, %(project)s, %(snapshot)s, %(unit)s, map('y', 4.))",
-        {
-            "org": str(writer.org_id),
-            "workspace": str(writer.workspace_id),
-            "project": str(writer.lease.project_id),
-            "snapshot": str(uuid4()),
-            "unit": unit_old,
-        },
-    )
     result = expire_project(writer, [definition], retention_days=lambda: 1, now=now)
     assert result["purged"] and not pin.is_usable()
     head = MetricProjectRefresh.objects.get(
@@ -208,10 +197,6 @@ def test_partial_cutoff_all_revisions_and_horizon_expand_never_resurrects(
     assert not MetricAttemptLedgerChunk.objects.filter(
         attempt__project_id=writer.lease.project_id
     ).exists()
-    assert writer.store.execute(
-        "SELECT count() FROM derived_metric_inputs WHERE unit_id = %(unit)s",
-        {"unit": unit_old},
-    ) == [(1,)]
     retired_sql, rp = committed_rows_select(
         RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
     )
@@ -219,13 +204,13 @@ def test_partial_cutoff_all_revisions_and_horizon_expand_never_resurrects(
         f"SELECT unit_count, weighted_n FROM ({retired_sql}) WHERE is_deleted = 0", rp
     )
     if level == "conversation":
-        assert retired_rows == [(1, 4.0)]
-        assert sum(r[2] for r in bucket_rows(writer, head) if not r[-1]) == 2
+        assert retired_rows == []
+        assert bucket_rows(writer, head) == []
         newer = seed_fields_and_buckets(
             writer, definition, [(unit_live, retained, 8, user_live)]
         )
         live = [r for r in bucket_rows(writer, newer) if not r[-1]]
-        assert len(live) == 1 and live[0][2:5] == (2, 12.0, 2.0)
+        assert live == []  # boundary bucket is unavailable, not stale total
     else:
         assert retired_rows == [] and bucket_rows(writer, head) == []
     # An expanded horizon/unlimited mode is NOT restoration from old revisions.
@@ -718,7 +703,7 @@ def test_larger_horizon_and_incremental_refresh_cannot_restore_purged_evidence(
     assert writer.store.execute(
         "SELECT count() FROM spans WHERE id = 'old-evidence'"
     ) == [(1,)]
-    assert sum(r[2] for r in bucket_rows(writer, head) if not r[-1]) == 1
+    assert bucket_rows(writer, head) == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1109,8 +1094,7 @@ def test_expiry_publication_revokes_recent_anchor_pin_and_queued_snapshot_before
     assert paused
     safe = paused[0]
     assert current_fields(writer, safe) == []
-    assert [(r[1:]) for r in anonymous_parts(writer, safe)] == [(1, 4.0, 1.0)]
-    assert anonymous_parts(writer, safe)[0][0] == old.replace(minute=0)
+    assert anonymous_parts(writer, safe) == []
     assert all(
         r[-1] for r in bucket_rows(writer, safe) if r[0] == recent.replace(minute=0)
     )
@@ -1683,7 +1667,7 @@ def test_policy_shrink_during_staging_requires_replan_before_publication(
         )
     head = writer.refresh(change_for(session, cursor=2), [definition], scope, **kwargs)
     assert current_fields(writer, head) == [] and not pin.is_usable()
-    assert [r[1:] for r in anonymous_parts(writer, head)] == [(1, 8.0, 1.0)]
+    assert anonymous_parts(writer, head) == []
 
 
 def known_expired_metric_update(writer, workspace, project, *, mixed, group="west"):
@@ -1779,7 +1763,7 @@ def test_known_expired_conversation_reopens_before_retirement(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("group", ["west", "east"])
-def test_span_expiry_replaces_bucket_with_final_retired_parts(
+def test_span_expiry_removes_expired_bucket_and_retired_parts(
     live_writer, workspace, observe_project, group
 ):
     from tracer.services.derived_metrics.buckets import STATS
@@ -1808,9 +1792,8 @@ def test_span_expiry_replaces_bucket_with_final_retired_parts(
         "AND is_deleted = 0 ORDER BY bucket_start, group_key",
         {**params, "metric": str(span.metric_id), "version": span.version},
     )
-    assert len(retired) == 1
-    assert retired[0][2 + STATS.index("weighted_n")] == 8
-    assert totals == retired
+    assert retired == []
+    assert totals == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1942,7 +1925,7 @@ def test_span_policy_shrink_is_revalidated_at_publication(
     )
     assert MetricProjectRefresh.for_project(scope.project).watermark_ns == 2
     assert not MetricProjectRefresh.for_project(scope.project).pending_expiry
-    assert metric_retired_statistics(writer, head, span)
+    assert metric_retired_statistics(writer, head, span) == []
     assert not MetricAttemptLedgerChunk.objects.filter(
         attempt__project_id=scope.project
     ).exists()
@@ -2176,10 +2159,8 @@ def test_idle_span_expiry_replaces_final_bucket_statistics(
     )["purged"]
     head = MetricProjectRefresh.for_project(scope.project).head_manifest
     parts = metric_retired_statistics(writer, head, definition)
-    assert len(parts) == 1 and parts[0][2 + STATS.index("weighted_n")] == 8
-    assert [row[2:] for row in metric_bucket_rows(writer, head, definition)] == [
-        (1, 8.0, 1.0)
-    ]
+    assert parts == []
+    assert metric_bucket_rows(writer, head, definition) == []
 
 
 def _created_span(writer, scope, trace, span, session, start, created, value):

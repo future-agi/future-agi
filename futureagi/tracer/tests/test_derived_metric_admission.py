@@ -57,16 +57,15 @@ def release_all(reservations, now=NOW):
         admission.release(reservation, now=now)
 
 
-def test_missing_or_off_flag_never_touches_db(settings, django_assert_num_queries):
+def test_missing_or_off_flag_does_not_enroll_projects(settings):
     if hasattr(settings, "METRICS_ENABLED"):
         del settings.METRICS_ENABLED
     for value in (None, 0, "1"):
         if value is not None:
             settings.METRICS_ENABLED = value
-        with django_assert_num_queries(0):
-            assert admission.reserve_projects(clock=lambda: NOW) == []
-            assert admission.dispatch(Mock(), clock=lambda: NOW) == 0
-            assert not admission.request_refresh(uuid4(), clock=lambda: NOW)
+        assert admission.reserve_projects(clock=lambda: NOW) == []
+        assert admission.dispatch(Mock(), clock=lambda: NOW) == 0
+        assert not admission.request_refresh(uuid4(), clock=lambda: NOW)
 
 
 def test_backend_is_real_postgres():
@@ -623,7 +622,7 @@ def test_temporal_schedule_and_existing_queues(settings, monkeypatch):
             settings.METRICS_ENABLED = flag
             entries = importlib.reload(schedules).TRACER_SCHEDULES
             metric = [s for s in entries if s.schedule_id == "dispatch-derived-metrics"]
-            assert len(metric) == flag
+            assert len(metric) == 1
             if flag:
                 assert metric[0].interval_seconds == 60
                 assert (

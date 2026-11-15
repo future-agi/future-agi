@@ -91,8 +91,12 @@ def cleanup_derived_metric_snapshots() -> int:
     from tracer.services.derived_metrics.source_retention import expire_runs
     from tracer.sql_workbench.metric_retention import expire_results
 
-    expire_runs(limit=100)
-    expire_results(limit=1000)
+    for cleanup, limit in ((expire_runs, 100), (expire_results, 1000)):
+        try:
+            cleanup(limit=limit)
+        except Exception as exc:
+            # A policy-provider outage must not stop already-authorized erasure.
+            logger.warning("metric_source_expiry_pending", error_type=type(exc).__name__)
     completed = sweep(limit=10)
     if metrics_enabled():
         # Never a completed namespace a (possibly failed) redaction reopened.

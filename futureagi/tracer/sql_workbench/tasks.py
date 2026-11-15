@@ -153,7 +153,10 @@ def purge_expired_sql_results():
 
     from .metric_retention import expire_results
 
-    expire_results(limit=1000)
+    try:
+        expire_results(limit=1000)
+    except Exception as exc:
+        logger.warning("Metric SQL expiry pending", extra={"error_type": type(exc).__name__})
     return purge_expired_results(batch_size=1000)
 
 

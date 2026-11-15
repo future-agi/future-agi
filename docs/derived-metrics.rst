@@ -369,8 +369,12 @@ time travel. ReplacingMergeTree may have already discarded earlier versions of a
 mutable source row. Consequently historical replay only reads the run's frozen
 input snapshot. It reuses the exact definition/evaluator versions, unit population,
 input values, probabilities, filters and original window. New late arrivals require
-a new idempotency key/run and therefore a new snapshot. Window boundaries retain microseconds. Snapshots deliberately have
-no TTL while their runs remain available.
+a new idempotency key/run and therefore a new snapshot. Window boundaries retain
+microseconds. Metric history, snapshots, per-unit evidence and saved SQL results
+follow the source retention policy. Expired values and identifying group labels
+are not retained as anonymous history. A bucket crossing the retention boundary
+is unavailable rather than returning a stale total; choose a later window start.
+Extending retention does not restore erased evidence or expired snapshots.
 
 Failed attempts are unpublished. A retry writes to a new attempt ID and a
 successful replay atomically selects one result attempt in the application
@@ -382,8 +386,13 @@ The ``derived_metrics`` ClickHouse view joins the committed-attempt
 table, hiding abandoned/partial attempt rows and older replay attempts. A
 PostgreSQL/ClickHouse process failure at the publication boundary remains an
 operational reconciliation consideration: this is not a distributed transaction.
-Orphan attempt retention/garbage collection is deliberately not automatic in this
-change; no deletion job may discard inputs needed for replay.
+Source expiry revokes access before physical cleanup. Cleanup continues for
+already-enrolled projects even when the Metrics rollout is disabled. Pending
+cleanup remains incomplete until outstanding writes have drained and deletion is
+verified. The expiry scheduling interval is not a physical-deletion SLA. Frozen
+inputs are available for replay only while the source policy permits them.
+Subject erasure also invalidates saved SQL results in the affected project;
+queries finishing after invalidation cannot restore those saved results.
 
 The SQL workbench adapter (TH-8685) consumes the logical ``derived_metrics`` view,
 scoped by ``org_id``, ``workspace_id`` and authorized ``project_id`` values.

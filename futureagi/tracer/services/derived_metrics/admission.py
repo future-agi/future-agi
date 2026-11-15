@@ -250,7 +250,7 @@ def eligible_projects(now: datetime):
             | Q(last_started_at__isnull=True)
             | Q(last_started_at__lte=now - expiry_interval() - PAUSED_EXPIRY_SLACK)
         )
-        .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False))
+        .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False) | Q(head_manifest_id__isnull=False))
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .filter(
             Q(consecutive_failures=0)

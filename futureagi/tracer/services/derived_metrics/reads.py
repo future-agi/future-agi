@@ -728,14 +728,14 @@ def read_kpi(metric, data, *, store=None):
             metric.organization_id, previous["window_start"], manifest=manifest
         ) and window_is_calculated(definition, previous) and (
             finality is None
-            or not open_buckets(
+            or (previous["window_end"] <= finality.settled and not open_buckets(
                 store,
                 metric,
                 definition,
                 manifest,
                 previous["window_start"],
                 previous["window_end"],
-            )
+            ))
         )
         if previous_final:
             current_row, previous_row = _aggregate_periods(
