@@ -22,7 +22,7 @@ import ContextLinksPanel from './ContextLinksPanel';
 // URL owns section identity; version/file loading never replaces the object shell.
 // Below sm the header actions share the title row (they wrap under it only when they cannot fit), so Edit adds no row.
 const PHONE_TITLE_ROW = { '@media (max-width:599.95px)': { '& > .MuiStack-root:has(h1)': { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 1 }, '& > .MuiStack-root:last-of-type': { flex: '1 1 0', minWidth: 'min-content', justifyContent: 'flex-end' } } };
-const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Rollback'], ['use', 'Use']];
+const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Rollback'], ['use', 'Install']];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
   const { isViewer, canWrite, ready } = useSkillsAccess();
@@ -50,29 +50,39 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const selected = manifest.find((file) => file.path === selectedPath);
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
-  const editPrimary = ['context', 'links'].includes(tab);
+  // The tab body owns the primary on these two, so the header never competes with it.
+  const bodyPrimary = ['tests', 'recovery'].includes(tab);
   const cannotEdit = !canWrite || query.data.releaseState?.permissions?.canPublish === false;
   const editReason = isViewer ? "Viewers can't edit. Ask a workspace admin for edit access." : ready && cannotEdit ? "You don't have permission to edit this agent context. Ask a workspace admin for edit access." : '';
   const production = context.labels?.find((label) => label.name === 'production')?.version;
   const latest = query.data.latest || versions.find((row) => row.number === context.latestVersion);
-  const newerPublished = production != null && latest?.number > production && latest?.id && latest?.digest;
-  const headerRelease = newerPublished && !['versions', 'tests'].includes(tab);
+  const latestReady = Boolean(latest?.id && latest?.digest && latest?.number != null);
+  const newerPublished = production != null && latestReady && latest.number > production;
+  // First release or a newer publication: one header action on every tab but Versions, where the row action is the control.
+  const releasable = latestReady && (production == null || latest.number > production);
+  const headerRelease = releasable && tab !== 'versions';
+  const editContained = !headerRelease && !bodyPrimary;
   const releaseError = Boolean(versionQuery.error) || state === 'error';
   // Contexts edit from the viewed version (not from latest), so say so whenever the two differ.
-  const originNote = !noRelease && viewed && context.latestVersion != null && viewed.number !== context.latestVersion ? `Editing starts from v${viewed.number}, the version you're viewing. Latest is v${context.latestVersion}.` : '';
+  const behindLatest = !noRelease && viewed && context.latestVersion != null && viewed.number !== context.latestVersion;
+  const originNote = behindLatest ? `Your draft starts from v${viewed.number} and won't include v${context.latestVersion}'s changes.` : '';
+  const editFrom = (version) => (query.data.ownDraft ? onPreserveDraft?.(version) : onEditViewed(version));
+  const editBlocked = cannotEdit || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error);
+  // Only offer the latest version when it carries the same fields the viewed version hands to the editor.
+  const canEditLatest = behindLatest && latestReady && latest.number === context.latestVersion && viewed.id && viewed.digest && viewed.number != null;
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader sx={PHONE_TITLE_ROW} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={phone ? undefined : (descriptor?.description || context.description)}
       actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: { xs: 'flex-end', sm: 'flex-start' } }}>
-        {query.data.ownDraft && <Button color="primary" variant={editPrimary && !newerPublished ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+        {query.data.ownDraft && <Button color="primary" variant={editContained ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
         {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
         {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}
-        {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editPrimary && !newerPublished ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={cannotEdit || !viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
-        {headerRelease && <Button component={RouterLink} color="primary" variant="contained" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
+        {!noRelease && <Button color="primary" variant={!query.data.ownDraft && editContained ? 'contained' : 'outlined'} {...reasonProps("context-edit-reason", editReason)} disabled={editBlocked || !viewed} onClick={() => editFrom(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : 'version'}</Button>}
+        {headerRelease && <Button component={RouterLink} color="primary" variant={bodyPrimary ? 'outlined' : 'contained'} to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
       </Stack>}
       identity={<Stack spacing={1}>
         {phone && (descriptor?.description || context.description) && <Typography variant="s3" color="text.secondary">{descriptor?.description || context.description}</Typography>}
         <ActionReason id="context-edit-reason" reason={editReason} sx={{ flexBasis: 'auto' }} />
-        {originNote && !cannotEdit && <Typography variant="s3" color="text.secondary">{originNote}</Typography>}
+        {originNote && !cannotEdit && <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Typography variant="s3" color="text.secondary">{originNote}</Typography>{canEditLatest && <Button variant="text" size="small" disabled={editBlocked} sx={{ ml: -1 }} onClick={() => editFrom(latest)}>Edit latest v{latest.number}</Button>}</Stack>}
         {query.data.ownDraft && viewed && <Typography variant="s3" color="text.secondary">Editing {viewed ? `v${viewed.number}` : 'a release'} first saves and suspends your current draft.</Typography>}
         <ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === 'production')?.version} draft={query.data.ownDraft}
         releaseControl={noRelease ? <Typography variant="s3">No releases yet</Typography> : <TextField select size="small" value={viewed?.number || ''} disabled={!onSelectVersion || versionQuery.isLoading || releaseError} SelectProps={{ displayEmpty: true, inputProps: { 'aria-label': 'Viewed release' } }} onChange={(event) => onSelectVersion(Number(event.target.value))} sx={{ minWidth: 88 }}>

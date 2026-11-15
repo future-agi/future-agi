@@ -54,22 +54,22 @@ describe("pilot credential input", () => {
 describe("ContextPilotCredentials", () => {
   it("issues with a stable idempotency key and never renders the secret", () => {
     const { rerender } = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
-    fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
     expect(hooks.issue.mutate).toHaveBeenCalledTimes(1);
     const [input] = hooks.issue.mutate.mock.calls[0];
     expect(input.grants[0]).toEqual({ kind: "agent_context", resourceId: CONTEXT, labels: [], versionIds: [VERSION] });
     expect(input.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
-    fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
     expect(hooks.issue.mutate.mock.calls[1][0].idempotencyKey).toBe(input.idempotencyKey);
     hooks.issue = { ...hooks.issue, data: { id: CONTEXT, secret: "secret-value-not-shown", secretAvailable: true } };
     rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
-    expect(screen.getByRole("button", { name: "Copy credential secret" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy key secret" })).toBeInTheDocument();
     expect(screen.queryByText(/secret-value-not-shown/)).toBeNull();
   });
   it("explains a replay instead of offering an unavailable secret", () => {
     hooks.issue = { ...hooks.issue, data: { id: CONTEXT, secret: null, secretAvailable: false } };
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
-    expect(screen.queryByRole("button", { name: "Copy credential secret" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy key secret" })).toBeNull();
     expect(screen.getByText(/secret is no longer available/)).toBeInTheDocument();
   });
   it("revokes only after explicit confirmation of the exact credential", () => {
@@ -93,7 +93,7 @@ describe("ContextPilotCredentials", () => {
   });
   it("does not offer issuance without the admin permission", () => {
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue={false} />);
-    expect(screen.queryByRole("button", { name: "Create credential" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   });
 });
 
@@ -124,15 +124,19 @@ it('lists only credentials granting the viewed version', () => {
 it('makes key creation primary only when no active key exists for this exact version', () => {
   const available = vi.fn();
   const view = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue onAvailabilityChange={available} />);
-  expect(screen.getByRole('button', { name: 'Create credential' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('button', { name: 'Create key' })).toHaveClass('MuiButton-contained');
   expect(available).toHaveBeenLastCalledWith(false);
   hooks.list.data.results = [credential(CONTEXT, CONTEXT)];
   view.rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue onAvailabilityChange={available} />);
-  expect(screen.getByRole('button', { name: 'Create credential' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Create key' })).toHaveClass('MuiButton-outlined');
   expect(available).toHaveBeenLastCalledWith(true);
   expect(screen.getByRole('columnheader', { name: 'Key' })).toBeVisible();
   expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Copy full Key' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Copy full Key' })).not.toBeInTheDocument();
+  // The row reads in words; the raw ID is on the name's tooltip and in the row menu.
+  expect(screen.getByText('Read-only key')).toBeVisible();
+  expect(screen.getByText(/created/)).toBeVisible();
+  expect(screen.queryByText(/^1111/)).not.toBeInTheDocument();
 });
 
 it('names itself when it stands alone, and drops the duplicate heading inside the install steps', () => {
@@ -140,7 +144,7 @@ it('names itself when it stands alone, and drops the duplicate heading inside th
   expect(screen.getByText('Create a read-only key for v1')).toBeVisible();
   view.rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue showHeading={false} />);
   expect(screen.queryByText(/Create a read-only key for/)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Create credential' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Create key' })).toBeVisible();
 });
 const phone = (matches) => vi.stubGlobal('matchMedia', (query) => ({ matches, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
 it('stacks keys below sm with the key ID in a tooltip and no expiry on a revoked key', () => {
@@ -151,9 +155,9 @@ it('stacks keys below sm with the key ID in a tooltip and no expiry on a revoked
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     const rows = screen.getAllByRole('listitem');
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent(/Read-only key · v1 · /);
+    expect(rows[0]).toHaveTextContent(/Read-only key · created .+ · v1 · /);
     expect(rows[0]).not.toHaveTextContent('11111111');
-    expect(rows[1]).toHaveTextContent('Read-only key · v1');
+    expect(rows[1]).toHaveTextContent(/Read-only key · created .+ · v1/);
     expect(rows[1]).toHaveTextContent('Revoked');
     expect(rows[1]).not.toHaveTextContent(/Expires in|Expired/);
     expect(screen.getByRole('button', { name: 'Actions for credential 22222222' })).toBeVisible();

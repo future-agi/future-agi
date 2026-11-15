@@ -3,7 +3,6 @@ import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
 import { Alert, Button, Checkbox, FormControlLabel, Stack, Typography } from '@mui/material';
 import { useFollowerUpdates } from 'src/api/skills/context-follower-update';
-import OperationFeedback from '../components/OperationFeedback';
 import ActionReason, { reasonProps } from '../components/ActionReason';
 import { paths } from 'src/routes/paths';
 import TechnicalDetails from '../components/TechnicalDetails';
@@ -43,7 +42,7 @@ function ReadyCard({ item }) {
 }
 ReadyCard.propTypes = { item: PropTypes.object.isRequired };
 
-export default function ContextFollowerUpdate({ skillId, targets, sourceRelease, skillName, onApplied }) {
+export default function ContextFollowerUpdate({ skillId, targets, sourceRelease, skillName, onApplied, impacts = [] }) {
   const updates = useFollowerUpdates(skillId);
   const [phase, setPhase] = useState('idle');
   const [items, setItems] = useState([]);
@@ -91,11 +90,19 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
   const alreadyApplied = phase === 'applied' && failed.length === 0 && done.length > 0 && preparedKey === selectionKey;
   const prepareLabel = targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates';
   const nameOf = (target) => `${target.name} v${target.version}`;
+  // Before Prepare the effect is already known from the dependents rows: show it per selected context so the click is informed.
+  // The server plan card replaces these lines once it exists.
+  const impactLines = alreadyApplied || phase === 'previewing' || items.length > 0 ? [] : targets.flatMap((target) => {
+    const impact = impacts.find((item) => item.contextId === target.contextId);
+    if (impact?.from == null || impact?.to == null) return [];
+    return [{ key: target.contextId, text: `${target.name}: ${skillName || 'this skill'} v${impact.from} → v${impact.to} · ${target.productionVersion != null ? `Production stays v${target.productionVersion}` : 'Production stays unchanged'}` }];
+  });
   return <Stack spacing={1.5} sx={{ pb: 8, minWidth: 0 }} aria-label="Update follower contexts" role="group">
     <Typography variant="m3" component="h3">Update contexts that follow production</Typography>
     <Typography variant="s1">Review the skill changes for each selected context, then accept them into drafts.</Typography>
     {!targets.length && <Typography variant="s3" color="text.secondary">Select at least one context to prepare updates.</Typography>}
     {selectionChanged && targets.length > 0 && <><Typography variant="s3" color="warning.main" role="status">Selection changed — prepare again.</Typography><Button variant="outlined" disabled sx={{ alignSelf: 'flex-start' }}>Apply selected updates</Button></>}
+    {impactLines.length > 0 && <Stack component="ul" spacing={0.5} aria-label="What each update changes" sx={{ m: 0, p: 0, listStyle: 'none' }}>{impactLines.map((line) => <Typography key={line.key} component="li" variant="s1" sx={{ overflowWrap: 'anywhere' }}>{line.text}</Typography>)}</Stack>}
     {!items.length && !alreadyApplied && phase !== 'previewing' && <Typography variant="s3" color="text.secondary">Preparing starts a draft for each selected context. Production doesn&apos;t change.</Typography>}
     <Stack direction="row" useFlexGap spacing={1.5} alignItems="center" sx={{ flexWrap: 'wrap' }}>
       <Button color="primary" variant={ready.length || done.length ? 'outlined' : 'contained'} disabled={!targets.length || busy || alreadyApplied} {...reasonProps('follower-prepare-reason', alreadyApplied ? 'Already prepared for this selection.' : '')} onClick={() => preview(targets)}>{prepareLabel}</Button>
@@ -111,14 +118,17 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
       <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these linked-skill versions and update rules for ${ready.length} ${ready.length === 1 ? 'context' : 'contexts'}.`} />
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}
-    {done.length > 0 && <OperationFeedback success={`Draft updated for ${done.length} ${done.length === 1 ? 'context' : 'contexts'}. Production unchanged.`}>
-      {done.map((item, index) => <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-        <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{item.target.name}: draft updated{skillName && item.lock?.links?.find((link) => link.skillId === skillId)?.version != null ? ` to use ${skillName} v${item.lock.links.find((link) => link.skillId === skillId).version}` : ''}.</Typography>
-        <Button color="primary" variant={ready.length || index > 0 ? "outlined" : "contained"} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Review {item.target.name} draft</Button>
-      </Stack>)}
-    </OperationFeedback>}
+    {done.length > 0 && <Alert severity="success" role="status"><Stack spacing={1}>
+      {done.map((item, index) => {
+        const version = item.lock?.links?.find((link) => link.skillId === skillId)?.version;
+        return <Stack key={item.target.contextId} direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+          <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{item.target.name} draft {skillName && version != null ? `now uses ${skillName} v${version}` : 'updated'}. Production unchanged.</Typography>
+          <Button color="primary" variant={ready.length || index > 0 ? 'outlined' : 'contained'} component={RouterLink} to={paths.dashboard.skills.contextReview(item.target.contextId)}>Review {item.target.name} draft</Button>
+        </Stack>;
+      })}
+    </Stack></Alert>}
     {phase === 'applied' && outcomes.map((item) => <Alert severity="warning" key={item.target.contextId}>{nameOf(item.target)}: {explain(item)}</Alert>)}
     {(phase === 'applied' || phase === 'previewed') && failed.length > 0 && <Button variant="outlined" disabled={busy} onClick={() => preview(failed.map((item) => item.target))}>{`Preview again for ${failed.length} ${failed.length === 1 ? 'context' : 'contexts'} that did not update`}</Button>}
   </Stack>;
 }
-ContextFollowerUpdate.propTypes = { skillName: PropTypes.string, onApplied: PropTypes.func, sourceRelease: PropTypes.string, skillId: PropTypes.string.isRequired, targets: PropTypes.arrayOf(PropTypes.shape({ contextId: PropTypes.string.isRequired, name: PropTypes.string.isRequired, version: PropTypes.number.isRequired })).isRequired };
+ContextFollowerUpdate.propTypes = { impacts: PropTypes.arrayOf(PropTypes.shape({ contextId: PropTypes.string.isRequired, from: PropTypes.number, to: PropTypes.number })), skillName: PropTypes.string, onApplied: PropTypes.func, sourceRelease: PropTypes.string, skillId: PropTypes.string.isRequired, targets: PropTypes.arrayOf(PropTypes.shape({ contextId: PropTypes.string.isRequired, name: PropTypes.string.isRequired, version: PropTypes.number.isRequired })).isRequired };

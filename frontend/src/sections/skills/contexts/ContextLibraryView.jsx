@@ -40,6 +40,8 @@ const libraryTableSx = (theme) => {
     },
   };
 };
+// Says what the object is: "Agents" sits two rows above it in the sidebar and means something else.
+const DESCRIPTION = 'An agent context bundles instructions with the exact skill versions an agent loads.';
 const AuthoringContext = createContext(null);
 export function ContextAuthoringProvider({ scopeKey, bindings, children }) {
   return <AuthoringContext.Provider value={{ scopeKey, bindings }}><Stack key={scopeKey} sx={{ minWidth: 0, flex: 1 }}>{children}</Stack></AuthoringContext.Provider>;
@@ -72,9 +74,9 @@ function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, import
   const fullInventory = data?.count === rows.length;
   const tagSuggestions = [...new Set([...(filters.tag ? [filters.tag] : []), ...rows.flatMap((context) => context.tags || [])])].sort();
   const createActions = canWrite && <><Button variant="outlined" disabled={!importActions} onClick={() => setImportOpen(true)}>Import AGENTS.md</Button><Button color="primary" variant="contained" disabled={!importActions} onClick={() => setImportOpen(true)}>New agent context</Button></>;
-  if (state === 'off') return <Stack spacing={1.5}><PageHeader title="Agent contexts" description="Standing instructions and linked skills, released together." /><CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="Existing skills stay available. Ask a workspace admin about access." /></Stack>;
+  if (state === 'off') return <Stack spacing={1.5}><PageHeader title="Agent contexts" description={DESCRIPTION} /><CapabilityNotice title="Agent contexts aren't enabled for this workspace." description="Existing skills stay available. Ask a workspace admin about access." /></Stack>;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <PageHeader title="Agent contexts" description="Standing instructions and linked skills, released together." sx={{ mb: 0, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root': { minWidth: 0, maxWidth: 1, ml: { xs: 0 }, flexWrap: 'wrap' } }} actions={!firstRun && !denied && createActions} />
+    <PageHeader title="Agent contexts" description={DESCRIPTION} sx={{ mb: 0, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root': { minWidth: 0, maxWidth: 1, ml: { xs: 0 }, flexWrap: 'wrap' }, '& > .MuiStack-root:last-of-type': { width: { xs: 1, sm: 'auto' }, '& > .MuiButton-root': { flex: { xs: 1, sm: 'none' } } } }} actions={!firstRun && !denied && createActions} />
     {!loading && !error && !denied && !empty && <Typography variant="s3" color="text.secondary">{fullInventory ? `${data.count} ${data.count === 1 ? 'context' : 'contexts'}` : `${rows.length} contexts on this page`} · {productionCount} in production · {draftCount} {draftCount === 1 ? 'draft' : 'drafts'}</Typography>}
     {query.isFetching && !loading && <StatusBadge status="checking" label="Updating…" />}
     {!firstRun && !denied && (rows.length > 0 || filtered) && <ListToolbar direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'flex-end' }} useFlexGap sx={{ flexWrap: 'wrap', '& > *': { maxWidth: '100%', flexShrink: 0 } }}>
@@ -92,7 +94,7 @@ function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, import
           <TableCell>{production(context) != null ? (phone ? `Production v${production(context)}` : <StatusBadge status="released" label={`v${production(context)}`} />) : <Typography component="span" variant="s3" color="text.secondary">Not in production</Typography>}</TableCell>
           <TableCell>{context.latestVersion == null ? 'Not published' : `${phone ? 'Latest ' : ''}v${context.latestVersion}`}</TableCell>
           <TableCell>{phone ? <When value={context.updatedAt} /> : <Stack direction="row" alignItems="center" spacing={1}>
-            {context.updatedBy && <Avatar alt={context.updatedBy.name} sx={{ width: 20, height: 20, typography: 's3', fontFamily: 'inherit' }}>{context.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</Avatar>}
+            {context.updatedBy && <Avatar alt={context.updatedBy.name} sx={(t) => ({ width: dsSize.avatar.md, height: dsSize.avatar.md, typography: 's3', fontWeight: 600, fontFamily: 'inherit', boxShadow: `inset 0 0 0 1px ${t.palette.divider}` })}>{context.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</Avatar>}
             <Stack sx={{ minWidth: 0 }}><Typography variant="s3"><When value={context.updatedAt} /></Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{context.updatedBy?.name || 'API'}</Typography></Stack>
           </Stack>}</TableCell>
           <TableCell data-cell="actions" align="right"><IconButton aria-label={`Actions for ${context.name}`} size="small" onClick={(event) => setMenu({ anchor: event.currentTarget, context })}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton></TableCell>

@@ -7,7 +7,7 @@ import ContextFollowerUpdate from './ContextFollowerUpdate';
 
 const state = vi.hoisted(() => ({ dependents: null, history: null, prepare: vi.fn(), apply: vi.fn() }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:ws:author' }) }));
-vi.mock('src/api/skills', () => ({ useSkill: () => ({ data: { latestVersion: 8, labels: [{ name: 'production', version: 8 }] } }) }));
+vi.mock('src/api/skills', () => ({ useSkill: () => ({ data: { name: 'refund-policy', latestVersion: 8, labels: [{ name: 'production', version: 8 }] } }) }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: (_skill, { view }) => (view === 'history' ? state.history : state.dependents) }));
 vi.mock('src/api/skills/context-follower-update', () => ({ useFollowerUpdates: () => ({ prepare: state.prepare, apply: state.apply }) }));
@@ -31,11 +31,19 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   expect(pin.closest('[title]')).toHaveAttribute('title', 'Pinned to v7 on purpose. Change the pin in the context to update.');
   expect(screen.getByText('Preparing starts a draft for each selected context. Production doesn\'t change.')).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Used by' })).toBeVisible();
-  expect(screen.getByRole('columnheader', { name: 'Locked at' })).toBeVisible();
+  expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
+  expect(screen.queryByRole('columnheader', { name: 'Locked at' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('columnheader', { name: 'Policy' })).not.toBeInTheDocument();
+  // The impact is known before Prepare: one client-side line per selected context.
+  expect(screen.getByText('a: refund-policy v7 → v8 · Production stays unchanged')).toBeVisible();
+  expect(screen.getByText('b: refund-policy v7 → v8 · Production stays unchanged')).toBeVisible();
+  expect(screen.queryByText(/^c: refund-policy/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Locked skill version/)).not.toBeInTheDocument();
   expect(screen.queryByText(/not proof of delivery/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
   expect(await screen.findByText('a: policy v7 → v8 · Production stays unchanged')).toBeVisible();
+  // The server plan card replaces the client-side impact lines.
+  expect(screen.queryByText('a: refund-policy v7 → v8 · Production stays unchanged')).not.toBeInTheDocument();
   expect(screen.getByText('b: policy v7 → v8 · Production stays unchanged')).toBeVisible();
   // Before the first Prepare the copy is future tense; once cards exist it is gone.
   expect(screen.queryByText(/Preparing starts a draft/)).not.toBeInTheDocument();
@@ -82,7 +90,12 @@ it('shows the pinned row with a disabled checkbox, a lock mark and Production as
   expect(rowOf('Select a v1 for update').querySelector('.component-iconify')).toBeNull();
   expect(within(rowOf('Select a v1 for update')).getByText('Production')).toBeVisible();
   expect(within(rowOf('Select c v1 for update')).getByText('Pinned on purpose')).toBeVisible();
-  expect(within(rowOf('Select c v1 for update')).getByText('v7')).toBeVisible();
+  expect(within(rowOf('Select c v1 for update')).getByText('Pinned v7')).toBeVisible();
+  expect(within(rowOf('Select a v1 for update')).getByText('Follows production · v7')).toBeVisible();
+  // A pinned row says how to change the pin; a following row does not.
+  expect(within(rowOf('Select c v1 for update')).getByRole('link', { name: 'Change pin for c' })).toHaveAttribute('href', '/dashboard/skills/contexts/c?tab=links');
+  expect(within(rowOf('Select a v1 for update')).queryByRole('link', { name: /Change pin/ })).not.toBeInTheDocument();
+  expect(within(rowOf('Select c v1 for update')).getByRole('link', { name: 'Inspect c v1' })).toBeVisible();
 });
 
 it('keeps Prepare off after every selected context is updated, and on again once the selection changes', async () => {
@@ -92,7 +105,9 @@ it('keeps Prepare off after every selected context is updated, and on again once
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
-  await screen.findByText('Draft updated for 2 contexts. Production unchanged.');
+  await screen.findByText('a draft updated. Production unchanged.');
+  expect(screen.getByText('b draft updated. Production unchanged.')).toBeVisible();
+  expect(screen.queryByText(/Draft updated for 2 contexts/)).not.toBeInTheDocument();
   const prepare = screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' });
   expect(prepare).toBeDisabled();
   expect(prepare).toHaveAccessibleDescription('Already prepared for this selection.');
@@ -220,6 +235,7 @@ it('shows confirmed draft status and a review action without exposing revision n
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 2 contexts.' }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
   expect(await screen.findByRole('link', { name: 'Review a draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/a/review');
+  expect(screen.getByText('a draft now uses refund-policy v8. Production unchanged.')).toBeVisible();
   expect(screen.getByText('Draft ready')).toBeVisible();
   expect(screen.queryByText(/revision 42/)).not.toBeInTheDocument();
 });

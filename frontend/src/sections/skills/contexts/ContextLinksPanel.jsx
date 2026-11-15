@@ -76,19 +76,11 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     autoPreviewed.current = true;
     prepare();
   });
-  const availableUpdates = links.flatMap((link) => {
-    const included = lock.find((entry) => entry.skillId === link.skillId);
-    const query = upstreamQueries[link.skillId];
-    const latest = query?.data?.labels?.find((label) => label.name === link.selector.label) || upstream[link.skillId];
-    return !link.selector.version && included && latest && !query?.isError && (latest.version !== included.version || (latest.versionId && included.versionId && latest.versionId !== included.versionId))
-      ? [`${query?.data?.name || included.mount?.replace(/^skills\//, '').replace(/\/$/, '') || 'A linked skill'} has v${latest.version} available`] : [];
-  });
   const Container = compact ? Stack : TableContainer;
   const Collection = compact ? Stack : Table;
   const Rows = compact ? Stack : TableBody;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Linked skills ({lock.length})</Typography>
-    {availableUpdates.length > 0 && <Typography variant="s1">{`${availableUpdates.join('; ')}. Review the update before changing this lock.`}</Typography>}
     <Typography variant="s3" color="text.secondary">Each skill is locked to one version. Skills that follow production can be updated; pinned skills stay put.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
@@ -112,9 +104,9 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         const open = expanded.includes(link.skillId);
         const detailId = `link-details-${link.skillId}`;
         const toggle = <IconButton size="small" aria-label={`Show details for ${name}`} aria-expanded={open} aria-controls={open ? detailId : undefined} onClick={() => toggleExpanded(link.skillId)}><Iconify icon={open ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={16} /></IconButton>;
-        const details = open && <Stack id={detailId} spacing={0.5} sx={{ minWidth: 0 }}>{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Version ID" />}{included?.digest && <IdentityChip value={included.digest} label="Content fingerprint" />}{!included?.versionId && !included?.digest && <Typography variant="s3" color="text.secondary">No lock details yet. Preview the dependency changes first.</Typography>}</Stack>;
-        const actions = readOnly ? <>{retry}{changed && <Button fullWidth={compact} variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Review update</Button>}</> : <>{retry}
-          {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
+        const details = open && <Stack id={detailId} spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s3" color="text.secondary">Technical details</Typography>{included?.versionId && <IdentityChip value={included.versionId} kind="id" label="Source version" />}{included?.digest && <IdentityChip value={included.digest} label="Digest" />}{!included?.versionId && !included?.digest && <Typography variant="s3" color="text.secondary">No lock details yet. Preview the dependency changes first.</Typography>}</Stack>;
+        const actions = readOnly ? <>{retry}{changed && <Button fullWidth={compact} variant="outlined" component={RouterLink} to={`${paths.dashboard.skills.detail(link.skillId)}?tab=dependents`} size="small">Check update</Button>}</> : <>{retry}
+          {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Check update for ${skill?.name || link.skillId}`} />}
           <Button disabled={operation.pending || Boolean(session.mutationError)} onClick={() => { setLinks(links.filter((entry) => entry.skillId !== link.skillId)); setRefresh(refresh.filter((id) => id !== link.skillId)); invalidate(); }}>Remove from context</Button>
         </>;
         return compact ? <Stack key={link.skillId} role="listitem" spacing={1} sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>

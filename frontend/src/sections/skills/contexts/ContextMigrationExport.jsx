@@ -28,11 +28,11 @@ export default function ContextMigrationExport({ contextName, links, version }) 
   };
   // Grouped under a foldable heading below the install command, but shown open: the export button is
   // a frozen, measured step (UX-R7 §4.3, §4.6), so reaching it never costs an extra gesture.
-  return <TechnicalDetails title="More ways to install" defaultOpen><Section title="Export latest linked skills">
+  return <TechnicalDetails title="More ways to install" defaultOpen><Section title={`Download the ${skillIds.length} linked skills (latest versions)`}>
     <Stack spacing={1.5}>
-      <Typography variant="s3" color="text.secondary">Downloads the newest published version of each of the {skillIds.length} linked skills in one ZIP, with its source mapping receipt. These are not the versions this context locks. Export does not modify the source, remove local files or revoke credentials.</Typography>
+      <Typography variant="s3" color="text.secondary">Downloads the newest published version of each of the {skillIds.length} linked skills in one ZIP, with its source mapping receipt. These are not the versions this context locks. Downloading does not modify the source, remove local files or revoke keys.</Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} useFlexGap>
-        <Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Export ${skillIds.length} linked skills with mapping receipts`}</Button>
+        <Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Download ${skillIds.length} linked skills`}</Button>
         <Typography variant="s3" color="text.secondary">{version != null ? `Use this only if you want newer skill versions than v${version} locks.` : 'Use this only if you want newer skill versions than this context locks.'}</Typography>
       </Stack>
       {error && <Alert severity="error">{error}</Alert>}

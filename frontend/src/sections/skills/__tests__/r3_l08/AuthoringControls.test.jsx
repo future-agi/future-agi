@@ -84,7 +84,7 @@ describe("accepted dependency review", () => {
     expect(screen.getByText("v9 available")).toBeVisible();
     expect(screen.getByText("v8", { exact: true })).toBeVisible();
     expect(preview).not.toHaveBeenCalled();
-    check("Review update for refunds"); click("Preview dependency changes");
+    check("Check update for refunds"); click("Preview dependency changes");
     await screen.findByText(/Compiled candidate/);
     expect(preview).toHaveBeenCalledWith({ revision: 12, links: session.contextSpec.links, refreshSkillIds: ["child"] });
     check("Accept these linked-skill versions and update rules for 1 context."); click("Apply selected updates to draft");
@@ -95,7 +95,7 @@ describe("accepted dependency review", () => {
   it("excludes contexts from the picker and exact pins from refresh", () => {
     const session = draft(); session.contextSpec.links[0].selector = { version: 8 };
     render(<ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={availableSkills} />);
-    expect(screen.queryByRole("checkbox", { name: /Review update/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Check update/ })).not.toBeInTheDocument();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Add a published skill" }));
     expect(screen.queryByRole("option", { name: "other-context" })).not.toBeInTheDocument();
   });

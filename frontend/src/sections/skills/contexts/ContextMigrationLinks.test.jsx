@@ -35,7 +35,7 @@ it("never replaces already accepted links with proposals", async () => {
   render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} />);
   expect(screen.queryByText(/from your migration are proposed/)).not.toBeInTheDocument();
   // Only the accepted link is listed: its own refresh choice, and no proposed row beside it.
-  expect(await screen.findByRole('checkbox', { name: 'Review update for kept' })).toBeInTheDocument();
+  expect(await screen.findByRole('checkbox', { name: 'Check update for kept' })).toBeInTheDocument();
   expect(screen.getAllByRole('button', { name: 'Remove from context' })).toHaveLength(1);
 });
 

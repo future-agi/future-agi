@@ -186,9 +186,9 @@ test('SKILLS-E2E-012: review, import and publish a retained set in one decision,
     assert.throws(() => linkOracle(inspection.descriptor.links.slice(1)));
 
     await page.goto(`/dashboard/skills/contexts/${contextId}?version=1`);
-    await page.getByRole('tab', { name: 'Use', exact: true }).click();
+    await page.getByRole('tab', { name: 'Install', exact: true }).click();
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Export 3 linked skills with mapping receipts', exact: true }).click();
+    await page.getByRole('button', { name: 'Download 3 linked skills', exact: true }).click();
     const bundlePath = join(root, 'migration-export.zip');
     await (await download).saveAs(bundlePath);
     await page.screenshot({ path: join(root, 'shots', '03-export.png'), fullPage: true });

@@ -137,7 +137,7 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
     assert.deepEqual((await read<{ release_state: { labels: unknown[] } }>(`/model-hub/skills/contexts/${contextId}/`)).release_state.labels, []);
 
     const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Create credential', exact: true }).click();
+    await page.getByRole('button', { name: 'Create key', exact: true }).click();
     const issuedResponse = await issued;
     assert.equal(issuedResponse.status(), 201);
     const credentialId: string = (await issuedResponse.json()).result.id;

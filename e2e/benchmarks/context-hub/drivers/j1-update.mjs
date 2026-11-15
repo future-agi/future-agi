@@ -175,9 +175,9 @@ export async function performUpdate(stage, tools, state) {
   requireValue(contextId, 'Published pilot context must precede export');
   const page = await newPage();
   await go(page, `/dashboard/skills/contexts/${contextId}?version=1`, 'exact-context-exit');
-  await click(page, 'tab', 'Use');
+  await click(page, 'tab', 'Install');
   const download = page.waitForEvent('download');
-  await click(page, 'button', 'Export 14 linked skills with mapping receipts');
+  await click(page, 'button', 'Download 14 linked skills');
   const bundlePath = resolve(output, 'migration-export.zip');
   await (await download).saveAs(bundlePath);
   const bundle = unzipSync(await readFile(bundlePath));

@@ -328,18 +328,18 @@ export async function createDriver({ jobId, runId, registration }) {
           lastPage = page;
           await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
           const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
-          await click(page, 'button', 'Create credential');
+          await click(page, 'button', 'Create key');
           const issuedResponse = await issued;
           assert.equal(issuedResponse.status(), 201);
           credentialId = (await issuedResponse.json()).result.id;
-          await click(page, 'button', 'Copy credential secret');
+          await click(page, 'button', 'Copy key secret');
           await expect(page.getByText('Copied. Store it in your secret manager.', { exact: true })).toBeVisible();
           // The one-time secret travels by clipboard from the browser into the
           // developer's terminal environment: a manual information transfer (H).
           secret = await operator.handoff('credential-secret-to-sdk-environment', () => page.evaluate(() => navigator.clipboard.readText()));
           requireValue(/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{40,}$/.test(secret), 'One-time credential secret required');
           await page.evaluate(() => navigator.clipboard.writeText(''));
-          await expect(page.getByRole('row').filter({ hasText: credentialId.slice(0, 8) })).toBeVisible();
+          await expect(page.getByRole('row').filter({ has: page.getByRole('button', { name: `Actions for credential ${credentialId.slice(0, 8)}`, exact: true }) })).toBeVisible();
           await page.screenshot({ path: resolve(output, 'shots', 'pilot-credential.png') });
           const listed = (await read('contexts/credentials/?page_size=100', signal)).results.find(row => row.id === credentialId);
           assert.deepEqual(listed.grants, [{ kind: 'agent_context', resource_id: contextId, labels: [], version_ids: [candidate.manifest.version_id] }]);
@@ -424,7 +424,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await operator.approve('revoke-pilot-credential', [`credential-${credentialId.slice(0, 8)}`], () => page.getByRole('dialog').getByRole('button', { name: 'Revoke', exact: true }).click());
           assert.equal((await revoked).status(), 204);
           credentialRevoked = true;
-          await expect(page.getByRole('row').filter({ hasText: credentialId.slice(0, 8) }).getByText('Revoked', { exact: true })).toBeVisible();
+          await expect(page.getByRole('row').filter({ has: page.getByRole('button', { name: `Actions for credential ${credentialId.slice(0, 8)}`, exact: true }) }).getByText('Revoked', { exact: true })).toBeVisible();
           await page.screenshot({ path: resolve(output, 'shots', 'credential-revoked.png') });
           await page.close();
           await receipt('filesystem', { removal_plan_sha256: sha256(planBytes), inspected: redactPlan(inspected), credential: credentialId }, decision);
