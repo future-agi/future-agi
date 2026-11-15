@@ -1455,6 +1455,11 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     stale = serializers.IntegerField(min_value=0)
     untested = serializers.IntegerField(min_value=0)
     lists = HarnessCapabilityCaseListsSerializer()
+    held_by_workers = serializers.DictField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        help_text="Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+    )
     dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
     grading = HarnessCapabilityGradingSerializer()
     requirements_recorded = serializers.BooleanField(

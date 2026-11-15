@@ -1236,3 +1236,45 @@ def test_a_case_relying_on_a_blocked_worker_is_held_back():
 
     assert (held.bucket, held.by) == ("blocked", ["worker:refund"])
     assert task_only.bucket == "eligible"
+
+
+def test_the_selection_counts_the_cases_each_blocked_worker_holds_back(monkeypatch):
+    from types import SimpleNamespace
+
+    def place(case):
+        return selection._place(
+            case,
+            {},
+            proved=True,
+            voice=False,
+            many=False,
+            pair_validating=False,
+            pair_failed=False,
+            blocked_workers=frozenset({"refund"}),
+        )
+
+    placed = [
+        place(_worker_case("refund-check", {"refund"})),
+        place(_worker_case("refund-order", {"refund", "lookup"})),
+        place(_worker_case("task-only", set())),
+    ]
+    monkeypatch.setattr(
+        selection,
+        "readiness_report",
+        lambda pairing: {"rows": [], "answer": {}, "workers": []},
+    )
+    monkeypatch.setattr(
+        selection,
+        "_place_all",
+        lambda *args, **kwargs: SimpleNamespace(
+            placed=placed, dropped=[], recorded=True
+        ),
+    )
+    monkeypatch.setattr(selection, "_scope", lambda *args: {})
+    monkeypatch.setattr(selection, "_selected_answer", lambda *args: {})
+
+    view = selection.selection_report(None, keys=None, trials=1)["selection"]
+
+    # The run dialog names the worker: two cases wait on the refund worker, the task-only case runs.
+    assert view["held_by_workers"] == {"refund": 2}
+    assert (view["blocked"], view["eligible"]) == (2, 1)

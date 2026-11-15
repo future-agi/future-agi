@@ -104533,6 +104533,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         lists: {
           $ref: "#/definitions/HarnessCapabilityCaseLists",
         },
+        held_by_workers: {
+          title: "Held by workers",
+          description:
+            "Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 1,
+          },
+        },
         dropped: {
           type: "array",
           items: {

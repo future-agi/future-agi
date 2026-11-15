@@ -20174,6 +20174,13 @@ export interface HarnessCapabilityGradingApi {
   truncated: boolean;
 }
 
+/**
+ * Held cases per declared worker whose limits cannot be held, keyed by worker id.
+ */
+export type HarnessCapabilitySelectionCountsApiHeldByWorkers = {
+  [key: string]: number;
+};
+
 export interface HarnessCapabilitySelectionCountsApi {
   /**
    * Every case of the suite version.
@@ -20193,6 +20200,8 @@ export interface HarnessCapabilitySelectionCountsApi {
   /** @minimum 0 */
   untested: number;
   lists: HarnessCapabilityCaseListsApi;
+  /** Held cases per declared worker whose limits cannot be held, keyed by worker id. */
+  held_by_workers?: HarnessCapabilitySelectionCountsApiHeldByWorkers;
   dropped: HarnessCapabilityDroppedCaseApi[];
   grading: HarnessCapabilityGradingApi;
   /** Every selected case's needs were read from its stored documents. */

@@ -226,6 +226,16 @@ def selection_report(
             "stale": len(by_bucket["stale"]),
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
+            # How many held cases each blocked worker holds back, so the run dialog names the worker.
+            "held_by_workers": dict(
+                Counter(
+                    reason[len("worker:") :]
+                    for one in placed
+                    if one.bucket == "blocked"
+                    for reason in one.by
+                    if reason.startswith("worker:")
+                )
+            ),
             "dropped": placement.dropped,
             "grading": {
                 "gradable": requested - len(not_gradable),

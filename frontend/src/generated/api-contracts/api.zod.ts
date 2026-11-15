@@ -39711,6 +39711,12 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         truncated: zod.boolean().describe("More than 200 cases; page them."),
       }),
     }),
+    held_by_workers: zod
+      .record(zod.string(), zod.number().min(1))
+      .optional()
+      .describe(
+        "Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+      ),
     dropped: zod.array(
       zod.object({
         key: zod.string().min(1),
@@ -40179,6 +40185,12 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           truncated: zod.boolean().describe("More than 200 cases; page them."),
         }),
       }),
+      held_by_workers: zod
+        .record(zod.string(), zod.number().min(1))
+        .optional()
+        .describe(
+          "Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+        ),
       dropped: zod.array(
         zod.object({
           key: zod.string().min(1),
