@@ -128,13 +128,17 @@ def source_names_sql(raw_values: Sequence[str], json_values: Sequence[str]) -> s
     return f"arrayDistinct(arrayFilter(etag_n -> match(etag_n, '[^\\\\s]'), {names}))"
 
 
-def live_tag_source_sql(prefix: str) -> str:
+def live_tag_source_sql(prefix: str, *, source_table: str = "spans") -> str:
     """Latest live span identities in the bound window with source names.
 
     The physical hours are replayed completely before the mutable liveness and
     event-time predicates, exactly like the list/detail readers. Only the tag
-    sources enter the aggregate state; whole attribute maps never do.
+    sources enter the aggregate state; whole attribute maps never do. Sampling
+    supplies its already replayed source so witnesses obey the same snapshot.
     """
+    if source_table not in {"spans", "sampling_source"}:
+        raise ValueError("Unsupported effective-tag source table.")
+    scope_clause = "PREWHERE" if source_table == "spans" else "WHERE"
     p = prefix
     names = source_names_sql(
         ("etag_w.5", "etag_w.6"),
@@ -152,8 +156,8 @@ def live_tag_source_sql(prefix: str) -> str:
                              JSONExtractRaw(attributes_extra, 'tag.tags'),
                              JSONExtractRaw(attributes_extra, 'tag', 'tags')),
                        _version) AS etag_w
-            FROM spans
-            PREWHERE project_id IN %({p}_projects)s
+            FROM {source_table}
+            {scope_clause} project_id IN %({p}_projects)s
               AND start_time >= %({p}_hour_start)s
               AND start_time < %({p}_hour_end)s
               AND (%({p}_scoped)s = 0 OR trace_id IN %({p}_traces)s)
@@ -432,14 +436,14 @@ def graph_tag_overlay_params(
         raise
 
 
-def canonical_root_sql(prefix: str) -> str:
+def canonical_root_sql(prefix: str, *, source_table: str = "spans") -> str:
     """The list's canonical root per trace (latest start, then identity)."""
     p = prefix
     return f"""(
         SELECT project_id, trace_id,
             argMax(src, tuple(start_time, id, toString(observation_type),
                               toString(service_name), start_hour)) AS src
-        FROM {live_tag_source_sql(p)}
+        FROM {live_tag_source_sql(p, source_table=source_table)}
         WHERE is_root
           AND (%({p}_rpv_any)s = 1 OR toString(project_version_id) = %({p}_rpv)s)
         GROUP BY project_id, trace_id

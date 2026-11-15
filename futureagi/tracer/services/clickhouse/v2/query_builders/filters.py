@@ -518,7 +518,10 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         self._params[relation] = EffectiveTagRelation(
             tuple(self.project_ids or ()), names
         )
-        live = live_tag_source_sql(relation)
+        # Sampling's CTE already applies latest-state and arrival watermarks.
+        # Reading raw spans here would admit post-snapshot tag witnesses.
+        source_table = "sampling_source" if self.table == "sampling_source" else "spans"
+        live = live_tag_source_sql(relation, source_table=source_table)
         source = predicate.format(names="src")
         match = effective_match_sql(relation, predicate)
         project = "toString(project_id), " if self._org_scoped else ""
@@ -556,7 +559,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
                 # The trace's canonical root: its own source names plus the
                 # trace assignment (or unsuppressed legacy curated tags).
                 inner = (
-                    f"SELECT {selected} FROM {canonical_root_sql(relation)} "
+                    f"SELECT {selected} FROM {canonical_root_sql(relation, source_table=source_table)} "
                     f"WHERE {source} OR "
                     f"{trace_overlay_sql(relation, predicate, live_roots=True)}"
                 )

@@ -429,7 +429,9 @@ def assign(span, names, *, trace_assignment=False):
         if trace_assignment
         else span.start_time.replace(minute=0, second=0, microsecond=0),
         observation_type="" if trace_assignment else span.observation_type,
-        service_name="" if trace_assignment else (span.service_name or ""),
+        service_name=""
+        if trace_assignment
+        else (getattr(span, "service_name", None) or ""),
         manual_tags=[{"name": name} for name in names],
     )
 
