@@ -1,7 +1,6 @@
 import json
 import traceback
 import uuid
-from contextlib import nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
@@ -1864,10 +1863,11 @@ def _execute_evaluation(
 
     # Persist EvalLogger result
     if logger_kwargs:
-        # An experiment can fail after its result write (for example while
-        # updating project fields). Roll back that partial result before the
-        # caller records the error, without enclosing the evaluator itself.
-        with transaction.atomic() if type == EXPERIMENT else nullcontext():
+        # Either entry point can fail after writing its result, including on
+        # the joined read-back. Roll back the partial result before the caller
+        # records an error. Experiment project updates share this savepoint;
+        # evaluator, billing and localization work stay outside it.
+        with transaction.atomic():
             value = logger_kwargs.pop("value") if "value" in logger_kwargs else ""
             log_id = logger_kwargs.pop("log_id") if "log_id" in logger_kwargs else None
             from tracer.services.eval_tasks.entries import in_engine_write_mode
