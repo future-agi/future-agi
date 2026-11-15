@@ -5436,7 +5436,11 @@ def _ledger_snapshot(ledger: Any) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     stages = ledger.get("stages") or []
-    if not isinstance(stages, list):
+    # _combined_spend reads every stage's name, so a stage it cannot read must not be kept.
+    if not isinstance(stages, list) or not all(
+        isinstance(stage, dict) and isinstance(stage.get("stage"), (str, type(None)))
+        for stage in stages
+    ):
         return None
     return {"total_usd": total, "unpriced_turns": unpriced, "stages": stages}
 
