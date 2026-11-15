@@ -1631,10 +1631,18 @@ class Workflows(unittest.TestCase):
         import yaml
 
         jobs = yaml_jobs(WORKFLOWS / "release-images.yml")
+        # The guard picks the approval environment: Production (reviewers)
+        # unless the opt-in migration-free policy selects production-auto.
+        # scripts/test_release_autopilot.py covers that decision.
+        selected = "${{ needs.guard.outputs.environment }}"
         reviewed = {
-            n for n, job in jobs.items() if job.get("environment") == "production"
+            n for n, job in jobs.items() if job.get("environment") in ("production", selected)
         }
         self.assertEqual(reviewed, {"approve"})
+        self.assertIn(
+            "release_autopilot.py environment",
+            "\n".join(step.get("run", "") for step in jobs["guard"]["steps"]),
+        )
         # Every other environment is the one without reviewers, on any event.
         for name, job in jobs.items():
             if name != "approve" and "environment" in job:
@@ -1642,8 +1650,9 @@ class Workflows(unittest.TestCase):
                     self.assertEqual(job["environment"], "production-auto")
         self.assertEqual(jobs["approve"]["needs"], "guard")
         # What the guard checked may have changed while the review waited.
-        self.assertEqual(
-            jobs["approve"]["steps"][-1]["run"], jobs["guard"]["steps"][0]["run"]
+        self.assertIn(
+            jobs["guard"]["steps"][0]["run"],
+            [step.get("run") for step in jobs["approve"]["steps"]],
         )
         self.assertEqual(jobs["approve"]["env"], jobs["guard"]["env"])
 

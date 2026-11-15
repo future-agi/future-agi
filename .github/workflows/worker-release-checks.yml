@@ -8,6 +8,17 @@ on:
       - "scripts/test_release_error_feed_worker.py"
       - "scripts/verify-platform-image-tags.py"
       - "scripts/test_verify_platform_image_tags.py"
+      - ".github/workflows/release-autopilot.yml"
+      - ".github/workflows/sdk-sync.yml"
+      - "scripts/release_autopilot.py"
+      - "scripts/test_release_autopilot.py"
+      # The release gate decides on this workflow's check job; a test pins its triggers and job.
+      - ".github/workflows/migrations-callout-check.yml"
+      # test_release_autopilot.py checks that this doc quotes the autopilot's reasons.
+      - "docs/release-autopilot.md"
+      # test_release_autopilot.py runs this script with -I, as size-report does.
+      # Its own tests are deploy/tests/test_image_size_budget.py in images-ci.yml.
+      - "scripts/image_size_budget.py"
 permissions:
   contents: read
 jobs:
@@ -15,4 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      # Only the tests of the scripts listed above, except image_size_budget.py,
+      # whose tests run in images-ci.yml. Other scripts/test_*.py files
+      # run in their own workflows with their own tools, such as ruff for the
+      # lint-gate test in python-lint.yml.
+      - working-directory: scripts
+        run: python3 -m unittest -v test_release_autopilot test_release_error_feed_worker test_verify_platform_image_tags

@@ -9,12 +9,14 @@ make release-please publish empty notes; text outside the delimiters is dropped.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
 CALLOUT = "Contains database migrations"
 STABLE_TAG = re.compile(r"v\d+\.\d+\.\d+")
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
 VERSION_HEADING = re.compile(r"^#{2,} \[?\d+\.\d+\.\d+(?:\]|\s|$)")
 
 
@@ -58,6 +60,33 @@ def previous_release(ref: str, exclude: str | None = None) -> str:
     return git("describe", "--tags", "--abbrev=0", *[f"--match={t}" for t in tags], ref)
 
 
+def pr_merge_preview(pr: dict) -> tuple[str, str]:
+    """Return (first parent, merge) of this run's own PR merge preview.
+
+    The payload's merge_commit_sha is not used. GitHub computes the test merge
+    after it creates the PR, so an `opened` payload usually carries null, and a
+    re-run reuses that payload. GITHUB_SHA is the refs/pull/N/merge commit that
+    actions/checkout fetched for this run, and it stays fixed across re-runs.
+    """
+    merge = os.environ.get("GITHUB_SHA", "")
+    if not FULL_SHA.fullmatch(merge):
+        raise ValueError(
+            "GITHUB_SHA is not a full commit id; no PR merge preview to check."
+        )
+    # Peeling fails for a missing object and changes the id of anything that
+    # is not a commit, such as a tag object.
+    if git("rev-parse", "--verify", f"{merge}^{{commit}}") != merge:
+        raise ValueError("GITHUB_SHA is not a commit; no PR merge preview to check.")
+    parents = git("rev-list", "--parents", "--no-walk", merge).split()[1:]
+    # GitHub's preview merges the PR head into the base tip: two parents, the
+    # head second. Anything else is not this PR's merge preview.
+    if len(parents) != 2 or parents[1] != pr["head"]["sha"]:
+        raise ValueError(
+            "GITHUB_SHA is not a merge of this PR's head; refresh the PR and rerun."
+        )
+    return parents[0], merge
+
+
 def check_event(event_name: str, event: dict) -> None:
     """Validate a PR snapshot or the actual published/edited release body."""
     if event_name == "pull_request":
@@ -68,10 +97,10 @@ def check_event(event_name: str, event: dict) -> None:
             return
         # Use the immutable merge preview: a stale PR head can omit migrations
         # already on main, while a moving origin/main can make a rerun empty.
-        head = pr.get("merge_commit_sha")
-        if not head:
-            raise ValueError("No PR merge preview is available; refresh and rerun.")
-        base = previous_release(pr["base"]["sha"])
+        # Both ends come from the same snapshot: the base side is the preview's
+        # first parent, not the payload's base.sha, which can be older or newer.
+        first_parent, head = pr_merge_preview(pr)
+        base = previous_release(first_parent)
         body = pr.get("body") or ""
     elif event_name == "release":
         release = event["release"]
