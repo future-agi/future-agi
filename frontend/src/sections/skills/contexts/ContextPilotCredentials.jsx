@@ -20,10 +20,12 @@ import {
   useMediaQuery,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import IdentityChip from "../components/IdentityChip";
 import When from "../components/When";
+import TechnicalDetails from "../components/TechnicalDetails";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import {
@@ -92,6 +94,17 @@ function CredentialActions({ credential, status, onRevoke }) {
         onClose={() => setAnchor(null)}
       >
         <MenuItem
+          onClick={async () => {
+            setAnchor(null);
+            try { await navigator.clipboard.writeText(credential.id); enqueueSnackbar("Copied"); } catch { enqueueSnackbar("Couldn't copy the key ID", { variant: "error" }); }
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:copy-linear" width={16} />
+          </ListItemIcon>
+          Copy key ID
+        </MenuItem>
+        <MenuItem
           disabled={status === "revoked"}
           onClick={() => {
             setAnchor(null);
@@ -119,7 +132,12 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
   return (
     <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
       <TableCell>
-        <IdentityChip value={credential.id} kind="id" label="Key" />
+        <Typography variant="s1">
+          <Tooltip title={`Key ${credential.id}`} describeChild>
+            <span tabIndex={0}>Read-only key</span>
+          </Tooltip>
+          {credential.createdAt && <Typography component="span" variant="s3" color="text.secondary">{" · created "}<When value={credential.createdAt} /></Typography>}
+        </Typography>
       </TableCell>
       <TableCell>
         <Typography variant="s1">{versionLabel(credential)}</Typography>
@@ -162,6 +180,7 @@ function CredentialStackRow({ credential, versionLabel, onRevoke }) {
         <Tooltip title={`Key ${credential.id}`} describeChild>
           <span tabIndex={0}>Read-only key</span>
         </Tooltip>
+        {credential.createdAt && <>{" · created "}<When value={credential.createdAt} /></>}
         {" · "}
         {versionLabel(credential)}
         {status !== "revoked" && (
@@ -258,12 +277,12 @@ export default function ContextPilotCredentials({
               );
             }}
           >
-            Create credential
+            Create key
           </Button>
         </Stack>
         {issue.isError && (
           <Alert severity="error">
-            Could not issue the credential. Retrying reuses the same request.
+            Could not create the key. Retrying reuses the same request.
           </Alert>
         )}
         {issued && (
@@ -273,9 +292,9 @@ export default function ContextPilotCredentials({
                 Read-only key created for v{snapshot.version}.
                 {issued.secretAvailable
                   ? " Copy it now; it isn't shown again. The install steps below say where to set it."
-                  : " This was a replay; the secret is no longer available. Issue a new credential."}
+                  : " This was a replay; the secret is no longer available. Create a new key."}
               </Typography>
-              <IdentityChip value={issued.id} kind="id" label="Key" />
+              <TechnicalDetails title="Technical details"><IdentityChip value={issued.id} kind="id" label="Key ID" /></TechnicalDetails>
               {issued.secretAvailable && (
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                   <Button
@@ -292,7 +311,7 @@ export default function ContextPilotCredentials({
                       }
                     }}
                   >
-                    Copy credential secret
+                    Copy key secret
                   </Button>
                   {copyState === "copied" && (
                     <Typography variant="s3" role="status">
@@ -301,7 +320,7 @@ export default function ContextPilotCredentials({
                   )}
                   {copyState === "failed" && (
                     <Typography variant="s3" role="status">
-                      Clipboard unavailable. Revoke this credential and issue
+                      Clipboard unavailable. Revoke this key and create
                       another from a browser with clipboard access.
                     </Typography>
                   )}
@@ -312,7 +331,7 @@ export default function ContextPilotCredentials({
         )}
         {list.isError ? (
           <Alert severity="error">
-            Could not load credentials.{" "}
+            Could not load keys.{" "}
             <Button size="small" onClick={() => list.refetch()}>
               Retry
             </Button>
@@ -366,10 +385,10 @@ export default function ContextPilotCredentials({
       <ConfirmDialog
         open={Boolean(revoking)}
         onClose={() => setRevoking(null)}
-        title="Revoke pilot credential"
+        title="Revoke key"
         content={
           revoking
-            ? `Credential ${revoking.id.slice(0, 8)} stops working for every new resolve, download and access check. Installed files stay until you remove them.`
+            ? `Key ${revoking.id.slice(0, 8)} stops working for every new resolve, download and access check. Installed files stay until you remove them.`
             : ""
         }
         action={

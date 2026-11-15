@@ -31,7 +31,7 @@ export function buildContextPlan({ snapshot, origin, organizationId, workspaceId
     `export FI_CONTEXT_ORIGIN=${quote(url.origin)}`,
     `export FI_CONTEXT_ORGANIZATION_ID=${quote(organizationId)}`,
     `export FI_CONTEXT_WORKSPACE_ID=${quote(workspaceId)}`,
-    '# requires FI_CONTEXT_CREDENTIAL',
+    '# needs your read-only key in FI_CONTEXT_CREDENTIAL',
     `python -m fi.context plan --name ${quote(snapshot.name)} --version ${snapshot.version} --client ${quote(profile.id)} --project ${quote(project)}${preview ? ' --allow-preview' : ''} --out ${quote('context-plan.json')}`,
     `python -m fi.context inspect --plan ${quote('context-plan.json')} --diff`,
   ].join('\n');
@@ -58,7 +58,7 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
   const copyCommand = async (text) => {
     setCopyBusy(true); setCopyError(''); setCopied(null);
     try { if (!navigator.clipboard?.writeText) throw new Error('Unavailable'); await navigator.clipboard.writeText(text); setCopied(text); }
-    catch { setCopyError('Could not copy. Select the command and copy it by hand; add the environment variables from Details when you copy the plan.'); }
+    catch { setCopyError('Could not copy. Select the command and copy it by hand; add the environment variables from Before you install when you copy the plan.'); }
     finally { setCopyBusy(false); }
   };
   const environment = command.split('\n').filter((line) => /^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
@@ -98,18 +98,11 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
           </Stack>}
           {copied === adminRequest && <Typography variant="s3" role="status">Copied the request for an admin.</Typography>}
           <CodeBlock label="Context install plan command" code={visibleCommand} copyLabel="Copy" ariaLabel="Copy plan command" action={<Button aria-label="Copy plan command" {...reasonProps('context-copy-reason', viewerReason)} variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy || isViewer} onClick={() => copyCommand(command)}>Copy</Button>} />
-          <TechnicalDetails title="Details">
-            <Stack spacing={1}>
-              <Typography variant="s3" color="text.secondary">Before you run it, set FI_CONTEXT_CREDENTIAL to your read-only key in your terminal. Never paste the key into the command. The flag --allow-preview opts in to the preview setup for {toolName}.</Typography>
-              <Typography variant="s3" color="text.secondary">Environment variables, included when you copy the plan command:</Typography>
-              <Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box>
-            </Stack>
-          </TechnicalDetails>
           {copied === command && <Typography variant="s3" role="status">Copied the complete plan command.</Typography>}
           {copyError && <Alert severity="error">{copyError}</Alert>}
           <Stack spacing={1}>
             <Typography variant="m3" component="h3">4. Install</Typography>
-            <Typography variant="s3" color="text.secondary">Check every file change in the preview and confirm v{snapshot.version} and the full digest in Installation requirements. Stop the coding tool before installing. This page does not run commands.</Typography>
+            <Typography variant="s3" color="text.secondary">Check every file change in the preview and confirm the version number (v{snapshot.version}) in Before you install. Stop the coding tool before installing. This page does not run commands.</Typography>
             <CodeBlock label="Context apply command" code={applyCommand} copyLabel="Copy" ariaLabel="Copy apply command" action={<Button aria-label="Copy apply command" {...reasonProps('context-copy-reason', viewerReason)} variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" width={16} />} disabled={copyBusy || isViewer} onClick={() => copyCommand(applyCommand)}>Copy</Button>} />
             {copied === applyCommand && <Typography variant="s3" role="status">Copied the apply command.</Typography>}
           </Stack>
@@ -117,8 +110,13 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
 
       </Stack>
     </Section>
-    <TechnicalDetails title="Installation requirements">
+    <TechnicalDetails title="Before you install">
       <Stack spacing={1}>
+        {!problem && <>
+          <Typography variant="s3" color="text.secondary">Before you run the plan, set FI_CONTEXT_CREDENTIAL to your read-only key in your terminal. Never paste the key into the command. The flag --allow-preview opts in to the preview setup for {toolName}.</Typography>
+          <Typography variant="s3" color="text.secondary">Environment variables, included when you copy the plan command:</Typography>
+          <Box component="pre" sx={{ m: 0, typography: 's1', fontFamily: 'monospace', overflowX: 'auto', maxWidth: 1 }}>{environment}</Box>
+        </>}
         {preview && <Typography variant="s3" color="text.secondary">Requires an environment with the Context SDK CLI installed (python -m fi.context). This plan opts in to a preview host profile. No released package or verified model delivery is claimed.</Typography>}
         {profileId === 'claude-code' && <Typography variant="s3" color="text.secondary">Existing CLAUDE.md or local instructions may affect AGENTS.md discovery. Settings, imports and permissions are not changed.</Typography>}
         {workspaceName && <Typography variant="s1">Workspace: {workspaceName}</Typography>}

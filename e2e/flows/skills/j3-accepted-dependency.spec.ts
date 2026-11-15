@@ -128,7 +128,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.goto(`${UI}/${parent.id}?version=1`);
       await page.getByRole('button', { name: 'Edit viewed v1', exact: true }).click();
       await page.getByRole('button', { name: 'Start selected draft', exact: true }).click();
-      await page.getByRole('checkbox', { name: `Review update for ${prefix}-leaf-0`, exact: true }).check();
+      await page.getByRole('checkbox', { name: `Check update for ${prefix}-leaf-0`, exact: true }).check();
       const before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       await page.getByRole('button', { name: 'Preview dependency changes', exact: true }).click();
       await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();

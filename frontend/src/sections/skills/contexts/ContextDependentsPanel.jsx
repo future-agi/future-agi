@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
-import { Box, Button, Checkbox, IconButton, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
+import { Checkbox, Link, IconButton, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
 import { useContextDependents } from 'src/api/skills/context-dependents';
 import { useSkill } from 'src/api/skills';
 import { useSkillV11Scope } from 'src/api/skills/testing';
@@ -45,24 +45,30 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
   return <>
     <Typography variant="s3" color="text.secondary">{query.data.count} {query.data.count === 1 ? 'reference' : 'references'} · <Tooltip title={query.data.as_of || 'Time unavailable'}><span>Checked {relativeTime(query.data.as_of)}</span></Tooltip></Typography>
     <TableContainer><Table size="small" aria-label={active ? 'Published context dependents' : 'Historical context references'} sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } } }}>
-      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{active && <TableCell padding="checkbox"><Typography variant="s3">Update</Typography></TableCell>}<TableCell>Context release</TableCell><TableCell>Labels</TableCell><TableCell>Policy</TableCell><TableCell>Locked at</TableCell><TableCell>Update state</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
-      <TableBody>{query.data.results.map((row) => <TableRow hover key={`${row.context_id}:${row.context_version}`} sx={{ height: { sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: active ? '64px minmax(0, 1fr)' : 'minmax(0, 1fr)', py: { xs: 1.5, sm: 0 }, '& > td': { display: { xs: 'block', sm: 'table-cell' }, borderBottom: { xs: 0 }, whiteSpace: 'normal', overflowWrap: 'anywhere', py: { xs: 0.5 }, px: { xs: 0, sm: 1.5 }, gridColumn: active ? '2' : '1' }, ...(active ? { '& > td:first-of-type': { gridColumn: '1', gridRow: '1 / 7' } } : {}) }}>
-        {active && (() => {
-          const pinned = Boolean(row.requested.version) || row.update_state === 'pinned_as_intended';
-          const disabled = Boolean(row.requested.version) || row.update_state !== 'update_available' || !selectable.some((item) => item.context_id === row.context_id && item.context_version === row.context_version);
-          const reason = row.requested.version ? `Pinned to v${row.requested.version} on purpose. Change the pin in the context to update.` : row.update_state === 'pinned_as_intended' ? `Pinned to v${row.locked_version} on purpose. Change the pin in the context to update.` : '';
-          return <TableCell padding="checkbox"><Tooltip describeChild title={reason}><Stack component="span" direction="row" alignItems="center" tabIndex={pinned ? 0 : undefined}>
-            <Checkbox size="small" checked={selected.some((item) => item.context_id === row.context_id && item.context_version === row.context_version)} disabled={disabled} sx={disabled ? { color: 'action.disabled' } : undefined} onChange={() => onToggle(row)} inputProps={{ 'aria-label': `Select ${row.name} v${row.context_version} for update` }} />
-            {pinned && <Iconify icon="solar:lock-keyhole-linear" width={16} aria-hidden sx={{ color: 'text.disabled', flexShrink: 0 }} />}
-          </Stack></Tooltip></TableCell>;
-        })()}
-        <TableCell><Typography variant="s1">{row.name} · v{row.context_version}</Typography></TableCell>
-        <TableCell><LabelChips labels={row.labels} /></TableCell>
-        <TableCell>{row.requested.version ? `Pin v${row.requested.version}` : `Follow ${row.requested.label}`}</TableCell>
-        <TableCell><Typography variant="s3"><Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>Locked at </Box>v{row.locked_version}</Typography></TableCell>
-        <TableCell><StatusBadge status={done.includes(row.context_id) ? 'draft' : states[row.update_state]?.[0] || 'unknown'} label={done.includes(row.context_id) ? 'Draft ready' : states[row.update_state]?.[1] || 'Unknown'} /></TableCell>
-        <TableCell><Button variant="outlined" size="small" component={RouterLink} to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Button></TableCell>
-      </TableRow>)}</TableBody>
+      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{active && <TableCell padding="checkbox"><Typography variant="s3">Update</Typography></TableCell>}<TableCell>Context release</TableCell><TableCell>Labels</TableCell><TableCell>Version</TableCell><TableCell>Update state</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
+      <TableBody>{query.data.results.map((row) => {
+        const pinned = Boolean(row.requested.version) || row.update_state === 'pinned_as_intended';
+        const hasLabels = Boolean(row.labels?.length);
+        // Below sm each row is three lines in a grid: name and update state; version and labels; actions.
+        const at = (column, rowLine) => ({ gridColumn: { xs: String(column + (active ? 1 : 0)), sm: 'auto' }, gridRow: { xs: String(rowLine), sm: 'auto' } });
+        return <TableRow hover key={`${row.context_id}:${row.context_version}`} sx={{ height: { sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: active ? '32px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto', columnGap: 1, rowGap: 0.5, alignItems: 'center', py: { xs: 1.5, sm: 0 }, '& > td': { display: { xs: 'block', sm: 'table-cell' }, borderBottom: { xs: 0 }, whiteSpace: 'normal', overflowWrap: 'anywhere', py: { xs: 0 }, px: { xs: 0, sm: 1.5 }, minWidth: 0 }, '& > td[data-empty="true"]': { display: { xs: 'none', sm: 'table-cell' } } }}>
+          {active && <TableCell padding="checkbox" sx={{ gridColumn: { xs: '1' }, gridRow: { xs: '1 / span 3' }, alignSelf: { xs: 'start' } }}>{(() => {
+            const disabled = Boolean(row.requested.version) || row.update_state !== 'update_available' || !selectable.some((item) => item.context_id === row.context_id && item.context_version === row.context_version);
+            const reason = row.requested.version ? `Pinned to v${row.requested.version} on purpose. Change the pin in the context to update.` : row.update_state === 'pinned_as_intended' ? `Pinned to v${row.locked_version} on purpose. Change the pin in the context to update.` : '';
+            return <Tooltip describeChild title={reason}><Stack component="span" direction="row" alignItems="center" tabIndex={pinned ? 0 : undefined}>
+              <Checkbox size="small" checked={selected.some((item) => item.context_id === row.context_id && item.context_version === row.context_version)} disabled={disabled} sx={{ ...(disabled ? { color: 'action.disabled' } : {}), p: { xs: 0.5, sm: 1.125 } }} onChange={() => onToggle(row)} inputProps={{ 'aria-label': `Select ${row.name} v${row.context_version} for update` }} />
+            </Stack></Tooltip>;
+          })()}</TableCell>}
+          <TableCell sx={at(1, 1)}><Stack component="span" direction="row" alignItems="center" spacing={0.5}><Typography component="span" variant="s1" sx={{ overflowWrap: 'anywhere' }}>{row.name} · v{row.context_version}</Typography>{pinned && <Iconify icon="solar:lock-keyhole-linear" width={16} aria-hidden sx={{ color: 'text.disabled', flexShrink: 0 }} />}</Stack></TableCell>
+          <TableCell data-empty={hasLabels ? undefined : 'true'} sx={{ ...at(2, 2), justifySelf: { xs: 'end' } }}><LabelChips labels={row.labels} /></TableCell>
+          <TableCell sx={at(1, 2)}><Typography variant="s3" color="text.secondary">{pinned ? `Pinned v${row.locked_version}` : `Follows ${row.requested.label} · v${row.locked_version}`}</Typography></TableCell>
+          <TableCell sx={{ ...at(2, 1), justifySelf: { xs: 'end' } }}><StatusBadge status={done.includes(row.context_id) ? 'draft' : states[row.update_state]?.[0] || 'unknown'} label={done.includes(row.context_id) ? 'Draft ready' : states[row.update_state]?.[1] || 'Unknown'} /></TableCell>
+          <TableCell sx={{ gridColumn: { xs: active ? '2 / -1' : '1 / -1' }, gridRow: { xs: '3' } }}><Stack component="span" direction="row" useFlexGap spacing={1.5} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+            <Link component={RouterLink} variant="s3" underline="always" to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Link>
+            {active && pinned && <Link component={RouterLink} variant="s3" underline="always" to={`${paths.dashboard.skills.contextDetail(row.context_id)}?tab=links`} aria-label={`Change pin for ${row.name}`}>Change pin</Link>}
+          </Stack></TableCell>
+        </TableRow>;
+      })}</TableBody>
     </Table></TableContainer>
     {query.data.total_pages > 1 && <Pagination page={page} count={query.data.total_pages} onChange={(_, value) => onPage(value)} />}
   </>;
@@ -99,7 +105,7 @@ function Dependents({ skillId, state }) {
     <Typography variant="s3" color="text.secondary">Open a context to see which apps have received it.</Typography>
     <ReferenceTable selectable={eligible} done={done} query={query} state={state} view="active" selected={selected} onToggle={toggle} page={page} onPage={setPage}
       empty={{ title: 'No agent contexts use this skill yet', description: 'Contexts appear here once they publish a version that links it. Drafts are not listed.' }} />
-    {eligible.length > 0 && <ContextFollowerUpdate skillName={skill.data?.name} onApplied={(ids) => setDone((previous) => [...new Set([...previous, ...ids])])} skillId={skillId} sourceRelease={sourceRelease} targets={selected.map((row) => ({ contextId: row.context_id, name: row.name, version: row.context_version, ...(row.labels.includes('production') ? { productionVersion: row.context_version } : {}) }))} />}
+    {eligible.length > 0 && <ContextFollowerUpdate skillName={skill.data?.name} impacts={selected.map((row) => ({ contextId: row.context_id, from: row.locked_version, to: skill.data?.labels?.find((label) => label.name === row.requested.label)?.version }))} onApplied={(ids) => setDone((previous) => [...new Set([...previous, ...ids])])} skillId={skillId} sourceRelease={sourceRelease} targets={selected.map((row) => ({ contextId: row.context_id, name: row.name, version: row.context_version, ...(row.labels.includes('production') ? { productionVersion: row.context_version } : {}) }))} />}
     {(history.isError || history.data?.total_pages > 1 || history.data?.results?.some((row) => !rows.some((active) => active.context_id === row.context_id && active.context_version === row.context_version))) && <TechnicalDetails title="Show superseded releases">
     <ReferenceTable query={history} state={state} view="history" page={historyPage} onPage={setHistoryPage}
       empty={{ title: 'No historical references', description: 'No retired or superseded context releases referenced this skill.' }} />

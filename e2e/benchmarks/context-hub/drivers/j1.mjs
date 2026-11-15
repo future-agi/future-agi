@@ -328,11 +328,11 @@ export async function createDriver({ jobId, runId, registration }) {
           lastPage = page;
           await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
           const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
-          await click(page, 'button', 'Create credential');
+          await click(page, 'button', 'Create key');
           const issuedResponse = await issued;
           assert.equal(issuedResponse.status(), 201);
           credentialId = (await issuedResponse.json()).result.id;
-          await click(page, 'button', 'Copy credential secret');
+          await click(page, 'button', 'Copy key secret');
           await expect(page.getByText('Copied. Store it in your secret manager.', { exact: true })).toBeVisible();
           // The one-time secret travels by clipboard from the browser into the
           // developer's terminal environment: a manual information transfer (H).

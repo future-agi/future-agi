@@ -322,10 +322,10 @@ test('skills walkthrough', async ({ browser, request }) => {
       await hide(async () => {
         await page.getByRole('checkbox', { name: /^Accept these exact resolved versions/ }).check();
         await page.getByRole('button', { name: 'Apply selected updates to 1 context draft', exact: true }).click();
-        await expect(page.getByText('Draft updated for 1 context. Production unchanged.', { exact: true })).toBeVisible();
+        await expect(page.getByText(/ draft now uses .+\. Production unchanged\./)).toBeVisible();
         await page.waitForTimeout(300);
       });
-      await point(page.getByText('Draft updated for 1 context. Production unchanged.', { exact: true }));
+      await point(page.getByText(/ draft now uses .+\. Production unchanged\./));
       await caption('Accepting writes a draft. The published context is unchanged until reviewed.');
       const openDraft = page.getByRole('link', { name: 'Open draft for support-agent' }).or(page.getByRole('button', { name: 'Open draft for support-agent' })).first();
       await settle();

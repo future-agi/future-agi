@@ -28,7 +28,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await mkdir(output, { recursive: true });
   const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Verify consumers', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
   const overflows = [];
-  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Use', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Rollback' };
+  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Install', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Rollback' };
   await page.goto('/dashboard/skills/contexts');
   await expect(page.getByRole('button', { name: 'Create agent context', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: /Search agent contexts/ })).toHaveCount(0);
@@ -88,7 +88,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
       const list = page.getByRole('list', { name: 'Linked skills' });
       await expect(list).toBeVisible();
       await expect(list.getByText('Follows production · locked v1', { exact: true }).first()).toBeInViewport();
-      await expect(list.getByRole('link', { name: 'Review update', exact: true })).toBeInViewport();
+      await expect(list.getByRole('link', { name: 'Check update', exact: true })).toBeInViewport();
       await expect(page.getByRole('table', { name: 'Linked skills' })).toHaveCount(0);
     }
     if (tab === 'context') {
@@ -106,7 +106,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
       await shot('context-use-mobile-command');
     }
     if (tab === 'links') {
-      await page.getByRole('link', { name: 'Review update', exact: true }).scrollIntoViewIfNeeded();
+      await page.getByRole('link', { name: 'Check update', exact: true }).scrollIntoViewIfNeeded();
       await shot('context-linked-skills-mobile-actions');
     }
     if (tab === 'context') {
@@ -119,7 +119,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   }
   await page.getByRole('button', { name: 'Copy apply command', exact: true }).scrollIntoViewIfNeeded();
   await shot('context-use-apply');
-  await page.getByRole('button', { name: 'Installation requirements', exact: true }).click();
+  await page.getByRole('button', { name: 'Before you install', exact: true }).click();
   await shot('context-use-details-open');
   // Network failures exercise the actual unavailable state, not a ?state shell.
   const inspectionRoute = `**/contexts/${draft.context_id}/versions/1/inspection/**`;
@@ -170,7 +170,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
     await page.goto(root);
     await expect(page.getByRole('tab', { name: 'Instructions', exact: true })).toHaveAttribute('aria-selected', 'true');
     await page.evaluate(value => { const runtime = window as Window & { __FUTURE_AGI_CONFIG__?: Record<string, unknown> }; runtime.__FUTURE_AGI_CONFIG__ = { ...runtime.__FUTURE_AGI_CONFIG__, VITE_PUBLIC_API_ORIGIN: value }; }, origin);
-    await page.getByRole('tab', { name: 'Use', exact: true }).click();
+    await page.getByRole('tab', { name: 'Install', exact: true }).click();
     if (origin.startsWith('https:')) {
       await expect(page.getByLabel('Context install plan command')).toContainText(origin);
       await page.getByRole('button', { name: 'Copy plan command', exact: true }).click();
@@ -209,7 +209,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await page.getByRole('button', { name: 'Prepare draft updates for 1 context', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
   await page.getByRole('button', { name: 'Apply selected updates to 1 context draft', exact: true }).click();
-  await expect(page.getByText('Draft updated for 1 context. Production unchanged.', { exact: true })).toBeVisible();
+  await expect(page.getByText(/ draft now uses .+\. Production unchanged\./)).toBeVisible();
   await shot('context-draft-updated');
   await page.goto(root);
   await expect(page.getByRole('button', { name: 'Resume your draft', exact: true })).toBeVisible();
@@ -251,7 +251,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await adminContext.addInitScript(id => sessionStorage.setItem('workspaceOrgId', id), owner.organizationId);
   const adminPage = await adminContext.newPage();
   await adminPage.goto(`${root}&tab=use`);
-  await expect(adminPage.getByRole('button', { name: 'Create credential', exact: true })).toBeVisible();
+  await expect(adminPage.getByRole('button', { name: 'Create key', exact: true })).toBeVisible();
   await expect(adminPage.getByRole('table', { name: 'Pilot credentials for this context' }).getByRole('row')).toHaveCount(2);
   await adminPage.screenshot({ path: `${output}/context-use-admin.png`, animations: 'disabled' });
   await adminContext.close();

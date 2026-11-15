@@ -26,13 +26,19 @@ it('makes choosing the non-production release explicit without changing the curr
   // Only the controller's exact inspection snapshot can change the command.
   expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--version 1');
 });
-it('names the steps in plain words and keeps environment variables and flags under Details', () => {
+it('names the steps in plain words and keeps environment variables, flags and requirements under one Before you install disclosure', () => {
   render(<ContextUsePanel {...props} />);
   expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['1. Choose your tool', '2. Create a read-only key', '3. Preview the changes', '4. Install']);
   expect(screen.queryByText(/Plan and inspect|Needs a key|Choose your client/)).not.toBeInTheDocument();
   expect(screen.queryByText(/set FI_CONTEXT_CREDENTIAL to your read-only key|--allow-preview opts in/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(screen.queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Installation requirements' })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Before you install' })).toHaveLength(1);
+  expect(screen.queryByText(/full digest/)).not.toBeInTheDocument();
+  expect(screen.getByText(/confirm the version number \(v1\) in Before you install/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Before you install' }));
   expect(screen.getByText(/set FI_CONTEXT_CREDENTIAL to your read-only key/)).toBeVisible();
+  expect(screen.getByText(/Pinned version\./)).toBeVisible();
   expect(screen.getByText(/--allow-preview opts in/)).toBeVisible();
 });
 it('keeps the copied commands complete, with the environment lines and the credential comment', async () => {
@@ -43,7 +49,7 @@ it('keeps the copied commands complete, with the environment lines and the crede
   await screen.findByText('Copied the complete plan command.');
   expect(writeText.mock.calls[0][0]).toContain("export FI_CONTEXT_ORIGIN='https://api.example.invalid'");
   expect(writeText.mock.calls[0][0]).toContain('--allow-preview');
-  expect(writeText.mock.calls[0][0]).toContain('# requires FI_CONTEXT_CREDENTIAL');
+  expect(writeText.mock.calls[0][0]).toContain('# needs your read-only key in FI_CONTEXT_CREDENTIAL');
 });
 it('holds back Copy for a viewer with the reason, and offers a request for an admin with no secret', async () => {
   access.isViewer = true;
