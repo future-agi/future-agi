@@ -222,7 +222,10 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             config_dict = json.loads(api_call_log_row.config)
             config_dict.update(
                 {
-                    "output": {"output": None, "reason": jev_error_message(e) or str(e)},
+                    "output": {
+                        "output": None,
+                        "reason": jev_error_message(e) or str(e),
+                    },
                 }
             )
             api_call_log_row.config = json.dumps(config_dict)
