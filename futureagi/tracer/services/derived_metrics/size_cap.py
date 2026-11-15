@@ -83,13 +83,13 @@ def pause_at_enrollment(lease, analytics, *, retention_days):
     Spans in the history window bound its rows from below (every span keeps a
     dependency row), counted only up to the limit + 1.
     """
-    from tracer.services.derived_metrics.backfill import (
-        _undecided,
-        history_window_spans,
-    )
+    from tracer.services.derived_metrics.backfill import history_window_spans
 
-    # Measured once, like enter_backfill: only while a version is enrolling.
-    if not _undecided(lease.project_id).exists():
+    # A history decision is not an admission receipt. Older workers may have
+    # decided every version yet repeatedly yielded before publishing a head.
+    # Recheck that no-head state too; otherwise it bypasses the capped release
+    # forever. Once a head exists, its actual stored receipts own this guard.
+    if MetricProjectRefresh.for_project(lease.project_id).head_manifest_id is not None:
         return False
     spans = history_window_spans(
         analytics,
