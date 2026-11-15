@@ -332,3 +332,45 @@ def test_erasure_remains_queued_if_initial_sql_cleanup_fails(tenants, policy, mo
     assert request.status == "queued" and request.completed_at is None
     # Even before the worker's retry, the durable intent denies poll/download.
     assert sql_service.snapshot(job)["result"] == {}
+
+
+def test_sql_database_failure_cannot_roll_back_a_queued_erasure(
+    tenants, policy, monkeypatch,
+):
+    from django.db import connection, transaction
+
+    from tracer.sql_workbench import metric_retention
+
+    (actor, project, _), _ = tenants
+    job = metric_job(actor, project, state="succeeded", result={"rows": [[1]]})
+
+    def database_error(*args, **kwargs):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 / 0")
+
+    monkeypatch.setattr(metric_retention, "invalidate_scope", database_error)
+    with transaction.atomic():
+        request = erase_metric_data(
+            organization_id=actor.organization_id,
+            project_id=project.pk,
+            scope_kind="project",
+        )
+    request.refresh_from_db()
+    assert request.status == "queued"
+    assert sql_service.snapshot(job)["result"] == {}
+
+
+def test_finality_projection_cannot_drop_winner_keys():
+    from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
+    from tracer.services.derived_metrics.storage import FIELD_VALUES
+
+    kwargs = {"org_id": uuid4(), "project_id": uuid4(), "predicate": "status = 'open'", "params": {}}
+    with pytest.raises(ValueError, match="complete winner keys"):
+        windowed_rows_select(FIELD_VALUES, None, columns=("bucket_start", "status"), **kwargs)
+    sql, _ = windowed_rows_select(
+        FIELD_VALUES, None, columns=(
+            *FIELD_VALUES.logical_key, "generation", FIELD_VALUES.version_column,
+            "bucket_start", "status", "is_deleted",
+        ), **kwargs,
+    )
+    assert "inputs" not in sql and "user_id" not in sql

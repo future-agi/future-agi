@@ -290,6 +290,7 @@ def windowed_rows_select(
     candidate_columns=None,
     frozen_overlay=None,
     key_relation=None,
+    columns=None,
     param_prefix="window",
 ):
     """Nominate from RAW history, collapse complete keys, then apply the window.
@@ -299,8 +300,20 @@ def windowed_rows_select(
     to X's candidates and is removed only by the final post-collapse predicate.
     Checkpoint, delta and frozen overlay histories all nominate and all receive
     the same correlated membership. Candidates never become Python literals.
+    A narrow projection must retain every winner key and ordering column.
     """
     table = _table(table)
+    if columns is not None:
+        columns = tuple(_sequence(columns))
+        required = {*table.logical_key, "generation", table.version_column}
+        if (
+            not columns
+            or len(set(columns)) != len(columns)
+            or set(columns) - set(table.columns)
+            or not required.issubset(columns)
+        ):
+            raise ValueError("window projection must preserve complete winner keys")
+    projection = "*" if columns is None else ", ".join(columns)
     branches, bound = committed_branches(
         table,
         manifest,
@@ -308,6 +321,7 @@ def windowed_rows_select(
         project_id=project_id,
         key_in=key_in,
         key_relation=key_relation,
+        columns=columns,
         param_prefix=param_prefix,
     )
     bound = merge_bindings(bound, params)
@@ -322,10 +336,10 @@ def windowed_rows_select(
         ctes.append(f"{param_prefix}_frozen AS ({overlay})")
         if key_relation is not None:
             fixed += f" AND ({key_relation.predicate(table)})"
-        branches.append(f"SELECT * FROM {param_prefix}_frozen WHERE {fixed}")
+        branches.append(f"SELECT {projection} FROM {param_prefix}_frozen WHERE {fixed}")
         bound = merge_bindings(bound, overlay_params, fixed_params)
     if not branches:
-        branches = [f"SELECT * FROM {table.name} WHERE 0"]
+        branches = [f"SELECT {projection} FROM {table.name} WHERE 0"]
     keys = _columns(
         table,
         candidate_columns

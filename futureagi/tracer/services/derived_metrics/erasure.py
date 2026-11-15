@@ -13,7 +13,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import structlog
-from django.db import connections
+from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -118,10 +118,13 @@ def erase_metric_data(
     from tracer.sql_workbench.metric_retention import invalidate_scope
 
     try:
-        invalidate_scope(organization_id, project_id)
+        # A database error must not poison a caller-owned transaction and roll
+        # back its outbox while the command reports that erasure was queued.
+        with transaction.atomic():
+            invalidate_scope(organization_id, project_id)
     except Exception as exc:
-        # The outbox is already durable. Readers deny this namespace immediately;
-        # the worker retries payload removal before it can record completion.
+        # Preserve the outbox. Readers deny its namespace once committed; the
+        # worker retries payload removal before it can record completion.
         structlog.get_logger(__name__).warning(
             "metric_sql_cleanup_pending", error_type=type(exc).__name__
         )

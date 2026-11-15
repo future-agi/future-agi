@@ -50,6 +50,7 @@ from tracer.services.derived_metrics.storage import BUCKET_TOTALS, FIELD_VALUES
 from tracer.services.derived_metrics.unit_reads import field_recipe
 
 QUARTER = timedelta(minutes=15)
+MAX_OPEN_BUCKETS = 4096
 NOUNS = {
     "conversation": "conversations",
     "span": "spans",
@@ -324,15 +325,28 @@ def open_buckets(store, metric, definition, manifest, start, end):
             "field_id": (definition.metric_id,),
             "field_version": (definition.version,),
         },
+        columns=(
+            *FIELD_VALUES.logical_key,
+            "generation",
+            FIELD_VALUES.version_column,
+            "bucket_start",
+            "status",
+            "is_deleted",
+        ),
         param_prefix="open_fields",
     )
     rows = _rows(
         store,
         f"SELECT bucket_start, count() AS units FROM ({fields}) "
         "WHERE is_deleted = 0 AND status = 'open' "
-        "GROUP BY bucket_start ORDER BY bucket_start LIMIT 4096",
+        f"GROUP BY bucket_start ORDER BY bucket_start LIMIT {MAX_OPEN_BUCKETS + 1}",
         params,
     )
+    if len(rows) > MAX_OPEN_BUCKETS:
+        raise MetricUnavailableError(
+            "metric_finality_unavailable",
+            "Too many unsettled buckets for this read. Choose a shorter window.",
+        )
     return {
         (
             row["bucket_start"]
@@ -402,7 +416,7 @@ class Finality:
         }
 
 
-def read_finality(store, metric, definition, manifest, window):
+def read_finality(store, metric, definition, manifest, window, *, include_start=None):
     """Finality of a pinned window, including history-mode windows.
 
     Without ``store`` only the calculated and settle bounds apply.
@@ -413,10 +427,11 @@ def read_finality(store, metric, definition, manifest, window):
     calculated, settled = terms
     end = min(window["window_end"], settled)
     opened = {}
-    if store is not None and window["window_start"] < end:
-        opened = open_buckets(
-            store, metric, definition, manifest, window["window_start"], end
-        )
+    start = window["window_start"]
+    if include_start is not None:
+        start = min(start, include_start)
+    if store is not None and start < end:
+        opened = open_buckets(store, metric, definition, manifest, start, end)
     return Finality(calculated, settled, opened, paused=_paused(manifest))
 
 
@@ -662,7 +677,14 @@ def _not_calculated_yet(stop, reason, message):
 
 
 def require_calculated_window(
-    definition, window, manifest=None, *, whole=False, store=None, metric=None
+    definition,
+    window,
+    manifest=None,
+    *,
+    whole=False,
+    store=None,
+    metric=None,
+    include_start=None,
 ):
     """Reject a window with no final bucket; return its Finality (or None).
 
@@ -686,7 +708,9 @@ def require_calculated_window(
         )
     if "window_end" not in window:
         return None
-    finality = read_finality(store, metric, definition, manifest, window)
+    finality = read_finality(
+        store, metric, definition, manifest, window, include_start=include_start
+    )
     if finality is None:
         return None
     nonfinal = finality.nonfinal(window)
@@ -724,33 +748,35 @@ def read_kpi(metric, data, *, store=None):
         "window_end": window["window_start"],
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
+        from tracer.services.derived_metrics.source_retention import window_retained
+
+        previous_available = window_is_calculated(
+            definition, previous
+        ) and window_retained(
+            metric.organization_id, previous["window_start"], manifest=manifest
+        )
+        # One complete-key proof covers both periods. The reported current
+        # window is unchanged; previous/open buckets never enter its totals.
         finality = require_calculated_window(
-            definition, window, manifest, store=store, metric=metric
+            definition,
+            window,
+            manifest,
+            store=store,
+            metric=metric,
+            include_start=previous["window_start"] if previous_available else None,
         )
         # The value is over the window's FINAL buckets only: never one past
         # the calculated or settle bound, nor one holding an open unit (a
         # long-open session must not freeze the rest of the window).
         exclude = finality.nonfinal(window) if finality else ()
         # The previous period is compared only if it is wholly final.
-        from tracer.services.derived_metrics.source_retention import window_retained
-
-        previous_final = (
-            window_retained(
-                metric.organization_id, previous["window_start"], manifest=manifest
-            )
-            and window_is_calculated(definition, previous)
-            and (
-                finality is None
-                or (
-                    previous["window_end"] <= finality.settled
-                    and not open_buckets(
-                        store,
-                        metric,
-                        definition,
-                        manifest,
-                        previous["window_start"],
-                        previous["window_end"],
-                    )
+        previous_final = previous_available and (
+            finality is None
+            or (
+                previous["window_end"] <= finality.settled
+                and not any(
+                    previous["window_start"] <= bucket < previous["window_end"]
+                    for bucket in finality.opened
                 )
             )
         )

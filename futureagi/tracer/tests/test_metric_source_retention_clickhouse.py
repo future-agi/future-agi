@@ -149,6 +149,8 @@ def test_history_kpi_and_trend_have_honest_native_finality_and_policy_guard(
     from tracer.models.derived_metric import DerivedMetric, DerivedMetricVersion
     from tracer.services.derived_metrics import reads, source_retention
     from tracer.services.derived_metrics.service import MetricUnavailableError
+    from tracer.services.derived_metrics.storage import FIELD_VALUES
+    from tracer.tests.test_derived_metric_publication_clickhouse import field_query
 
     settings.METRICS_ENABLED = 1
     now = timezone.now().replace(minute=0, second=0, microsecond=0)
@@ -182,6 +184,17 @@ def test_history_kpi_and_trend_have_honest_native_finality_and_policy_guard(
         ],
     )
     attempt = writer.begin(versions=[{"id": definition.pk, "metric_id": metric.pk}])
+    # The prior period has an open unit. Its proof must share the current read
+    # without contributing that unit to the current disclosure or comparison.
+    sql, params = field_query(
+        "previous-open", metric=metric.pk, start=now - timedelta(hours=3)
+    )
+    sql = sql.replace("'ok' AS status", "'open' AS status")
+    sql = sql.replace(
+        "defaultValueOfTypeName('UInt64') AS last_arrival_ns",
+        "toUInt64(%(arrival)s) AS last_arrival_ns",
+    )
+    writer.freeze(attempt, FIELD_VALUES, sql, {**params, "arrival": int(now.timestamp()) * 10**9})
     writer.seal(
         attempt,
         cursors={"watermark_ns": int((now - timedelta(hours=1)).timestamp()) * 10**9},
@@ -193,6 +206,8 @@ def test_history_kpi_and_trend_have_honest_native_finality_and_policy_guard(
     kpi = reads.read_kpi(metric, window, store=writer.store)
     assert kpi["partial"] and kpi["current"]["value"] == 7
     assert kpi["current"]["eligible_count"] == 1
+    assert kpi["previous"] is None and kpi["open_units"] == 0
+    assert "retention_floor" not in kpi["provenance"]
     trend = reads.read_trend(metric, {**window, "points": 8}, store=writer.store)
     assert trend["partial"] and trend["complete_through"] < now
     assert any(row["point_status"] == "not_calculated" for row in trend["results"])
@@ -338,3 +353,35 @@ def test_open_bucket_nomination_does_not_revive_closed_moved_or_deleted_rows(liv
     assert reads.open_buckets(writer.store, metric, definition, head, now, now + timedelta(hours=1)) == {now: 1}
     head = publish(now, opened=True, deleted=True)
     assert reads.open_buckets(writer.store, metric, definition, head, now, now + timedelta(hours=1)) == {}
+
+
+def test_finality_overflow_is_unavailable_not_a_truncated_proof(live_writer):
+    from types import SimpleNamespace
+
+    from tracer.services.derived_metrics import reads
+    from tracer.services.derived_metrics.service import MetricUnavailableError
+    from tracer.services.derived_metrics.storage import FIELD_VALUES
+
+    writer = live_writer
+    end = timezone.now().replace(minute=0, second=0, microsecond=0)
+    count = reads.MAX_OPEN_BUCKETS + 1
+    start = end - timedelta(minutes=15 * count)
+    definition = numeric_definition(uuid4())
+    attempt = writer.begin()
+    sql = default_row_select(FIELD_VALUES, {
+        "field_id": "toUUID(%(metric)s)", "field_version": "toUInt32(1)",
+        "level": "'conversation'", "unit_id": "concat('open-', toString(number))",
+        "bucket_start": "toDateTime(%(start)s, 'UTC') + toIntervalMinute(15 * number)",
+        "unit_start": "toDateTime64(%(start)s, 6, 'UTC') + toIntervalMinute(15 * number)",
+        "last_arrival_ns": "toUInt64(%(arrival)s)",
+        "status": "'open'",
+    }) + " FROM numbers(%(count)s)"
+    writer.freeze(attempt, FIELD_VALUES, sql, {
+        "metric": str(definition.metric_id), "start": start, "count": count,
+        "arrival": int(timezone.now().timestamp()) * 10**9,
+    })
+    writer.seal(attempt)
+    head = writer.stage_and_publish(attempt)
+    metric = SimpleNamespace(organization_id=writer.org_id, project_id=writer.lease.project_id)
+    with pytest.raises(MetricUnavailableError, match="Too many unsettled buckets"):
+        reads.open_buckets(writer.store, metric, definition, head, start, end)
