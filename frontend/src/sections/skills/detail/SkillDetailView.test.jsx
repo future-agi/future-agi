@@ -15,7 +15,9 @@ import { enqueueSnackbar } from "notistack";
 import VersionsTab from "../versions/VersionsTab";
 import SkillDetailView from "./SkillDetailView";
 
-const access = vi.hoisted(() => ({ isViewer: false }));
+const access = vi.hoisted(() => ({ isViewer: false, archived: null, dependents: { data: undefined } }));
+vi.mock("../contexts/ContextLibraryView", () => ({ useContextAuthoring: () => (access.archived ? { bindings: { archived: access.archived } } : null) }));
+vi.mock("src/api/skills/context-dependents", () => ({ useContextDependents: vi.fn(() => access.dependents) }));
 vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: access.isViewer, canWrite: !access.isViewer }) }));
 vi.mock("../sources/GitHubSourcePanel", () => ({ default: () => null, GitHubSourceStatus: () => null }));
 vi.mock("src/api/skills", () => ({
@@ -84,6 +86,7 @@ function show(search = "") {
   );
 }
 beforeEach(() => {
+  access.archived = null; access.dependents = { data: undefined };
   vi.clearAllMocks();
   access.isViewer = false;
   useSkill.mockReturnValue(success(skill));
@@ -154,11 +157,11 @@ describe("Skill detail route", () => {
       "tab=usage&version=2&path=references%2Fpolicy.md&source=shared",
     );
     fireEvent.click(
-      screen.getByRole("tab", { name: "Use", exact: true }),
+      screen.getByRole("tab", { name: "Install", exact: true }),
     );
     expect(screen.getByText("Install commands")).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Use", exact: true }),
+      screen.getByRole("tab", { name: "Install", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
   });
   it("falls back to Files for an unknown tab", () => {
@@ -384,5 +387,52 @@ describe("header shape in every state (UX iteration 3, LIB4)", () => {
     expect(screen.queryByRole("tab", { name: "Dependents" })).not.toBeInTheDocument();
     fireEvent.click(tab);
     expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=dependents");
+  });
+});
+
+describe("Archive confirm (UX iteration 4, LIB1)", () => {
+  const openArchive = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    return within(screen.getByRole("dialog"));
+  };
+  it("says there is no restore path here, and which label stops resolving", () => {
+    show();
+    const dialog = openArchive();
+    expect(dialog.getByText("Archive support-policy?")).toBeInTheDocument();
+    expect(dialog.getByText("Agents can no longer fetch it, including through labels.")).toBeInTheDocument();
+    expect(dialog.getByText("production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
+    expect(dialog.getByText("Restoring an archived skill isn't available in this workspace; contact support to restore it.")).toBeInTheDocument();
+  });
+  it("points to Archived skills when the workspace can restore, and drops the label line without labels", () => {
+    access.archived = { list: vi.fn() };
+    useSkill.mockReturnValue(success({ ...skill, labels: [] }));
+    show();
+    const dialog = openArchive();
+    expect(dialog.getByText("You can restore it from More → Archived skills.")).toBeInTheDocument();
+    expect(dialog.queryByText(/points at/)).not.toBeInTheDocument();
+    expect(dialog.queryByText(/isn't available in this workspace/)).not.toBeInTheDocument();
+  });
+});
+
+describe("header button weight (UX iteration 4, LIB3)", () => {
+  const edit = () => screen.getByRole("link", { name: "Resume your draft" });
+  const row = (overrides = {}) => ({ context_id: "c1", context_version: 2, labels: ["production"], requested: { label: "production" }, update_state: "update_available", ...overrides });
+  it.each([["files"], ["versions"], ["usage"], ["use"]])("stays contained on %s, where no panel has its own primary", (tab) => {
+    show(`?tab=${tab}`);
+    expect(edit()).toHaveClass("MuiButton-contained");
+  });
+  it("is outlined on Tests, which draws its own run button", () => {
+    show("?tab=tests");
+    expect(edit()).toHaveClass("MuiButton-outlined");
+  });
+  it("is outlined on Used by only when a context can be updated", () => {
+    access.dependents = { data: { results: [row()] } };
+    show("?tab=dependents");
+    expect(edit()).toHaveClass("MuiButton-outlined");
+    cleanup();
+    access.dependents = { data: { results: [row({ update_state: "current" }), row({ context_id: "c2", requested: { version: 1 } })] } };
+    show("?tab=dependents");
+    expect(edit()).toHaveClass("MuiButton-contained");
   });
 });

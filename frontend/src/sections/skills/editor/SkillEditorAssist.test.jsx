@@ -166,8 +166,11 @@ it('does not repopulate assistance after switching the session scope during prev
 it('does not expose paid generation when only text comparisons are enabled', async () => {
   api.assistEnabled = false;
   render(tree());
-  expect(await screen.findByText('AI drafting is off for this workspace')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled();
+  await screen.findByRole('button', { name: 'Publish', exact: true });
+  // Off for the workspace means absent, not a permanently disabled button with an explanation.
+  expect(screen.queryByText('AI drafting is off for this workspace')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Draft with AI' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Task and use / non-use boundary')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Generate proposal' })).not.toBeInTheDocument();
   expect(api.preview).not.toHaveBeenCalled();
   expect(api.create).not.toHaveBeenCalled();

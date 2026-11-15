@@ -1,5 +1,5 @@
 vi.mock('./useDraftChecks', () => ({ default: () => api.validation }));
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -399,4 +399,30 @@ it('explains the disabled publish action during a recheck', async () => {
   mount();
   expect(await screen.findByText('Waiting for checks…')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+});
+it('keeps the header buttons in place while checks re-run: one status slot holds the state', async () => {
+  api.validation = { current: true, pending: false };
+  const view = mount();
+  await screen.findByLabelText('File content');
+  const slot = () => document.querySelector('[data-slot="editor-status"]');
+  expect(slot()).toBeInTheDocument();
+  api.validation = { current: false, pending: true, checks: null };
+  view.refresh();
+  // The reason moves into the slot (still described by it); nothing is inserted between the buttons.
+  expect(within(slot()).getByText('Waiting for checks…')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toHaveAttribute('aria-describedby', within(slot()).getByText('Waiting for checks…').id);
+  expect(screen.getByRole('button', { name: 'Discard draft' }).nextElementSibling).toBe(screen.getByRole('button', { name: 'Publish', exact: true }));
+});
+it('shows no AI drafting controls or explanation when the workspace has it off', async () => {
+  api.assistEnabled = false;
+  mount();
+  await screen.findByLabelText('File content');
+  expect(screen.queryByRole('button', { name: 'Draft with AI' })).not.toBeInTheDocument();
+  expect(screen.queryByText('AI drafting is off for this workspace')).not.toBeInTheDocument();
+});
+it('keeps Draft with AI disabled with its tooltip when the feature is on but permission is missing', async () => {
+  api.skill = { data: { ...api.skill.data, permissions: { canRunTests: false } } };
+  mount();
+  await screen.findByLabelText('File content');
+  expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled();
 });

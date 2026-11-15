@@ -101,7 +101,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   return <>
   <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', pb: 2, flexShrink: 1 }}>
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
-    {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "inventory packet" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
+    {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "list of skills to import" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
     {plans.length > 0 && sourceSetupOpen && <Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(false)} sx={{ alignSelf: 'flex-start', ml: -1 }}>Back to review</Button>}
     {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Source" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
@@ -110,13 +110,13 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     </Stack>
     <Box hidden={plans.length > 0 && !sourceSetupOpen}><Stack spacing={1.5}>
     <Typography variant="s1">Bring skills from Langfuse or a local folder. Nothing is published until you review each one.</Typography>
-    <TechnicalDetails title="Supported formats and source identity"><Typography variant="s3">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Typography></TechnicalDetails>
+    <TechnicalDetails title="Supported formats"><Typography variant="s3">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. A local folder needs the list made with the command line; without it, a later import can&apos;t be matched to the same source.</Typography></TechnicalDetails>
     {kind === 'langfuse' && <Typography variant="s3" color="text.secondary">Use a compatible Langfuse exchange file (langfuse-skills-v1). Native Langfuse exports need converting first.{' '}<Link href="https://docs.futureagi.com/docs/skills/migration#before-migration" target="_blank" rel="noopener noreferrer">How to prepare the file</Link></Typography>}
     <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
       <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose export file</Button>
       <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose folder</Button>
     </Stack>
-    <TechnicalDetails title="CLI inventory"><Typography variant="s3">An inventory packet (skills-inventory --packet) holds every inventoried source, its identities and the proposed context. Choosing it previews them all.</Typography><Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose inventory packet</Button></TechnicalDetails>
+    <TechnicalDetails title="List made with the command line"><Typography variant="s3">A list made with the skills-inventory command (--packet) holds every source it found, where each came from, and the proposed context. Choosing it previews them all.</Typography><Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose list file</Button></TechnicalDetails>
     <input ref={packetInput} type="file" hidden accept="application/json,.json" aria-label="Inventory migration packet" disabled={busy} onChange={(event) => { const [file] = event.target.files; event.target.value = ''; if (file) previewPacket(file); }} />
     <input ref={upload} type="file" hidden multiple={kind === 'folder'} aria-label="Retained source files" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
     {/* Choosing a folder is itself the format choice; no separate selection is needed. */}

@@ -9,5 +9,5 @@ import ArchivedSkillsView from "src/sections/skills/library/ArchivedSkillsView";
 
 export default function ArchivedSkillsPage() {
   const composition = useContextAuthoring();
-  return <><Helmet><title>Archived skills</title></Helmet>{composition?.bindings.archived ? <ArchivedSkillsView {...composition.bindings.archived} scopeKey={composition.scopeKey} /> : <Stack spacing={2} sx={{ p: { xs: 2, md: 3 } }}><PageHeader title="Archived skills" /><CapabilityNotice title="Archived skills can't be browsed in this workspace yet" description="Archived skills are kept. Contact support to restore one." actions={<Button component={RouterLink} to={paths.dashboard.skills.root} variant="outlined">Back to skills</Button>} /></Stack>}</>;
+  return <><Helmet><title>Archived skills</title></Helmet>{composition?.bindings.archived ? <ArchivedSkillsView {...composition.bindings.archived} scopeKey={composition.scopeKey} /> : <Stack spacing={2} sx={{ p: { xs: 2, md: 3 } }}><PageHeader title="Archived skills" /><CapabilityNotice title="Archived skills can't be browsed in this workspace yet" description="Archived skills are kept, but restoring one isn't available in this workspace. Contact support to restore it." actions={<Button component={RouterLink} to={paths.dashboard.skills.root} variant="outlined">Back to skills</Button>} /></Stack>}</>;
 }

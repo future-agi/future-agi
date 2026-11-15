@@ -31,13 +31,6 @@ import { formatDate } from "src/utils/report-utils";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import { buildSkillTraceLink } from "src/sections/skills/utils/traces";
 
-const STATE_LABELS = {
-  current_only: "Current version fetched",
-  other_only: "Other version fetched",
-  mixed: "Both fetched",
-  not_seen: "Not seen after this move",
-  ambiguous: "Ordering uncertain",
-};
 const timestamp = (value) =>
   value
     ? new Date(value).toLocaleString(undefined, {
@@ -45,17 +38,52 @@ const timestamp = (value) =>
         timeZoneName: "short",
       })
     : "Ordering unavailable";
-// A consumer reads as a person or key, never "email · api" (UX iteration 3, LIB5).
-const CHANNELS = { api: "API key", mcp: "MCP", download: "Download" };
+// A consumer reads as the person's key or the integration's name, never "email · api" (UX iterations 3 and 4).
+const KINDS = { api: "API key", mcp: "MCP", download: "Download" };
+const KIND_PREFIX = /^(api key|mcp|download)\s*[·:\-–]\s*/i;
+const personName = (label) => /^[^@\s]+@[^@\s]+$/.test(label)
+  ? label.split("@")[0].split(/[._-]+/).filter(Boolean).map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ")
+  : label;
 const consumerName = (row) => {
-  const label = String(row.consumerLabel || "").trim();
-  const channel = CHANNELS[row.channel] || row.channel;
   const keyName = typeof row.keyName === "string" ? row.keyName.trim() : "";
   if (keyName && row.channel === "api") return keyName;
-  const person = /^[^@\s]+@[^@\s]+$/.test(label)
-    ? label.split("@")[0].split(/[._-]+/).filter(Boolean).map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ")
-    : label;
-  return `${person || "Unknown consumer"} · ${channel}`;
+  // The label sometimes already carries its kind ("API key · Maya Chen"); the kind is said once.
+  const person = personName(String(row.consumerLabel || "").replace(KIND_PREFIX, "").trim()) || "Unknown consumer";
+  const kind = KINDS[row.channel] || row.channel;
+  if (row.channel === "api") return /key$/i.test(person) ? person : `${person}'s API key`;
+  return `${person} · ${kind}`;
+};
+const versionList = (numbers) => {
+  const names = [...new Set(numbers)].sort((a, b) => a - b).map((number) => `v${number}`);
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+};
+// What a row says about the versions it fetched, in version numbers rather than a state name.
+const rowSummary = (row, target) => {
+  const others = row.versions.map((version) => version.version).filter((number) => number !== target.version);
+  if (row.state === "current_only") return `Got v${target.version}`;
+  if (row.state === "other_only") return `Still on ${versionList(others) || "another version"}`;
+  if (row.state === "mixed") return versionList(row.versions.map((version) => version.version)) || "More than one version";
+  if (row.state === "not_seen") return "Not seen after this move";
+  if (row.state === "ambiguous") return "Ordering uncertain";
+  return "Unknown observation";
+};
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+// The first line answers "is anyone still on the old version?" (UX iteration 4, LIB2); the counting caveats live in About this data.
+const adoptionLead = ({ skill, target, data, days }) => {
+  if (!target.promotedAt) return "Observed versions are shown without claiming adoption after this move.";
+  const { currentOnly, otherOnly, mixed, notSeen, ambiguous } = data.summary;
+  const stale = otherOnly + mixed;
+  const rest = [
+    notSeen > 0 && `${plural(notSeen, "consumer hasn't", "consumers haven't")} fetched since.`,
+    ambiguous > 0 && `${plural(ambiguous, "consumer", "consumers")} can't be placed before or after the move.`,
+  ].filter(Boolean);
+  if (stale > 0) {
+    const older = data.results.filter((row) => ["other_only", "mixed"].includes(row.state)).flatMap((row) => row.versions.map((version) => version.version)).filter((number) => number !== target.version);
+    return [`${plural(stale, "consumer still received", "consumers still received")} ${versionList(older) || "another version"} after production moved.`, ...rest].join(" ");
+  }
+  if (currentOnly === 0) return [`No fetches since production moved to v${target.version}.`, ...rest].join(" ");
+  if (rest.length === 0) return `Everyone who fetched ${skill.name} in the last ${days} days got v${target.version}.`;
+  return [`${plural(currentOnly, "consumer", "consumers")} got v${target.version} in the last ${days} days.`, ...rest].join(" ");
 };
 const dateInput = (value) => formatDate(value).replace(" ", "T");
 
@@ -240,7 +268,7 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
     <Section
       title={
         target
-          ? `Fetches since production moved to v${target.version}`
+          ? `Who is using v${target.version}`
           : "Production fetches"
       }
       actions={
@@ -298,7 +326,7 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
           />
         ) : (
           <>
-            <Typography variant="s1">{target.promotedAt ? `After production moved to v${target.version}, ${data.summary.mixed} ${data.summary.mixed === 1 ? 'observed consumer has' : 'observed consumers have'} fetched both the current and other versions in this window. ${data.summary.otherOnly} fetched only other versions.` : 'Observed versions are shown without claiming adoption after this move.'}</Typography>
+            <Typography variant="s1">{adoptionLead({ skill, target, data, days })}</Typography>
             {summary}
             {preview === "empty" || data.count === 0 ? (
               <EmptyState
@@ -314,7 +342,7 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
                   >
                     <TableHead>
                       <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                        <TableCell>API key</TableCell>
+                        <TableCell>Consumer</TableCell>
                         <TableCell>Versions fetched</TableCell>
                         <TableCell>Last fetch</TableCell>
                       </TableRow>
@@ -326,7 +354,7 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
                           key={`${row.consumerId}:${row.channel}`}
                           sx={{ height: ROW_HEIGHT.default }}
                         >
-                          <TableCell><Typography variant="s1" display="block">{consumerName(row)}</Typography><Typography variant="s3" display="block" color="text.secondary">{STATE_LABELS[row.state] || "Unknown observation"}</Typography></TableCell>
+                          <TableCell><Typography variant="s1" display="block">{consumerName(row)}</Typography><Typography variant="s3" display="block" color="text.secondary">{rowSummary(row, target)}</Typography></TableCell>
                           <TableCell>{row.versions.map((version) => <Typography key={version.versionId} variant="s3" component="div" title={version.versionId}>v{version.version} · <When value={version.lastAt} /></Typography>)}</TableCell>
                           <TableCell><When value={row.lastAt} /></TableCell>
                         </TableRow>
@@ -358,9 +386,9 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
             color="text.secondary"
             sx={{ fontVariantNumeric: "tabular-nums" }}
           >
-            {data.summary.currentOnly} current only ·{" "}
-            {data.summary.otherOnly} other only · {data.summary.mixed}{" "}
-            both · {data.summary.notSeen} not seen after move ·{" "}
+            {data.summary.currentOnly} on v{target.version} only ·{" "}
+            {data.summary.otherOnly} on other versions only · {data.summary.mixed}{" "}
+            on both · {data.summary.notSeen} not seen after the move ·{" "}
             {data.summary.ambiguous} ordering uncertain
           </Typography>}
           {details}
@@ -387,6 +415,10 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
                 </Alert>
               )}
             </>}
+            {target && data && <Typography variant="s3" color="text.secondary">
+              Only consumers seen in this window are counted. One that hasn&apos;t fetched lately may still be
+              running an older version.
+            </Typography>}
             <Typography variant="s3" color="text.secondary">
               Fetches show retrieval, not installation or successful use. One key
               may represent several processes, and each channel is counted separately. Historical timestamp ordering is best
