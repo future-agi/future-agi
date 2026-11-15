@@ -652,7 +652,6 @@ def test_draft_preview_project_scope_validation_and_unavailable_users(
     auth_client, observe_project, user, workspace
 ):
     from accounts.models.workspace import Workspace
-
     from tracer.models.project import Project
 
     definition = sentence(level="user", user_rule="any")

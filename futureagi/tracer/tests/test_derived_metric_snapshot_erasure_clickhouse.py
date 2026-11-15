@@ -33,7 +33,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture
 def capture_case(live_writer, workspace, observe_project, user, request, monkeypatch):
     from ee.usage.models.usage import PlanEntitlement
-
     from tfc.capabilities import retention as policy_adapter
     from tfc.licensing.types import DeploymentFlavor
 

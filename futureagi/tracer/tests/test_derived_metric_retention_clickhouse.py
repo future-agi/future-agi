@@ -1331,9 +1331,9 @@ def test_physical_expiry_waits_for_delayed_insert_drain_and_final_scrub(
 ):
     from threading import Event, Thread
 
-    from conftest import _ch_test_native_client
     from django.db import close_old_connections
 
+    from conftest import _ch_test_native_client
     from tracer.models.derived_metric import (
         MetricAttemptBatch,
         MetricErasureRequest,

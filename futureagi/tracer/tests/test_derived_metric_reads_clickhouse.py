@@ -539,7 +539,6 @@ def test_m10_complete_service_budget_with_source_retained_parts(
     (METRICS_MAX_DELTAS_BEFORE_COMPACTION's default), under the same budget.
     """
     from ee.usage.models.usage import PlanEntitlement
-
     from tfc.capabilities import retention as policy_adapter
     from tfc.licensing.types import DeploymentFlavor
     from tracer.services.derived_metrics.publication import committed_rows_select
