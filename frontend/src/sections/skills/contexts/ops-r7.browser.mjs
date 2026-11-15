@@ -53,7 +53,7 @@ function App() {
  let content;
  if (screen.startsWith('rollouts')) content = <ContextCampaignList query={{ data: { count: screen === 'rollouts-list' ? 1 : 0, results: screen === 'rollouts-list' ? [campaign] : [] }, refetch: () => {} }} availability={{}} enabled={screen !== 'rollouts-off'} state={params.get('state')} onOpen={() => {}} page={1} onPageChange={() => {}} />;
  else if (screen.startsWith('rollout-')) content = <ContextCampaignReview campaign={campaign} targets={targets} onAuthorize={async () => {}} onStatus={async () => {}} onRollback={async () => {}} selectedTarget={selected} onSelectTarget={setSelected} observations={{ data: {} }} />;
- else if (screen.startsWith('consumers')) content = <ContextConsumersView registrationAction={<Box><Button variant='outlined'>Register application target</Button></Box>} scopeKey='fixture' state={params.get('state') || 'ready'} data={{ results: cohort.map((row) => ({ ...row, binding: { ...row.binding, name: screen === 'consumers-long-name' ? row.binding.name.toLowerCase().replaceAll(' ', '-') + '-regional-runtime-with-a-long-deployment-identifier' : row.binding.name }, resolved: null, installed: null, discovered: null, observationAgeSeconds: 3.447751 })), asOf: '2026-11-13T01:46:04.943460Z', count: 2, page: 1, pageSize: 25 }} versionNumbers={{ 'release-1': 1, 'release-2': 2 }} onWindowChange={() => {}} onPageChange={() => {}} onRetry={() => {}} />;
+ else if (screen.startsWith('consumers')) content = <ContextConsumersView registrationAction={<Box><Button variant='outlined'>Connect an app</Button></Box>} scopeKey='fixture' state={params.get('state') || 'ready'} data={{ results: cohort.map((row) => ({ ...row, binding: { ...row.binding, name: screen === 'consumers-long-name' ? row.binding.name.toLowerCase().replaceAll(' ', '-') + '-regional-runtime-with-a-long-deployment-identifier' : row.binding.name }, resolved: null, installed: null, discovered: null, observationAgeSeconds: 3.447751 })), asOf: '2026-11-13T01:46:04.943460Z', count: 2, page: 1, pageSize: 25 }} versionNumbers={{ 'release-1': 1, 'release-2': 2 }} onWindowChange={() => {}} onPageChange={() => {}} onRetry={() => {}} />;
  else content = <J6RecoveryPanel contextId='context' contextName='Support policy' />;
  return <Box sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}><Typography variant='s3' color='text.secondary' sx={{ display: 'block', mb: 1.5 }}>Synthetic UI fixture · no repository writes or production changes</Typography>{content}</Box>;
 }
@@ -109,7 +109,7 @@ try {
       if (screen === 'consumers') { await page.getByText(/As of 13 Nov 2026, 01:46 UTC/).waitFor(); assert.equal(await page.getByText('Updated 3s ago', { exact: true }).count(), 2); }
       if (screen === 'recovery-candidates') {
         assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
-        assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);
+        assert.equal(await page.getByRole('button', { name: 'Technical details', exact: true }).count(), 1);
         await page.getByText('1 file changes, 1 stays the same. Linked skills keep their pinned versions.').waitFor();
       }
       if (screen === 'rollout-review') {
@@ -133,6 +133,7 @@ try {
       await page.screenshot({ path: path.join(output, name), animations: 'disabled' }); captures.push(name);
       if (screen === 'recovery-verify') {
         const threadName = `recovery-threads${theme === 'dark' ? '-dark' : ''}.png`;
+        await page.getByRole('button', { name: 'Advanced recovery', exact: true }).click();
         await page.getByText('Check apps that are mid-conversation', { exact: true }).evaluate((heading) => heading.scrollIntoView({ block: 'start' }));
         await page.screenshot({ path: path.join(output, threadName), animations: 'disabled' }); captures.push(threadName);
       }
@@ -158,7 +159,7 @@ try {
     if (screen === 'rollout-target-drawer') await page.getByRole('button', { name: 'Review target support-repository-01' }).click();
       if (screen === 'recovery-candidates') {
         assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
-        assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);
+        assert.equal(await page.getByRole('button', { name: 'Technical details', exact: true }).count(), 1);
         await page.getByText('1 file changes, 1 stays the same. Linked skills keep their pinned versions.').waitFor();
       }
       if (screen === 'rollout-review') {

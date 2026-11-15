@@ -77,7 +77,7 @@ it("names the release revision a rollback review is made against", () => {
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
   // The bound revision is visible without opening anything.
   expect(
-    screen.getByText(/Reviewed against release revision 7\./),
+    screen.getByText(/Reviewed against the current production release \(revision 7\)\./),
   ).toBeVisible();
 });
 
@@ -165,11 +165,11 @@ it("attaches only explicitly selected workspace evidence for the exact recovery 
   const evidence = { source: 'skills_text', sourceId: 'run-1', subjectId: 'ctx', candidateDigest: rollbackCandidate.digest, visibility: 'workspace', status: 'passed', annotationRevision: 4 };
   evidenceOptions = { data: { evidence: [evidence, { ...evidence, sourceId: 'other', candidateDigest: 'different' }, { ...evidence, sourceId: 'private', visibility: 'private' }] } };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getAllByRole('checkbox', { name: 'Attach Text comparison' })).toHaveLength(1);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
+  expect(screen.getAllByRole('checkbox', { name: 'Attach Answer check' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Answer check' }));
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
   expect(previewMutate).toHaveBeenCalledWith({ contextId: 'ctx', candidateVersionId: 'v1-id', evidence: [evidence], external_pipeline: null });
-  expect(screen.getByRole('checkbox', { name: 'Attach Text comparison' })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: 'Attach Answer check' })).toBeDisabled();
 });
 
 it("keeps evidence errors distinct from an empty test history and blocks incomplete review", () => {
@@ -202,7 +202,7 @@ it('retries the preview with the acknowledged annotation revision, not refreshed
   const evidence = { source: 'skills_text', sourceId: 'run-1', subjectId: 'ctx', candidateDigest: rollbackCandidate.digest, visibility: 'workspace', status: 'passed', annotationRevision: 4 };
   evidenceOptions = { data: { evidence: [evidence] } };
   const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Answer check' }));
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
   const original = previewMutate.mock.calls[0][0];
   previewState = { error: { requestSent: false } };
@@ -265,7 +265,7 @@ it('uses one exact-identity disclosure and a pressed release choice', () => {
   recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByRole('button', { name: 'Choose v1' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getAllByRole('button', { name: 'Exact identities', exact: true })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Technical details', exact: true })).toHaveLength(1);
   expect(screen.queryByText(/0 removed|0 sources retired/)).toBeNull();
   expect(screen.getByRole('checkbox', { name: 'I reviewed everything v1 contains, including linked skill versions and files left out.' })).not.toBeChecked();
 });
@@ -324,7 +324,9 @@ it("leads the rollback review with its consequence and keeps the descriptor byte
   expect(within(files).getByText("Context settings (generated)")).toBeVisible();
   expect(within(files).getAllByText("Context settings (generated)")).toHaveLength(1);
   expect(within(files).getByRole("cell", { name: ".futureagi/context.json", exact: true })).toBeVisible();
-  expect(screen.getByText(/is the context settings file; it is generated from the linked skill versions/)).toBeVisible();
+  // One short line under the table says what differs, instead of a paragraph before it.
+  expect(screen.getByText(/Only skills\/refund-policy\/policy\.md differs\. The generated settings file changes with it\./)).toBeVisible();
+  expect(screen.queryByText(/is the context settings file/)).toBeNull();
   expect(screen.getAllByText("Earlier version")[0]).toBeVisible();
   expect(screen.queryByText("Lower-number rollback")).toBeNull();
   const readable = screen.getByLabelText("skills/refund-policy/policy.md change from production");
@@ -383,9 +385,10 @@ it('offers the canonical release review for a newer publication without calling 
   recovery = { cohort: [], releaseRevision: 1, candidates: [{ ...rollbackCandidate, isProduction: true, eligible: false }, { ...rollbackCandidate, id: 'v2-id', number: 2 }] };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText("v1 is the only released version, so there's nothing to roll back to yet.")).toBeVisible();
-  const link = new URL(screen.getByRole('link', { name: 'Request release review for v2' }).href);
-  expect(link.searchParams.get('candidate')).toBe('v2-id');
-  expect(link.searchParams.get('label')).toBe('production');
+  // The page header carries "Request release review"; the body keeps the sentence but not a second button.
+  expect(screen.getByText('To change production, request a release review for v2.')).toBeVisible();
+  expect(screen.queryByRole('link', { name: /Request release review/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Request release review/ })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Submit rollback for review' })).toBeNull();
 });
 
@@ -403,6 +406,8 @@ it('keeps restore copy beside the commands and disabled until a full commit is e
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  expect(screen.queryByLabelText('Last reviewed commit')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Advanced recovery' }));
   const copy = screen.getByRole('button', { name: 'Copy restore commands' });
   expect(copy).toBeDisabled();
   fireEvent.change(screen.getByLabelText('Last reviewed commit'), { target: { value: 'a'.repeat(40) } });
@@ -428,7 +433,7 @@ it('names the version to roll back to in plain words and keeps the review-releas
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText('Roll back to: v1 (suggested)')).toBeVisible();
   expect(screen.queryByText(/Recovery release/)).toBeNull();
-  expect(screen.getByText(/Reviewed against release revision 7\./)).toBeVisible();
+  expect(screen.getByText(/Reviewed against the current production release \(revision 7\)\./)).toBeVisible();
   expect(screen.getByRole('table', { name: 'Recovery releases' })).toBeVisible();
 });
 
@@ -441,6 +446,10 @@ it('uses plain words for the application steps, the CLI and the reviewer check',
   expect(screen.getByText(/The reviewer's access is checked when you submit\./)).toBeVisible();
   expect(screen.queryByText(/review authority/)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  // The credential stays in the main flow; the commit field and thread steps sit behind Advanced recovery.
+  expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
+  expect(screen.queryByText('Check apps that are mid-conversation')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Advanced recovery' }));
   expect(screen.getByText('Check apps that are mid-conversation')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Mid-conversation checks' })).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByText('Review application threads')).toBeNull();
@@ -481,4 +490,57 @@ it('keeps the four release columns the phone card is built from', () => {
   const cells = within(table).getAllByRole('row')[2].querySelectorAll('td');
   expect(cells).toHaveLength(4);
   expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Release', 'Eligibility', 'Linked skills', 'Choose']);
+});
+
+it('shows recovery progress as the numbered three-step stepper with the current step marked', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  const steps = within(screen.getByRole('list', { name: 'Recovery progress' })).getAllByRole('listitem');
+  expect(steps.map((item) => item.textContent)).toEqual(['1Request', '2Approve', '3Confirm apps updated']);
+  expect(steps.map((item) => item.getAttribute('aria-current'))).toEqual(['step', null, null]);
+});
+
+it('keeps the reviewer select full width before and after the request is prepared', () => {
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, lastReleaserId: 'u3', candidates: [rollbackCandidate] };
+  reviewers = [{ id: 'u3', name: 'Releaser' }];
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
+  const picker = () => screen.getByRole('combobox', { name: 'Reviewer' }).closest('.MuiFormControl-root');
+  expect(picker()).toHaveClass('MuiFormControl-fullWidth');
+  previewState = { data: { fingerprint: 'fp', packet: { p: 1 } } };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
+  expect(picker()).toHaveClass('MuiFormControl-fullWidth');
+});
+
+it('lists changed files first, shows six rows and keeps the rest behind "Show N more files" without an inner scroll', () => {
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, candidates: [rollbackCandidate] };
+  const unchanged = Array.from({ length: 8 }, (_, index) => ({ path: `skills/a-${index}/SKILL.md`, status: 'unchanged', sizeBytes: 10, sha256: `u${index}` }));
+  closureData = {
+    rows: [...unchanged, { path: 'skills/refund-policy/SKILL.md', status: 'changed', sizeBytes: 10, sha256: 'c' }],
+    changes: [{ path: 'skills/refund-policy/SKILL.md', status: 'changed', lines: [{ kind: 'removed', text: '45 days' }, { kind: 'added', text: '30 days' }] }],
+  };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
+  const files = screen.getByRole('table', { name: 'Recovery closure files' });
+  expect(within(files).getAllByRole('row')).toHaveLength(7);
+  // The changed file is never hidden under the fold.
+  expect(within(files).getByRole('cell', { name: 'skills/refund-policy/SKILL.md', exact: true })).toBeVisible();
+  expect(files.closest('.MuiTableContainer-root')).not.toHaveStyle({ maxHeight: '240px' });
+  fireEvent.click(screen.getByRole('button', { name: 'Show 3 more files' }));
+  expect(within(files).getAllByRole('row')).toHaveLength(10);
+  expect(within(files).getByRole('cell', { name: 'skills/a-7/SKILL.md', exact: true })).toBeVisible();
+  expect(screen.getByText('Only skills/refund-policy/SKILL.md differs.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Show fewer files' })).toHaveAttribute('aria-expanded', 'true');
+});
+
+it('names evidence in plain words and keeps the revision the review is bound to in view', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  const base = { subjectId: 'ctx', candidateDigest: rollbackCandidate.digest, visibility: 'workspace', status: 'passed', annotationRevision: 4 };
+  evidenceOptions = { data: { evidence: [{ ...base, source: 'skills_text', sourceId: 'run-1' }, { ...base, source: 'simulation_native', sourceId: 'run-2' }] } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByRole('checkbox', { name: 'Attach Answer check' })).toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: 'Attach Application test' })).toBeInTheDocument();
+  expect(screen.queryByText(/Text comparison|Application verification/)).toBeNull();
+  expect(screen.getByText('Reviewed against the current production release (revision 7). If production changes, review and acknowledge the rollback again.')).toBeVisible();
 });
