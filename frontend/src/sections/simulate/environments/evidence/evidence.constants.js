@@ -235,6 +235,8 @@ export const EVIDENCE_COPY = {
       "These changes can't be made live yet: the environment hasn't been prepared for them.",
     chat_working:
       "Chat is still working on this environment; add when it finishes.",
+    evidence_import_not_found:
+      "This import was discarded, so nothing was added.",
   },
   genericError: "Something went wrong. Try again in a moment.",
   // The environment's imports a person can still finish (the Scenarios tab).
