@@ -121,7 +121,7 @@ ConsumerRows.propTypes = { data: PropTypes.object.isRequired, windowDays: PropTy
 export default function ContextConsumersView({ scopeKey, state: resolvedState = 'unavailable', data, windowDays = 7, onWindowChange, onPageChange, onRetry, versionNumbers, registrationAction }) {
   const preview = new URLSearchParams(window.location.search).get('state');
   const state = resolvedState === 'ready' && ['loading', 'error', 'empty', 'filtered-empty', 'off', 'denied'].includes(preview) ? preview : resolvedState;
-  return <Section title="Consumers">
+  return <Section title="Connected apps">
     {!scopeKey || ['denied', 'forbidden'].includes(state) ? <ErrorState title="You cannot view these consumers" />
       : state === 'loading' ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" />
         : state === 'error' ? <ErrorState detail="Delivery status is unknown until this loads." title="Couldn't load consumers" onRetry={onRetry} />

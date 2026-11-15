@@ -219,7 +219,7 @@ it('explains label movement and keeps the release write bound to its reviewed id
   const packet = { subjectKind: 'agent_context', candidateVersionId: 'v2', candidateDigest: 'digest', evidence: [], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
   render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true }} request={{ id: 'request', name: 'support-agent', revision: 3, status: 'approved' }} permissions={{ canExecute: true }} reviewedIdentity="3:fp" onExecute={execute} />);
   fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
-  expect(screen.getByText("Production for support-agent will point to v2. Apps that follow production pick it up the next time they fetch it; check Consumers to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.")).toBeVisible();
+  expect(screen.getByText("Production for support-agent will point to v2. Apps that follow production pick it up the next time they fetch it; check Connected apps to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.")).toBeVisible();
   expect(execute).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Move production' }));
   await waitFor(() => expect(execute).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request', revision: 3, expectedFingerprint: 'fp' })));

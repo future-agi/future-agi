@@ -500,7 +500,7 @@ export default function ReleaseReviewBody({
       <Stack spacing={1.5} sx={{ minWidth: 0 }}>
         <Stack spacing={0.5}>
           <Typography variant="s1" sx={{ fontWeight: 600 }}>{packet.transition.label.charAt(0).toUpperCase() + packet.transition.label.slice(1)} moves {packet.transition.expectedVersion == null ? 'from no release' : `v${packet.transition.expectedVersion}`} → v{packet.transition.version}</Typography>
-          <Typography variant="s3" color="text.secondary">Production stays unchanged until approval and release. Check Consumers to confirm delivery.</Typography>
+          <Typography variant="s3" color="text.secondary">Production stays unchanged until approval and release. Check {isContext ? 'Connected apps' : 'Consumers'} to confirm delivery.</Typography>
         </Stack>
         <SummaryTable label="Release summary" rows={[
           { label: 'Evidence', value: evidenceFact },

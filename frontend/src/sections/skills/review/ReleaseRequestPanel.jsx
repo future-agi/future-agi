@@ -383,7 +383,7 @@ function PacketActions({
         }}
         closeDisabled={operation.busy}
         title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
-        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check Consumers to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}
+        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check ${packet.subjectKind === 'agent_context' ? 'Connected apps' : 'Consumers'} to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}
         action={
           <Button
             variant="contained" color="primary"
