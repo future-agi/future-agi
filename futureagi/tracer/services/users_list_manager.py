@@ -581,7 +581,9 @@ class UsersListManager:
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id or UserListQueryBuilderV2._is_output_filter(item):
                 continue
-            if UserListQueryBuilderV2.native_span_dimension(item):
+            if UserListQueryBuilderV2.native_span_dimension(
+                item
+            ) or UserListQueryBuilderV2.is_native_tag_filter(item):
                 native_dimension_leaves.append((filter_index, item))
                 continue
             attribute_key = str(column_id)
@@ -1493,6 +1495,7 @@ class UsersListManager:
                 and not UserListQueryBuilderV2._is_relation_filter(item)
                 and str(item.get("column_id") or item.get("columnId")) == key
                 and not UserListQueryBuilderV2._is_output_filter(item)
+                and not UserListQueryBuilderV2.is_native_tag_filter(item)
             }.values()
         )
         if len(items) != 1:
@@ -2143,7 +2146,9 @@ class UsersListManager:
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id or UserListQueryBuilderV2._is_output_filter(item):
                 continue
-            if UserListQueryBuilderV2.native_span_dimension(item):
+            if UserListQueryBuilderV2.native_span_dimension(
+                item
+            ) or UserListQueryBuilderV2.is_native_tag_filter(item):
                 continue
             if (
                 column_id == "eval_score"
@@ -2171,7 +2176,9 @@ class UsersListManager:
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id:
                 continue
-            if UserListQueryBuilderV2.native_span_dimension(item):
+            if UserListQueryBuilderV2.native_span_dimension(
+                item
+            ) or UserListQueryBuilderV2.is_native_tag_filter(item):
                 if not self._native_dimension_matches(
                     row=row, filter_index=filter_index
                 ):
