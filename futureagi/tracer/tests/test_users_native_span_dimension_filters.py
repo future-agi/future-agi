@@ -179,7 +179,7 @@ def test_native_leaf_is_the_users_graphs_own_membership_sql(
 
     def renamed(text):
         text = text.replace("user_member", "native_leaf_3")
-        if column_id == "trace_name" and "project_ids" in scope:
+        if column_id == "trace_name" and scope.get("project_ids"):
             text = list_root_scope(text)
         return text
 
@@ -196,7 +196,7 @@ def test_native_leaf_is_the_users_graphs_own_membership_sql(
         assert "AND start_time < %(end_date)s" in flags[0]
         expected_scope = (
             "project_id IN %(project_ids)s"
-            if "project_ids" in scope
+            if scope.get("project_ids")
             else "project_id = %(project_id)s"
         )
         assert f"PREWHERE {expected_scope}" in flags[0]
