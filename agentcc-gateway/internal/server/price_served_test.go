@@ -68,7 +68,7 @@ func TestChatCostFollowsTheServingProvider(t *testing.T) {
 			}
 			cost := costplugin.New(true, db.Load, nil, nil)
 			srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, store, nil)
-			cost.SetPriceTables(srv.PriceTableName)
+			cost.SetPriceTables(srv.ServedPriceTableName)
 			srv.ready.Store(true)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gemini-4-argon","messages":[{"role":"user","content":"hi"}]}`))

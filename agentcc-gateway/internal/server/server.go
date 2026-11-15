@@ -73,10 +73,10 @@ type Server struct {
 	ready            atomic.Bool
 }
 
-// PriceTableName is the name the price table keys a provider's models under;
-// see Handlers.priceTableName.
-func (s *Server) PriceTableName(orgID, providerID string) string {
-	return s.handlers.priceTableName(orgID, providerID)
+// ServedPriceTableName is the name the price table keys the models of the
+// provider that served rc under; see Handlers.servedPriceTableName.
+func (s *Server) ServedPriceTableName(rc *models.RequestContext) string {
+	return s.handlers.servedPriceTableName(rc)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica

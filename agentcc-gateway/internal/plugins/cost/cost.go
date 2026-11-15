@@ -54,7 +54,7 @@ type Plugin struct {
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
-	priceTables      func(orgID, providerID string) string
+	priceTables      func(rc *models.RequestContext) string
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -70,9 +70,9 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 	}
 }
 
-// SetPriceTables gives the plugin the name the price table keys a provider's
-// models under, as the provider that served the request states it.
-func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
+// SetPriceTables gives the plugin the name the price table keys the models of
+// the provider that served rc under, as that provider states it.
+func (p *Plugin) SetPriceTables(f func(rc *models.RequestContext) string) {
 	p.priceTables = f
 }
 
@@ -255,7 +255,7 @@ func (p *Plugin) tableName(rc *models.RequestContext) string {
 	if p.priceTables == nil || rc.Provider == "" {
 		return ""
 	}
-	return p.priceTables(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
+	return p.priceTables(rc)
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

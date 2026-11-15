@@ -16,7 +16,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// The name comes from the provider that serves the request, whatever its ID:
+// Model listings, where nothing is served, take the name from the provider
+// that would serve the request, whatever its ID:
 // the org's own enabled provider first, else the config.yaml provider. The
 // org's name comes from its config, so it is the same before and after the
 // org's first request builds its provider.
@@ -58,7 +59,7 @@ func TestPriceTableNameComesFromTheProvider(t *testing.T) {
 	check := func(when string) {
 		t.Helper()
 		for _, tc := range cases {
-			if got := srv.PriceTableName(tc.orgID, tc.providerID); got != tc.want {
+			if got := srv.handlers.priceTableName(tc.orgID, tc.providerID); got != tc.want {
 				t.Errorf("%s: PriceTableName(%q, %q) = %q, want %q", when, tc.orgID, tc.providerID, got, tc.want)
 			}
 		}
@@ -104,7 +105,7 @@ func TestChatCostOnAGeminiProviderOfAnyName(t *testing.T) {
 	}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	srv.ready.Store(true)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gemini-4-argon","messages":[{"role":"user","content":"hi"}]}`))

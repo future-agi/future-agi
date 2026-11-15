@@ -963,6 +963,29 @@ func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provide
 	return h.registry.GetProvider(rc.Provider)
 }
 
+// metadataPriceTable carries the price-table name of the provider that served
+// the request. Chat sets it where the successful instance is known, since
+// retries and failover can switch instances. Other handlers leave it unset and
+// servedPriceTableName derives it.
+const metadataPriceTable = "price_table"
+
+// pinPriceTable records the price-table name of p, the instance that served rc.
+func pinPriceTable(rc *models.RequestContext, p providers.Provider) {
+	rc.Metadata[metadataPriceTable] = providers.PriceTableName(p)
+}
+
+// servedPriceTableName is the name the price table keys the models of the
+// provider that served rc under. It follows the instance that served, never
+// the org's config, which can differ from it (an internal key keeps the base
+// provider) and can change while the request runs.
+func (h *Handlers) servedPriceTableName(rc *models.RequestContext) string {
+	if name, ok := rc.Metadata[metadataPriceTable]; ok {
+		return name
+	}
+	p, _ := h.servingProvider(rc)
+	return providers.PriceTableName(p)
+}
+
 // resolveTimeout returns the effective timeout for a request.
 // Priority: request header > the org's model timeout > config.yaml model
 // timeout > server default, and never above server.max_request_timeout.
@@ -1452,6 +1475,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
 		if err == nil {
+			pinPriceTable(rc, provider)
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1473,6 +1497,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
+				pinPriceTable(rc, fbProvider)
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1534,6 +1559,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				return err
 			}
 			servingProvider = p
+			pinPriceTable(rc, p)
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1566,6 +1592,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
+					pinPriceTable(rc, fbProvider)
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1647,6 +1674,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
+		pinPriceTable(rc, callProvider)
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
@@ -2438,10 +2466,12 @@ func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models
 }
 
 // priceTableName is the name the price table keys a provider's models under,
-// as the provider that serves an org's request states it: the org's own
+// as the provider that would serve an org's request states it: the org's own
 // provider when the org has that provider enabled, else the config.yaml
 // provider with that ID. The org's name comes from its config, not from a
 // built instance, which exists only after the org's first request through it.
+// It is for model discovery, where nothing is served; costing uses
+// servedPriceTableName.
 func (h *Handlers) priceTableName(orgID, providerID string) string {
 	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
 		if cfg := h.tenantStore.Get(orgID); cfg != nil {
