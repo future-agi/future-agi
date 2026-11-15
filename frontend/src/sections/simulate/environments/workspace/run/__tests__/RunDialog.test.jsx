@@ -420,7 +420,7 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("keeps a pre-change run's other versions when its agent can't be picked", async () => {
@@ -439,7 +439,7 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("drops only the agent when the server refuses a re-run's agent pick", async () => {
@@ -467,7 +467,7 @@ describe("RunDialog", () => {
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("falls back to every default when the kept versions are refused too", async () => {
@@ -581,7 +581,7 @@ describe("RunDialog", () => {
     // The default suite runs the server's current list, so no count is promised.
     expect(screen.getByText("Runs all scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null);
   });
 
   it("runs the default suite's own scenarios with versioning on, even before the drafts are known", async () => {
@@ -589,7 +589,12 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
     expect(screen.getByText("Runs all 3 scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2", "k3"], DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2", "k3"],
+      DEFAULTS,
+      null,
+    );
   });
 
   it("says unsaved changes aren't part of the run", () => {
