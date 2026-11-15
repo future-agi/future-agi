@@ -213,6 +213,58 @@ class CheckpointRestore(ContextSerializer):
     expected_digest = Digest()
 
 
+class ArchivedSkillLabel(ContextSerializer):
+    name = s.CharField()
+    version = Integer(min_value=1)
+
+
+class ArchivedSkillSummary(ContextSerializer):
+    id = s.UUIDField()
+    kind = s.ChoiceField(choices=["skill", "agent_context"])
+    name = s.CharField()
+    description = s.CharField(allow_blank=True)
+    tags = s.ListField(child=s.CharField())
+    latest_version = Integer(min_value=1, allow_null=True)
+    release_revision = Integer(min_value=0)
+    security_revision = Integer(min_value=0)
+    protected_label_names = s.ListField(child=s.CharField())
+    archived = s.BooleanField()
+
+
+class ArchivedSkill(ArchivedSkillSummary):
+    archived_at = s.DateTimeField(allow_null=True)
+    labels = ArchivedSkillLabel(many=True)
+
+
+class ArchivedSkillPage(ContextSerializer):
+    results = ArchivedSkill(many=True)
+    count = Integer(min_value=0)
+    page = Integer(min_value=1)
+    page_size = Integer(min_value=1, max_value=100)
+    total_pages = Integer(min_value=0)
+
+
+class RetainedLabel(ArchivedSkillLabel):
+    version_id = s.UUIDField()
+    digest = Digest()
+    is_protected = s.BooleanField()
+
+
+class RestoreReview(ContextSerializer):
+    resource = ArchivedSkillSummary()
+    retained_labels = RetainedLabel(many=True)
+    review_fingerprint = Digest()
+    name_collision = s.BooleanField()
+
+
+class RestoreInput(ContextSerializer):
+    expected_release_revision = Integer(min_value=0)
+    expected_review_fingerprint = s.CharField(trim_whitespace=False)
+    note = s.CharField(
+        max_length=2000, allow_blank=True, default="", trim_whitespace=False
+    )
+
+
 class SpendPolicyInput(ContextSerializer):
     revision = Integer(min_value=0)
     enabled = s.BooleanField()

@@ -1,12 +1,72 @@
-"""Serializer-driven workspace spending and private checkpoint entry points."""
+"""Serializer-driven workspace spending, archive and checkpoint recovery routes."""
 
 from model_hub.serializers import skills_hub_integration as s
-from model_hub.serializers.skills_hub_r3 import SpendPolicyInput
+from model_hub.serializers.skills_hub_r3 import (
+    ArchivedSkillPage,
+    ArchivedSkillSummary,
+    RestoreInput,
+    RestoreReview,
+    SpendPolicyInput,
+)
 from model_hub.serializers.skills_hub_v12 import PageQuery
-from model_hub.services.skills_hub.r3 import draft_recovery, spend_policy
+from model_hub.services.skills_hub.r3 import (
+    draft_recovery,
+    legacy_recovery,
+    spend_policy,
+)
 from model_hub.services.skills_hub.v12.types import ResourceKind
 from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, header_uuid
 from model_hub.views.skills_hub import SkillsView
+
+
+class ArchivedSkillsView(SkillsView):
+    private_resource = True
+
+    @contract(ArchivedSkillPage, query=PageQuery)
+    def get(self, request):
+        return self.output(
+            request,
+            ArchivedSkillPage,
+            legacy_recovery.list_archived_skills(
+                principal=request.skill_principal,
+                kind="skill",
+                **request.validated_query_data,
+            ),
+        )
+
+
+class ArchivedSkillRestoreReviewView(SkillsView):
+    private_resource = True
+
+    @contract(RestoreReview)
+    def get(self, request, resource_id):
+        return self.output(
+            request,
+            RestoreReview,
+            legacy_recovery.review_unarchive(
+                principal=request.skill_principal,
+                resource_id=resource_id,
+                kind="skill",
+            ),
+        )
+
+
+class ArchivedSkillRestoreView(SkillsView):
+    private_resource = True
+
+    @contract(ArchivedSkillSummary, body=RestoreInput, manual_parameters=[IDEMPOTENCY])
+    def post(self, request, resource_id):
+        return self.output(
+            request,
+            ArchivedSkillSummary,
+            legacy_recovery.unarchive_resource(
+                principal=request.skill_principal,
+                resource_id=resource_id,
+                kind="skill",
+                idempotency_key=header_uuid(request, "Idempotency-Key"),
+                **request.validated_data,
+            ),
+        )
 
 
 class SpendPolicyView(SkillsView):

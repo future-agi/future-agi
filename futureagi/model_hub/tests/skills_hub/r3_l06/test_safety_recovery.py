@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
 
 from accounts.models import OrgApiKey
 from model_hub.models.skills_hub import HubSkill, HubSkillLabel
@@ -119,7 +120,9 @@ def test_original_uuid_recovery_collision_policy_cas_and_replay(
     )
     HubSkillLabel.objects.create(skill=skill, name="production", version=version)
     HubSkill._base_manager.filter(pk=skill.pk).update(
-        deleted=True, protected_label_names=["production"]
+        deleted=True,
+        deleted_at=timezone.now(),
+        protected_label_names=["production"],
     )
     review = review_unarchive(principal=principal, resource_id=skill.pk, kind=kind)
     assert review["retained_labels"][0]["is_protected"]
@@ -150,6 +153,9 @@ def test_original_uuid_recovery_collision_policy_cas_and_replay(
     assert result["id"] == str(skill.pk)
     assert result["release_revision"] == review["resource"]["release_revision"] + 1
     assert result["protected_label_names"] == ["production"]
+    skill.refresh_from_db()
+    assert skill.deleted is False
+    assert skill.deleted_at is None
     assert unarchive_resource(**request) == result
     assert skill.versions.get(pk=version.pk).digest == version.digest
     assert skill.labels.get(name="production").version_id == version.pk

@@ -32,6 +32,17 @@ def _summary(skill: HubSkill) -> dict:
     }
 
 
+def _archived_row(skill: HubSkill) -> dict:
+    return {
+        **_summary(skill),
+        "archived_at": skill.deleted_at.isoformat() if skill.deleted_at else None,
+        "labels": [
+            {"name": row.name, "version": row.version.number}
+            for row in sorted(skill.labels.all(), key=lambda row: row.name)
+        ],
+    }
+
+
 def list_archived_skills(
     *,
     principal: SkillPrincipal,
@@ -47,13 +58,15 @@ def list_archived_skills(
         or not 1 <= page_size <= 100
     ):
         raise SkillsHubError("invalid_selector", "Invalid page.", status=400)
-    rows = resources_for_scope(
-        scope=principal.scope, kind=kind, archived=True
-    ).order_by("name", "id")
+    rows = (
+        resources_for_scope(scope=principal.scope, kind=kind, archived=True)
+        .prefetch_related("labels__version")
+        .order_by("name", "id")
+    )
     count = rows.count()
     return {
         "results": [
-            _summary(row) for row in rows[(page - 1) * page_size : page * page_size]
+            _archived_row(row) for row in rows[(page - 1) * page_size : page * page_size]
         ],
         "count": count,
         "page": page,
@@ -176,11 +189,13 @@ def unarchive_resource(
                 )
             # Unarchive is not quarantine clearance. Blocked labels remain blocked.
             skill.deleted = False
+            skill.deleted_at = None
             skill.release_revision += 1
             skill.updated_by_id = principal.user_id
             skill.save(
                 update_fields=[
                     "deleted",
+                    "deleted_at",
                     "release_revision",
                     "updated_by",
                     "updated_at",

@@ -35,6 +35,28 @@ def test_evidence_source_paths_are_mounted(suffix):
     assert str(match.kwargs["source_id"]) == "11111111-1111-4111-8111-111111111111"
 
 
+@pytest.mark.parametrize(
+    "template,method,name",
+    [
+        ("archived/", "get", "skills-archived"),
+        (
+            "archived/{resource_id}/restore-review/",
+            "get",
+            "skills-archived-restore-review",
+        ),
+        ("archived/{resource_id}/restore/", "post", "skills-archived-restore"),
+    ],
+)
+def test_archived_skill_routes_are_mounted(template, method, name):
+    # These routes must resolve before the integrator regenerates client contracts.
+    match = resolve(concrete_path(PREFIX + template), urlconf=__name__)
+    assert match.url_name == name
+    view = match.func.view_class
+    assert method in view.http_method_names
+    assert callable(getattr(view, method, None))
+    assert view.private_resource is True
+
+
 def test_unknown_path_parameters_are_not_silently_substituted():
     with pytest.raises(AssertionError):
         concrete_path(PREFIX + "{unknown}/")
