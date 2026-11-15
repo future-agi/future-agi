@@ -476,7 +476,7 @@ def scenario_lifecycle(
                 warning=None,
                 warning_text=None,
             )
-        if default and key in failed:
+        if default and key in failed and view["state"] != "archived":
             view.update(
                 state="draft",
                 reason="apply_failed",
