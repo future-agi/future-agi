@@ -105,10 +105,13 @@ describe("DraftBar", () => {
   it("saves every open piece with the parent and revision it shows", async () => {
     render(<DraftBar env={ENV} />);
     await userEvent.click(saveButton());
-    expect(saveMutate).toHaveBeenCalledWith([
-      { piece: "environment", parentId: "e2", revision: 3 },
-      { piece: "suite", parentId: "s3", revision: 1 },
-    ]);
+    expect(saveMutate).toHaveBeenCalledWith(
+      [
+        { piece: "environment", parentId: "e2", revision: 3 },
+        { piece: "suite", parentId: "s3", revision: 1 },
+      ],
+      { onSuccess: expect.any(Function) },
+    );
   });
 
   it("keeps Save off with the reason in view when the drafts are out of date", async () => {
