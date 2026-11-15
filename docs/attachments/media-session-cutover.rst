@@ -59,6 +59,33 @@ This bounds churn, not concurrent players; it never revokes predecessors or
 extends session/grant deadlines. Clients should reuse a usable handle within a
 captured bearer/organization context instead of exchanging for every resolve.
 
+With ``FI_ATTACHMENTS_ENABLED=true``, startup rejects unsupported admission
+cache configurations **before** storage readiness. The supported configuration
+is ``CACHES['default']`` using ``django_redis.cache.RedisCache``,
+``django_redis.client.DefaultClient`` (explicit or its default), and one
+``redis://`` or ``rediss://`` writer URL. All API workers must share that Redis
+database, ``KEY_PREFIX`` and ``VERSION``; keep worker clocks synchronized and
+retain counter keys for their 120-second TTL (no eviction/flush). API process
+restarts do not reset the allowance; losing Redis counter state does, so this
+is not a durable accounting/quota guarantee across Redis data loss.
+
+Use the standard ``django_redis.pool.ConnectionFactory`` and default key
+function. Supported ``OPTIONS`` are ``CLIENT_CLASS``, ``SOCKET_CONNECT_TIMEOUT``,
+``SOCKET_TIMEOUT``, ``PASSWORD`` and ``IGNORE_EXCEPTIONS`` (only false). Global
+``DJANGO_REDIS_IGNORE_EXCEPTIONS`` must also be false unless explicitly
+overridden to false for this cache. Custom clients, pools, factories, key
+functions and other options are not qualified; neither are multi-location
+configurations, LocMem, Dummy or other cache backend implementations.
+The existing shared-Redis default satisfies this condition.
+
+The configuration check is static, performs no cache network I/O, and does not
+probe fleet topology. Operators must verify the shared writer/namespace before
+activation. Runtime counter failures still deny issuance with ``429``; no
+local or database fallback is used. With attachments OFF, startup does not
+inspect or contact the admission cache, so ``DJANGO_CACHE_BACKEND=locmem``
+remains valid. Changing the feature/cache settings requires restarting workers;
+there is no supported hot activation that bypasses startup readiness.
+
 Original AuthToken revocation/expiry is checked during resolve and every media
 read, including stream rechecks. Refresh creates another access row; logout of
 that new row does not revoke a pre-refresh row. Login-family revocation remains

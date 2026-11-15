@@ -8,15 +8,17 @@ class SdkConfig(AppConfig):
     def ready(self):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
+        from django.conf import settings
+
         from tracer.models import (
             attachment,  # noqa: F401
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
-            eval_task,  # noqa: F401
             eval_sampling,  # noqa: F401
-            feed_alert,  # noqa: F401
+            eval_task,  # noqa: F401
             external_eval_config,  # noqa: F401
+            feed_alert,  # noqa: F401
             imagine_analysis,  # noqa: F401
             insights,  # noqa: F401
             instant_eval,  # noqa: F401
@@ -27,9 +29,9 @@ class SdkConfig(AppConfig):
             project_version,  # noqa: F401
             replay_session,  # noqa: F401
             saved_view,  # noqa: F401
-            sql_query,  # noqa: F401
             shared_link,  # noqa: F401
             span_notes,  # noqa: F401
+            sql_query,  # noqa: F401
             trace,  # noqa: F401
             trace_annotation,  # noqa: F401
             trace_error_analysis,  # noqa: F401
@@ -40,10 +42,11 @@ class SdkConfig(AppConfig):
             trace_session,  # noqa: F401
         )
 
-        from django.conf import settings
-
         if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+            from tracer.services.attachments.cache_config import verify_admission_cache
             from tracer.services.attachments.storage import from_settings
 
+            # Reject process-local/non-atomic admission before storage/network I/O.
+            verify_admission_cache(settings)
             # Fail closed on unverifiable/private-storage policy drift.
             from_settings(settings).verify_readiness()

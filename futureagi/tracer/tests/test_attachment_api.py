@@ -1,10 +1,12 @@
 """HTTP acceptance for all 17 F01 attachment operations, through real URLs.
 
 Real PostgreSQL, real application JWTs (``issue_tokens``) and the production
-``LiveAuthority`` session check. Only the ClickHouse span read and object
+``LiveAuthority`` session check. The ClickHouse span read and object
 storage are doubles: the span reader returns a fixed span for the test parent
-and storage keeps bytes in memory. These tests do not qualify ClickHouse,
-S3 or the decoder sandbox.
+and storage keeps bytes in memory. The suite's LocMem cache is a single-process
+component double, not a supported attachments-enabled deployment configuration.
+Shared admission/startup is qualified separately in test_attachment_admission.
+These tests do not qualify ClickHouse, S3 or the decoder sandbox.
 
 Every success body is validated against the vendored F01 schema; every error
 body must be exactly ``{code, request_id}`` with a code allowed for its HTTP
