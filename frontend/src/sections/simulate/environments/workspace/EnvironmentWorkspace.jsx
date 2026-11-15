@@ -132,7 +132,7 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // The run awaiting its version picks: { ids, trials, initialPicks }.
+  // The run awaiting its version picks: { ids, trials, initialPicks, seed }.
   const [runDialog, setRunDialog] = useState(null);
   const runMutation = useMutation({
     meta: { errorHandled: true },
@@ -197,17 +197,17 @@ export default function EnvironmentWorkspace() {
   });
   // With versioning on, a run first asks which versions to use; a re-run
   // pre-selects the versions it ran with.
-  const startRun = (ids, trials, { initialPicks } = {}) => {
+  const startRun = (ids, trials, { initialPicks, seed } = {}) => {
     if (source !== "harness") {
       navigate(runSimulationTarget(env));
       return;
     }
     if (env?.versioning?.enabled) {
       runMutation.reset();
-      setRunDialog({ ids, trials, initialPicks });
+      setRunDialog({ ids, trials, initialPicks, seed });
       return;
     }
-    runMutation.mutate({ ids, trials });
+    runMutation.mutate({ ids, trials, seed });
   };
   const runDialogEl = runDialog && (
     <RunDialog
@@ -216,6 +216,7 @@ export default function EnvironmentWorkspace() {
       scenarioIds={runDialog.ids}
       trials={runDialog.trials || 1}
       initialPicks={runDialog.initialPicks}
+      initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
       onSubmit={(picks, ids, resolved, seed) =>
         runMutation.mutate({

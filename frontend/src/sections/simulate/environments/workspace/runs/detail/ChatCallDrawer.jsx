@@ -269,7 +269,12 @@ export default function ChatCallDrawer({
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {showChanges ? (
+            {showChanges && isLoading ? (
+              // Until the call detail arrives there is nothing to say yet, not "not recorded".
+              <Stack alignItems="center" sx={{ py: 6 }}>
+                <CircularProgress size={20} />
+              </Stack>
+            ) : showChanges ? (
               <TrialChangesPanel trialState={callDetail?.trial_state ?? null} />
             ) : showTraces ? (
               <Box

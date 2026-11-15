@@ -20395,9 +20395,9 @@ export interface HarnessRunCreateApi {
    */
   trials?: number;
   /**
-   * The same seed draws the same personas and variations again; absent keeps the environment's.
+   * The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.
    * @minimum 0
-   * @maximum 9007199254740991
+   * @maximum 9223372036854776000
    */
   seed?: number;
   agent_version_id?: string | null;
@@ -26406,7 +26406,8 @@ export interface RunExecutionApi {
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
-  seed?: number;
+  /** @minLength 1 */
+  seed?: string;
   /** @minLength 1 */
   agent_type: string;
   resume: RunResumeApi;

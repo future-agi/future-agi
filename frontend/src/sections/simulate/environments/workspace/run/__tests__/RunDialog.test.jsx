@@ -757,12 +757,30 @@ describe("RunDialog", () => {
     ).toBeInTheDocument();
     await user.type(screen.getByTestId("run-seed"), "-4");
     expect(
-      screen.getByText("A seed is a whole number from 0"),
+      screen.getByText(
+        "A seed is a whole number from 0 to 9223372036854775807",
+      ),
     ).toBeInTheDocument();
+    expect(runButton()).toBeDisabled();
+    await user.clear(screen.getByTestId("run-seed"));
+    await user.type(screen.getByTestId("run-seed"), "9223372036854775808");
     expect(runButton()).toBeDisabled();
     await user.clear(screen.getByTestId("run-seed"));
     await user.type(screen.getByTestId("run-seed"), "42");
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, 42);
+    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, "42");
+  });
+
+  it("starts a re-run from its run's seed, exactly, past what a JavaScript number holds", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({ initialSeed: "7902065059689103066" });
+    expect(screen.getByTestId("run-seed")).toHaveValue("7902065059689103066");
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      "7902065059689103066",
+    );
   });
 });

@@ -286,8 +286,9 @@ class RunExecutionSerializer(serializers.Serializer):
         child=serializers.CharField(), required=False, default=list
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
-    # The seed the run drew its personas and variations from: the same seed draws them again.
-    seed = serializers.IntegerField(allow_null=True, required=False)
+    # The seed the run drew its personas and variations from: the same seed draws them again. Decimal text: a drawn
+    # seed is up to 2^63 - 1, past what a JSON number keeps exactly.
+    seed = serializers.CharField(allow_null=True, required=False)
     agent_type = serializers.CharField(allow_null=True)
     resume = RunResumeSerializer()
     summary = RunSummarySerializer()
@@ -940,7 +941,7 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
-        "seed": job.seed if job is not None else None,
+        "seed": str(job.seed) if job is not None else None,
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,

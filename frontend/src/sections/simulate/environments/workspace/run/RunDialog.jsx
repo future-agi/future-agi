@@ -23,6 +23,7 @@ import {
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
+import { parseRunSeed } from "./runSeed";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -47,6 +48,7 @@ export default function RunDialog({
   scenarioIds,
   trials = 1,
   initialPicks,
+  initialSeed = null,
   onClose,
   onSubmit,
   submitting = false,
@@ -69,11 +71,9 @@ export default function RunDialog({
   const [agentFellBack, setAgentFellBack] = useState(false);
   // A refusal stays shown until the user changes a pick.
   const [dismissedError, setDismissedError] = useState(null);
-  // The run's seed, as typed: empty keeps the environment's.
-  const [seed, setSeed] = useState("");
-  const seedValue = seed.trim() === "" ? null : Number(seed);
-  const seedInvalid =
-    seedValue !== null && !(Number.isSafeInteger(seedValue) && seedValue >= 0);
+  // The run's seed, as typed: empty keeps the environment's; a re-run starts from its run's.
+  const [seed, setSeed] = useState(() => initialSeed ?? "");
+  const { value: seedValue, invalid: seedInvalid } = parseRunSeed(seed);
 
   const options = useMemo(
     () =>
@@ -397,8 +397,10 @@ RunDialog.propTypes = {
   trials: PropTypes.number,
   // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
   initialPicks: PropTypes.objectOf(PropTypes.string),
+  // A re-run's seed as decimal text, pre-filled.
+  initialSeed: PropTypes.string,
   onClose: PropTypes.func,
-  // (picks, scenarioIds, resolved {agent, environment, suite} version ids, seed or null).
+  // (picks, scenarioIds, resolved {agent, environment, suite} version ids, seed as decimal text or null).
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,

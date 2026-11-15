@@ -428,7 +428,7 @@ export const RUN_DIALOG_COPY = {
   title: "Run simulation",
   seed: "Seed (optional)",
   seedHelp: "The same seed draws the same personas and variations again",
-  seedInvalid: "A seed is a whole number from 0",
+  seedInvalid: "A seed is a whole number from 0 to 9223372036854775807",
   pieces: {
     agent: "Agent version",
     environment: "Environment version",

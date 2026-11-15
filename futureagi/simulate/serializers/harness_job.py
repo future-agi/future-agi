@@ -7,7 +7,7 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -790,13 +790,16 @@ class HarnessRunCreateSerializer(serializers.Serializer):
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
-    # environment's own.
+    # environment's own. Any seed the platform draws (up to 2^63 - 1) is accepted, as a number or decimal text.
     seed = serializers.IntegerField(
         required=False,
         allow_null=True,
         min_value=0,
-        max_value=2**53 - 1,
-        help_text="The same seed draws the same personas and variations again; absent keeps the environment's.",
+        max_value=MAX_SEED,
+        help_text=(
+            "The same seed draws the same personas and variations again; absent keeps the environment's. Up to"
+            " 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision."
+        ),
     )
     # Absent or null runs the environment's default for that piece.
     agent_version_id = serializers.UUIDField(required=False, allow_null=True)

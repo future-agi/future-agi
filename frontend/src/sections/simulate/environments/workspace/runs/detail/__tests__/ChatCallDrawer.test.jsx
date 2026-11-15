@@ -5,13 +5,17 @@ import { render, screen, userEvent } from "src/utils/test-utils";
 const mocks = vi.hoisted(() => ({
   runTraces: vi.fn(() => ({ projectId: null, traces: [], isError: false })),
   callDetail: null,
+  loading: false,
 }));
 
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    useCallDetail: () => ({ callDetail: mocks.callDetail, isLoading: false }),
+    useCallDetail: () => ({
+      callDetail: mocks.callDetail,
+      isLoading: mocks.loading,
+    }),
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });
@@ -179,5 +183,21 @@ describe("ChatCallDrawer World changes", () => {
       screen.getByText("World changes were not recorded for this trial."),
     ).toBeInTheDocument();
     mocks.callDetail = null;
+  });
+
+  it("says nothing about World changes while the call is still loading", async () => {
+    mocks.loading = true;
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-12", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "World changes" }));
+    expect(
+      screen.queryByText("World changes were not recorded for this trial."),
+    ).toBeNull();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    mocks.loading = false;
   });
 });

@@ -1337,7 +1337,53 @@ class TestSeed:
         from simulate.views.run_results_v3 import _execution_payload
 
         execution = TestExecution.objects.get(id=seeded.json()["test_execution_id"])
-        assert _execution_payload(execution, {})["seed"] == 4242
+        assert _execution_payload(execution, {})["seed"] == "4242"
+
+    def test_a_rerun_from_the_shown_seed_draws_the_runs_own_seed_exactly(
+        self, auth_client, user, workspace, storage
+    ):
+        """The journey: run without a seed, read the seed the run shows, re-run with it. A drawn seed is up to
+        2^63 - 1, past what a JSON number keeps, so it travels as decimal text both ways and is never rounded."""
+        from simulate.models import HostedHarnessJob, TestExecution
+        from simulate.models.hosted_harness import MAX_SEED
+        from simulate.views.run_results_v3 import _execution_payload
+
+        environment = _environment(user, workspace, "pk-seed-rerun", storage)
+        environment.seed = 7902065059689103066
+        environment.payload = {**environment.payload, "seed": environment.seed}
+        environment.save(update_fields=["seed", "payload"])
+
+        first = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1},
+            key="seed-r1",
+        )
+        assert first.status_code == 202, first.content
+        shown = _execution_payload(
+            TestExecution.objects.get(id=first.json()["test_execution_id"]), {}
+        )["seed"]
+        assert shown == "7902065059689103066"
+
+        rerun = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": shown},
+            key="seed-r2",
+        )
+        too_big = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": str(MAX_SEED + 1)},
+            key="seed-r3",
+        )
+
+        assert rerun.status_code == 202, rerun.content
+        assert (
+            HostedHarnessJob.no_workspace_objects.get(id=rerun.json()["job_id"]).seed
+            == 7902065059689103066
+        )
+        assert too_big.status_code == 400
 
     def test_a_request_key_reused_with_another_seed_is_refused(
         self, auth_client, user, workspace, storage

@@ -185,13 +185,14 @@ export default function RunDetail({
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
   const lastResume = resumeState?.history?.at(-1);
-  // A re-run starts from the versions this run used.
+  // A re-run starts from the versions and the seed this run used.
   const rerunOptions = {
     initialPicks: {
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
     },
+    seed: identity?.seed ?? undefined,
   };
 
   // A check run opened from a fix carries the fix page as its way back; it is

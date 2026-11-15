@@ -1083,6 +1083,7 @@ describe("RunDetail", () => {
         pinnedAgentVersion: { id: "a4", label: "v4" },
         environmentVersion: { id: "e1", label: "v1" },
         suiteVersion: { id: "s2", label: "v2" },
+        seed: "7902065059689103066",
       },
       stats: STATS,
       isLoading: false,
@@ -1092,6 +1093,7 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "rerun ticked" }));
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
       initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+      seed: "7902065059689103066",
     });
   });
 

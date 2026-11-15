@@ -11,6 +11,9 @@ from tfc.utils.base_model import BaseModel
 
 # Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
 MAX_SCENARIOS_PER_JOB = 5000
+# A run's seed is drawn from 63 bits, so it always fits the signed BigInteger column; request validation reuses it.
+SEED_BITS = 63
+MAX_SEED = 2**SEED_BITS - 1
 
 
 class HostedHarnessJob(BaseModel):

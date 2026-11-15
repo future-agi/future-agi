@@ -41448,7 +41448,7 @@ export const simulateApiHarnessEnvironmentsRunBodyTrialsDefault = 1;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsMax = 20;
 
 export const simulateApiHarnessEnvironmentsRunBodySeedMin = 0;
-export const simulateApiHarnessEnvironmentsRunBodySeedMax = 9007199254740991;
+export const simulateApiHarnessEnvironmentsRunBodySeedMax = 9223372036854776000;
 
 export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   scenario_ids: zod
@@ -41470,7 +41470,7 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
     .max(simulateApiHarnessEnvironmentsRunBodySeedMax)
     .optional()
     .describe(
-      "The same seed draws the same personas and variations again; absent keeps the environment's.",
+      "The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.",
     ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),
@@ -44010,7 +44010,7 @@ export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
 export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
 
 export const simulateApiHarnessJobsRunsBodySeedMin = 0;
-export const simulateApiHarnessJobsRunsBodySeedMax = 9007199254740991;
+export const simulateApiHarnessJobsRunsBodySeedMax = 9223372036854776000;
 
 export const SimulateApiHarnessJobsRunsBody = zod.object({
   scenario_ids: zod
@@ -44029,7 +44029,7 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .max(simulateApiHarnessJobsRunsBodySeedMax)
     .optional()
     .describe(
-      "The same seed draws the same personas and variations again; absent keeps the environment's.",
+      "The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.",
     ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),
@@ -54815,7 +54815,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .number()
       .min(1)
       .default(simulateV3TestExecutionCallsResponseExecutionTrialsDefault),
-    seed: zod.number().optional(),
+    seed: zod.string().min(1).optional(),
     agent_type: zod.string().min(1),
     resume: zod.object({
       resumable: zod.boolean(),

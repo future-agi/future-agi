@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -225,7 +226,7 @@ def create_hosted_job(
         run_id = payload.get("run_id") or uuid.uuid4()
         seed = payload.get("seed")
         if seed is None:
-            seed = secrets.randbits(63)
+            seed = secrets.randbits(SEED_BITS)
         normalized = _json_value(payload)
         # Deployment policy must not change the submitted request's idempotency digest.
         artifacts = normalized["artifacts"]
