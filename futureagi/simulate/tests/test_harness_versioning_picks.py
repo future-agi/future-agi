@@ -258,7 +258,7 @@ class TestNoPicks:
             },
             "suite": {"id": str(environment.suite_version_id), "label": "v2"},
         }
-        assert [one["code"] for one in body["warnings"]] == ["suite_unproved"]
+        assert [one["code"] for one in body["warnings"]] == ["suite_partly_proved"]
 
     def test_with_versioning_off_the_202_has_no_versions(
         self, auth_client, user, workspace, storage, settings
@@ -679,7 +679,7 @@ class TestPickedRun:
         body = response.json()
         assert body["versions"]["suite"] == {"id": str(s1.id), "label": "v1"}
         assert [one["code"] for one in body["warnings"]] == [
-            "suite_unproved",
+            "suite_partly_proved",
             "bundle_cache_miss",
         ]
 
@@ -956,6 +956,35 @@ class TestWarnings:
             }
         ]
 
+    def test_a_partly_proved_suite_says_how_each_case_stands(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HarnessSuiteMember
+
+        environment = _environment(user, workspace, "pk-w-partly", storage)
+        keys = sorted(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version=environment.suite_version
+            ).values_list("scenario_key", flat=True)
+        )
+        kept = {"format": 2, "proved": False, "kept_as_written": True}
+        HarnessSuiteValidation.no_workspace_objects.create(
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+            status="partial",
+            proved_at=timezone.now(),
+            proofs={keys[0]: kept},
+        )
+
+        assert self._warnings(environment) == [
+            {
+                "code": "suite_partly_proved",
+                "message": "Suite v2 on environment v1: 0 proved, 1 kept as written,"
+                f" {len(keys) - 1} not proved",
+                "piece": "suite",
+            }
+        ]
+
     def test_a_version_without_a_number_is_never_named_none(
         self, user, workspace, storage
     ):
@@ -1200,7 +1229,7 @@ class TestRunPlan:
         )
 
         assert response.status_code == 202, response.content
-        assert [one["code"] for one in plan["warnings"]] == ["suite_unproved"]
+        assert [one["code"] for one in plan["warnings"]] == ["suite_partly_proved"]
         assert plan["bundle_cached"] is None
         assert response.json()["warnings"] == plan["warnings"]
 
