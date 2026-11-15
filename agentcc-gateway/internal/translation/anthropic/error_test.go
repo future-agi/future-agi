@@ -17,6 +17,7 @@ func TestErrorFromCanonical(t *testing.T) {
 		apiErr          *models.APIError
 		wantStatus      int
 		wantType        string // Anthropic error type
+		wantCode        string // error.code; absent when empty
 		wantMsgContains string
 	}{
 		{
@@ -79,6 +80,28 @@ func TestErrorFromCanonical(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			wantType:   "invalid_request_error",
 		},
+		{
+			name:       "gateway_timeout",
+			apiErr:     models.ErrGatewayTimeout("request timed out"),
+			wantStatus: http.StatusGatewayTimeout,
+			wantType:   "timeout_error",
+			wantCode:   "gateway_timeout",
+		},
+		{
+			name:       "gateway_timeout_zero_status",
+			apiErr:     &models.APIError{Status: 0, Type: models.ErrTypeGatewayTimeout, Code: "gateway_timeout", Message: "request timed out"},
+			wantStatus: http.StatusGatewayTimeout,
+			wantType:   "timeout_error",
+			wantCode:   "gateway_timeout",
+		},
+		{
+			// An upstream's own gateway_timeout, passed on as a 502.
+			name:       "upstream_gateway_timeout_as_502",
+			apiErr:     &models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeGatewayTimeout, Code: "gateway_timeout", Message: "upstream timed out"},
+			wantStatus: http.StatusBadGateway,
+			wantType:   "api_error",
+			wantCode:   "gateway_timeout",
+		},
 	}
 
 	for _, tc := range tests {
@@ -110,6 +133,11 @@ func TestErrorFromCanonical(t *testing.T) {
 			}
 			if errDetail["type"] != tc.wantType {
 				t.Errorf("want error.type=%q, got %q", tc.wantType, errDetail["type"])
+			}
+			if code, present := errDetail["code"]; tc.wantCode == "" && present {
+				t.Errorf("want no error.code, got %v", code)
+			} else if tc.wantCode != "" && code != tc.wantCode {
+				t.Errorf("want error.code=%q, got %v", tc.wantCode, code)
 			}
 			if errDetail["message"] != tc.apiErr.Message {
 				t.Errorf("want error.message=%q, got %q", tc.apiErr.Message, errDetail["message"])

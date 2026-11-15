@@ -89,7 +89,7 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 #   - engineers able to triage by cause via the Sentry dashboard
 #     (one error type per failure mode, not all merged together)
 USER_FACING_EVAL_FAILED = (
-    "Evaluation failed. Please try again. If the problem persists, " "contact support."
+    "Evaluation failed. Please try again. If the problem persists, contact support."
 )
 
 
@@ -449,8 +449,9 @@ def _openai_media_block(url_type: str, content_type: str, b64_data: str) -> dict
 
 _EVAL_INPUT_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
+# Video extensions must fall through to content sniffing, not image attachment.
 _EVAL_INPUT_IMAGE_EXT_RE = re.compile(
-    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?|$)",
+    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?|$)",
     re.IGNORECASE,
 )
 _EVAL_INPUT_AUDIO_EXT_RE = re.compile(
@@ -466,7 +467,7 @@ _RENDER_AUDIO_URL_RE = re.compile(
     re.IGNORECASE,
 )
 _RENDER_IMAGE_URL_RE = re.compile(
-    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?\S*)?$",
+    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?\S*)?$",
     re.IGNORECASE,
 )
 _RENDER_PDF_URL_RE = re.compile(
@@ -1020,7 +1021,7 @@ class AgentEvaluator:
         # Inject few-shot feedback examples into the rendered prompt
         if few_shots:
             few_shot_texts = []
-            for block in (few_shots if isinstance(few_shots, list) else [few_shots]):
+            for block in few_shots if isinstance(few_shots, list) else [few_shots]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     few_shot_texts.append(block["text"])
                 elif isinstance(block, str):

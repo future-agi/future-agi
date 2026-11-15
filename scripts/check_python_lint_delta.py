@@ -21,11 +21,13 @@ Three passes run on the changed files under futureagi/:
 Only config-named entries in futureagi/ or at the repository root are read:
 these are the paths Ruff can discover for backend files. Both comparison trees
 use the committed configuration from the trusted tip, including [project]
-metadata. A config-only change has no changed Python files to compare. Changing
-formatter settings and reformatting in one PR is judged against the trusted
-tip's formatter. An in-scope config using `extend`, or one at the trusted tip
-that cannot be parsed as TOML, stops the check rather than following settings
-outside the committed overlay.
+metadata. Changed head configs are checked separately with pinned Ruff's
+config discovery, even when no Python file changes; removals are also probed.
+Changing formatter settings and reformatting in one PR is judged against the
+trusted tip's formatter. Root configs are probed at the root even when a
+backend config shadows them. An in-scope config using `extend`, or one that
+cannot be parsed as TOML, stops the check even if a sibling shadows it,
+rather than following settings outside the committed overlay.
 
 Usage, from the repo root:
 
@@ -295,6 +297,63 @@ def reject_extended_configs(
             raise GateError(
                 f"{path}: Ruff config uses extend; cannot compare referenced settings"
             )
+
+
+def validate_changed_head_configs(
+    ruff: str,
+    head_configs: dict[str, bytes | None],
+    merge_base_configs: dict[str, bytes | None],
+) -> None:
+    """Probe changed or removed config directories with committed head settings.
+
+    Ruff discovers ancestor configs and reads pyproject metadata even without a
+    [tool.ruff] table. A removal can reveal a previously shadowed config. Keep
+    all in-scope head configs in the isolated tree so discovery sees their real
+    hierarchy, but never read or run source files from the head checkout.
+    """
+    changed = sorted(
+        path
+        for path in head_configs.keys() | merge_base_configs.keys()
+        if head_configs.get(path) != merge_base_configs.get(path)
+    )
+    if not changed:
+        return
+    with tempfile.TemporaryDirectory(prefix="lint-config-check-") as tmp:
+        root = Path(tmp)
+        for path, content in head_configs.items():
+            if content is None:
+                raise GateError(f"{path}: head config is not a regular file")
+            config = root / path
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_bytes(content)
+        for path in changed:
+            probe = (root / path).parent / "__lint_config_probe__.py"
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("pass\n", encoding="utf-8")
+            proc = subprocess.run(
+                [
+                    ruff,
+                    "check",
+                    "--no-cache",
+                    "--no-fix",
+                    "--exit-zero",
+                    "--output-format",
+                    "json",
+                    "--",
+                    str(probe),
+                ],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode:
+                error = (
+                    proc.stderr.strip()
+                    .replace(f"{root}{os.sep}", "")
+                    .replace(str(root), ".")[:2000]
+                )
+                raise GateError(f"{path}: head Ruff config cannot be loaded: {error}")
 
 
 def trusted_head_tree(
@@ -689,6 +748,7 @@ def check(
             raise GateError(f"{path}: head config is not a regular file")
     reject_extended_configs(base_configs, trusted=True)
     reject_extended_configs(head_configs)
+    validate_changed_head_configs(ruff, head_configs, merge_base_configs)
     # Overlay every committed in-scope config, including unchanged ones:
     # checkout filters must not substitute different settings in either tree.
     if not files:

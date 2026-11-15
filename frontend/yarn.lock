@@ -1662,15 +1662,6 @@
     "@napi-rs/canvas-win32-arm64-msvc" "0.1.100"
     "@napi-rs/canvas-win32-x64-msvc" "0.1.100"
 
-"@newrelic/browser-agent@^1.264.0":
-  version "1.264.0"
-  resolved "https://registry.npmjs.org/@newrelic/browser-agent/-/browser-agent-1.264.0.tgz"
-  integrity sha512-W1Or5rEGFjHve35wvFCL65H2fUKy34u9iVnUspOpe0FCazcBSYW+jK9AmAB8rvWijN9o5jQXGDF/guxgsOsjFg==
-  dependencies:
-    fflate "0.7.4"
-    rrweb "2.0.0-alpha.12"
-    web-vitals "3.5.2"
-
 "@nodelib/fs.scandir@2.1.5":
   version "2.1.5"
   resolved "https://registry.npmjs.org/@nodelib/fs.scandir/-/fs.scandir-2.1.5.tgz"
@@ -2262,13 +2253,6 @@
   version "4.59.0"
   resolved "https://registry.yarnpkg.com/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.59.0.tgz#4584a8a87b29188a4c1fe987a9fcf701e256d86c"
   integrity sha512-2HRCml6OztYXyJXAvdDXPKcawukWY2GpR5/nxKp4iBgiO3wcoEGkAaqctIbZcNB6KlUQBIqt8VYkNSj2397EfA==
-
-"@rrweb/types@^2.0.0-alpha.12":
-  version "2.0.0-alpha.17"
-  resolved "https://registry.npmjs.org/@rrweb/types/-/types-2.0.0-alpha.17.tgz"
-  integrity sha512-AfDTVUuCyCaIG0lTSqYtrZqJX39ZEYzs4fYKnexhQ+id+kbZIpIJtaut5cto6dWZbB3SEe4fW0o90Po3LvTmfg==
-  dependencies:
-    rrweb-snapshot "^2.0.0-alpha.17"
 
 "@rrweb/types@^2.0.0-alpha.13":
   version "2.0.0-alpha.16"
@@ -5871,11 +5855,6 @@ fdir@^6.5.0:
   resolved "https://registry.yarnpkg.com/fdir/-/fdir-6.5.0.tgz#ed2ab967a331ade62f18d077dae192684d50d350"
   integrity sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==
 
-fflate@0.7.4:
-  version "0.7.4"
-  resolved "https://registry.npmjs.org/fflate/-/fflate-0.7.4.tgz"
-  integrity sha512-5u2V/CDW15QM1XbbgS+0DfPxVB+jUKhWEKuuFuHncbk3tEEqzmoXL+2KyOFuKGqOnmdIy0/davWF1CkuwtibCw==
-
 fflate@^0.4.4, fflate@^0.4.8:
   version "0.4.8"
   resolved "https://registry.npmjs.org/fflate/-/fflate-0.4.8.tgz"
@@ -8223,11 +8202,6 @@ nanoid@^3.3.11:
   resolved "https://registry.yarnpkg.com/nanoid/-/nanoid-3.3.11.tgz#4f4f112cefbe303202f2199838128936266d185b"
   integrity sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==
 
-nanoid@^3.3.7:
-  version "3.3.7"
-  resolved "https://registry.npmjs.org/nanoid/-/nanoid-3.3.7.tgz"
-  integrity sha512-eSRppjcPIatRIMC1U6UngP8XFcz8MQWGQdt1MTBQ7NaAmvXDfvNxbvWV3x2y6CdEUciCSsDHDQZbhYaB8QEo2g==
-
 native-promise-only@0.8.1:
   version "0.8.1"
   resolved "https://registry.yarnpkg.com/native-promise-only/-/native-promise-only-0.8.1.tgz#20a318c30cb45f71fe7adfbf7b21c99c1472ef11"
@@ -8735,7 +8709,7 @@ pend@~1.2.0:
   resolved "https://registry.yarnpkg.com/pend/-/pend-1.2.0.tgz#7a57eb550a6783f9115331fcf4663d5c8e007a50"
   integrity sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==
 
-picocolors@1.1.1, picocolors@^1.0.0, picocolors@^1.0.1, picocolors@^1.1.1:
+picocolors@1.1.1, picocolors@^1.0.0, picocolors@^1.1.1:
   version "1.1.1"
   resolved "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz"
   integrity sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==
@@ -8771,15 +8745,6 @@ possible-typed-array-names@^1.0.0:
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/possible-typed-array-names/-/possible-typed-array-names-1.1.0.tgz#93e3582bc0e5426586d9d07b79ee40fc841de4ae"
   integrity sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==
-
-postcss@^8.4.38:
-  version "8.4.41"
-  resolved "https://registry.npmjs.org/postcss/-/postcss-8.4.41.tgz"
-  integrity sha512-TesUflQ0WKZqAvg52PWL6kHgLKP6xB6heTOdoYM0Wt2UHyxNa4K25EZZMgKns3BH1RLVbZCREPpLY0rhnNoHVQ==
-  dependencies:
-    nanoid "^3.3.7"
-    picocolors "^1.0.1"
-    source-map-js "^1.2.0"
 
 postcss@^8.4.43:
   version "8.5.8"
@@ -9598,13 +9563,6 @@ rollup@^4.34.9:
     "@rollup/rollup-win32-x64-msvc" "4.43.0"
     fsevents "~2.3.2"
 
-rrdom@^2.0.0-alpha.12:
-  version "2.0.0-alpha.17"
-  resolved "https://registry.npmjs.org/rrdom/-/rrdom-2.0.0-alpha.17.tgz"
-  integrity sha512-b6caDiNcFO96Opp7TGdcVd4OLGSXu5dJe+A0IDiAu8mk7OmhqZCSDlgQdTKmdO5wMf4zPsUTgb8H/aNvR3kDHA==
-  dependencies:
-    rrweb-snapshot "^2.0.0-alpha.17"
-
 rrdom@^2.0.0-alpha.13:
   version "2.0.0-alpha.16"
   resolved "https://registry.npmjs.org/rrdom/-/rrdom-2.0.0-alpha.16.tgz"
@@ -9617,31 +9575,10 @@ rrweb-cssom@^0.8.0:
   resolved "https://registry.yarnpkg.com/rrweb-cssom/-/rrweb-cssom-0.8.0.tgz#3021d1b4352fbf3b614aaeed0bc0d5739abe0bc2"
   integrity sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==
 
-rrweb-snapshot@^2.0.0-alpha.12, rrweb-snapshot@^2.0.0-alpha.17:
-  version "2.0.0-alpha.17"
-  resolved "https://registry.npmjs.org/rrweb-snapshot/-/rrweb-snapshot-2.0.0-alpha.17.tgz"
-  integrity sha512-GBg5pV8LHOTbeVmH2VHLEFR0mc2QpQMzAvcoxEGfPNWgWHc8UvKCyq7pqN1vA+fDZ+yXXbixeO0kB2pzVvFCBw==
-  dependencies:
-    postcss "^8.4.38"
-
 rrweb-snapshot@^2.0.0-alpha.13, rrweb-snapshot@^2.0.0-alpha.16:
   version "2.0.0-alpha.16"
   resolved "https://registry.npmjs.org/rrweb-snapshot/-/rrweb-snapshot-2.0.0-alpha.16.tgz"
   integrity sha512-p81OrzUiCmUMZzJu4fGHeLB00PIbVIqsV/zhqzr2pitHTUXpMYcyOvDWt0vHdla0vnowEPaHq3Wsu6cUc732/w==
-
-rrweb@2.0.0-alpha.12:
-  version "2.0.0-alpha.12"
-  resolved "https://registry.npmjs.org/rrweb/-/rrweb-2.0.0-alpha.12.tgz"
-  integrity sha512-lUGwBV7gmbwz1dIgzo9EEayIVyxoTIF6NBF6+Jctqs4Uy45QkyARtikpQlCUfxVCGTCQ0FOee9jeVYsG39oq1g==
-  dependencies:
-    "@rrweb/types" "^2.0.0-alpha.12"
-    "@types/css-font-loading-module" "0.0.7"
-    "@xstate/fsm" "^1.4.0"
-    base64-arraybuffer "^1.0.1"
-    fflate "^0.4.4"
-    mitt "^3.0.0"
-    rrdom "^2.0.0-alpha.12"
-    rrweb-snapshot "^2.0.0-alpha.12"
 
 rrweb@2.0.0-alpha.13:
   version "2.0.0-alpha.13"
@@ -11469,11 +11406,6 @@ web-namespaces@^2.0.0:
   version "2.0.1"
   resolved "https://registry.yarnpkg.com/web-namespaces/-/web-namespaces-2.0.1.tgz#1010ff7c650eccb2592cebeeaf9a1b253fd40692"
   integrity sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==
-
-web-vitals@3.5.2:
-  version "3.5.2"
-  resolved "https://registry.npmjs.org/web-vitals/-/web-vitals-3.5.2.tgz"
-  integrity sha512-c0rhqNcHXRkY/ogGDJQxZ9Im9D19hDihbzSQJrsioex+KnFgmMzBiy57Z1EjkhX/+OjyBpclDCzz2ITtjokFmg==
 
 web-vitals@^5.1.0:
   version "5.1.0"
