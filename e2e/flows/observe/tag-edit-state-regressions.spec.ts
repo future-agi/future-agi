@@ -261,7 +261,12 @@ async function expectChips(page: Page, entity: Oracle) {
     await expect(chipRow(page).getByText(source, { exact: true }).locator('..').getByRole('button')).toHaveCount(0, { timeout: UI_READY });
 }
 async function selectSpan(page: Page, entity: Oracle) {
-  await drawer(page).getByRole('region', { name: 'Trace Tree', exact: true }).getByText(entity.name, { exact: true }).click();
+  // TraceDetailDrawerV2 handleSelectSpan toggles an already-selected span off.
+  // Opening a trace preselects its root after detail loads; wait for that pane
+  // before deciding whether a selection change is needed.
+  await expect(drawer(page).getByRole('button', { name: 'tag', exact: true })).toBeVisible({ timeout: UI_READY });
+  if (!(await drawer(page).getByText(entity.spanId, { exact: true }).first().isVisible()))
+    await drawer(page).getByRole('region', { name: 'Trace Tree', exact: true }).getByText(entity.name, { exact: true }).click();
   await expectChips(page, entity);
 }
 async function addInDrawer(page: Page, value: string) {
@@ -393,7 +398,9 @@ async function holdResponses(page: Page, path: string, method: string) {
   return {
     waitFetched: () => expect.poll(() => count, { timeout: UI_READY }).toBeGreaterThan(0),
     release: gate.resolve,
-    close: async () => { gate.resolve(); await page.unroute(pattern, handler); await Promise.all(running); },
+    // Removing an active handler continues its route in Playwright. Fulfill the
+    // held real responses first so unroute cannot race a second handling.
+    close: async () => { gate.resolve(); await Promise.all(running); await page.unroute(pattern, handler); },
   };
 }
 
