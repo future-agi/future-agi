@@ -111,7 +111,7 @@ try {
       await page.getByLabel('AGENTS.md read-only source').waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `context-${theme}-${width}.png`) });
-      await page.getByRole('tab', { name: 'Consumers', exact: true }).click();
+      await page.getByRole('tab', { name: 'Connected apps', exact: true }).click();
       await page.getByText('No apps connected yet').waitFor();
       await page.screenshot({ path: path.join(output, `consumers-${theme}-${width}.png`) });
       await page.getByRole('tab', { name: 'Reviews', exact: true }).click();

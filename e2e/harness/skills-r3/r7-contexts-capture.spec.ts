@@ -28,7 +28,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await mkdir(output, { recursive: true });
   const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Verify consumers', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
   const overflows = [];
-  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Install', versions: 'Versions', tests: 'Tests', consumers: 'Consumers', recovery: 'Rollback' };
+  const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Install', versions: 'Versions', tests: 'Tests', consumers: 'Connected apps', recovery: 'Rollback' };
   await page.goto('/dashboard/skills/contexts');
   await expect(page.getByRole('button', { name: 'Create agent context', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: /Search agent contexts/ })).toHaveCount(0);
@@ -126,7 +126,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await page.route(inspectionRoute, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Temporarily unavailable' }) }));
   await page.goto(root);
   await expect(page.getByText("Couldn't load v1", { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Edit viewed version', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Edit latest version', exact: true })).toBeDisabled();
   await shot('context-detail-error');
   await page.unroute(inspectionRoute);
   const detailRoute = `**/contexts/${draft.context_id}/`;

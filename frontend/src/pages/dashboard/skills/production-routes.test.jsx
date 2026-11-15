@@ -88,7 +88,7 @@ it('opens the real context controller through production navigation and reads ex
   mount('/dashboard/skills/contexts');
   fireEvent.click(await screen.findByRole('button', { name: 'policy-context' }));
   expect(await screen.findByText('# Exact policy')).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'Consumers' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Connected apps' }));
   expect(await screen.findByText('No apps connected yet')).toBeVisible();
   fireEvent.click(screen.getByRole('tab', { name: 'Install' }));
   fireEvent.click(screen.getByRole('button', { name: 'Before you install' }));
@@ -235,7 +235,7 @@ it('keeps the floating assistant on pages outside Skills', () => {
 it('starts editing from the explicitly viewed release, recognizing normalized missing-draft errors', async () => {
   mount(`/dashboard/skills/contexts/${id}?version=4`);
   await screen.findByText('# Exact policy');
-  fireEvent.click(screen.getByRole('button', { name: 'Edit viewed v4' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit latest v4' }));
   expect(await screen.findByRole('button', { name: 'Start selected draft' })).toBeEnabled();
   expect(screen.getByText(/Start a draft from v4/)).toBeVisible();
   expect(screen.getByText(/starts from exactly v4; it is never swapped for the latest version/)).toBeVisible();
