@@ -515,7 +515,9 @@ class TestUnscrubbedBatchRetry:
             mock.patch.object(task, "apply_async", side_effect=enqueue) as enqueued,
             mock.patch.object(trace_ingestion, "logger") as log,
         ):
-            task(
+            # The task body without its Temporal wrapper, whose connection cleanup
+            # touches the database when an earlier test left a connection open.
+            task._original_func(
                 "payload:in", "org", "user", "ws", "protobuf", pii_scrub_attempt=attempt
             )
 
@@ -630,7 +632,7 @@ class TestUnscrubbedBatchRetry:
                 ),
                 mock.patch.object(task, "apply_async") as enqueued,
             ):
-                task("payload:in", "org", "user", "ws", "protobuf")
+                task._original_func("payload:in", "org", "user", "ws", "protobuf")
         finally:
             sentry_sdk.init()  # no DSN: no client
 
