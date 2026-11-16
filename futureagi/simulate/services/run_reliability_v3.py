@@ -137,9 +137,10 @@ def trial_passes(executions: Sequence[Any]) -> dict[Any, TrialPass]:
     outcomes: dict[Any, dict[str, int]] = defaultdict(dict)
     excluded: dict[Any, int] = defaultdict(int)
     for runs in by_run_test.values():
+        # Read by its annotations (result_outcome), as every reader in this module reads a run's calls.
+        calls: QuerySet = run_calls_queryset(runs[0], [run.id for run in runs])
         rows = (
-            run_calls_queryset(runs[0], [run.id for run in runs])
-            .order_by()
+            calls.order_by()
             .values_list("test_execution_id", "result_outcome")
             .annotate(
                 comparable=Count("id", filter=~NOT_COMPARABLE),
