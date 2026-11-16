@@ -302,9 +302,10 @@ def _documents(refunds, lookups, suffix, *, refund_worker_budget=False):
     ]
 
 
-# Two declared workers wired separately, each reaching the world through its own channel. ``workers="sealed"`` seals
-# the world door's per-worker limits in the bundle; ``workers="old_seal"`` declares them without, as a bundle sealed
-# before worker limits.
+# Two declared workers wired separately, each reaching the world through its own channel. ``workers`` picks what ALK
+# sealed for them, as it writes it: ``"sealed"`` a tool proxy holding per-worker limits; ``"not_fronted"`` no door,
+# the tool service not behind it, so ALK holds each refund case that relies on the refund worker; ``"old_seal"``
+# nothing, as a bundle sealed before worker limits.
 WORKERS = [
     {
         "id": "order_lookup",
@@ -323,13 +324,51 @@ WORKERS = [
         "address_env": "REFUND_API_URL",
     },
 ]
-DOOR_FILES = {
+DOOR_OUTCOMES = {
+    "sealed": {"present": True, "surface": "tool_proxy", "worker_deadlines": "per_worker"},
+    "not_fronted": {"present": False, "reason": "tool_service_not_fronted"},
+}
+TOOL_PROXY_FILES = {
     "environment-bundle/generated/tool-proxy/door.json": {"worker_deadlines": "per_worker"},
     "environment-bundle/generated/tool-proxy/permissions.json": {
         "worker:order_lookup": {"allow": ["POST orders.lookup"]},
         "worker:refund": {"allow": ["POST refunds.issue"]},
     },
+    "environment-bundle/generated/tool-proxy/actions.json": {
+        "POST orders.lookup": "lookup_order",
+        "POST refunds.issue": "issue_refund",
+    },
 }
+
+
+def _door_files(documents, workers):
+    """ALK's door files for ``workers``: the root ``door.json``, ``worker-limits.json`` with each scenario's hold, and
+    for a tool proxy its own files. A refund case with a budget relies on the refund worker."""
+    if workers not in DOOR_OUTCOMES:
+        return {}
+    held = workers == "not_fronted"
+    scenarios = {}
+    for document in documents:
+        relies = "worker_budget_seconds" in document
+        scenarios[document["scenario_key"]] = {
+            "workers": ["refund"] if relies else [],
+            "relies_on_worker_limits": relies,
+            "held": held and relies,
+            "reason": "worker_limits_not_enforced" if held and relies else None,
+            "cause": "tool_service_not_fronted" if held and relies else None,
+            "limit": "all" if held and relies else None,
+            "deadline": None,
+        }
+    files = {
+        "environment-bundle/door.json": DOOR_OUTCOMES[workers],
+        "environment-bundle/worker-limits.json": {
+            "workers": {one["id"]: {"limited": True} for one in WORKERS},
+            "scenarios": scenarios,
+        },
+    }
+    if workers == "sealed":
+        files.update(TOOL_PROXY_FILES)
+    return files
 
 
 def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
@@ -343,6 +382,7 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
             {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
         ]
         contract["workers"] = WORKERS
+    door_files = _door_files(documents, workers)
     if production_only:
         contract["tool_entrypoints"] = [
             *(one for one in contract.get("tool_entrypoints", []) if one["tool"] != production_only),
@@ -382,7 +422,7 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
                                 "sha256": "a" * 64,
                                 "size": 2,
                             }
-                            for path in (DOOR_FILES if workers == "sealed" else ())
+                            for path in door_files
                         ),
                     ],
                     "digest": BUNDLE_DIGEST,
@@ -408,8 +448,7 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
                 },
             }
         )
-    if certified and workers == "sealed":
-        files.update(DOOR_FILES)
+        files.update(door_files)
     return {
         path: (value if isinstance(value, str) else json.dumps(value)).encode()
         for path, value in files.items()

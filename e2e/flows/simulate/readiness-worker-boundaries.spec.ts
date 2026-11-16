@@ -21,14 +21,14 @@ test('SIM-E2E-007: run readiness shows each worker\'s tools as Allowed, Blocked 
     id: 'SIM-E2E-007', area: 'simulate',
     userGoal: 'A developer testing a multi-agent app sees, per worker, which tools the test world holds it to, '
       + 'and is told to rebuild an environment sealed before worker limits',
-    steps: ['seed a certified Environment with two separately wired workers and the world door\'s worker limits sealed '
-              + '(e2e/lib/harness_environment_seed.py, workers=sealed)',
+    steps: ['seed a certified Environment with two separately wired workers and ALK\'s root door.json, '
+              + 'worker-limits.json and tool proxy files sealed (e2e/lib/harness_environment_seed.py, workers=sealed)',
             'seed one with the same workers sealed before worker limits (workers=old_seal)',
             'read each pairing\'s readiness (GET capabilities)'],
     backendChecks: ['the sealed pairing reads both workers Partial held_at_world_cooperative, the lookup worker\'s '
                       + 'lookup_order Allowed and issue_refund Blocked, and no worker Supported',
-                    'the old seal reads both workers Blocked sealed_before_worker_limits with a rebuild fix and every '
-                      + 'tool Not enforced'],
+                    'the old seal reads both workers Untested sealed_before_worker_limits with a rebuild fix and '
+                      + 'every tool Not enforced'],
   }),
 }, async ({ actor }, testInfo) => {
   // Two seeds through the backend container (Django start-up each) and two API calls.
@@ -47,11 +47,11 @@ test('SIM-E2E-007: run readiness shows each worker\'s tools as Allowed, Blocked 
     expect(report.workers.every((one) => one.status !== 'supported')).toBe(true);
   });
 
-  await test.step('api: an old seal blocks each worker with a rebuild fix', async () => {
+  await test.step('api: an old seal reads each worker not known, with a rebuild fix', async () => {
     const report = await actor.api.get<Report>(`${ENVIRONMENTS}/${oldSeal.environmentId}/capabilities/`);
     for (const row of report.workers) {
       expect([row.status, row.reason_code, row.fix?.type])
-        .toEqual(['blocked', 'sealed_before_worker_limits', 'rebuild_environment']);
+        .toEqual(['untested', 'sealed_before_worker_limits', 'rebuild_environment']);
       expect(row.tools.every((one) => one.boundary === 'not_enforced')).toBe(true);
     }
   });

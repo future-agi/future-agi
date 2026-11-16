@@ -450,7 +450,7 @@
     {
       "pattern": "e2e/lib/harness_environment_seed.py",
       "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database; its other writes go through the Django ORM to PostgreSQL.",
-      "sha256": "dba2770d0006a95bb9d7b63fede87b19ff629f36c09640406aa97d09f440ceaa"
+      "sha256": "acbb2412cc45fac33a7ea746784a63623d0e59dbd5e1f119887a0116eadc6cb1"
     }
   ]
 }
