@@ -57,11 +57,13 @@ export const evidenceImportsKey = (envId) => [
 const refreshImports = (queryClient, envId) =>
   queryClient.invalidateQueries({ queryKey: evidenceImportsKey(envId) });
 // Every import review of the environment: one import's change can move another's
-// cases, as a discard that makes another import's repeat the case to draft.
-const refreshReviews = (queryClient, envId) =>
-  queryClient.invalidateQueries({
-    queryKey: evidenceImportKey(envId).slice(0, 2),
-  });
+// cases, as a discard that makes another import's repeat the case to draft. A read
+// still under way is dropped first, since it answers from before the change.
+const refreshReviews = async (queryClient, envId) => {
+  const queryKey = evidenceImportKey(envId).slice(0, 2);
+  await queryClient.cancelQueries({ queryKey });
+  return queryClient.invalidateQueries({ queryKey });
+};
 
 // An Observe import names its project and ids. A dataset import names its
 // dataset, row ids and columns ({conversation, labels, expected}); a transcript
@@ -156,7 +158,11 @@ export function useCreateEvidenceImport() {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: ({ envId, ...body }) => createEvidenceImport(envId, body),
-    onSuccess: (data, { envId }) => {
+    onSuccess: async (data, { envId }) => {
+      // A new import can change another's cases, as a retry supersedes an
+      // earlier import's blocked case. Ask again for every review first, then
+      // set this one, so its own bundle is not read again.
+      await refreshReviews(queryClient, envId);
       queryClient.setQueryData(evidenceImportKey(envId, data.id), data);
       refreshImports(queryClient, envId);
     },
