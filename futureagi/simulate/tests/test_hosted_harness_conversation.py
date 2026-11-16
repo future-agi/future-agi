@@ -2505,6 +2505,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
     conversation.refresh_from_db()
     late.refresh_from_db()
     assert late.state == "failed"
+    assert late.payload["failure_reason"].startswith("Not taken as the answer")
     assert (conversation.state, conversation.blocking_input["message_id"]) == (
         "waiting_for_user",
         again,

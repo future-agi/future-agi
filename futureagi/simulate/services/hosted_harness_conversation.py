@@ -1125,6 +1125,12 @@ def _ingest_event(
     _project_event(conversation, event)
 
 
+# Why an answer was not taken: the builder asked its question again, to be answered with one of its options.
+ASKED_AGAIN = (
+    "Not taken as the answer: the builder asked again. Answer with one of the options."
+)
+
+
 def _project_event(
     conversation: HostedHarnessConversation, event: dict[str, Any]
 ) -> None:
@@ -1216,15 +1222,15 @@ def _project_event(
             # Asked again after a restart, but already answered.
             return
         # An answer still queued for another question can't be taken any more: that question is closed and the builder
-        # asks this one in its place, so the person answers this one.
-        conversation.messages.filter(
+        # asks this one in its place, so the person answers this one. The answer says why it stopped.
+        for stale in conversation.messages.filter(
             role=HostedHarnessConversationMessage.Role.USER,
             state=HostedHarnessConversationMessage.State.QUEUED,
             reply_to__isnull=False,
-        ).exclude(reply_to=message_id).update(
-            state=HostedHarnessConversationMessage.State.FAILED,
-            updated_at=timezone.now(),
-        )
+        ).exclude(reply_to=message_id):
+            stale.state = HostedHarnessConversationMessage.State.FAILED
+            stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
+            stale.save(update_fields=["state", "payload", "updated_at"])
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),

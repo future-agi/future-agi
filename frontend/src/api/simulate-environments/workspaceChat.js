@@ -422,6 +422,11 @@ export function useWorkspaceChat(env, { source } = {}) {
     // frozen chat (job ended without a saved workspace, conversation retired)
     // can keep an open question on the backend, but there is nothing to do.
     waiting: !frozen && conversationWaiting(conversation),
+    // The open question takes only one of its options, as the server serves it: free text is not an answer.
+    answerWithOptions:
+      !frozen &&
+      conversationWaiting(conversation) &&
+      Boolean(conversation?.blocking_input?.options_only),
     // The chat holds Save (see draftsBlocked).
     draftsBlocked: draftsBlocked(conversation),
     // A nudge waits for an answer: the collapsed chat shows its dot.

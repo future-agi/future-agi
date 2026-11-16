@@ -35,7 +35,9 @@ function normalizeQuestion(message, blocking) {
   // The open question also carries prompt/options on blocking_input; prefer the
   // message payload and fall back to blocking for the row that is still open.
   const source =
-    blocking && blocking.message_id === message.message_id ? { ...p, ...blocking } : p;
+    blocking && blocking.message_id === message.message_id
+      ? { ...p, ...blocking }
+      : p;
   const rawOptions = Array.isArray(source.options) ? source.options : [];
   const options = rawOptions.map((opt) =>
     typeof opt === "string"
@@ -65,7 +67,9 @@ function finalizeRunningSteps(steps) {
 
 export function projectConversation(conversation) {
   if (!conversation) return [];
-  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
   const events = Array.isArray(conversation.events) ? conversation.events : [];
   const blocking = conversation.blocking_input || null;
 
@@ -73,12 +77,22 @@ export function projectConversation(conversation) {
   // text so a refreshed conversation renders the resolved summary.
   const answerFor = {};
   for (const m of messages) {
-    if (m.reply_to && m.role === "user") answerFor[m.reply_to] = m.content;
+    if (m.reply_to && m.role === "user") answerFor[m.reply_to] = m;
   }
 
   const timeline = [
-    ...messages.map((m) => ({ src: "msg", t: m.created_at, seq: m.sequence, data: m })),
-    ...events.map((e) => ({ src: "evt", t: e.emitted_at, seq: e.sequence, data: e })),
+    ...messages.map((m) => ({
+      src: "msg",
+      t: m.created_at,
+      seq: m.sequence,
+      data: m,
+    })),
+    ...events.map((e) => ({
+      src: "evt",
+      t: e.emitted_at,
+      seq: e.sequence,
+      data: e,
+    })),
   ].sort((a, b) => {
     const ta = Date.parse(a.t) || 0;
     const tb = Date.parse(b.t) || 0;
@@ -110,7 +124,12 @@ export function projectConversation(conversation) {
 
   const pushActivity = (line, seedId) => {
     if (!builder?.title) {
-      builder = { id: null, role: "builder", title: "Background run activity", steps: [] };
+      builder = {
+        id: null,
+        role: "builder",
+        title: "Background run activity",
+        steps: [],
+      };
       turns.push(builder);
     }
     const b = builder;
@@ -119,7 +138,12 @@ export function projectConversation(conversation) {
       last.lines.push(line);
       last.count = last.lines.length;
     } else {
-      b.steps.push({ id: `grp-${seedId}`, kind: "group", count: 1, lines: [line] });
+      b.steps.push({
+        id: `grp-${seedId}`,
+        kind: "group",
+        count: 1,
+        lines: [line],
+      });
     }
   };
 
@@ -179,7 +203,10 @@ export function projectConversation(conversation) {
       }
       if (m.kind === "question" || m.kind === "confirmation") {
         const b = startBuilder();
-        const answered = Object.prototype.hasOwnProperty.call(answerFor, m.message_id);
+        const answered = Object.prototype.hasOwnProperty.call(
+          answerFor,
+          m.message_id,
+        );
         b.steps.push({
           id: m.message_id,
           kind: "ask",
@@ -187,7 +214,14 @@ export function projectConversation(conversation) {
           replyTo: m.message_id,
           confirmation: m.kind === "confirmation",
           resolved: answered,
-          answerText: answered ? answerFor[m.message_id] : undefined,
+          answerText: answered ? answerFor[m.message_id].content : undefined,
+          // An answer the server did not take: shown failed, with the reason it serves, never as accepted.
+          answerFailed:
+            answered && answerFor[m.message_id].state === "failed"
+              ? {
+                  reason: answerFor[m.message_id].payload?.failure_reason || "",
+                }
+              : undefined,
         });
         continue;
       }
@@ -199,7 +233,12 @@ export function projectConversation(conversation) {
           text: m.content || "The builder hit an error.",
         });
       } else if (m.content) {
-        b.steps.push({ id: m.message_id, kind: "note", text: m.content, markdown: true });
+        b.steps.push({
+          id: m.message_id,
+          kind: "note",
+          text: m.content,
+          markdown: true,
+        });
       }
       continue;
     }
@@ -219,7 +258,9 @@ export function projectConversation(conversation) {
         break;
       }
       case "tool_result": {
-        const existing = e.function_call_id ? toolByCall.get(e.function_call_id) : null;
+        const existing = e.function_call_id
+          ? toolByCall.get(e.function_call_id)
+          : null;
         const isError = Boolean(e.payload?.is_error);
         const result =
           e.payload?.text ||
@@ -241,23 +282,36 @@ export function projectConversation(conversation) {
       }
       case "authoring_activity": {
         const p = e.payload || {};
-        const line = p.event?.text || readable(p.event?.tool || p.event_type || "activity");
+        const line =
+          p.event?.text ||
+          readable(p.event?.tool || p.event_type || "activity");
         pushActivity(line, e.event_id);
         break;
       }
       case "stage_changed": {
-        pushActivity(`ALK moved to ${readable(e.payload?.to || "")}`.trim(), e.event_id);
+        pushActivity(
+          `ALK moved to ${readable(e.payload?.to || "")}`.trim(),
+          e.event_id,
+        );
         break;
       }
       case "turn_interrupted": {
         const b = startBuilder();
-        b.steps.push({ id: `int-${e.event_id}`, kind: "cancelled", text: "Stopped." });
+        b.steps.push({
+          id: `int-${e.event_id}`,
+          kind: "cancelled",
+          text: "Stopped.",
+        });
         break;
       }
       case "turn_completed": {
         if (e.payload?.outcome === "failed") {
           const b = startBuilder();
-          b.steps.push({ id: `fail-${e.event_id}`, kind: "error", text: "The turn failed." });
+          b.steps.push({
+            id: `fail-${e.event_id}`,
+            kind: "error",
+            text: "The turn failed.",
+          });
         }
         break;
       }
@@ -269,7 +323,8 @@ export function projectConversation(conversation) {
   }
 
   const active = ACTIVE_CONVERSATION_STATES.has(conversation.state);
-  const waiting = conversation.state === "waiting_for_user" || Boolean(blocking);
+  const waiting =
+    conversation.state === "waiting_for_user" || Boolean(blocking);
   if (!active || waiting) {
     // Not actively working (stopped, failed, or waiting on the user): nothing is
     // in flight, so no tool dot should keep pulsing. Finalize any lingering
@@ -292,16 +347,22 @@ export function projectConversation(conversation) {
 export function conversationInFlight(conversation) {
   if (!conversation) return false;
   if (ACTIVE_CONVERSATION_STATES.has(conversation.state)) return true;
-  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
   return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
 }
 
 // A Stop the builder has not acted on yet. The server settles it when the turn
 // ends, or fails it when the runtime died.
 export function conversationStopping(conversation) {
-  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  const messages = Array.isArray(conversation?.messages)
+    ? conversation.messages
+    : [];
   return messages.some(
-    (m) => m.payload?.command_kind === "interrupt" && IN_FLIGHT_MESSAGE_STATES.has(m.state),
+    (m) =>
+      m.payload?.command_kind === "interrupt" &&
+      IN_FLIGHT_MESSAGE_STATES.has(m.state),
   );
 }
 
@@ -313,7 +374,9 @@ export function conversationWaiting(conversation) {
   if (!conversation) return false;
   const blocking = conversation.blocking_input || null;
   if (!blocking) return conversation.state === "waiting_for_user";
-  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
   return !messages.some((m) => m.reply_to === blocking.message_id);
 }
 

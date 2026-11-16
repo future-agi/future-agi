@@ -161,6 +161,34 @@ describe("useWorkspaceChat (real)", () => {
     expect(answered.result.current.canStop).toBe(true);
   });
 
+  it("holds free text only when the server serves an open question that takes its options alone", () => {
+    const question = {
+      message_id: "q2",
+      role: "assistant",
+      kind: "question",
+      state: "completed",
+      content: "Confirm this change",
+      created_at: "2026-09-22T10:00:02Z",
+      sequence: 3,
+    };
+    const asked = (blocking) =>
+      renderChat(
+        conversationWith({
+          state: "waiting_for_user",
+          blocking_input: blocking,
+          messages: [question],
+        }),
+      ).result.current.answerWithOptions;
+    expect(
+      asked({
+        message_id: "q2",
+        kind: "question_requested",
+        options_only: true,
+      }),
+    ).toBe(true);
+    expect(asked({ message_id: "q2", kind: "question_requested" })).toBe(false);
+  });
+
   it("send posts a user_message and writes the returned conversation into the cache", async () => {
     const next = conversationWith({
       messages: [

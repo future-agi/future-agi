@@ -88,6 +88,7 @@ export default function BuilderConsole({
   preComposer,
   frozen = false,
   frozenReason,
+  answerWithOptions = false,
   onCollapse,
   collapseRef,
   active = true,
@@ -167,7 +168,8 @@ export default function BuilderConsole({
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
-  const blocked = running || frozen;
+  // An open question that takes only its options holds the composer too, saying so.
+  const blocked = running || frozen || answerWithOptions;
   const reason = frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
@@ -397,7 +399,13 @@ export default function BuilderConsole({
             multiline
             maxRows={8}
             variant="standard"
-            placeholder={frozen ? reason : CONSOLE_COPY.placeholder}
+            placeholder={
+              frozen
+                ? reason
+                : answerWithOptions
+                  ? CONSOLE_COPY.answerWithOptions
+                  : CONSOLE_COPY.placeholder
+            }
             value={draft}
             disabled={blocked}
             onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
@@ -488,6 +496,8 @@ BuilderConsole.propTypes = {
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,
+  // The open question takes only one of its options; free text is held.
+  answerWithOptions: PropTypes.bool,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.
   collapseRef: PropTypes.oneOfType([
