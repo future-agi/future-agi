@@ -182,18 +182,18 @@ func TestOrgBreakerCountsRejectedKeysByDefault(t *testing.T) {
 		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 			err := &models.APIError{Status: status, Type: "upstream_error", Message: "synthetic rejected key"}
 			org := orgs.Get(fmt.Sprintf("org-%d", status), "byok")
-			org.RecordFailure(err)
+			recordAdmittedFailure(t, org, err)
 			if org.State() != StateOpen {
 				t.Fatalf("codes=%v: org breaker ignored %d", codes, status)
 			}
 			op := shared.Get(fmt.Sprintf("operator-%d", status))
-			op.RecordFailure(err)
+			recordAdmittedFailure(t, op, err)
 			if op.State() != StateClosed {
 				t.Fatalf("codes=%v: shared breaker counted %d", codes, status)
 			}
 		}
 		org := orgs.Get("org-404", "byok")
-		org.RecordFailure(&models.APIError{Status: http.StatusNotFound, Type: "upstream_error", Message: "synthetic not found"})
+		recordAdmittedFailure(t, org, &models.APIError{Status: http.StatusNotFound, Type: "upstream_error", Message: "synthetic not found"})
 		if org.State() != StateClosed {
 			t.Fatalf("codes=%v: org breaker counted 404", codes)
 		}

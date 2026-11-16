@@ -11,6 +11,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/routing"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 )
 
@@ -216,8 +217,14 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 	var nativeResp *models.CompletionResponse
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		lease, err := h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		if err != nil {
+			return err
+		}
+		defer lease.Abandon()
 		start := time.Now()
 		resp, err := provider.TextCompletion(ctx, req)
+		lease.Complete(ctx, err)
 		h.recordProviderOutcome(ctx, provider, time.Since(start), err)
 		if err != nil {
 			return err
@@ -267,7 +274,13 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 
 func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		lease, err := h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		if err != nil {
+			return err
+		}
+		defer lease.Abandon()
 		resp, err := h.callChatProvider(ctx, provider, rc.Request)
+		lease.Complete(ctx, err)
 		if err != nil {
 			return err
 		}
@@ -307,14 +320,27 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
 	var upstreamStart time.Time
+	var lease *routing.ProbeLease
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer func() {
+		lease.Abandon()
+		cancelAndDrainStream(streamCancel, chunks)
+	}()
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		var err error
+		lease, err = h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		if err != nil {
+			return err
+		}
 		upstreamStart = time.Now()
-		chunks, errCh = provider.StreamChatCompletion(ctx, rc.Request)
+		chunks, errCh = provider.StreamChatCompletion(streamCtx, rc.Request)
 		// Sample here: after Process, a nil stream can also mean a pre-plugin
 		// short-circuited and the provider was never called.
 		if chunks == nil {
-			h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), models.ErrInternal("no stream from provider"))
+			err := models.ErrInternal("no stream from provider")
+			lease.Complete(ctx, err)
+			h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), err)
 		}
 		return nil
 	}
@@ -399,6 +425,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	// its own status, as /v1/chat/completions does.
 	first, startErr := waitForFirstStreamChunk(ctx, chunks, errCh)
 	if startErr != nil {
+		lease.Complete(ctx, startErr)
 		h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), startErr)
 		if apiErr := streamEndError(ctx, startErr); apiErr != nil {
 			rc.AddError(apiErr)
@@ -419,16 +446,18 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+				raw := closedStreamOutcome(ctx, errCh)
+				lease.Complete(ctx, raw)
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, raw)
+				if raw != nil {
+					apiErr := streamEndError(ctx, raw)
 					if apiErr != nil {
-						h.recordProviderOutcome(ctx, provider, firstChunkLatency, apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(ctx, provider, firstChunkLatency, nil)
 				if wantsStreamMetadata(rc) {
 					// Finalise first: the last chunk carries the cost.
 					finalizeStream(false)
@@ -448,7 +477,12 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			}
 
 		case err, ok := <-errCh:
-			if ok && err != nil {
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				lease.Complete(ctx, err)
 				h.recordProviderOutcome(ctx, provider, firstChunkLatency, err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
@@ -461,6 +495,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			}
 
 		case <-ctx.Done():
+			lease.Complete(ctx, ctx.Err())
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. Drain the channel and run post-plugins.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
@@ -468,10 +503,6 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
-			go func() {
-				for range chunks {
-				}
-			}()
 			finalizeStream(true)
 			return
 		}

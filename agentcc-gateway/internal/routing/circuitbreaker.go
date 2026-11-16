@@ -37,15 +37,18 @@ func (s CircuitState) String() string {
 
 // CircuitBreaker implements the circuit breaker pattern for a single provider.
 type CircuitBreaker struct {
-	mu            sync.Mutex
-	providerID    string
-	state         CircuitState
-	failures      int
-	successes     int
-	lastFailure   time.Time
-	cfg           config.CircuitBreakerConfig
-	codes         map[int]bool
-	onStateChange func(string, bool) // providerID, healthy
+	mu             sync.Mutex
+	providerID     string
+	state          CircuitState
+	generation     uint64 // identifies the state in which a request was admitted
+	failures       int
+	successes      int
+	halfOpenProbes int // half-open probes granted whose result is not recorded yet
+	lastFailure    time.Time
+	cfg            config.CircuitBreakerConfig
+	codes          map[int]bool
+	onStateChange  func(string, bool) // providerID, healthy
+	readmitted     bool               // routing eligibility already published for this open cycle
 }
 
 // NewCircuitBreaker creates a circuit breaker for a provider.
@@ -58,6 +61,9 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 	}
 	if cfg.Cooldown <= 0 {
 		cfg.Cooldown = 30 * time.Second
+	}
+	if cfg.HalfOpenMaxProbes <= 0 {
+		cfg.HalfOpenMaxProbes = 1
 	}
 	if len(cfg.OnStatusCodes) == 0 {
 		cfg.OnStatusCodes = DefaultCBStatusCodes
@@ -77,46 +83,80 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 	}
 }
 
-// Allow returns true if the circuit allows a request through.
-func (cb *CircuitBreaker) Allow() bool {
+// Allow admits a request and returns its generation. Pass that generation to exactly one
+// RecordSuccess or RecordFailure call so late results cannot affect a newer recovery cycle.
+func (cb *CircuitBreaker) Allow() (generation uint64, allowed bool) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	switch cb.state {
 	case StateClosed:
-		return true
+		return cb.generation, true
 	case StateOpen:
 		// Check if cooldown has elapsed.
 		if time.Since(cb.lastFailure) >= cb.cfg.Cooldown {
 			cb.state = StateHalfOpen
+			cb.generation++
 			cb.successes = 0
+			cb.halfOpenProbes = 0
+			// Direct probes can enter recovery before the cooldown callback runs.
+			// Publish eligibility in this epoch so later routed probes are not stranded.
+			if cb.onStateChange != nil && !cb.readmitted {
+				cb.onStateChange(cb.providerID, true)
+				cb.readmitted = true
+			}
 			slog.Debug("circuit breaker half-open",
 				"provider", cb.providerID,
 			)
-			return true
+			return cb.generation, cb.grantHalfOpenProbeLocked()
 		}
-		return false
+		return cb.generation, false
 	case StateHalfOpen:
-		return true
+		return cb.generation, cb.grantHalfOpenProbeLocked()
 	default:
-		return true
+		return cb.generation, false
+	}
+}
+
+// grantHalfOpenProbeLocked takes a half-open probe slot if fewer than HalfOpenMaxProbes probes
+// are in flight. cb.mu must be held.
+func (cb *CircuitBreaker) grantHalfOpenProbeLocked() bool {
+	if cb.halfOpenProbes >= cb.cfg.HalfOpenMaxProbes {
+		return false
+	}
+	cb.halfOpenProbes++
+	return true
+}
+
+// releaseHalfOpenProbeLocked hands back the slot of a half-open probe that has finished, however
+// it ended. cb.mu must be held.
+func (cb *CircuitBreaker) releaseHalfOpenProbeLocked() {
+	if cb.halfOpenProbes > 0 {
+		cb.halfOpenProbes--
 	}
 }
 
 // RecordSuccess records a successful call.
-func (cb *CircuitBreaker) RecordSuccess() {
+func (cb *CircuitBreaker) RecordSuccess(generation uint64) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	if generation != cb.generation {
+		return
+	}
 
 	switch cb.state {
 	case StateClosed:
 		cb.failures = 0
 	case StateHalfOpen:
 		cb.successes++
+		cb.releaseHalfOpenProbeLocked()
 		if cb.successes >= cb.cfg.SuccessThreshold {
 			cb.state = StateClosed
+			cb.generation++
 			cb.failures = 0
 			cb.successes = 0
+			cb.halfOpenProbes = 0
 			slog.Info("circuit breaker closed (recovered)",
 				"provider", cb.providerID,
 			)
@@ -128,13 +168,23 @@ func (cb *CircuitBreaker) RecordSuccess() {
 }
 
 // RecordFailure records a failed call.
-func (cb *CircuitBreaker) RecordFailure(err error) {
-	if !cb.isFailure(err) {
+func (cb *CircuitBreaker) RecordFailure(generation uint64, err error) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if generation != cb.generation {
 		return
 	}
 
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	if !cb.isFailure(err) {
+		// The error says nothing about provider health (a 400 the provider passed through, say),
+		// so it neither re-opens nor closes the circuit. A half-open probe must still hand back
+		// its slot, or once HalfOpenMaxProbes slots leak this way Allow refuses every request.
+		if cb.state == StateHalfOpen {
+			cb.releaseHalfOpenProbeLocked()
+		}
+		return
+	}
 
 	cb.lastFailure = time.Now()
 
@@ -143,6 +193,7 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 		cb.failures++
 		if cb.failures >= cb.cfg.FailureThreshold {
 			cb.state = StateOpen
+			cb.generation++
 			slog.Warn("circuit breaker opened",
 				"provider", cb.providerID,
 				"failures", cb.failures,
@@ -155,7 +206,9 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 	case StateHalfOpen:
 		// Any failure in half-open → re-open.
 		cb.state = StateOpen
+		cb.generation++
 		cb.successes = 0
+		cb.halfOpenProbes = 0
 		slog.Warn("circuit breaker re-opened",
 			"provider", cb.providerID,
 		)
@@ -177,7 +230,19 @@ func (cb *CircuitBreaker) State() CircuitState {
 // the circuit is open the router skips the provider, so no request would otherwise reach Allow
 // to move the circuit to half-open; Allow and the half-open probes decide from there.
 func (cb *CircuitBreaker) readmitAfterCooldown() {
-	time.AfterFunc(cb.cfg.Cooldown, func() { cb.onStateChange(cb.providerID, true) })
+	cb.readmitted = false
+	generation := cb.generation
+	time.AfterFunc(cb.cfg.Cooldown, func() { cb.readmit(generation) })
+}
+
+// readmit serializes callbacks with transitions, including a newer open cycle.
+func (cb *CircuitBreaker) readmit(generation uint64) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.generation == generation && cb.state == StateOpen && cb.onStateChange != nil && !cb.readmitted {
+		cb.readmitted = true
+		cb.onStateChange(cb.providerID, true)
+	}
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.
@@ -231,6 +296,11 @@ func (r *CircuitBreakerRegistry) Get(providerID string) *CircuitBreaker {
 	cb := NewCircuitBreaker(providerID, r.cfg, r.onChange)
 	r.breakers[providerID] = cb
 	return cb
+}
+
+// GetScoped uses the bounded org/provider store, independent of adapter replacement.
+func (r *CircuitBreakerRegistry) GetScoped(orgID, providerID string) *CircuitBreaker {
+	return r.orgBreakers.Get(orgID, providerID)
 }
 
 // IsEnabled returns true if circuit breaking is enabled.

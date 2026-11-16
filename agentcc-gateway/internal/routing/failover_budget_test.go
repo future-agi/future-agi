@@ -70,7 +70,7 @@ func TestFailoverRefusalsDoNotSpendAttempts(t *testing.T) {
 				refusedAt := map[string]time.Time{}
 				for _, id := range tc.refused {
 					cb := fo.circuitBreakerFor(id)
-					cb.RecordFailure(errors.New("synthetic failure"))
+					recordAdmittedFailure(t, cb, errors.New("synthetic failure"))
 					refusedBreakers[id], refusedAt[id] = cb, cb.lastFailure
 				}
 				var calls, considered []string
@@ -155,7 +155,7 @@ func TestFailoverCancellationDuringRefusalTraversal(t *testing.T) {
 			if realErrorFirst {
 				refused = "b"
 			}
-			registry.Get(refused).RecordFailure(errors.New("synthetic failure"))
+			recordAdmittedFailure(t, registry.Get(refused), errors.New("synthetic failure"))
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var considered, calls []string

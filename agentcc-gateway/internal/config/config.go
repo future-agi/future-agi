@@ -667,10 +667,10 @@ type AccessGroupConfig struct {
 
 // MirrorConfig controls traffic mirroring for shadow testing.
 type MirrorConfig struct {
-	Enabled          bool         `yaml:"enabled" json:"enabled"`
-	CaptureResults   bool         `yaml:"capture_results" json:"capture_results"`
-	MaxStored        int          `yaml:"max_stored" json:"max_stored"`
-	FlushIntervalSec int          `yaml:"flush_interval_sec" json:"flush_interval_sec"`
+	Enabled          bool `yaml:"enabled" json:"enabled"`
+	CaptureResults   bool `yaml:"capture_results" json:"capture_results"`
+	MaxStored        int  `yaml:"max_stored" json:"max_stored"`
+	FlushIntervalSec int  `yaml:"flush_interval_sec" json:"flush_interval_sec"`
 	// MaxConcurrent bounds the number of in-flight async mirror requests.
 	// Mirroring is fire-and-forget shadow traffic, so excess is dropped (not
 	// queued) once this budget is exhausted, preventing unbounded goroutine and
@@ -734,11 +734,12 @@ type RetryConfig struct {
 
 // CircuitBreakerConfig controls per-provider circuit breaking.
 type CircuitBreakerConfig struct {
-	Enabled          bool          `yaml:"enabled" json:"enabled"`
-	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
-	SuccessThreshold int           `yaml:"success_threshold" json:"success_threshold"`
-	Cooldown         time.Duration `yaml:"cooldown" json:"cooldown"`
-	OnStatusCodes    []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	FailureThreshold  int           `yaml:"failure_threshold" json:"failure_threshold"`
+	SuccessThreshold  int           `yaml:"success_threshold" json:"success_threshold"`
+	Cooldown          time.Duration `yaml:"cooldown" json:"cooldown"`
+	OnStatusCodes     []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	HalfOpenMaxProbes int           `yaml:"half_open_max_probes" json:"half_open_max_probes"`
 }
 
 // RoutingTargetConfig defines a single routing target for a model.
