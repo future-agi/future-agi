@@ -553,6 +553,21 @@ def test_core_management_endpoints_have_runtime_backed_contracts():
     )
 
 
+def test_websocket_request_schema_matches_object_messages_and_optional_uuid():
+    schema = _swagger()["definitions"]["CallWebsocketRequest"]
+    assert schema["required"] == ["message"]
+    message = schema["properties"]["message"]
+    assert message["type"] == "object"
+    assert message["additionalProperties"]["x-json-value"] is True
+    target = schema["properties"]["uuid"]
+    from sockets.targets import TARGET_PATTERN
+
+    assert target["type"] == "string"
+    assert target["pattern"] == TARGET_PATTERN
+    assert "format" not in target
+    assert target["x-nullable"] is True
+
+
 def test_management_api_auto_schema_adds_default_error_contracts():
     assert (
         _response_ref("/model-hub/annotation-queues/", "get", "default")

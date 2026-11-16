@@ -4,7 +4,11 @@ from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
-from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_definition import (
+    provider_for_version,
+    resolve_api_key_for_version,
+    resolve_provider_configuration_for_version,
+)
 from simulate.services.agent_setup import agent_summary
 from tracer.services.observability_switch import snapshot_as_shown
 
@@ -77,6 +81,16 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
                 data["configuration_snapshot"] = snapshot
         except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
+        if isinstance(snapshot, dict) and provider_for_version(instance) == "vapi":
+            # The form reads api_key separately from the snapshot's assistant.
+            # Overlay the effective identity for every Vapi source, including
+            # keyed rows with stale snapshots and missing-row legacy fallback.
+            # Never persist this overlay or replace another provider's fields.
+            configuration = resolve_provider_configuration_for_version(instance)
+            data["configuration_snapshot"] = {
+                **snapshot,
+                "assistant_id": configuration.assistant_id or "",
+            }
         return data
 
     def get_version_name_display(self, obj):

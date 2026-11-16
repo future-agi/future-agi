@@ -6,18 +6,18 @@ import json
 import sys
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import httpx
 import pytest
 
 from tracer.utils.vapi_recording import (
+    _URL_TYPE_TO_ARTIFACT,
     VapiArtifactNotReadyError,
     VapiArtifactType,
     VapiAuthError,
     VapiRateLimitError,
     VapiRecordingService,
-    _URL_TYPE_TO_ARTIFACT,
 )
 
 
@@ -645,46 +645,126 @@ class TestNormaliseCallLogEntry:
 
 
 class TestApiKeyFromAgentDefinition:
-    """Table-driven test of the versioned-snapshot vs plaintext-column preference."""
+    """Model-shaped credentials: no fabricated active version from MagicMock."""
 
-    def _agent(self, snapshot=None, plaintext=None, has_latest_version=True):
-        latest_version = None
-        if has_latest_version:
-            latest_version = MagicMock(configuration_snapshot=snapshot or {})
-        agent = MagicMock(latest_version=latest_version, api_key=plaintext)
+    def _agent(self, *, plaintext=None, versioned=True):
+        from simulate.models.agent_definition import ProviderCredentials
+
+        agent = Mock(
+            provider="vapi",
+            active_version=None,
+            latest_version=None,
+            api_key=plaintext,
+            assistant_id="synthetic-assistant",
+        )
+        type(agent).credentials_legacy = PropertyMock(
+            side_effect=ProviderCredentials.DoesNotExist
+        )
+        if versioned:
+            agent.latest_version = Mock(
+                agent_definition=agent,
+                configuration_snapshot={
+                    "provider": "vapi",
+                    "assistant_id": "version-assistant",
+                },
+            )
+            type(agent.latest_version).credentials = PropertyMock(
+                side_effect=ProviderCredentials.DoesNotExist
+            )
         return agent
 
-    def test_prefers_versioned_snapshot(self):
-        agent = self._agent(snapshot={"api_key": "snap"}, plaintext="plain")
-        with patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value="snap",
-        ):
-            assert VapiRecordingService._api_key_from_agent_definition(agent) == "snap"
+    def test_prefers_versioned_credentials(self):
+        agent = self._agent(plaintext="obsolete-plaintext")
+        type(agent.latest_version).credentials = PropertyMock(
+            return_value=SimpleNamespace(
+                provider_type="vapi",
+                api_key="enc::synthetic",
+                get_api_key=lambda: "version-key",
+                assistant_id="row-assistant",
+            )
+        )
+        assert (
+            VapiRecordingService._api_key_from_agent_definition(agent) == "version-key"
+        )
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        # The row's assistant goes with the row's key, not the snapshot's.
+        assert configuration.assistant_id == "row-assistant"
 
-    def test_falls_back_to_plaintext_when_snapshot_missing(self):
-        agent = self._agent(snapshot={}, plaintext="plain")
-        with patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value="plain",
-        ):
-            assert VapiRecordingService._api_key_from_agent_definition(agent) == "plain"
+    def test_version_without_any_credential_row_uses_the_definitions_pair(self):
+        # No version row and no legacy row: the definition's key and its own
+        # assistant together, never the version snapshot's assistant.
+        agent = self._agent(plaintext="definition-key")
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        assert (configuration.api_key, configuration.assistant_id) == (
+            "definition-key",
+            "synthetic-assistant",
+        )
 
-    def test_falls_back_when_no_latest_version(self):
-        agent = self._agent(has_latest_version=False, plaintext="plain")
-        with patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value="plain",
-        ):
-            assert VapiRecordingService._api_key_from_agent_definition(agent) == "plain"
+    @pytest.mark.parametrize("source", ["version", "legacy", "preversioned"])
+    @pytest.mark.parametrize(
+        "state",
+        [
+            "keyed",
+            "empty",
+            "unreadable",
+            "decrypted-empty",
+            "wrong-provider",
+            "wrong-empty",
+        ],
+    )
+    def test_credential_source_distinguishes_empty_and_unusable_keys(
+        self, source, state
+    ):
+        agent = self._agent(
+            plaintext="definition-key", versioned=source != "preversioned"
+        )
+        decrypt = Mock(return_value="" if state == "decrypted-empty" else "row-key")
+        if state == "unreadable":
+            decrypt.side_effect = ValueError("Synthetic unreadable credential")
+        credentials = SimpleNamespace(
+            provider_type="retell" if state.startswith("wrong") else "vapi",
+            api_key="" if state in ("empty", "wrong-empty") else "enc::synthetic",
+            get_api_key=decrypt,
+            assistant_id="row-assistant",
+            agent_version=None,
+        )
+        if source == "version":
+            type(agent.latest_version).credentials = PropertyMock(
+                return_value=credentials
+            )
+        else:
+            type(agent).credentials_legacy = PropertyMock(return_value=credentials)
+
+        if state == "unreadable":
+            with pytest.raises(ValueError, match="Synthetic unreadable credential"):
+                VapiRecordingService.configuration_from_agent_definition(agent)
+            decrypt.assert_called_once_with()
+            return
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        if state == "empty":
+            expected = ("definition-key", "synthetic-assistant")
+            decrypt.assert_not_called()
+        elif state.startswith("wrong"):
+            expected = (None, None)
+            decrypt.assert_not_called()
+        else:
+            expected = (
+                None if state == "decrypted-empty" else "row-key",
+                "row-assistant",
+            )
+            decrypt.assert_called_once_with()
+        assert (configuration.api_key, configuration.assistant_id) == expected
+
+    def test_falls_back_when_no_version_or_encrypted_credentials(self):
+        agent = self._agent(versioned=False, plaintext="legacy-plaintext")
+        assert (
+            VapiRecordingService._api_key_from_agent_definition(agent)
+            == "legacy-plaintext"
+        )
 
     def test_returns_none_when_all_absent(self):
-        agent = self._agent(snapshot={}, plaintext=None)
-        with patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value=None,
-        ):
-            assert VapiRecordingService._api_key_from_agent_definition(agent) is None
+        agent = self._agent(versioned=False)
+        assert VapiRecordingService._api_key_from_agent_definition(agent) is None
 
 
 class TestGetApiKeyForProject:
@@ -694,21 +774,29 @@ class TestGetApiKeyForProject:
         assert VapiRecordingService.get_api_key_for_project(None) is None
 
     def test_returns_provider_row_key_when_present(self):
-        agent = MagicMock(
-            latest_version=MagicMock(configuration_snapshot={"api_key": "abc"}),
-            api_key="ignored",
+        agent = SimpleNamespace(
+            provider="vapi",
+            active_version=None,
+            latest_version=SimpleNamespace(
+                configuration_snapshot={
+                    "provider": "vapi",
+                    "assistant_id": "synthetic-assistant",
+                },
+                credentials=SimpleNamespace(
+                    provider_type="vapi",
+                    api_key="enc::synthetic",
+                    get_api_key=lambda: "abc",
+                    assistant_id="",
+                ),
+            ),
         )
-        provider = MagicMock(agent_definition=agent)
-        with (
-            patch.object(
-                VapiRecordingService,
-                "_get_vapi_provider_for_project",
-                return_value=provider,
-            ),
-            patch(
-                "simulate.services.agent_definition.resolve_api_key_for_version",
-                return_value="abc",
-            ),
+        provider = SimpleNamespace(
+            agent_definition=agent, organization_id="synthetic-org"
+        )
+        with patch.object(
+            VapiRecordingService,
+            "_get_vapi_provider_for_project",
+            return_value=provider,
         ):
             assert VapiRecordingService.get_api_key_for_project("proj-id") == "abc"
 

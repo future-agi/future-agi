@@ -11557,11 +11557,29 @@ export const ApiTracesSpanAttributeValuesListResponse = zod.object({
 
 export const callWebsocketCreateBodySendToUuidDefault = false;
 
-export const CallWebsocketCreateBody = zod.object({
-  message: zod.string().min(1),
-  send_to_uuid: zod.boolean().default(callWebsocketCreateBodySendToUuidDefault),
-  uuid: zod.string().optional(),
-});
+export const callWebsocketCreateBodyUuidRegExp = new RegExp(
+  "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+);
+
+export const CallWebsocketCreateBody = zod
+  .object({
+    message: zod.record(zod.string(), jsonValueSchema),
+    send_to_uuid: zod
+      .boolean()
+      .default(callWebsocketCreateBodySendToUuidDefault),
+    uuid: zod
+      .string()
+      .min(1)
+      .regex(callWebsocketCreateBodyUuidRegExp)
+      .nullish()
+      .describe(
+        "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
+      ),
+  })
+  .refine((value) => !value.send_to_uuid || value.uuid != null, {
+    path: ["uuid"],
+    message: "A UUID is required for targeted delivery.",
+  });
 
 export const callWebsocketCreateResponseStatusDefault = true;
 
@@ -33998,6 +34016,13 @@ export const SimulateAgentDefinitionsVersionsCreateCreateBody = zod.object({
       simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax,
     )
     .optional(),
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within this agent; omitted selects active/latest.",
+    ),
   commit_message: zod
     .string()
     .default(
@@ -70404,6 +70429,29 @@ export const TracerObservabilityProviderListResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       metadata: zod.object({}).passthrough().optional(),
+      configuration_health: zod
+        .union([
+          zod
+            .object({
+              status: zod.enum(["misconfigured"]),
+              reason_code: zod.enum([
+                "missing_agent",
+                "deleted_agent",
+                "missing_key",
+                "missing_assistant_id",
+                "credential_unreadable",
+              ]),
+              first_failed_at: zod.string().datetime({ offset: true }),
+              last_failed_at: zod.string().datetime({ offset: true }),
+              failure_count: zod.number().min(1),
+              next_retry_at: zod.string().datetime({ offset: true }),
+            })
+            .describe(
+              "Last detected setup problem and next probe; null when no setup problem is recorded.",
+            ),
+          zod.null(),
+        ])
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -70437,6 +70485,13 @@ export const TracerObservabilityProviderCreateBody = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within agent_id; omitted selects active/latest.",
+    ),
   provider: zod.enum(["vapi", "retell", "bland"]),
   api_key: zod.string().optional(),
   agent_id: zod.string().optional(),
@@ -70456,6 +70511,13 @@ export const TracerObservabilityProviderVerifyApiKeyResponse = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyAssistantIdBody = zod.object({
+  source_version_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Credential source within agent_id; omitted selects active/latest.",
+    ),
   provider: zod.enum(["vapi", "retell", "bland"]),
   assistant_id: zod.string().optional(),
   api_key: zod.string().optional(),
@@ -70500,6 +70562,29 @@ export const TracerObservabilityProviderReadResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -70551,6 +70636,29 @@ export const TracerObservabilityProviderUpdateResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -70602,6 +70710,29 @@ export const TracerObservabilityProviderPartialUpdateResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });

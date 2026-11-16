@@ -68,6 +68,10 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
     )
 
     # Version-specific fields
+    source_version_id = serializers.UUIDField(
+        required=False,
+        help_text="Credential source within this agent; omitted selects active/latest.",
+    )
     commit_message = serializers.CharField(required=False, allow_blank=True, default="")
     observability_enabled = serializers.BooleanField(required=False)
 

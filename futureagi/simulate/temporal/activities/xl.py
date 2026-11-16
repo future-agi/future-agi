@@ -32,7 +32,11 @@ from django.utils import timezone
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
-from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_definition import (
+    provider_for_version,
+    resolve_provider_configuration_for_version,
+)
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
@@ -45,6 +49,7 @@ from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
@@ -1090,6 +1095,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             eval_config.status = StatusType.COMPLETED.value
             eval_config.save()
 
+    except EvaluationDenied as denial:
+        record_evaluation_denial(call_execution, eval_config, denial)
+        raise
     except Exception as e:
         logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -1331,6 +1339,8 @@ def _run_evaluations_standalone(
                         f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                         f"on call execution {call_execution.id}"
                     )
+            except EvaluationDenied as denial:
+                logger.warning("simulation_evaluation_denied", code=denial.code)
             except Exception as e:
                 logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                 traceback.print_exc()
@@ -1548,7 +1558,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from simulate.models import AgentDefinition
     from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
-    from tracer.models.observability_provider import ProviderChoices
 
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -1581,7 +1590,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
         else:
             agent_version = agent_definition.get_version(selected_version.id)
 
-        snapshot = agent_version.configuration_snapshot
         agent_type = agent_definition.agent_type
         is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
 
@@ -1619,12 +1627,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     )
                 return
 
-            customer_api_key = resolve_api_key_for_version(agent_version)
-            customer_assistant_id = (
-                snapshot.get("assistant_id")
-                if snapshot and snapshot.get("assistant_id")
-                else None
-            )
+            configuration = resolve_provider_configuration_for_version(agent_version)
+            customer_api_key = configuration.api_key
+            customer_assistant_id = configuration.assistant_id
 
             if not customer_api_key or not customer_assistant_id:
                 logger.info(
@@ -1642,7 +1647,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
 
             logger.info(f"Using customer_call_id: {customer_call_id}")
 
-            customer_provider = snapshot.get("provider", ProviderChoices.VAPI)
+            customer_provider = provider_for_version(agent_version)
             from simulate.semantics import ToolCallingSupportedProviders
 
             provider_value = getattr(customer_provider, "value", customer_provider)

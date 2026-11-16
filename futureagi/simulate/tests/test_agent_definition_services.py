@@ -9,6 +9,7 @@ Tests cover:
 
 import pytest
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.agent_definition import (
@@ -18,6 +19,7 @@ from simulate.services.agent_definition import (
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from tfc.middleware.workspace_context import set_workspace_context
 
 
 @pytest.fixture
@@ -280,6 +282,250 @@ class TestSyncProviderCredentials:
         assert legacy.get_api_key() == "sk-legacy-key"
 
 
+@pytest.mark.parametrize("snapshot_provider", [True, False], ids=["authored", "legacy"])
+@pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
+def test_sync_explicit_provider_change_distinguishes_bland_encoding(
+    agent_version, snapshot_provider, key
+):
+    # The writer has already changed the definition to Vapi. For old snapshots
+    # without a provider, it supplies the pre-write provider as server context.
+    agent = agent_version.agent_definition
+    agent.api_key = "synthetic-stale-definition-key"
+    agent.save(update_fields=["api_key"])
+    before = {"assistant_id": "assistant-A", "description": "preserved"}
+    if snapshot_provider:
+        before["provider"] = "bland"
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=before
+    )
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",  # Bland's migration-0071 storage encoding
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    data = ProviderCredentialsInput(
+        provider="vapi",
+        # An authored snapshot must win even over divergent writer context.
+        previous_provider="vapi" if snapshot_provider else "bland",
+        provider_was_provided=True,
+        api_key=key,
+    )
+    ciphertext = credentials.api_key
+    if key != "synthetic-key-B":
+        from rest_framework.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="new API key is required"):
+            sync_provider_credentials(agent_version, data)
+        agent_version.refresh_from_db()
+        credentials.refresh_from_db()
+        agent.refresh_from_db()
+        assert agent_version.configuration_snapshot == before
+        assert credentials.api_key == ciphertext
+        assert credentials.assistant_id == "assistant-A"
+        assert agent.api_key == "synthetic-stale-definition-key"
+    else:
+        sync_provider_credentials(agent_version, data)
+        agent_version.refresh_from_db()
+        credentials.refresh_from_db()
+        assert credentials.provider_type == "vapi"
+        assert credentials.get_api_key() == key
+        assert credentials.assistant_id == ""
+        assert agent_version.configuration_snapshot == {
+            **before,
+            "provider": "vapi",
+            "assistant_id": "",
+        }
+
+
+def test_sync_omitted_provider_keeps_authored_bland_identity(agent_version):
+    before = {
+        "provider": "bland",
+        "assistant_id": "assistant-A",
+        "description": "preserved",
+    }
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=before
+    )
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        # This family may come from a harness or a definition now set to Vapi.
+        # Without an explicit provider write it must not re-author the snapshot.
+        ProviderCredentialsInput(provider="vapi", api_key="synthetic-key-B"),
+    )
+    agent_version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert agent_version.configuration_snapshot == before
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert credentials.assistant_id == "assistant-A"
+
+
+@pytest.mark.parametrize("assistant", ["assistant-B", "  assistant-B  ", ""])
+def test_sync_updates_snapshot_from_saved_identity(agent_version, assistant):
+    # The caller can hold a stale version; unrelated snapshot changes must survive.
+    snapshot = {"assistant_id": "assistant-A", "description": "latest description"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(
+            provider="vapi", assistant_id=assistant, api_key="synthetic-key-B"
+        ),
+    )
+    agent_version.refresh_from_db()
+    credentials = ProviderCredentials.objects.get(agent_version=agent_version)
+    assert credentials.assistant_id == assistant.strip()
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": credentials.assistant_id,
+    }
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert "api_key" not in agent_version.configuration_snapshot
+
+
+@pytest.mark.parametrize("provider", ["vapi", "retell"])
+@pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
+@pytest.mark.parametrize(
+    "identity,expected",
+    [({}, "assistant-A"), ({"assistant_id": None}, ""), ({"assistant_id": ""}, "")],
+    ids=["omitted", "explicit-null", "empty-string"],
+)
+def test_sync_distinguishes_null_identity_from_omission(
+    agent_version, provider, key, identity, expected
+):
+    snapshot = {"assistant_id": "assistant-A", "description": "preserved"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type=provider,
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(provider=provider, api_key=key, **identity),
+    )
+    agent_version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert credentials.assistant_id == expected
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": expected,
+    }
+    assert credentials.get_api_key() == (
+        "synthetic-key-B" if key == "synthetic-key-B" else "synthetic-key-A"
+    )
+
+
+@pytest.mark.parametrize("assistant", ["assistant-B", None, ""])
+def test_sync_snapshot_failure_rolls_back_credentials(agent_version, assistant):
+    from django.db import connection
+
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    original_key = credentials.api_key
+    original_snapshot = agent_version.configuration_snapshot.copy()
+
+    def fail_snapshot_write(execute, sql, params, many, context):
+        if sql.startswith('UPDATE "simulate_agent_version"'):
+            raise RuntimeError("Synthetic snapshot write failure")
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(fail_snapshot_write):
+        with pytest.raises(RuntimeError, match="Synthetic snapshot write failure"):
+            sync_provider_credentials(
+                agent_version,
+                ProviderCredentialsInput(
+                    provider="vapi",
+                    assistant_id=assistant,
+                    api_key="synthetic-key-B",
+                ),
+            )
+    credentials.refresh_from_db()
+    agent_version.refresh_from_db()
+    assert credentials.api_key == original_key
+    assert credentials.assistant_id == "assistant-A"
+    assert agent_version.configuration_snapshot == original_snapshot
+
+
+@pytest.mark.parametrize("ambient", ["default", "unrelated"])
+def test_sync_locks_the_given_version_whatever_the_ambient_workspace(
+    organization, workspace, user, ambient
+):
+    """The caller already resolved this version; the lock re-reads it by key only.
+
+    Harness creation writes an agent in the job's workspace while the
+    thread-local scope can name another one (here the user's default, as the
+    ``user`` fixture binds, or an unrelated workspace).
+    """
+    target = Workspace.objects.create(
+        name="Target", organization=organization, created_by=user
+    )
+    definition = AgentDefinition.no_workspace_objects.create(
+        agent_name="Other workspace agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12345678902",
+        inbound=True,
+        description="Agent outside the ambient workspace",
+        provider="vapi",
+        organization=organization,
+        workspace=target,
+        languages=["en"],
+    )
+    version = definition.create_version(
+        description="Initial version",
+        commit_message="First version",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    assert version.workspace_id == target.id
+    if ambient == "unrelated":
+        set_workspace_context(
+            workspace=Workspace.objects.create(
+                name="Unrelated", organization=organization, created_by=user
+            ),
+            organization=organization,
+            user=user,
+        )
+    # Precondition: the ambient scope hides the version from the scoped manager.
+    assert not AgentVersion.objects.filter(pk=version.pk).exists()
+
+    sync_provider_credentials(
+        version,
+        ProviderCredentialsInput(
+            provider="vapi",
+            api_key="synthetic-key-B",
+            assistant_id="assistant-B",
+            provider_was_provided=True,
+        ),
+    )
+
+    credentials = ProviderCredentials.no_workspace_objects.get(agent_version=version)
+    stored = AgentVersion.no_workspace_objects.get(pk=version.pk)
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert credentials.assistant_id == "assistant-B"
+    assert stored.configuration_snapshot["assistant_id"] == "assistant-B"
+    assert version.configuration_snapshot["assistant_id"] == "assistant-B"
+
+
 # ============================================================================
 # Tests for resolve_api_key_for_version()
 # ============================================================================
@@ -300,14 +546,183 @@ class TestResolveApiKeyForVersion:
         )
         assert resolve_api_key_for_version(agent_version) == "sk-direct-key"
 
-    def test_falls_back_to_legacy_credentials(self, agent_version):
+    @pytest.mark.parametrize("provider", ["vapi", "retell", "livekit"])
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_falls_back_to_legacy_credentials(self, agent_version, provider, for_save):
         agent = agent_version.agent_definition
+        agent_version.configuration_snapshot["provider"] = provider
+        agent_version.save(update_fields=["configuration_snapshot"])
         ProviderCredentials.objects.create(
             agent_definition=agent,
-            provider_type=ProviderCredentials.ProviderType.VAPI,
+            provider_type=provider,
             api_key="sk-legacy-fallback-key",
         )
-        assert resolve_api_key_for_version(agent_version) == "sk-legacy-fallback-key"
+        assert (
+            resolve_api_key_for_version(agent_version, for_save=for_save)
+            == "sk-legacy-fallback-key"
+        )
+
+    @pytest.mark.parametrize("provider", ["vapi", "retell", "livekit", "bland"])
+    @pytest.mark.parametrize("key", ["", "synthetic-key-B"])
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_existing_row_authority_keeps_other_providers_unchanged(
+        self, agent_version, provider, key, for_save
+    ):
+        agent = agent_version.agent_definition
+        agent.provider = provider
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["provider", "api_key"])
+        agent_version.configuration_snapshot["provider"] = provider
+        agent_version.save(update_fields=["configuration_snapshot"])
+        storage_provider = "vapi" if provider == "bland" else provider
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=storage_provider,
+            api_key="synthetic-key-A",
+        )
+        ProviderCredentials.objects.create(
+            agent_version=agent_version,
+            provider_type=storage_provider,
+            api_key=key,
+        )
+        # Empty Vapi rows select the definition on read, but must remain empty
+        # on save. Retell/LiveKit retain their existing legacy fallback.
+        fallback = "synthetic-key-A"
+        if provider == "vapi":
+            fallback = None if for_save else "synthetic-definition-key"
+        assert resolve_api_key_for_version(agent_version, for_save=for_save) == (
+            key or fallback
+        )
+
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_nonempty_vapi_ciphertext_with_empty_plaintext_is_authoritative(
+        self, agent_version, for_save
+    ):
+        from integrations.services.credentials import CredentialManager
+
+        agent = agent_version.agent_definition
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["api_key"])
+        ciphertext = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+        ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key=ciphertext
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent_version.agent_definition,
+            provider_type="vapi",
+            api_key="synthetic-legacy-key",
+        )
+        assert resolve_api_key_for_version(agent_version, for_save=for_save) is None
+
+    @pytest.mark.parametrize("for_save", [False, True])
+    def test_unreadable_vapi_ciphertext_does_not_fall_back(
+        self, agent_version, for_save
+    ):
+        agent = agent_version.agent_definition
+        agent.api_key = "synthetic-definition-key"
+        agent.save(update_fields=["api_key"])
+        ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key="enc::invalid"
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type="vapi",
+            api_key="synthetic-legacy-key",
+        )
+        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+            resolve_api_key_for_version(agent_version, for_save=for_save)
+
+
+@pytest.mark.parametrize("location", ["version", "legacy"])
+@pytest.mark.parametrize("source", ["raw-empty", "empty-ciphertext", "wrong-provider"])
+def test_vapi_save_resolution_distinguishes_fallback_from_closed_source(
+    agent_version, location, source
+):
+    from integrations.services.credentials import CredentialManager
+    from simulate.services.agent_definition import (
+        resolve_provider_configuration_for_version,
+    )
+
+    agent = agent_version.agent_definition
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["api_key", "assistant_id"])
+    key = (
+        "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+        if source == "empty-ciphertext"
+        else ""
+    )
+    credentials = ProviderCredentials.objects.create(
+        **(
+            {"agent_version": agent_version}
+            if location == "version"
+            else {"agent_definition": agent}
+        ),
+        provider_type="retell" if source == "wrong-provider" else "vapi",
+        api_key=key,
+        assistant_id="assistant-A",
+    )
+    ciphertext = credentials.api_key
+    for_save = resolve_provider_configuration_for_version(agent_version, for_save=True)
+    assert for_save.api_key is None
+    assert for_save.uses_definition_fallback is (source == "raw-empty")
+    effective = resolve_provider_configuration_for_version(agent_version)
+    assert effective.api_key == ("synthetic-key-B" if source == "raw-empty" else None)
+    assert (
+        effective.assistant_id
+        == {
+            "raw-empty": "assistant-B",
+            "empty-ciphertext": "assistant-A",
+            "wrong-provider": None,
+        }[source]
+    )
+    credentials.refresh_from_db()
+    assert credentials.api_key == ciphertext
+    assert credentials.agent_version_id == (
+        agent_version.pk if location == "version" else None
+    )
+
+
+@pytest.mark.parametrize("legacy_provider", ["vapi", "bland"])
+@pytest.mark.parametrize("for_save", [False, True])
+def test_bland_legacy_fallback_checks_migrated_owners_authored_provider(
+    agent_version, legacy_provider, for_save
+):
+    agent = agent_version.agent_definition
+    agent.provider = "bland"
+    agent.save(update_fields=["provider"])
+    agent_version.configuration_snapshot.update(
+        provider="bland", assistant_id="pathway-A"
+    )
+    agent_version.save(update_fields=["configuration_snapshot"])
+    ProviderCredentials.objects.create(
+        agent_version=agent_version, provider_type="vapi", api_key=""
+    )
+    owner = agent.create_version(
+        description="Synthetic legacy owner", commit_message="owner"
+    )
+    owner.configuration_snapshot.update(
+        provider=legacy_provider, assistant_id="legacy-owner"
+    )
+    owner.save(update_fields=["configuration_snapshot"])
+    owner_snapshot = owner.configuration_snapshot.copy()
+    legacy = ProviderCredentials.objects.create(
+        agent_definition=agent,
+        agent_version=owner,
+        provider_type="vapi",
+        api_key="synthetic-legacy-key",
+        assistant_id="legacy-owner",
+    )
+    ciphertext = legacy.api_key
+    assert resolve_api_key_for_version(agent_version, for_save=for_save) == (
+        "synthetic-legacy-key" if legacy_provider == "bland" else None
+    )
+    owner.refresh_from_db()
+    legacy.refresh_from_db()
+    assert owner.configuration_snapshot == owner_snapshot
+    assert legacy.api_key == ciphertext
+    assert legacy.agent_version_id == owner.pk
+    assert legacy.agent_definition_id == agent.pk
 
 
 # ============================================================================
@@ -398,6 +813,75 @@ class TestResolveStoredApiKey:
             masked_value="sk-r...2345",
         )
         assert key is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "provider,row_provider,key,expected_mask,expected_assistant",
+    [
+        ("vapi", "vapi", "", "synt...ey-B", "assistant-B"),
+        ("vapi", "vapi", "synthetic-key-C", "synt...ey-C", "assistant-C"),
+        ("vapi", "vapi", "empty-ciphertext", None, "assistant-C"),
+        ("vapi", "retell", "", None, ""),
+        ("vapi", "retell", "synthetic-key-C", None, ""),
+        ("retell", "retell", "", "synt...ey-A", "assistant-S"),
+        ("livekit", "livekit", "", "synt...ey-A", "assistant-S"),
+        ("retell", "vapi", "", "synt...ey-A", "assistant-S"),
+        ("livekit", "vapi", "", "synt...ey-A", "assistant-S"),
+        ("bland", "vapi", "", "synt...ey-A", "assistant-S"),
+        ("bland", "vapi", "synthetic-key-C", "synt...ey-C", "assistant-S"),
+        ("vapi", None, "", "synt...ey-A", "assistant-A"),
+    ],
+)
+def test_version_response_uses_effective_vapi_pair_only(
+    agent_version, provider, row_provider, key, expected_mask, expected_assistant
+):
+    from integrations.services.credentials import CredentialManager
+    from simulate.serializers.response.agent_version import (
+        AgentVersionResponseSerializer,
+    )
+
+    agent = agent_version.agent_definition
+    agent.provider = provider
+    agent.api_key = "synthetic-key-B"
+    agent.assistant_id = "assistant-B"
+    agent.save(update_fields=["provider", "api_key", "assistant_id"])
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "provider": provider,
+        "assistant_id": "assistant-S",
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+    stored_snapshot = agent_version.configuration_snapshot.copy()
+    ProviderCredentials.objects.create(
+        agent_definition=agent,
+        provider_type="vapi" if provider == "bland" else provider,
+        api_key="synthetic-key-A",
+        assistant_id="assistant-A",
+    )
+    if key == "empty-ciphertext":
+        key = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+    if row_provider:
+        credentials = ProviderCredentials.objects.create(
+            agent_version=agent_version,
+            provider_type=row_provider,
+            api_key=key,
+            assistant_id="assistant-C",
+        )
+        stored_key = credentials.api_key
+
+    data = AgentVersionResponseSerializer(agent_version).data
+    assert data["api_key"] == expected_mask
+    assert data["configuration_snapshot"]["assistant_id"] == expected_assistant
+    for secret in ("synthetic-key-A", "synthetic-key-B", "synthetic-key-C"):
+        assert secret not in str(data)
+    assert agent_version.configuration_snapshot == stored_snapshot
+    agent_version.refresh_from_db()
+    assert agent_version.configuration_snapshot == stored_snapshot
+    if row_provider:
+        credentials.refresh_from_db()
+        assert credentials.api_key == stored_key
+        assert credentials.assistant_id == "assistant-C"
 
 
 # ============================================================================
