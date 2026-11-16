@@ -96,7 +96,11 @@ def test_a_blocked_worker_holds_back_its_cases_and_every_refusal_names_it(
     report = auth_client.get(f"{BASE}/{environment.id}/capabilities/").json()
     refund = next(one for one in report["workers"] if one["worker_id"] == "refund")
     assert refund["status"] == "blocked"
-    assert report["selection"]["held_by_workers"] == {"refund": len(REFUND_KEYS)}
+    held = {one["id"]: one["count"] for one in report["selection"]["held_by"]}
+    assert held == {"worker:refund": len(REFUND_KEYS)}
+    # The header counts the blocked worker with the blocked rows, and the answer is blocked.
+    assert report["blockers"] == report["counts"]["blocked"] + 1
+    assert report["answer"]["kind"] == "blocked"
     assert report["selection"]["eligible"] == len(LOOKUP_KEYS)
 
     # 2. A run of only the refund cases is refused, and the refusal names the worker and why.

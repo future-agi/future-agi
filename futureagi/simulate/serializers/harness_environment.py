@@ -1021,6 +1021,10 @@ class HarnessCapabilityReportSerializer(serializers.Serializer):
         help_text="One row per declared worker; empty when the contract declares none.",
     )
     counts = HarnessCapabilityCountsSerializer()
+    blockers = serializers.IntegerField(
+        min_value=0,
+        help_text="Blocked rows plus blocked workers: what the run plan counts as blockers.",
+    )
     catalog_version = serializers.CharField()
     rules_version = serializers.CharField()
     computed_at = serializers.CharField()
@@ -1143,6 +1147,16 @@ class HarnessCapabilityGradingSerializer(serializers.Serializer):
     )
 
 
+class HarnessCapabilityHeldBySerializer(serializers.Serializer):
+    id = serializers.CharField(
+        help_text="The row id, or worker:<id> for a declared worker."
+    )
+    name = serializers.CharField()
+    area = serializers.CharField(allow_null=True)
+    count = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(allow_null=True)
+
+
 class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):
     """The selected cases, each in one bucket: requested is their sum. Cases
     certifying dropped, or that grade no sub-goal, are listed under dropped and
@@ -1154,10 +1168,9 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     stale = serializers.IntegerField(min_value=0)
     untested = serializers.IntegerField(min_value=0)
     lists = HarnessCapabilityCaseListsSerializer()
-    held_by_workers = serializers.DictField(
-        child=serializers.IntegerField(min_value=1),
-        required=False,
-        help_text="Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+    held_by = HarnessCapabilityHeldBySerializer(
+        many=True,
+        help_text="Each blocked row, then each blocked worker, holding selected cases back, with how many.",
     )
     dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
     grading = HarnessCapabilityGradingSerializer()
