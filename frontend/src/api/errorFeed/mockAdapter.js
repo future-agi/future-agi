@@ -21,7 +21,7 @@ import {
 } from "./omegaFindings";
 import {
   DEEP_ANALYSIS_STATUS,
-  useObserveProjectList,
+  useObserveProjectList as realUseObserveProjectList,
   useErrorFeedList as realUseList,
   useErrorFeedStats as realUseStats,
   useErrorFeedDetail as realUseDetail,
@@ -35,6 +35,7 @@ import {
   useCreateLinearIssue,
   useUpdateErrorFeedIssue as realUseUpdate,
 } from "./error-feed";
+import { OBSERVE_PROJECTS } from "src/sections/simulate-v2/_mock/connectAgent";
 
 /* ── Mock clusters ────────────────────────────────────────────────────── */
 
@@ -1279,8 +1280,27 @@ function mockOverview(cluster) {
 
 /* ── Filtered list ────────────────────────────────────────────────────── */
 
+/* Scanner = Future AGI's own trace checks (tool, data and ordering faults);
+   Eval = one of the customer's evals (policy, claims, verification). */
+const EVAL_TYPES = new Set([
+  "PolicyViolation",
+  "PolicyBypassError",
+  "UnsupportedClaim",
+  "SelfContradiction",
+  "SkippedVerification",
+  "SkippedConfirmation",
+]);
+const sourceOf = (r) =>
+  r.source || (EVAL_TYPES.has(r.error?.type) ? "eval" : "scanner");
+
 function filterAndPaginate(rows, params = {}) {
-  let list = rows.slice();
+  let list = rows.map((r) => ({ ...r, source: sourceOf(r) }));
+  /* Each filter may hold several values, comma-separated (#88). */
+  const anyOf = (v) => String(v).toLowerCase().split(",");
+  if (params.project_id)
+    list = list.filter((r) => r.project_id === params.project_id);
+  if (params.source)
+    list = list.filter((r) => anyOf(params.source).includes(r.source));
   if (params.search) {
     const q = String(params.search).toLowerCase();
     list = list.filter(
@@ -1290,10 +1310,13 @@ function filterAndPaginate(rows, params = {}) {
     );
   }
   if (params.severity)
-    list = list.filter((r) => r.severity === params.severity);
-  if (params.status) list = list.filter((r) => r.status === params.status);
+    list = list.filter((r) => anyOf(params.severity).includes(r.severity));
+  if (params.status)
+    list = list.filter((r) => anyOf(params.status).includes(r.status));
   if (params.fix_layer)
-    list = list.filter((r) => r.fix_layer === params.fix_layer);
+    list = list.filter((r) =>
+      anyOf(params.fix_layer).includes(String(r.fix_layer).toLowerCase()),
+    );
   if (params.evidence_state)
     list = list.filter((r) => r.evidence_state === params.evidence_state);
 
@@ -1536,8 +1559,25 @@ export function useErrorFeedDeepAnalysis(clusterId, traceId, options = {}) {
 
 export {
   DEEP_ANALYSIS_STATUS,
-  useObserveProjectList,
   useRunDeepAnalysis,
   useLinearTeams,
   useCreateLinearIssue,
 };
+
+/* The Project picker: the projects the sample issues belong to first, then
+   the workspace's other Observe projects. */
+const SAMPLE_PROJECTS = OBSERVE_PROJECTS.map((p) => ({
+  value: p.id,
+  label: p.name,
+}));
+export function useObserveProjectList(options = {}) {
+  const real = realUseObserveProjectList(options);
+  const data = useMemo(() => {
+    const ids = new Set(SAMPLE_PROJECTS.map((p) => p.value));
+    return [
+      ...SAMPLE_PROJECTS,
+      ...(real.data || []).filter((p) => !ids.has(p.value)),
+    ];
+  }, [real.data]);
+  return { ...real, data };
+}

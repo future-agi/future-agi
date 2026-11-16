@@ -1,3 +1,4 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +22,7 @@ import { useIssueFix } from "./issueFix";
  */
 export default function RegressionMemoryRow({ issue }) {
   const navigate = useNavigate();
+  const [showWhich, setShowWhich] = useState(false);
   const improving = useAgentImprovementFlag();
   const { status } = useIssueFix(issue);
   const { state, commit } = useSimStore();
@@ -104,9 +106,39 @@ export default function RegressionMemoryRow({ issue }) {
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {`Keep ${plural(n, "scenario", "scenarios")} from this fix as must-pass in ${envName}?`}
         </Typography>
+        {/* Which ones and why (#79): the issue's own scenarios that passed
+            every repeat of the check run on the released version. */}
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {`${n === 1 ? "It passed" : "They passed"} every repeat on ${memory.version}. A later change that fails one again is rejected, so this can't quietly come back.${memory.targets.length ? ` ${plural(memory.targets.length, "other still fails", "others still fail")} sometimes.` : ""}`}
+          {`Picked from this issue's scenarios: the ${n === 1 ? "one" : n} that passed all ${memory.confirmation?.of || ""} repeats on ${memory.version}.${memory.targets.length ? ` ${plural(memory.targets.length, "other still fails", "others still fail")} sometimes, so ${memory.targets.length === 1 ? "it isn't" : "they aren't"} offered.` : ""} `}
+          <Box
+            component="button"
+            type="button"
+            onClick={() => setShowWhich((v) => !v)}
+            aria-expanded={showWhich}
+            sx={{
+              all: "unset",
+              cursor: "pointer",
+              fontWeight: 600,
+              color: "text.secondary",
+              "&:hover": { textDecoration: "underline" },
+            }}
+          >
+            {showWhich ? "Hide" : `Which ${n === 1 ? "one" : n}`}
+          </Box>
         </Typography>
+        {showWhich && (
+          <Stack component="ul" sx={{ m: 0, mt: 0.5, pl: 2.25 }}>
+            {memory.offer.map((t) => (
+              <Typography
+                key={t.id}
+                component="li"
+                sx={{ typography: "s3", color: "text.secondary" }}
+              >
+                {`${t.title} · ${t.passes} of ${t.of} passed`}
+              </Typography>
+            ))}
+          </Stack>
+        )}
       </Box>
       <Button
         size="small"
@@ -117,8 +149,7 @@ export default function RegressionMemoryRow({ issue }) {
       </Button>
       <Button
         size="small"
-        variant="contained"
-        color="primary"
+        variant="outlined"
         onClick={keep}
         sx={{ flexShrink: 0 }}
       >

@@ -154,6 +154,14 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   /* The same must-pass rule the search gates on: passes every repeat today. */
   const mustPassIn = (e) => envMustPassOf(e, state.byEnv[e.id]).gated.length;
   const inFlight = !!agent && !!status && FIX_IN_FLIGHT.has(status.key);
+  /* An issue with a fix in flight opens that fix — no in-between page
+     saying so (#67). The notice below stays only for a fix with nothing to
+     open yet. */
+  useEffect(() => {
+    if (!inFlight || !status?.optId || !status?.envId) return;
+    const [to, opts] = issueFixNav(status, issue?.cluster_id);
+    navigate(to, { ...(opts || {}), replace: true });
+  }, [inFlight, status?.optId, status?.envId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [connecting, setConnecting] = useState(false);
   const mainState = main ? state.byEnv[main.id] : null;
   const [target, setTarget] = useState("");
@@ -950,7 +958,13 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 <Section
                   n={lead + 2}
                   title="Where it's tested"
-                  meta="A change that breaks what passes today is rejected"
+                  /* How it was found (#84): the issue's project → its agent →
+                     that agent's main environment; none yet → Build one. */
+                  meta={
+                    main
+                      ? `${agent.name}'s main environment, found through the agent this issue's project is linked to · a change that breaks what passes today is rejected`
+                      : `${agent.name} has no environment yet — build one here`
+                  }
                 >
                   {!main ? (
                     <Stack
@@ -1173,7 +1187,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
                 <Section
                   n={lead + 4}
-                  title="The agent's rules"
+                  /* One name for the agent's rules everywhere (#87): the
+                     agent's Constraints tab, the improvement's Constraints. */
+                  title="Constraints"
                   meta="A change that breaks one is rejected"
                 >
                   <Box sx={{ px: 2, py: 1.5 }}>
@@ -1302,8 +1318,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                               code: "Code",
                             })[x] || x,
                         )
-                        .join(", ") ||
-                        "Nothing yet — set it in the agent's rules"}
+                        .join(", ") || "Nothing yet — set it in Constraints"}
                     </Typography>
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}

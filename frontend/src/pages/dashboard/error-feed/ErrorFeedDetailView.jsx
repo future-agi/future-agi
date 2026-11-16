@@ -38,6 +38,7 @@ import IssueProjectLine from "src/sections/simulate-v2/errorFeed/IssueProjectLin
 import { useIssueFix } from "src/sections/simulate-v2/errorFeed/issueFix";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
 import IssueBriefButton from "./IssueBriefButton";
+import IssueExportButton from "./IssueExportButton";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -313,6 +314,8 @@ export default function ErrorFeedDetailView() {
                   <Iconify icon="solar:link-linear" width={16} />
                 </IconButton>
               </Tooltip>
+              {/* Download the traces or the analysis (#65). */}
+              <IssueExportButton issue={currentError} rootCause={rootCause} />
               {/* Status is set in the right rail — one place, not two. */}
               {/* Hand the issue to a coding agent instead. */}
               <IssueBriefButton
@@ -346,7 +349,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >

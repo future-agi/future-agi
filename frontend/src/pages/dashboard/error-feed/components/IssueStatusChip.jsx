@@ -127,6 +127,37 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
     : undefined;
   const tip = `${status.detail && label === status.label ? `${status.label} · ${status.detail}. ` : ""}${fixTip(status)}${open ? " Click to open the fix." : ""}`;
 
+  /* In the list (#63): one icon after the issue's name, its state on hover.
+     Issues without a fix show nothing. */
+  if (variant === "icon") {
+    const em = EMPHASIS[status.key];
+    return (
+      <Tooltip
+        arrow
+        placement="top-start"
+        title={`Fix: ${label}. ${fixTip(status)}${open ? " Click to open the fix." : ""}`}
+      >
+        <Box
+          component="span"
+          onClick={open}
+          aria-label={`Fix: ${label}`}
+          sx={{
+            display: "inline-flex",
+            flexShrink: 0,
+            cursor: open ? "pointer" : "default",
+          }}
+        >
+          <Iconify
+            icon={tone.icon}
+            width={14}
+            sx={{
+              color: em ? statusColors(theme, em.role).fg : "text.tertiary",
+            }}
+          />
+        </Box>
+      </Tooltip>
+    );
+  }
   if (variant === "text") {
     /* "Fix in review · Vapi copy" → the state, then its detail underneath. */
     const [head, ...rest] = status.label.split(" · ");
@@ -209,5 +240,5 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
 
 IssueStatusChip.propTypes = {
   issue: PropTypes.object,
-  variant: PropTypes.oneOf(["chip", "text"]),
+  variant: PropTypes.oneOf(["chip", "text", "icon"]),
 };

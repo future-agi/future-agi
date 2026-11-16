@@ -1596,7 +1596,9 @@ const outcomeOf = (rec, { model } = {}) => {
   const searchSaid = issue?.targets
     ? /* Its failing scenarios include held-back ones the search never saw —
        said, so the count doesn't read against Reproduce's. */
-      `Fixed ${issue.id} on ${issue.fixed} of ${issue.targets} failing ${issue.targets === 1 ? "scenario" : "scenarios"}${issue.held ? ` (${issue.held} never seen by the search)` : ""}, broke ${held.broke ? held.broke : "none"}, ${costText}`
+      /* ISS-… is the Error Feed issue, not a Linear ticket (#78); an
+         improvement started without an issue reads its own result instead. */
+      `Fixed Error Feed issue ${issue.id} on ${issue.fixed} of ${issue.targets} failing ${issue.targets === 1 ? "scenario" : "scenarios"}${issue.held ? ` (${issue.held} never seen by the search)` : ""}, broke ${held.broke ? held.broke : "none"}, ${costText}`
     : result;
   /* A chosen run is read on its own numbers — projected until it's verified. */
   const said = chosen

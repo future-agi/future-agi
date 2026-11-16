@@ -15,7 +15,6 @@ import {
   Tooltip,
   Link,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import RunResults from "./RunResults";
@@ -1506,6 +1505,16 @@ function LiveRun() {
     ])
     .filter(([, n]) => n);
   const staleLine = `${staleKinds.map(([k, n]) => `${n} ${k === "outdated" ? "outdated" : "re-check"}`).join(" and ")} ${staleCount === 1 ? "scenario" : "scenarios"}`;
+  /* Conversations waiting on an approver, and who answers. */
+  const waitingApproval = tasks.filter(
+    (t) =>
+      t.status !== "notStarted" &&
+      approvalOf({ env, envState, task: t })?.pending,
+  );
+  const firstApproval = waitingApproval.length
+    ? approvalOf({ env, envState, task: waitingApproval[0] })
+    : null;
+
   /* Pulled scenarios settle into their own group in the left column. */
   const pulledDone = tasks.filter((t) => t.pulled && t.status === "unmeasured");
   const listed = tasks.filter((t) => !pulledDone.includes(t));
@@ -1789,7 +1798,8 @@ function LiveRun() {
       <RunGroupBar envId={envId} runId={runId} live />
 
       {/* ── what to know about this run ── */}
-      {(fixRun ||
+      {(waitingApproval.length > 0 ||
+        fixRun ||
         watchTrial ||
         blockers.length > 0 ||
         toolGap.length > 0 ||
@@ -1886,6 +1896,34 @@ function LiveRun() {
               </Stack>
             </Tooltip>
           )}
+          {/* Conversations waiting on an approver: one item here, not a
+              separate card (#68). */}
+          {waitingApproval.length > 0 && (
+            <Stack direction="row" alignItems="center" spacing={0.625}>
+              <Iconify
+                icon="solar:clock-circle-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {`${waitingApproval.length} waiting for ${firstApproval?.approver?.name || "approval"} · answers within ${firstApproval?.approver?.timeoutMin || 3} min · `}
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => setFocusId(waitingApproval[0].id)}
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.primary",
+                    verticalAlign: "baseline",
+                  }}
+                >
+                  Open
+                </Link>
+              </Typography>
+            </Stack>
+          )}
           {toolGap.length > 0 && (
             <Stack direction="row" alignItems="center" spacing={0.625}>
               <Iconify
@@ -1893,11 +1931,11 @@ function LiveRun() {
                 width={14}
                 sx={{ color: "status.warning.fg" }}
               />
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                Environment {runEnvShown} can&apos;t answer {toolGap.join(", ")}{" "}
-                — scenarios that call {toolGap.length === 1 ? "it" : "them"}{" "}
-                come back not measured.
-              </Typography>
+              <Tooltip arrow title={toolGap.join(", ")}>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {`Environment ${runEnvShown} can't answer ${toolGap.length === 1 ? toolGap[0] : `${toolGap.length} tools`} · scenarios that call ${toolGap.length === 1 ? "it" : "them"} come back not measured`}
+                </Typography>
+              </Tooltip>
             </Stack>
           )}
           {stats.retried > 0 && (
@@ -1985,50 +2023,6 @@ function LiveRun() {
         onAnswer={answer}
         onOpen={() => blocked && setFocusId(blocked.taskId)}
       />
-
-      {/* ── conversations waiting for an approver ── */}
-      {(() => {
-        const waiting = tasks.filter(
-          (t) =>
-            t.status !== "notStarted" &&
-            approvalOf({ env, envState, task: t })?.pending,
-        );
-        if (!waiting.length) return null;
-        const first = approvalOf({ env, envState, task: waiting[0] });
-        return (
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.25}
-            sx={{
-              mx: 2,
-              mb: 1,
-              px: 1.5,
-              py: 1,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Iconify
-              icon="solar:clock-circle-linear"
-              width={16}
-              sx={{ color: "text.secondary", flexShrink: 0 }}
-            />
-            <Typography sx={{ typography: "s2", flex: 1 }}>
-              {`Waiting for approval · ${waiting.length} conversation${waiting.length === 1 ? "" : "s"} — ${first.approver.name} answers within ${first.approver.timeoutMin || 3} min.`}
-            </Typography>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => setFocusId(waiting[0].id)}
-              sx={{ color: "text.primary", borderColor: "divider" }}
-            >
-              Open
-            </Button>
-          </Stack>
-        );
-      })()}
 
       {/* A platform agent: its call limit, a rate-limit pause, and cancelling until confirmed. */}
       {(() => {
@@ -2239,7 +2233,7 @@ function LiveRun() {
                   >
                     {focus.stepIndex < 0
                       ? "Queued"
-                      : `Turn ${focus.stepIndex + 1} of ${focus.steps.length}`}
+                      : `${TURN_STAGES.has(surface.stage) ? "Turn" : "Step"} ${focus.stepIndex + 1} of ${focus.steps.length}`}
                     {repeats > 1 ? ` · repeat 1 of ${repeats}` : ""}
                   </Typography>
                 </Tooltip>
@@ -2272,6 +2266,7 @@ function LiveRun() {
             evals={evals}
             env={env}
             grading={liveGrading}
+            stage={surface.stage}
           />
         </Box>
       </Box>
@@ -2583,15 +2578,21 @@ function SkippedRow({ scenario }) {
  * conversation ends, one grader at a time. Then what a pass looks like, and
  * who is calling.
  */
-function LiveEvalPanel({ task, evals, env, grading: rule = null }) {
+/* Agents that talk in turns; the rest (browser, terminal, tools) act in steps.
+   Sub-goals are checked against end state and tool calls either way (#68). */
+const TURN_STAGES = new Set(["voice", "chat", "email", "multi"]);
+
+function LiveEvalPanel({ task, evals, env, grading: rule = null, stage }) {
   if (!task) return null;
   const grading = task.status === "grading";
   const settled = ["passed", "failed", "flaky", "unmeasured"].includes(
     task.status,
   );
   const basis = rule?.basis || null;
+  const unit = !stage || TURN_STAGES.has(stage) ? "turn" : "step";
   const goals = subGoalStates(task, env).map((g) => ({
     ...g,
+    unit,
     basis: subGoalBasisOf(g.label, basis, env),
   }));
 
@@ -2599,40 +2600,34 @@ function LiveEvalPanel({ task, evals, env, grading: rule = null }) {
     <Box>
       {goals.length > 0 && (
         <>
-          <ColumnLabel>
-            Sub-goals · {goals.filter((g) => g.state === "met").length} of{" "}
-            {goals.length}
-          </ColumnLabel>
-          {/* Which rule decides, and what the sub-goals are checked against. */}
-          {rule && (
-            <Tooltip
-              arrow
-              placement="left"
-              title={[rule.note, basis?.note].filter(Boolean).join(" ")}
-            >
-              <Typography
-                sx={{
-                  px: 2,
-                  pt: 1.25,
-                  typography: "s3",
-                  color: "text.tertiary",
-                  cursor: "default",
-                }}
-              >
-                {[
-                  rule.rule >= 2
-                    ? "Every critical sub-goal must hold"
-                    : rule.label,
-                  basis &&
-                    (basis.judged
-                      ? "judged from the conversation; only the starting state is checked"
-                      : "checked against end state and tool calls"),
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
-            </Tooltip>
-          )}
+          <Tooltip
+            arrow
+            placement="left"
+            title={
+              rule
+                ? [
+                    rule.rule >= 2
+                      ? "Every critical sub-goal must hold."
+                      : `${rule.label}.`,
+                    basis &&
+                      (basis.judged
+                        ? "Judged from the conversation; only the starting state is checked."
+                        : "Checked against the end state and tool calls."),
+                    rule.note,
+                    basis?.note,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
+                : ""
+            }
+          >
+            <Box>
+              <ColumnLabel>
+                Sub-goals · {goals.filter((g) => g.state === "met").length} of{" "}
+                {goals.length}
+              </ColumnLabel>
+            </Box>
+          </Tooltip>
           {task.turnLimit && (
             <Typography
               sx={{
@@ -2715,7 +2710,11 @@ function LiveEvalPanel({ task, evals, env, grading: rule = null }) {
                     {task.status === "queued"
                       ? "—"
                       : task.status === "running"
-                        ? "After the call"
+                        ? stage === "voice"
+                          ? "After the call"
+                          : unit === "turn"
+                            ? "After the conversation"
+                            : "After the trial"
                         : "Scoring…"}
                   </Typography>
                 )}
@@ -2729,7 +2728,16 @@ function LiveEvalPanel({ task, evals, env, grading: rule = null }) {
       <ColumnLabel>Passes when</ColumnLabel>
       <Stack spacing={1.25} sx={{ p: 2 }}>
         <Typography sx={{ typography: "s2", color: "text.primary" }}>
-          {(task.expected || "").replace(/\."\.$/, '".')}
+          {(task.expected || "")
+            .replace(/\."\.$/, '".')
+            /* An agent that acts rather than talks holds a rule by what it
+               does, not by refusing someone. */
+            .replace(
+              /^Agent refuses and holds to the rule:/,
+              unit === "step"
+                ? "Agent takes only actions the rule allows:"
+                : "Agent refuses and holds to the rule:",
+            )}
         </Typography>
         {task.critical && (
           <Stack direction="row" spacing={0.75} alignItems="flex-start">
@@ -2744,61 +2752,6 @@ function LiveEvalPanel({ task, evals, env, grading: rule = null }) {
           </Stack>
         )}
       </Stack>
-
-      {/* Who is calling. The call header has the name; this has the rest. */}
-      {task.persona && (
-        <>
-          <ColumnLabel>Caller</ColumnLabel>
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="flex-start"
-            sx={{ p: 2 }}
-          >
-            <Box
-              sx={{
-                width: 28,
-                height: 28,
-                borderRadius: "50%",
-                display: "grid",
-                placeItems: "center",
-                flexShrink: 0,
-                bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
-                color: "primary.main",
-                typography: "s3",
-                fontWeight: 600,
-              }}
-            >
-              {task.persona.name
-                .split(" ")
-                .map((w) => w[0])
-                .slice(0, 2)
-                .join("")}
-            </Box>
-            <Box minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {task.persona.name}
-                <Box
-                  component="span"
-                  sx={{ color: "text.tertiary", fontWeight: 400 }}
-                >
-                  {task.persona.age
-                    ? ` · ${task.persona.age}`
-                    : task.persona.role
-                      ? ` · ${task.persona.role}`
-                      : ""}
-                </Box>
-              </Typography>
-              {/* Wraps — a trait cut off mid-word is a trait nobody reads. */}
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {[...(task.persona.traits || []), task.persona.voice]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
-            </Box>
-          </Stack>
-        </>
-      )}
     </Box>
   );
 }
@@ -2862,7 +2815,7 @@ function SubGoalRow({ goal }) {
     met: {
       icon: "solar:check-circle-bold",
       color: "status.success.fg",
-      note: `turn ${goal.turn + 1}`,
+      note: `${goal.unit || "turn"} ${goal.turn + 1}`,
     },
     missed: { icon: "solar:close-circle-bold", color: RED, note: "missed" },
     unscored: { note: "not measured" },
@@ -2965,4 +2918,5 @@ LiveEvalPanel.propTypes = {
   task: PropTypes.object,
   evals: PropTypes.array,
   env: PropTypes.object,
+  stage: PropTypes.string,
 };

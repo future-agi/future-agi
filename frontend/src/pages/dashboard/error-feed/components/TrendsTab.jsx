@@ -302,7 +302,7 @@ function ScoreTrends({ scoreTrends }) {
                 color="text.disabled"
                 sx={{ ml: 0.25 }}
               >
-                vs prev
+                vs previous 14 days
               </Typography>
             </Stack>
           </Box>
@@ -530,29 +530,42 @@ function MetricCards({ metrics }) {
             >
               {m.display ?? m.value}
             </Typography>
-            <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
-              <Iconify icon={badgeIcon} width={12} sx={{ color: badgeColor }} />
-              <Typography
-                fontSize="12px"
-                fontWeight={600}
-                sx={{ color: badgeColor }}
-              >
-                {m.deltaText ?? (
-                  <>
-                    {m.delta > 0 ? "+" : ""}
-                    {typeof m.delta === "number"
-                      ? Math.abs(m.delta) < 1
-                        ? m.delta.toFixed(2)
-                        : m.delta
-                      : m.delta}
-                    {m.unit}
-                  </>
-                )}
-              </Typography>
-              <Typography fontSize="12px" color="text.disabled">
-                vs prev period
-              </Typography>
-            </Stack>
+            {/* What the change means (#90): more error traces is worse, so red;
+               a higher eval score is better, so green. Against the 14 days
+               before this window. */}
+            <Tooltip
+              arrow
+              placement="bottom-start"
+              title={`${m.delta > 0 ? "Up" : m.delta < 0 ? "Down" : "No change"} against the 14 days before — ${isNeg ? "worse" : "better or the same"}${isErrorMetric ? " (fewer is better)" : " (higher is better)"}.`}
+            >
+              <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
+                <Iconify
+                  icon={badgeIcon}
+                  width={12}
+                  sx={{ color: badgeColor }}
+                />
+                <Typography
+                  fontSize="12px"
+                  fontWeight={600}
+                  sx={{ color: badgeColor }}
+                >
+                  {m.deltaText ?? (
+                    <>
+                      {m.delta > 0 ? "+" : ""}
+                      {typeof m.delta === "number"
+                        ? Math.abs(m.delta) < 1
+                          ? m.delta.toFixed(2)
+                          : m.delta
+                        : m.delta}
+                      {m.unit}
+                    </>
+                  )}
+                </Typography>
+                <Typography fontSize="12px" color="text.disabled">
+                  vs previous 14 days
+                </Typography>
+              </Stack>
+            </Tooltip>
           </Box>
         );
       })}
@@ -585,7 +598,10 @@ export default function TrendsTab({ error }) {
 
       {/* Events over time */}
       {data.events_over_time?.length > 0 && (
-        <SectionCard title="Events Over Time" icon="solar:chart-2-linear">
+        <SectionCard
+          title="Events over the last 14 days"
+          icon="solar:chart-2-linear"
+        >
           <EventsLineChart eventsData={data.events_over_time} />
         </SectionCard>
       )}

@@ -1533,6 +1533,15 @@ export default function EnvironmentWorkspace() {
         key: a.key,
         name: a.name,
         version: a.production || a.latest || "v1",
+        /* Its versions, for the run plan's version pick (#57). */
+        versions: [
+          ...new Set(
+            [
+              a.production || a.latest || "v1",
+              ...(a.versions || []).map((v) => v.label).reverse(),
+            ].filter(Boolean),
+          ),
+        ],
         current: false,
       })),
     ];
@@ -3518,6 +3527,7 @@ export default function EnvironmentWorkspace() {
           onStart={startPlannedRun}
           env={env}
           envState={envState}
+          patch={patch}
           initialAgentKey={runPlanReq?.useAgent || null}
           agentChoices={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot

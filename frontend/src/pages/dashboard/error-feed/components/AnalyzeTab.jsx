@@ -1583,61 +1583,72 @@ export default function AnalyzeTab({ error }) {
       >
         <Stack gap={1.25} sx={{ p: 1.5 }}>
           {messages.length === 0 && !isStreaming ? (
-            <Stack
-              alignItems="center"
-              justifyContent="center"
-              gap={1.25}
-              sx={{
-                py: 6,
-                px: 2,
-                textAlign: "center",
-                maxWidth: 460,
-                mx: "auto",
-              }}
-            >
-              <Box
+            /* Before the in-depth analysis (#91): what is already known, at
+               the top — not one line centred in an empty page. */
+            <Stack gap={2} sx={{ p: 2.5, maxWidth: 760 }}>
+              {[
+                [
+                  "Likely cause",
+                  error?.suggested_fix?.cause ||
+                    "Not found yet — the analysis below finds it.",
+                ],
+                ["What to change", error?.suggested_fix?.change],
+                ["Wrong if", error?.suggested_fix?.wrongIf],
+                ["Seen in", error?.why_shown],
+              ]
+                .filter(([, v]) => v)
+                .map(([label, value]) => (
+                  <Stack key={label} direction="row" gap={2}>
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        color: "text.tertiary",
+                        width: 120,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {label}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.primary" }}
+                    >
+                      {value}
+                    </Typography>
+                  </Stack>
+                ))}
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={1.5}
                 sx={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  bgcolor: "status.discovery.bg",
+                  pt: 2,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
                 }}
               >
-                <Iconify
-                  icon="solar:stars-minimalistic-linear"
-                  width={20}
-                  sx={{ color: "accent.brand" }}
-                />
-              </Box>
-              <Typography fontSize="13px" fontWeight={600} color="text.primary">
-                {error?.suggested_fix?.cause
-                  ? "Likely cause"
-                  : "No root cause yet"}
-              </Typography>
-              <Typography
-                fontSize="12px"
-                color="text.secondary"
-                sx={{ lineHeight: 1.55 }}
-              >
-                {error?.suggested_fix?.cause ||
-                  "Sample calls, compare them with passing ones, and explain why it happens."}
-              </Typography>
-              <Button
-                size="small"
-                variant="contained"
-                startIcon={
-                  <Iconify icon="solar:stars-minimalistic-linear" width={14} />
-                }
-                onClick={onTriggerRun}
-                sx={{ mt: 0.5 }}
-              >
-                {error?.suggested_fix?.cause
-                  ? "Explain in depth"
-                  : "Find root cause"}
-              </Button>
+                <Typography
+                  sx={{ typography: "s2", color: "text.secondary", flex: 1 }}
+                >
+                  The in-depth analysis samples the failing calls, compares them
+                  with passing ones and writes the full explanation here.
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <Iconify
+                      icon="solar:stars-minimalistic-linear"
+                      width={14}
+                    />
+                  }
+                  onClick={onTriggerRun}
+                  sx={{ flexShrink: 0 }}
+                >
+                  {error?.suggested_fix?.cause
+                    ? "Explain in depth"
+                    : "Find root cause"}
+                </Button>
+              </Stack>
             </Stack>
           ) : messages.length === 0 && isStreaming ? (
             <Stack

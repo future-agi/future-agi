@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import SvgColor from "src/components/svg-color";
 import PageHeader from "src/components/page-header";
 import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
@@ -10,6 +11,7 @@ import { useErrorFeedApiParams } from "./store";
 
 export default function ErrorFeedView() {
   const [selected, setSelected] = useState([]);
+  const navigate = useNavigate();
 
   const apiParams = useErrorFeedApiParams();
   const { data } = useErrorFeedList(apiParams);
@@ -66,26 +68,42 @@ export default function ErrorFeedView() {
           }
           description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
           actions={
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={
-                <SvgColor
-                  src="/assets/icons/ic_docs_single.svg"
-                  sx={{ width: 15 }}
-                />
-              }
-              component="a"
-              href="https://docs.futureagi.com/docs/error-feed"
-              target="_blank"
-              sx={{
-                borderColor: "divider",
-                color: "text.secondary",
-                "&:hover": { borderColor: "border.hover" },
-              }}
-            >
-              Docs
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/navbar/ic_alert.svg"
+                    sx={{ width: 16 }}
+                  />
+                }
+                onClick={() => navigate("/dashboard/error-feed/alerts")}
+                sx={{ borderColor: "divider", color: "text.secondary" }}
+              >
+                Alert rules
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/ic_docs_single.svg"
+                    sx={{ width: 15 }}
+                  />
+                }
+                component="a"
+                href="https://docs.futureagi.com/docs/error-feed"
+                target="_blank"
+                sx={{
+                  borderColor: "divider",
+                  color: "text.secondary",
+                  "&:hover": { borderColor: "border.hover" },
+                }}
+              >
+                Docs
+              </Button>
+            </>
           }
         />
       </Box>

@@ -454,6 +454,9 @@ const ErrorFeed = lazyWithRetry(
 const ErrorFeedDetail = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeedDetail"),
 );
+const ErrorFeedAlerts = lazyWithRetry(
+  () => import("src/pages/dashboard/error-feed/ErrorFeedAlerts"),
+);
 const AnnotationLabelsPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/labels"),
 );
@@ -1413,6 +1416,14 @@ export const dashboardRoutes = (
               <SimStoreProvider>
                 <ErrorFeed />
               </SimStoreProvider>
+            </CapabilityGate>
+          ),
+        },
+        {
+          path: "alerts",
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeedAlerts />
             </CapabilityGate>
           ),
         },

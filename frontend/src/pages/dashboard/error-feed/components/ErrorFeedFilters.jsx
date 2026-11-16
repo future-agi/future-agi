@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import {
   Button,
+  Checkbox,
   Divider,
   IconButton,
   InputAdornment,
@@ -12,7 +13,6 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SelectionBar from "src/components/selection-bar";
-import { FilterButton } from "src/components/filter";
 import {
   useObserveProjectList,
   useUpdateErrorFeedIssue,
@@ -45,54 +45,55 @@ const TIME_RANGE_OPTIONS = [
 ];
 
 const FIX_LAYER_OPTIONS = [
-  { value: "", label: "All layers" },
+  { value: "", label: "All Fix Layers" },
   { value: "Prompt", label: "Prompt" },
   { value: "Tools", label: "Tools" },
   { value: "Orchestration", label: "Orchestration" },
   { value: "Guardrails", label: "Guardrails" },
+  { value: "Data", label: "Data" },
+  { value: "Memory", label: "Memory" },
 ];
 
-// Filter panel fields. Each maps to one store value (a single selection), so
-// the panel rows and the store stay interchangeable.
-const withoutAll = (options) => options.filter((opt) => opt.value !== "");
-
-const buildFilterFields = (projectOptions) => [
-  {
-    id: "project",
-    label: "Project",
-    type: "enum",
-    options: withoutAll(projectOptions),
-    operators: ["equals"],
-  },
-  {
-    id: "status",
-    label: "Status",
-    type: "enum",
-    options: withoutAll(STATUS_OPTIONS),
-    operators: ["equals"],
-  },
-  {
-    id: "severity",
-    label: "Severity",
-    type: "enum",
-    options: withoutAll(SEVERITY_OPTIONS),
-    operators: ["equals"],
-  },
-  {
-    id: "fix_layer",
-    label: "Fix layer",
-    type: "enum",
-    options: withoutAll(FIX_LAYER_OPTIONS),
-    operators: ["equals"],
-  },
+const SOURCE_OPTIONS = [
+  { value: "", label: "All Sources" },
+  { value: "scanner", label: "Scanner" },
+  { value: "eval", label: "Eval" },
 ];
 
 // ── compact select ─────────────────────────────────────────────────────────
-function CompactSelect({ value, onChange, options, minWidth = 130 }) {
+/* `multiple` (#88): pick several values. The store keeps them as one
+   comma-separated string, so a single pick reads the same as before. */
+function CompactSelect({
+  value,
+  onChange,
+  options,
+  minWidth = 130,
+  multiple = false,
+  noun = "selected",
+}) {
+  const picked = multiple ? (value ? value.split(",") : []) : null;
+  const labelOf = (v) => options.find((o) => o.value === v)?.label || v;
   return (
     <Select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
+      value={multiple ? picked : value}
+      multiple={multiple}
+      onChange={(e) =>
+        onChange(
+          multiple
+            ? (e.target.value || []).filter(Boolean).join(",")
+            : e.target.value,
+        )
+      }
+      renderValue={
+        multiple
+          ? (sel) =>
+              !sel.length
+                ? options[0]?.label
+                : sel.length === 1
+                  ? labelOf(sel[0])
+                  : `${sel.length} ${noun}`
+          : undefined
+      }
       size="small"
       displayEmpty
       SelectDisplayProps={{
@@ -140,8 +141,15 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
         },
       }}
     >
-      {options.map((opt) => (
+      {(multiple ? options.filter((o) => o.value) : options).map((opt) => (
         <MenuItem key={opt.value} value={opt.value}>
+          {multiple && (
+            <Checkbox
+              size="small"
+              checked={picked.includes(opt.value)}
+              sx={{ p: 0, mr: 1 }}
+            />
+          )}
           {opt.label}
         </MenuItem>
       ))}
@@ -153,6 +161,8 @@ CompactSelect.propTypes = {
   onChange: PropTypes.func,
   options: PropTypes.array,
   minWidth: PropTypes.number,
+  multiple: PropTypes.bool,
+  noun: PropTypes.string,
 };
 
 // ── bulk action menu ───────────────────────────────────────────────────────
@@ -267,7 +277,8 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     setSearchQuery,
     selectedProject,
     setSelectedProject,
-
+    selectedSource,
+    setSelectedSource,
     selectedStatus,
     setSelectedStatus,
     selectedSeverity,
@@ -283,36 +294,6 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     () => [{ value: "", label: "All Projects" }, ...(projects ?? [])],
     [projects],
   );
-
-  const filterFields = useMemo(
-    () => buildFilterFields(projectOptions),
-    [projectOptions],
-  );
-  const filterValue = useMemo(
-    () =>
-      [
-        ["project", selectedProject],
-        ["status", selectedStatus],
-        ["severity", selectedSeverity],
-        ["fix_layer", selectedFixLayer],
-      ]
-        .filter(([, value]) => value)
-        .map(([field, value]) => ({
-          field,
-          fieldType: "categorical",
-          operator: "equals",
-          value: [value],
-        })),
-    [selectedProject, selectedStatus, selectedSeverity, selectedFixLayer],
-  );
-  const handleFilterChange = (rows) => {
-    const valueOf = (field) =>
-      (rows || []).find((row) => row.field === field)?.value?.[0] ?? "";
-    setSelectedProject(valueOf("project"));
-    setSelectedStatus(valueOf("status"));
-    setSelectedSeverity(valueOf("severity"));
-    setSelectedFixLayer(valueOf("fix_layer"));
-  };
 
   return (
     <Stack gap={1.25}>
@@ -375,10 +356,45 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             options={TIME_RANGE_OPTIONS}
             minWidth={140}
           />
-          <FilterButton
-            fields={filterFields}
-            value={filterValue}
-            onChange={handleFilterChange}
+          {/* Every filter inline, as in production (#63) — few enough to
+              read at a glance, so no Filter panel to open. */}
+          <CompactSelect
+            value={selectedProject}
+            onChange={setSelectedProject}
+            options={projectOptions}
+            minWidth={140}
+          />
+          <CompactSelect
+            multiple
+            noun="statuses"
+            value={selectedStatus}
+            onChange={setSelectedStatus}
+            options={STATUS_OPTIONS}
+            minWidth={120}
+          />
+          <CompactSelect
+            multiple
+            noun="severities"
+            value={selectedSeverity}
+            onChange={setSelectedSeverity}
+            options={SEVERITY_OPTIONS}
+            minWidth={120}
+          />
+          <CompactSelect
+            multiple
+            noun="fix layers"
+            value={selectedFixLayer}
+            onChange={setSelectedFixLayer}
+            options={FIX_LAYER_OPTIONS}
+            minWidth={120}
+          />
+          <CompactSelect
+            multiple
+            noun="sources"
+            value={selectedSource}
+            onChange={setSelectedSource}
+            options={SOURCE_OPTIONS}
+            minWidth={110}
           />
         </Stack>
 

@@ -1527,10 +1527,10 @@ const signedPct = (n) =>
 function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
   const items = [
     {
-      title: "The agent's rules ruled out the change it needs",
+      title: "The constraints ruled out the change it needs",
       body: "Allowed changes, protected parts or the cost and latency limits can block the fix. Loosen one, then fix again.",
       action: onOpenRules && {
-        label: "Open the agent's rules",
+        label: "Open its constraints",
         onClick: onOpenRules,
       },
     },

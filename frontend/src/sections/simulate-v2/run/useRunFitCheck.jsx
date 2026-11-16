@@ -1,58 +1,18 @@
-import { useState } from "react";
-import { currentAgentVersion } from "../_mock/versions";
-import { toolFit } from "../_mock/toolFit";
-import { mcpRunGapOf } from "../_mock/worldTools";
-import RunFitDialog from "./RunFitDialog";
-
 /**
- * Wrap any "start a run" action with the tool-fit check.
+ * Every "start a run" action used to pass a tool-fit dialog first. The tool
+ * fit is now a row in the run plan (run/ToolFitRow.jsx), beside the other
+ * readiness checks, so a run goes straight to the plan. A run started without
+ * the plan still says it on the run itself: LiveRunView names the tools the
+ * environment can't answer.
  *
  *   const { check, dialog } = useRunFitCheck(env, envState, patch);
- *   <Button
- variant="outlined" onClick={() => check(() => startRun())}>Run</Button>
+ *   <Button onClick={() => check(() => openRunPlan())}>Run</Button>
  *   {dialog}
  *
- * If the agent version fits the pinned environment version the run starts at
- * once; otherwise the dialog asks first, on the screen the user is already on.
- * It warns, never blocks. `locked` (a template preview) leaves out the fixes
- * that change the world. A secret that failed its access check is said by the
- * run view itself, where every way of starting a run lands (LiveRunView).
+ * The signature stays so the callers don't change.
  */
-export default function useRunFitCheck(
-  env,
-  envState,
-  patch,
-  { locked = false, onReviewFirst } = {},
-) {
-  const [pending, setPending] = useState(null);
-
-  const check = (run, { agent } = {}) => {
-    const label = agent || currentAgentVersion(envState)?.label;
-    /* The agent's own MCP tools count too: a run gets no answer for those the world doesn't have. */
-    if (
-      !env ||
-      (toolFit(env, envState, { agent: label }).fits &&
-        !mcpRunGapOf(env, envState).missing.length)
-    ) {
-      run();
-      return;
-    }
-    setPending({ run, agent: label });
-  };
-
-  const dialog = (
-    <RunFitDialog
-      open={!!pending}
-      onClose={() => setPending(null)}
-      env={env}
-      envState={envState}
-      patch={patch}
-      agent={pending?.agent}
-      locked={locked}
-      onRun={() => pending?.run()}
-      onReviewFirst={onReviewFirst && (() => onReviewFirst(pending?.run))}
-    />
-  );
-
-  return { check, dialog };
+// eslint-disable-next-line no-unused-vars
+export default function useRunFitCheck(env, envState, patch, options = {}) {
+  const check = (run) => run();
+  return { check, dialog: null };
 }

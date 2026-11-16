@@ -86,15 +86,15 @@ export default function FixRunNote({ envId, run, issue = null }) {
   const progress = !(issue?.total > 0)
     ? ""
     : issue.done
-      ? ` The issue's ${issue.total}: ${issue.failed} of ${issue.done} finished are failing.`
-      : ` The issue's ${issue.total} haven't finished yet.`;
+      ? ` · ${issue.failed} of ${issue.done} failing so far`
+      : "";
   return (
     <Stack direction="row" alignItems="center" spacing={0.625}>
       <Iconify icon="fagi:fix" width={14} sx={{ color: "text.tertiary" }} />
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
         {kind === "fix"
-          ? `Step 1 of the fix for ${issueId} — checking the issue shows up on today's agent.${progress}`
-          : `${issueId}'s scenarios only — no fix is tried.${progress}`}
+          ? `Fix for ${issueId} · step 1, reproduce on today's agent${progress}`
+          : `${issueId}'s scenarios only · no fix is tried${progress}`}
         {fix && (
           <>
             {" · "}

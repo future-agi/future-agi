@@ -40,7 +40,7 @@ import {
   minutesLabel,
   runLimitsOf,
 } from "../_mock/runLimits";
-import { currentEnvVersion } from "../_mock/versions";
+import { currentAgentVersion, currentEnvVersion } from "../_mock/versions";
 import ReadyToRun, { KnownLimits } from "../compat/ReadyToRun";
 import { StatusDot } from "../components/primitives";
 import { readinessOf } from "../_mock/readiness";
@@ -55,6 +55,7 @@ import { membersOf } from "../_mock/improvementPolicy";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import SideDrawer from "../components/SideDrawer";
+import ToolFitRow from "../run/ToolFitRow";
 import { startsFromCode } from "../_mock/connectionCheck";
 
 /* Pre-run cost and spending cap for simulations: hidden for now. */
@@ -68,7 +69,6 @@ import { startsFromCode } from "../_mock/connectionCheck";
 */
 
 const ALERTS = [0.5, 0.8, 0.9];
-const MAX_VERSIONS = 3;
 const MORE = "__more";
 
 /* One key-value row: label (and its quiet detail) left, value right. */
@@ -179,6 +179,8 @@ export default function RunPlanDialog({
   envLabel = null,
   suggestedEvals = [],
   canAddEvals = true,
+  /* Fixes made from the plan (the tool-fit row) write to the environment. */
+  patch = null,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
   /* Agents we start from code run in our sandbox and take the seed; a
@@ -216,8 +218,21 @@ export default function RunPlanDialog({
           ? [...ids, id]
           : ids,
     );
-  const otherAgent =
+  const [otherVersionPick, setOtherVersionPick] = useState(null);
+  const otherChoice =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
+  /* Another agent runs the version picked beside it (#57), production by
+     default. */
+  const otherAgent = otherChoice
+    ? {
+        ...otherChoice,
+        version:
+          otherVersionPick &&
+          (otherChoice.versions || []).includes(otherVersionPick)
+            ? otherVersionPick
+            : otherChoice.version,
+      }
+    : null;
   const suite = suites.find((x) => x.id === suiteId) || null;
   /* The environment version this run uses: the current one unless picked. */
   const currentEnvLabel =
@@ -256,6 +271,7 @@ export default function RunPlanDialog({
   const [viewVersion, setViewVersion] = useState(null);
   const shownVersion =
     multi && versions.includes(viewVersion) ? viewVersion : versions[0];
+  const currentEnvAgentLabel = currentAgentVersion(envState)?.label || null;
   const compat = reportFor(
     otherAgent ? otherAgent.version : shownVersion || null,
   );
@@ -451,10 +467,13 @@ export default function RunPlanDialog({
      excluded ride on the same line; why each part is left out is on hover. */
   const fromSuite = suite ? null : bd;
   const envLbl = pickedEnv || currentEnvLabel;
+  /* Read as "how many run, and why the rest don't" (#58): the number that
+     runs first, then what holds the others back, in plain words. */
   const outParts = [
-    blockedN > 0 && `${blockedN} blocked for this agent`,
-    fromSuite?.blocked > 0 && `${fromSuite.blocked} blocked on ${envLbl}`,
-    fromSuite?.excluded > 0 && `${fromSuite.excluded} excluded`,
+    blockedN > 0 && `${blockedN} need a change on the agent`,
+    fromSuite?.blocked > 0 &&
+      `${fromSuite.blocked} can't run on environment ${envLbl}`,
+    fromSuite?.excluded > 0 && `${fromSuite.excluded} left out`,
   ].filter(Boolean);
   const staleN = fromSuite?.stale || 0;
   const outTip = [
@@ -476,13 +495,16 @@ export default function RunPlanDialog({
     blockedN +
     (fromSuite?.blocked || 0) +
     (fromSuite?.excluded || 0);
-  const tail = [...outParts, staleN > 0 && `${staleN} stale`].filter(Boolean);
+  const heldN = totalN - runCount;
   const countText = [
     outParts.length
-      ? `${runCount} of ${totalN} eligible`
-      : `All ${runCount} eligible`,
-    ...tail,
-  ].join(" · ");
+      ? `${runCount} of ${totalN} will run`
+      : `All ${runCount} will run`,
+    outParts.length ? `${heldN} won't: ${outParts.join(", ")}` : null,
+    staleN > 0 ? `${staleN} stale` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const pairVal = compat?.validation;
   const pairState = checkingCompat ? "validating" : pairVal?.state;
   const areasNow = compat
@@ -526,7 +548,9 @@ export default function RunPlanDialog({
           ? {
               dot: "failed",
               title: "Can't start",
-              rest: `all ${totalN} scenarios are blocked`,
+              /* The scenarios picked above, not every scenario the
+                 environment has — the same number the plan shows. */
+              rest: `all ${blockedN || shownCount} scenarios are blocked`,
             }
           : pairState === "unavailable"
             ? {
@@ -551,12 +575,17 @@ export default function RunPlanDialog({
                 : outParts.length
                   ? {
                       dot: "flaky",
-                      title: `${runCount} of ${totalN} eligible`,
-                      rest: tail.join(" · "),
+                      title: `${runCount} of ${totalN} will run`,
+                      rest: [
+                        `${heldN} won't: ${outParts.join(", ")}`,
+                        staleN > 0 && `${staleN} stale`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · "),
                     }
                   : {
                       dot: "passed",
-                      title: `All ${runCount} eligible`,
+                      title: `All ${runCount} will run`,
                       rest: staleN ? `${staleN} stale` : "",
                     };
   /* A first run of this agent version on this environment version prepares
@@ -703,30 +732,50 @@ export default function RunPlanDialog({
                 {/* The version beside the agent (12 Nov review): what runs is
                   said once, at the top. */}
                 {otherAgent ? (
-                  <Box component="span" sx={{ color: "text.primary" }}>
-                    {otherAgent.version}
-                  </Box>
+                  <TextField
+                    select
+                    size="small"
+                    value={otherAgent.version}
+                    onChange={(e) => setOtherVersionPick(e.target.value)}
+                    inputProps={{ "aria-label": "Agent version" }}
+                    sx={{ minWidth: 88, ...fieldSx }}
+                  >
+                    {(otherAgent.versions?.length
+                      ? otherAgent.versions
+                      : [otherAgent.version]
+                    ).map((v, i) => (
+                      <MenuItem key={v} value={v} sx={{ gap: 1 }}>
+                        <Box component="span" sx={{ flex: 1 }}>
+                          {v}
+                        </Box>
+                        {i === 0 && (
+                          <Box
+                            component="span"
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            production
+                          </Box>
+                        )}
+                      </MenuItem>
+                    ))}
+                  </TextField>
                 ) : (
                   <TextField
                     select
                     size="small"
                     value={versions}
+                    /* One version per run, as the plan's Run setup has it;
+                       comparing versions is Runs → Compare (#59, #60). */
                     onChange={(e) => {
                       const v = e.target.value;
-                      const picked = Array.isArray(v) ? v : [v];
                       /* "More versions…" opens the older ones; it's not a pick. */
-                      if (picked.includes(MORE)) {
+                      if (v === MORE) {
                         setMoreVersions(true);
                         return;
                       }
-                      if (picked.length >= 1 && picked.length <= MAX_VERSIONS)
-                        setVersions(picked);
+                      setVersions([v]);
                     }}
-                    SelectProps={{
-                      multiple: true,
-                      renderValue: (sel) => sel.join(", "),
-                    }}
-                    inputProps={{ "aria-label": "Agent versions" }}
+                    inputProps={{ "aria-label": "Agent version" }}
                     sx={{ minWidth: 88, ...fieldSx }}
                   >
                     {versionOptions
@@ -735,15 +784,7 @@ export default function RunPlanDialog({
                           moreVersions || !o.more || versions.includes(o.label),
                       )
                       .map((o) => (
-                        <MenuItem
-                          key={o.label}
-                          value={o.label}
-                          disabled={
-                            !versions.includes(o.label) &&
-                            versions.length >= MAX_VERSIONS
-                          }
-                          sx={{ gap: 1 }}
-                        >
+                        <MenuItem key={o.label} value={o.label} sx={{ gap: 1 }}>
                           <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
                             {o.name}
                           </Box>
@@ -952,6 +993,18 @@ export default function RunPlanDialog({
                     : undefined
                 }
                 checking={checkingCompat}
+              />
+            )}
+            {/* The agent calls tools this environment can't answer — a row
+                here, not a dialog before the plan. Start run still runs the
+                rest; those scenarios come back not measured. */}
+            {!otherAgent && (
+              <ToolFitRow
+                env={env}
+                envState={envState}
+                patch={patch || undefined}
+                agent={shownVersion || currentEnvAgentLabel}
+                locked={!patch}
               />
             )}
 
@@ -1819,6 +1872,7 @@ export default function RunPlanDialog({
 }
 
 RunPlanDialog.propTypes = {
+  patch: PropTypes.func,
   open: PropTypes.bool,
   onClose: PropTypes.func,
   onStart: PropTypes.func,

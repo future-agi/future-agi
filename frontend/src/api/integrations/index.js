@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { getErrorMessage } from "src/sections/settings/integrations/utils";
@@ -226,3 +231,26 @@ export const useResumeConnection = () => {
     },
   });
 };
+
+/* Slack channels for a connection (from dev, for the Error Feed alert rules). */
+export const useSlackChannels = (connectionId, options = {}) =>
+  useInfiniteQuery({
+    queryKey: [...integrationKeys.all, "slack-channels", connectionId],
+    queryFn: ({ pageParam }) =>
+      axios.get(endpoints.integrations?.slack?.channels?.(connectionId), {
+        params: pageParam ? { cursor: pageParam } : undefined,
+      }),
+    select: (response) => ({
+      ...response,
+      channels: response.pages.flatMap((page) => {
+        const result = page?.data?.result || page?.data || {};
+        return result?.channels || [];
+      }),
+    }),
+    getNextPageParam: (lastPage) =>
+      lastPage?.data?.result?.next_cursor || undefined,
+    initialPageParam: undefined,
+    enabled: !!connectionId,
+    retry: false,
+    ...options,
+  });

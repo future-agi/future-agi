@@ -23,7 +23,10 @@ import IssueStatusChip from "./IssueStatusChip";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
-import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
+import {
+  useErrorFeedList,
+  useObserveProjectList,
+} from "src/api/errorFeed/mockAdapter";
 import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 import { ROW_HEIGHT } from "src/theme/sizes";
@@ -48,26 +51,63 @@ const humanizeTime = (iso) => {
   }
 };
 
-function ErrorTypeTag({ type }) {
-  const shortType = type
-    .replace(/Error$/, "")
-    .replace(/([A-Z])/g, " $1")
-    .trim();
+/* The small tags under an issue's name, as production shows them (#64):
+   an icon and a word on a quiet fill, so where it came from and what kind
+   of error it is read at a glance. */
+function RowTag({ icon, label, tip }) {
   return (
-    <Tooltip arrow title={`Error type: ${shortType}`}>
-      <Typography
-        noWrap
-        sx={{ fontSize: "12px", color: "text.tertiary", maxWidth: 140 }}
+    <Tooltip arrow title={tip}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{
+          height: 20,
+          px: 0.75,
+          borderRadius: 0.5,
+          bgcolor: "background.neutral",
+          color: "text.secondary",
+          maxWidth: 170,
+          flexShrink: 0,
+        }}
       >
-        {shortType}
-      </Typography>
+        <Iconify icon={icon} width={12} sx={{ flexShrink: 0 }} />
+        <Typography noWrap sx={{ typography: "s3", fontWeight: 500 }}>
+          {label}
+        </Typography>
+      </Stack>
     </Tooltip>
   );
 }
-
-ErrorTypeTag.propTypes = {
-  type: PropTypes.string,
+RowTag.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.string,
+  tip: PropTypes.string,
 };
+
+/* Scanner (Future AGI's own checks) or Eval (one of the customer's evals) —
+   the backend's own source values. */
+function SourceTag({ source }) {
+  const evalSource = source === "eval";
+  return (
+    <RowTag
+      icon="solar:tag-linear"
+      label={evalSource ? "Eval" : "Scanner"}
+      tip={
+        evalSource
+          ? "Source: Eval — found by one of your evals"
+          : "Source: Scanner — found by Future AGI's trace scanner"
+      }
+    />
+  );
+}
+SourceTag.propTypes = { source: PropTypes.string };
+
+const shortTypeOf = (type = "") =>
+  type
+    .replace(/Error$/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
 
 // ── Fix layer chip ──────────────────────────────────────────────────────────
 /* Where the fix most likely belongs. */
@@ -136,10 +176,7 @@ const COLUMNS = [
   { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
   { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },
 ];
-/* With agent improvement on: the fix-status chip, in its own column beside
-   the issue's triage status (RSI PRD: "a fix-status chip on the list"). */
-const FIX_COLUMN = { id: "fix", label: "Fix", sortable: false, width: 170 };
-const WITH_AGENT = [...COLUMNS.slice(0, 3), FIX_COLUMN, ...COLUMNS.slice(3)];
+/* A fix shows as one icon after the issue's name, not a column (#63). */
 
 function SortIcon({ active, dir }) {
   if (!active)
@@ -261,10 +298,17 @@ EmptyState.propTypes = { filtered: PropTypes.bool, colSpan: PropTypes.number };
 export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const theme = useTheme();
   const improving = useAgentImprovementFlag();
-  const columns = improving ? WITH_AGENT : COLUMNS;
+  const columns = COLUMNS;
   const navigate = useNavigate();
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
+
+  /* Each issue's Observe project, by name (#64). */
+  const { data: projects } = useObserveProjectList();
+  const projectName = useMemo(
+    () => Object.fromEntries((projects || []).map((p) => [p.value, p.label])),
+    [projects],
+  );
 
   const apiParams = useErrorFeedApiParams();
   const { data, isLoading } = useErrorFeedList(apiParams);
@@ -385,7 +429,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
           <TableBody>
             {isLoading ? (
               Array.from({ length: pageSize }).map((_, i) => (
-                <SkeletonRow key={i} withAgent={improving} />
+                <SkeletonRow key={i} />
               ))
             ) : rows.length === 0 ? (
               <EmptyState filtered={isFiltered} colSpan={columns.length + 2} />
@@ -437,49 +481,69 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         gap={0.5}
                         justifyContent="center"
                       >
-                        <Tooltip
-                          title={row.error.name}
-                          placement="top-start"
-                          arrow
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.75}
+                          sx={{ minWidth: 0 }}
                         >
-                          <Typography
-                            typography="s2_1"
-                            fontWeight="fontWeightMedium"
-                            color="text.primary"
-                            sx={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              maxWidth: 420,
-                              display: "block",
-                            }}
+                          <Tooltip
+                            title={`${row.error.name} · ${row.cluster_id}`}
+                            placement="top-start"
+                            arrow
                           >
-                            {row.error.name}
-                          </Typography>
-                        </Tooltip>
-                        <Stack direction="row" alignItems="center" gap={0.75}>
-                          {/* The issue's id — how people find and refer to it. */}
-                          <Typography
-                            typography="s3"
-                            color="text.secondary"
-                            sx={{
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, Menlo, monospace",
-                              fontFeatureSettings: "'tnum'",
-                            }}
-                          >
-                            {row.cluster_id}
-                          </Typography>
-                          <ErrorTypeTag type={row.error.type} />
-                          {row.eval_score != null && (
                             <Typography
-                              typography="s3"
-                              color="text.disabled"
-                              sx={{ fontFeatureSettings: "'tnum'" }}
+                              typography="s2_1"
+                              fontWeight="fontWeightMedium"
+                              color="text.primary"
+                              sx={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                maxWidth: 420,
+                                display: "block",
+                              }}
                             >
-                              eval: {row.eval_score.toFixed(2)}
+                              {row.error.name}
                             </Typography>
+                          </Tooltip>
+                          {improving && (
+                            <IssueStatusChip issue={row} variant="icon" />
                           )}
+                        </Stack>
+                        <Stack direction="row" alignItems="center" gap={0.75}>
+                          <SourceTag source={row.source} />
+                          {/* One tag (where it came from); the type and the
+                              project as quiet text; the eval score on hover. */}
+                          <Tooltip
+                            arrow
+                            placement="bottom-start"
+                            title={[
+                              `Error type: ${shortTypeOf(row.error.type)}`,
+                              projectName[row.project_id] &&
+                                `Project: ${projectName[row.project_id]}`,
+                              row.eval_score != null &&
+                                `Eval score: ${row.eval_score.toFixed(2)}`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          >
+                            <Typography
+                              noWrap
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                minWidth: 0,
+                              }}
+                            >
+                              {[
+                                shortTypeOf(row.error.type),
+                                projectName[row.project_id],
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </Typography>
+                          </Tooltip>
                         </Stack>
                       </Stack>
                     </TableCell>
@@ -493,14 +557,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <ErrorStatusChip status={row.status} />
                     </TableCell>
-
-                    {/* Fix */}
-                    {improving && (
-                      <TableCell>
-                        {/* Opening the fix stops the row click itself; an empty cell opens the issue. */}
-                        <IssueStatusChip issue={row} variant="text" />
-                      </TableCell>
-                    )}
 
                     {/* Traces */}
                     <TableCell>

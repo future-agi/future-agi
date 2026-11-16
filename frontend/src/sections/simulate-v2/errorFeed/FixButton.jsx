@@ -105,13 +105,10 @@ export default function FixButton({ issue, onOpenSheet, rootCause = null }) {
         title={`${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${inFlight.why}`}
       >
         <Button
-          /* A fix waiting on someone is the page's main action. */
-          variant={
-            ["review", "ready"].includes(status.key) ? "contained" : "outlined"
-          }
-          color={
-            ["review", "ready"].includes(status.key) ? "primary" : undefined
-          }
+          /* The header's one main action, the same look in every state
+             (#80) — Review fix, View fix or Fix. */
+          variant="contained"
+          color="primary"
           onClick={openFix}
           startIcon={<Iconify icon="fagi:fix" width={14} />}
         >

@@ -1255,17 +1255,10 @@ export default function ErrorMetadataPanel({ error }) {
   }));
   const coOccurringIssues = sidebar?.co_occurring_issues ?? [];
 
-  const activityLog = error.first_seen
-    ? [
-        {
-          color: "status.warning.solid",
-          text: "First detected",
-          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
-            ageDays != null ? ` — ${ageDays} days open` : ""
-          }`,
-        },
-      ]
-    : [];
+  /* Activity lists what happened after detection; when it was first seen
+     and its age are already in Timeline (#81). */
+  const activityLog = [];
+  const evalScore = sidebar?.ai_metadata?.eval_score ?? error.eval_score;
 
   return (
     <Box
@@ -1393,57 +1386,64 @@ export default function ErrorMetadataPanel({ error }) {
           </Stack>
         </Section>
 
-        {/* ── AI Metadata ── */}
-        <Section title="AI Metadata">
-          <Stack gap={0.5}>
-            <MetaRow
-              label="Model"
-              value={sidebar?.ai_metadata?.model ?? error.model}
-              icon="solar:brain-linear"
-              monospace
-            />
-            <MetaRow
-              label="Version"
-              value={sidebar?.ai_metadata?.model_version ?? error.model_version}
-              icon="solar:tag-linear"
-              monospace
-            />
-            <MetaRow
-              label="Agent"
-              value={error.agent}
-              icon="solar:bot-linear"
-              monospace
-            />
-            <MetaRow label="Pipeline" value={error.pipeline} icon="mdi:pipe" />
-            {error.connector && (
+        {/* ── AI Metadata ── (only when something is known) */}
+        {[
+          sidebar?.ai_metadata?.model ?? error.model,
+          sidebar?.ai_metadata?.model_version ?? error.model_version,
+          error.agent,
+          error.pipeline,
+          error.connector,
+          sidebar?.ai_metadata?.project ?? error.project,
+          sidebar?.ai_metadata?.trace_id ?? error.trace_id,
+        ].some((v) => v != null && v !== "") && (
+          <Section title="AI Metadata">
+            <Stack gap={0.5}>
               <MetaRow
-                label="Connector"
-                value={error.connector}
-                icon="solar:plug-circle-linear"
+                label="Model"
+                value={sidebar?.ai_metadata?.model ?? error.model}
+                icon="solar:brain-linear"
+                monospace
               />
-            )}
-            <MetaRow
-              label="Project"
-              value={sidebar?.ai_metadata?.project ?? error.project}
-              icon="solar:folder-linear"
-            />
-            {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
               <MetaRow
-                label="Eval score"
-                value={`${(
-                  sidebar?.ai_metadata?.eval_score ?? error.eval_score
-                ).toFixed(2)} / 1.00`}
-                icon="solar:graph-up-linear"
+                label="Version"
+                value={
+                  sidebar?.ai_metadata?.model_version ?? error.model_version
+                }
+                icon="solar:tag-linear"
+                monospace
               />
-            )}
-            <MetaRow
-              label="Trace ID"
-              value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
-              icon="solar:graph-linear"
-              monospace
-            />
-          </Stack>
-        </Section>
+              <MetaRow
+                label="Agent"
+                value={error.agent}
+                icon="solar:bot-linear"
+                monospace
+              />
+              <MetaRow
+                label="Pipeline"
+                value={error.pipeline}
+                icon="mdi:pipe"
+              />
+              {error.connector && (
+                <MetaRow
+                  label="Connector"
+                  value={error.connector}
+                  icon="solar:plug-circle-linear"
+                />
+              )}
+              <MetaRow
+                label="Project"
+                value={sidebar?.ai_metadata?.project ?? error.project}
+                icon="solar:folder-linear"
+              />
+              <MetaRow
+                label="Trace ID"
+                value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
+                icon="solar:graph-linear"
+                monospace
+              />
+            </Stack>
+          </Section>
+        )}
 
         {/* ── Evaluations ── */}
         {sidebarPending ? (
@@ -1470,6 +1470,31 @@ export default function ErrorMetadataPanel({ error }) {
           qualityScores.length > 0 && (
             <Section title="Evaluations">
               <Stack gap={0.5}>
+                {/* The issue's own score sits with the evaluations it comes
+                    from (#80), not in a separate metadata block. */}
+                {evalScore != null && (
+                  <Tooltip
+                    arrow
+                    placement="left"
+                    title="The score of the evaluation that grouped these calls into this issue. Below: how each evaluation scored the issue's calls."
+                  >
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      sx={{ typography: "s2", py: 0.25 }}
+                    >
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        Issue score
+                      </Box>
+                      <Box
+                        component="span"
+                        sx={{ fontWeight: 600, fontFeatureSettings: "'tnum'" }}
+                      >
+                        {`${evalScore.toFixed(2)} / 1.00`}
+                      </Box>
+                    </Stack>
+                  </Tooltip>
+                )}
                 {qualityScores.map((qs) => (
                   <EvalRow
                     key={qs.label}

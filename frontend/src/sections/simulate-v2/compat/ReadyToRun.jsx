@@ -242,7 +242,14 @@ export default function ReadyToRun({
   /* Everything ready means the pair was checked, even where a platform
      check keeps no date. */
   const checked = !!val || (!blockers.length && !unchecked.length);
-  const checkButton = onCheck && (
+  /* One action per moment (#61): while a problem has its own fix button,
+     the panel's Re-check waits until a fix was made; Run the check stays
+     when the pair was never checked. */
+  const showCheck =
+    !checked ||
+    fixed.length > 0 ||
+    !blockers.some((a) => kindOf(a) && kindOf(a) !== "link");
+  const checkButton = onCheck && showCheck && (
     <Button
       size="small"
       variant="outlined"
@@ -413,7 +420,71 @@ export default function ReadyToRun({
                 <Facts
                   rows={[
                     ["What we saw", saw],
-                    ["Fix", shortFixLabel(fixLabelOf(r))],
+                    /* A value to add sits in the Fix line itself — the
+                       problem and its fix together, one block (#62). */
+                    [
+                      "Fix",
+                      field ? (
+                        <Stack
+                          component="span"
+                          direction="row"
+                          spacing={1}
+                          alignItems="center"
+                          sx={{ display: "flex" }}
+                        >
+                          <Box
+                            component="span"
+                            sx={{
+                              typography: "s3",
+                              color: "text.tertiary",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {field.label}
+                          </Box>
+                          <Tooltip
+                            arrow
+                            placement="top-start"
+                            title={
+                              r.suggestion?.why
+                                ? `${r.suggestion.why} Only this field changes; saving checks the pair again.`
+                                : "Only this field changes; saving checks the pair again."
+                            }
+                          >
+                            <TextField
+                              size="small"
+                              placeholder={field.label}
+                              inputProps={{ "aria-label": field.label }}
+                              value={value}
+                              onChange={(e) =>
+                                setValues((v) => ({
+                                  ...v,
+                                  [a.id]: e.target.value,
+                                }))
+                              }
+                              sx={{
+                                flex: 1,
+                                "& input": { typography: "s2", py: 0.625 },
+                              }}
+                            />
+                          </Tooltip>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={!String(value).trim() || checking}
+                            onClick={() => {
+                              fixKit.applyRepair(r.fixId, String(value));
+                              setOpenId(null);
+                            }}
+                            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                          >
+                            Save and re-check
+                          </Button>
+                        </Stack>
+                      ) : (
+                        shortFixLabel(fixLabelOf(r))
+                      ),
+                    ],
                     ["Once fixed", r.fix?.would],
                     [
                       "Blocks",
@@ -429,78 +500,6 @@ export default function ReadyToRun({
                     ],
                   ]}
                 />
-                {field && (
-                  <Box
-                    sx={{
-                      border: "1px solid",
-                      borderColor: "divider",
-                      borderRadius: "6px",
-                      bgcolor: "background.paper",
-                    }}
-                  >
-                    <Stack
-                      direction="row"
-                      spacing={1.5}
-                      alignItems="center"
-                      sx={{ px: 1.25, py: 0.75 }}
-                    >
-                      <Typography
-                        sx={{ typography: "s2", width: 120, flexShrink: 0 }}
-                      >
-                        {field.label}
-                      </Typography>
-                      <TextField
-                        size="small"
-                        value={value}
-                        onChange={(e) =>
-                          setValues((v) => ({ ...v, [a.id]: e.target.value }))
-                        }
-                        inputProps={{ "aria-label": field.label }}
-                        sx={{
-                          flex: 1,
-                          "& input": { typography: "s2", py: 0.625 },
-                        }}
-                      />
-                    </Stack>
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        px: 1.25,
-                        pb: 0.5,
-                      }}
-                    >
-                      {r.suggestion?.why
-                        ? `${r.suggestion.why} Only this field changes; saving checks the pair again.`
-                        : "Only this field changes; saving checks the pair again."}
-                    </Typography>
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      justifyContent="flex-end"
-                      sx={{ px: 1.25, pb: 0.75 }}
-                    >
-                      <Button
-                        size="small"
-                        color="inherit"
-                        onClick={() => setOpenId(null)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={!String(value).trim() || checking}
-                        onClick={() => {
-                          fixKit.applyRepair(r.fixId, String(value));
-                          setOpenId(null);
-                        }}
-                      >
-                        Save and re-check
-                      </Button>
-                    </Stack>
-                  </Box>
-                )}
               </Stack>
             )}
           </Box>

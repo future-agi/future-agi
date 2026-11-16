@@ -9,6 +9,7 @@ import {
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -450,42 +451,37 @@ export default function BuildEnvironmentDialog({
         spacing={1}
         sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
       >
-        {blocked && (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.subtitle",
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            {blocked}
-          </Typography>
-        )}
+        {/* Why Build is off sits on the button, not as a second line of
+            text under the form (#85). */}
+        <Box flex={1} />
         {/* The same build from code — what Build environment would start. */}
         <CopyCommandButton command="fi sim env create --repo ." />
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={!!blocked}
-          onClick={() =>
-            gates.canRun
-              ? onBuild({
-                  name: name.trim(),
-                  version,
-                  count,
-                  parallel: worlds,
-                  request: request.trim(),
-                })
-              : enqueueSnackbar(gates.runReason, { variant: "info" })
-          }
-        >
-          Build environment
-        </Button>
+        <Tooltip arrow title={blocked || ""}>
+          <span>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={!!blocked}
+              onClick={() =>
+                gates.canRun
+                  ? onBuild({
+                      name: name.trim(),
+                      version,
+                      count,
+                      parallel: worlds,
+                      request: request.trim(),
+                    })
+                  : enqueueSnackbar(gates.runReason, { variant: "info" })
+              }
+            >
+              Build environment
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
     </ClosableDialog>
   );
