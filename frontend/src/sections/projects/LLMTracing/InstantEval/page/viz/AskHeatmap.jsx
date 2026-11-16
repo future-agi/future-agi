@@ -8,7 +8,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { alpha, getContrastRatio, useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { formatCount, formatShare, isYesNo, resolveFocus } from "./askAnswers";
 import {
@@ -32,6 +32,7 @@ import {
   Swatch,
   VizCard,
   answerRamp,
+  inkOn,
   legendAnswers,
   quoted,
   rowsNoun,
@@ -120,12 +121,6 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
   const peak = gridPeak(grid, answer);
   const { rows, columns, cells } = grid;
   const matchesOf = (cell) => cell?.byLabel.get(answer) || 0;
-  const inkOn = (level, small) =>
-    !small &&
-    level >= 3 &&
-    getContrastRatio(ramp[level], theme.palette.status.neutral.onSolid) >= 3
-      ? theme.palette.status.neutral.onSolid
-      : theme.palette.text.primary;
   const overallShare = grid.overall.answered
     ? (grid.overall.byLabel.get(answer) || 0) / grid.overall.answered
     : null;
@@ -189,13 +184,14 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
       const level = cell.answered
         ? shareLevel(matchesOf(cell) / cell.answered, peak)
         : 0;
+      const fill = cell.answered ? (small ? ramp[0] : ramp[level]) : null;
       return {
-        fill: cell.answered ? (small ? ramp[0] : ramp[level]) : null,
+        fill,
         hatch: small ? ramp[Math.max(level, 2)] : null,
         outline: cell.pending ? (cell.answered ? "solid" : "dashed") : null,
         dot: dotted(cell),
         text: showCounts ? formatCount(cell.n) : null,
-        ink: cell.answered ? inkOn(level, small) : null,
+        ink: fill ? inkOn(fill, theme) : null,
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -214,14 +210,15 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
           return { fill: alpha(theme.palette.text.disabled, 0.08) };
         const small = t.answered < SMALL_N;
         const level = shareLevel(t.matches / t.answered, peak);
+        const fill = small ? ramp[0] : ramp[level];
         return {
-          fill: small ? ramp[0] : ramp[level],
+          fill,
           hatch: small ? ramp[Math.max(level, 2)] : null,
           text:
             cellW >= TOTAL_FITS
               ? String(Math.round((t.matches / t.answered) * 100))
               : null,
-          ink: inkOn(level, small),
+          ink: inkOn(fill, theme),
         };
       },
       describe: (c) => {

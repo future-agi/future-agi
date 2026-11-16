@@ -492,12 +492,17 @@ describe("InsightsView", () => {
         await screen.findByText("Summarising each item: 16 of 18 sessions"),
       ).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-      fireEvent.click(
-        within(await screen.findByRole("dialog")).getByRole("button", {
-          name: "Stop run",
-        }),
+      // Red is kept for the confirmation, not the button that asks for it.
+      expect(screen.getByRole("button", { name: "Stop" })).not.toHaveClass(
+        "MuiButton-outlinedError",
       );
+      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+      const confirm = within(await screen.findByRole("dialog")).getByRole(
+        "button",
+        { name: "Stop run" },
+      );
+      expect(confirm).toHaveClass("MuiButton-containedError");
+      fireEvent.click(confirm);
       await waitFor(
         () =>
           expect(

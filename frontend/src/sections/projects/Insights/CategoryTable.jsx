@@ -608,14 +608,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
         )}
         <ColumnsMenu columns={columns} prefs={prefs} onChange={changePrefs} />
       </Stack>
-      <Box
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "8px",
-          overflowX: "auto",
-        }}
-      >
+      <Box sx={{ overflowX: "auto" }}>
         <Table
           size="small"
           id="insights-categories"

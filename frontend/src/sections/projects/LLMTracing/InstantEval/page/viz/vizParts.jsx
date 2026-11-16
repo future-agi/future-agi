@@ -7,7 +7,16 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
-import { alpha, darken, lighten, useTheme } from "@mui/material/styles";
+import {
+  alpha,
+  darken,
+  decomposeColor,
+  getContrastRatio,
+  hslToRgb,
+  lighten,
+  recomposeColor,
+  useTheme,
+} from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { answerColor } from "../../results/answerColors";
 import { formatCount, isYesNo } from "./askAnswers";
@@ -234,6 +243,34 @@ export function useAnswerColor() {
       answer,
       theme,
     );
+}
+
+// `fill` as it shows on `surface`: a translucent fill is laid over it.
+const shownOn = (fill, surface) => {
+  const color = decomposeColor(fill.startsWith("hsl") ? hslToRgb(fill) : fill);
+  const opacity = color.values[3] ?? 1;
+  if (opacity >= 1) return fill;
+  const base = decomposeColor(surface).values;
+  return recomposeColor({
+    type: "rgb",
+    values: [0, 1, 2].map((i) =>
+      Math.round(color.values[i] * opacity + base[i] * (1 - opacity)),
+    ),
+  });
+};
+
+/**
+ * The more readable ink for text on `fill`: the theme's primary text or the
+ * page colour, one light and one dark in either mode, judged against the fill
+ * as it shows on the page.
+ */
+export function inkOn(fill, theme) {
+  const surface = theme.palette.background.paper;
+  const shown = shownOn(fill, surface);
+  const text = theme.palette.text.primary;
+  return getContrastRatio(shown, text) >= getContrastRatio(shown, surface)
+    ? text
+    : surface;
 }
 
 /** The strong end of the same nominal hue, adapted for the chart surface. */

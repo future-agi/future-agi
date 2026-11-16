@@ -323,7 +323,6 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
         <Button
           size="small"
           variant="outlined"
-          color="error"
           disabled={busy}
           startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
           onClick={onCancel}
@@ -1226,7 +1225,7 @@ export default function AskRunView({
             {metaLine.join(" · ")}
           </Typography>
           {questions.length > 1 && (
-            <Box sx={{ mt: 1, borderBottom: 1, borderColor: "divider" }}>
+            <Box sx={{ mt: 1 }}>
               <CustomTabs
                 value={
                   questions.some((item) => item.configId === question?.configId)
@@ -1234,7 +1233,7 @@ export default function AskRunView({
                     : false
                 }
                 variant="scrollable"
-                scrollButtons={false}
+                scrollButtons="auto"
                 aria-label="Questions"
               >
                 {questions.map((item, index) => (

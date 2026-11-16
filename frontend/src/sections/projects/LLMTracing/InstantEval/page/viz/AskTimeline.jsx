@@ -49,6 +49,7 @@ import {
   Swatch,
   VizCard,
   deepColor,
+  inkOn,
   legendAnswers,
   quoted,
   rowsNoun,
@@ -721,6 +722,9 @@ function SquaresPlot({
             const badgeW = Math.max(w + 4, text.length * 6 + 8);
             const cx = stack.index * colW + colW / 2;
             const y = stackTop(stack.index) - BADGE_H + 2;
+            const badgeFill = answer
+              ? deepColor(colorOf(question, answer))
+              : theme.palette.text.secondary;
             return (
               <g key={`more-${stack.index}`} pointerEvents="none">
                 <rect
@@ -729,17 +733,13 @@ function SquaresPlot({
                   width={badgeW}
                   height={BADGE_H - 3}
                   rx={(BADGE_H - 3) / 2}
-                  fill={
-                    answer
-                      ? deepColor(colorOf(question, answer))
-                      : theme.palette.text.secondary
-                  }
+                  fill={badgeFill}
                 />
                 <text
                   x={cx}
                   y={y + 9.5}
                   textAnchor="middle"
-                  fill={theme.palette.status.neutral.onSolid}
+                  fill={inkOn(badgeFill, theme)}
                   fontSize={9.5}
                   fontWeight={theme.typography.fontWeightSemiBold}
                   fontFamily={theme.typography.fontFamily}

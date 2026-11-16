@@ -136,7 +136,6 @@ function StopRun({ run }) {
       <Button
         size="small"
         variant="outlined"
-        color="error"
         startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
         onClick={() => setOpen(true)}
         disabled={!canRun}

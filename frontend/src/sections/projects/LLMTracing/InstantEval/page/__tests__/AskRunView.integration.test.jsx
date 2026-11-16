@@ -251,12 +251,19 @@ describe("cancelling a live run", () => {
     const view = render(wrap(live(0)));
     // Polled at its usual pace, nothing extra is read before Cancel asks.
     expect(readNow).not.toHaveBeenCalled();
+    // Red is kept for the confirmation, not the button that asks for it.
+    expect(screen.getByRole("button", { name: "Stop" })).not.toHaveClass(
+      "MuiButton-outlinedError",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(
       screen.getByText(
         "Stop this run? Nothing has been answered yet, and it can't be resumed.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop run" })).toHaveClass(
+      "MuiButton-containedError",
+    );
     // Read at once, then every 2 s while it asks.
     expect(readNow).toHaveBeenCalledTimes(1);
     act(() => {
