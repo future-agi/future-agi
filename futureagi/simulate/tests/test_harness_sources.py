@@ -1,17 +1,20 @@
 import base64
 import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
 from simulate.services import harness_sources
-from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_versioning_backfill import (
     storage as storage,  # noqa: F401
 )
+from simulate.tests.test_harness_versioning_record import _save_drafts
 from simulate.tests.test_harness_versioning_rollback import _built
 
 pytestmark = pytest.mark.django_db
@@ -78,7 +81,18 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
                 "compiled": {
                     "agent_environments": [
                         {"kind": "retrieval", "documents": ["REFERENCE_SENTINEL"]}
-                    ]
+                    ],
+                    "evaluator_inputs": {
+                        "policies": [],
+                        "records": [],
+                        "references": [
+                            {
+                                "source_id": pin["source_id"],
+                                "documents": ["REFERENCE_SENTINEL"],
+                            }
+                        ],
+                        "rules": [],
+                    },
                 },
             },
         }
@@ -121,6 +135,11 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     files = archives.read_archive(archives.get_archive(source_draft.archive_object_key))
     assert b"REFERENCE_SENTINEL" in files["sources/tested-agent.json"]
     assert b"REFERENCE_SENTINEL" not in files["sources/manifest.json"]
+    saved = _save_drafts(environment, user=user)
+    assert saved["saved"]["environment"]["id"] == str(
+        environment.environment_version_id
+    )
+    assert drafts.fresh_draft(environment, "environment") is None
     private_keys = [
         key
         for key in storage.objects
@@ -128,6 +147,115 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     ]
     assert len(private_keys) == 2
     assert any(b"REFERENCE_SENTINEL" in storage.objects[key] for key in private_keys)
+    for key in private_keys:
+        if b'"snapshot"' in storage.objects[key]:
+            assert key.endswith(
+                f"/{hashlib.sha256(storage.objects[key]).hexdigest()}.json"
+            )
+        else:
+            aggregate = json.loads(storage.objects[key])
+            payload = {
+                "schema_version": aggregate["schema_version"],
+                "private_snapshot_digests": aggregate["private_snapshot_digests"],
+                "source_snapshot_digests": aggregate["source_snapshot_digests"],
+            }
+            assert key.endswith(
+                f"/{hashlib.sha256(harness_sources._canonical(payload)).hexdigest()}.json"
+            )
+    run = SimpleNamespace(
+        environment_id=environment.id,
+        organization_id=environment.organization_id,
+        environment_version=source_draft,
+    )
+    resolved = harness_sources.resolve_evaluator_sources(run)
+    assert resolved["snapshot_digest"] == accepted["snapshot_digest"]
+    assert b"REFERENCE_SENTINEL" in harness_sources._canonical(resolved)
+    leaf_key = next(
+        key for key in private_keys if b'"snapshot"' in storage.objects[key]
+    )
+    storage.objects[leaf_key] += b" "
+    with pytest.raises(HostedHarnessError) as caught:
+        harness_sources.resolve_evaluator_sources(run)
+    assert caught.value.code == "source_snapshot_invalid"
+
+
+def test_upload_prepare_keeps_csv_and_json_in_one_review(
+    user, workspace, storage, monkeypatch
+):
+    environment = _built(user, workspace, "source-multi-upload")
+    seen = {}
+
+    def alk(payload):
+        seen.update(payload)
+        return {
+            "ok": True,
+            "result": {
+                "draft": {
+                    "draft_digest": "sha256:prepared",
+                    "sources": [],
+                    "proposals": {},
+                    "diagnostics": [],
+                }
+            },
+        }
+
+    monkeypatch.setattr(harness_sources, "execute_source_request", alk)
+    basis = drafts.draft_refs(environment)["environment"]
+    prepared = harness_sources.prepare_upload_import(
+        environment,
+        [
+            SimpleUploadedFile("customers.csv", b"customer_id\nC17\n", "text/csv"),
+            SimpleUploadedFile(
+                "orders.json",
+                b'[{"order_id":"O1","buyer_id":"C17"}]',
+                "application/json",
+            ),
+        ],
+        purpose="seed_records",
+        expected_environment_version_id=str(environment.environment_version_id),
+        expected_draft={"id": basis.id, "revision": basis.revision},
+    )
+
+    assert prepared["draft_digest"] == "sha256:prepared"
+    assert [source["filename"] for source in seen["sources"]] == [
+        "source-1.csv",
+        "source-2.json",
+    ]
+    assert {source["role"] for source in seen["sources"]} == {"seed_records"}
+
+
+def test_safe_version_documents_exclude_private_source_fields():
+    environment = {
+        "sources/manifest.json": harness_sources._canonical(
+            {
+                "schema_version": 1,
+                "snapshot_digest": "sha256:aggregate",
+                "source_count": 1,
+                "sources": [
+                    {
+                        "source_id": "guide",
+                        "purpose": "reference",
+                        "private_key": "must-not-escape",
+                    }
+                ],
+                "tested_agent_projection_sha256": "sha256:public",
+                "validation_status": "accepted",
+                "private_snapshot_digests": ["sha256:private"],
+            }
+        )
+    }
+
+    documents = versions._source_documents(environment)
+
+    assert documents == {
+        "schema_version": 1,
+        "snapshot_digest": "sha256:aggregate",
+        "source_count": 1,
+        "sources": [{"source_id": "guide", "purpose": "reference"}],
+        "tested_agent_projection_sha256": "sha256:public",
+        "validation_status": "accepted",
+    }
+    assert "private" not in json.dumps(documents)
 
 
 def test_participant_visibility_fails_closed(user, workspace, storage, monkeypatch):

@@ -25,6 +25,7 @@ export default function Actions({
   selectedAll,
   totalRows,
   excludingIds,
+  onUseInEnvironment,
 }) {
   const { role } = useAuthContext();
   const navigate = useNavigate();
@@ -85,6 +86,18 @@ export default function Actions({
           sx={{ mr: "5px" }}
           actions={[
             {
+              label: "Use in Environment",
+              icon: "solar:folder-with-files-linear",
+              disabled: selectedAll || status?.status !== "Completed",
+              tooltip: selectedAll
+                ? "Clear Select all and choose exact files"
+                : status?.status !== "Completed"
+                  ? "Wait for processing to finish"
+                  : "",
+              onClick: () =>
+                onUseInEnvironment(selectedFiles.map((file) => file.id)),
+            },
+            {
               label: "Delete",
               icon: "solar:trash-bin-trash-linear",
               onClick: () => {
@@ -113,6 +126,14 @@ export default function Actions({
             <Box component={"img"} src="/assets/icons/ic_pen.svg" />
           </IconButton>
           {/* </CustomTooltip> */}
+          <Button
+            disabled={status?.status !== "Completed"}
+            onClick={() => onUseInEnvironment(null)}
+            variant="outlined"
+            color="primary"
+          >
+            Use in Environment
+          </Button>
           <Button
             disabled={status?.status !== "Completed"}
             onClick={() => {
@@ -166,4 +187,5 @@ Actions.propTypes = {
   totalRows: PropTypes.number,
   selectedAll: PropTypes.bool,
   excludingIds: PropTypes.array,
+  onUseInEnvironment: PropTypes.func.isRequired,
 };

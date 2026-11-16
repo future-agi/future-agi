@@ -371,6 +371,7 @@ export const refreshFollowers = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: ["harness-environment", envId] });
   queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
   queryClient.invalidateQueries({ queryKey: ["harness-scenarios", envId] });
+  queryClient.invalidateQueries({ queryKey: ["harness-env-sources", envId] });
 };
 
 // A draft keeps its id as it is edited, so its diff and members are asked

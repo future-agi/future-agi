@@ -111,6 +111,79 @@ def _get_private(key: str) -> bytes:
         response.release_conn()
 
 
+def resolve_evaluator_sources(run) -> dict[str, Any]:
+    """Resolve private source inputs from the Environment version pinned to a run."""
+    version = getattr(run, "environment_version", None)
+    if (
+        version is None
+        or not getattr(run, "environment_id", None)
+        or version.job_id != run.environment_id
+        or version.organization_id != run.organization_id
+    ):
+        raise HostedHarnessError(
+            "source_snapshot_unavailable",
+            "The run does not have a valid pinned Environment source snapshot.",
+            status_code=409,
+        )
+    files = archives.read_archive(archives.get_archive(version.archive_object_key))
+    try:
+        manifest = json.loads(files["sources/manifest.json"])
+        aggregate_digest = manifest["snapshot_digest"]
+        aggregate_key = (
+            f"{SNAPSHOT_PREFIX}/{run.organization_id}/"
+            f"{aggregate_digest.removeprefix('sha256:')}.json"
+        )
+        aggregate = json.loads(_get_private(aggregate_key))
+        aggregate_payload = {
+            "schema_version": aggregate["schema_version"],
+            "private_snapshot_digests": aggregate["private_snapshot_digests"],
+            "source_snapshot_digests": aggregate["source_snapshot_digests"],
+        }
+        actual_aggregate_digest = (
+            "sha256:" + hashlib.sha256(_canonical(aggregate_payload)).hexdigest()
+        )
+        if actual_aggregate_digest != aggregate_digest:
+            raise ValueError("aggregate digest mismatch")
+        source_digests = aggregate_payload["source_snapshot_digests"]
+        if set(source_digests) != {
+            source["source_id"] for source in manifest.get("sources", [])
+        }:
+            raise ValueError("source map mismatch")
+        resolved = []
+        for source_id, digest in sorted(source_digests.items()):
+            key = (
+                f"{SNAPSHOT_PREFIX}/{run.organization_id}/"
+                f"{digest.removeprefix('sha256:')}.json"
+            )
+            body = _get_private(key)
+            if "sha256:" + hashlib.sha256(body).hexdigest() != digest:
+                raise ValueError("leaf digest mismatch")
+            leaf = json.loads(body)
+            resolved.append(
+                {
+                    "source_id": source_id,
+                    "evaluator_inputs": leaf["compiled"]["evaluator_inputs"],
+                }
+            )
+        return {
+            "snapshot_digest": aggregate_digest,
+            "sources": resolved,
+        }
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        S3Error,
+    ) as exc:
+        raise HostedHarnessError(
+            "source_snapshot_invalid",
+            "The pinned Environment source snapshot could not be verified.",
+            status_code=409,
+        ) from exc
+
+
 def _alk_result(response: dict) -> dict:
     if response.get("ok") is True and isinstance(response.get("result"), dict):
         return response["result"]
@@ -169,65 +242,74 @@ def prepare_upload_import(
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
-    original = uploaded.read(25 * 1024 * 1024 + 1)
-    if len(original) > 25 * 1024 * 1024:
+    uploads = tuple(uploaded) if isinstance(uploaded, (list, tuple)) else (uploaded,)
+    if len(uploads) > 100:
         raise HostedHarnessError(
             "source_limit_exceeded",
-            "The upload exceeds the 25 MiB Environment import limit.",
+            "Upload at most 100 files in one Environment import.",
             status_code=413,
         )
-    suffix = PurePath(uploaded.name).suffix.lower()
     defaults = {
         ".pdf": ("reference", "application/pdf"),
         ".txt": ("reference", "text/plain"),
         ".csv": ("seed_records", "text/csv"),
         ".json": ("seed_records", "application/json"),
     }
-    if suffix not in defaults:
-        raise HostedHarnessError(
-            "source_format_unsupported",
-            "Upload a PDF, TXT, CSV, or JSON file.",
-            status_code=422,
-        )
-    suggested, media_type = defaults[suffix]
-    role = purpose or suggested
     valid_roles = {
         ".pdf": {"policy", "reference"},
         ".txt": {"reference"},
         ".csv": {"seed_records"},
         ".json": {"seed_records"},
     }
-    if role not in valid_roles[suffix]:
-        raise HostedHarnessError(
-            "source_format_unsupported",
-            "The selected purpose is not supported for this file type.",
-            status_code=422,
+    captured = []
+    for index, item in enumerate(uploads, start=1):
+        original = item.read(25 * 1024 * 1024 + 1)
+        if len(original) > 25 * 1024 * 1024:
+            raise HostedHarnessError(
+                "source_limit_exceeded",
+                "An upload exceeds the 25 MiB Environment import limit.",
+                status_code=413,
+            )
+        suffix = PurePath(item.name).suffix.lower()
+        if suffix not in defaults:
+            raise HostedHarnessError(
+                "source_format_unsupported",
+                "Upload PDF, TXT, CSV, or JSON files.",
+                status_code=422,
+            )
+        suggested, media_type = defaults[suffix]
+        role = purpose or suggested
+        if role not in valid_roles[suffix]:
+            raise HostedHarnessError(
+                "source_format_unsupported",
+                "The selected purpose is not supported for every file.",
+                status_code=422,
+            )
+        digest = "sha256:" + hashlib.sha256(original).hexdigest()
+        source_id = (
+            "src_"
+            + hashlib.sha256(f"upload:{item.name}:{digest}".encode()).hexdigest()[:24]
         )
-    digest = "sha256:" + hashlib.sha256(original).hexdigest()
-    source_id = (
-        "src_"
-        + hashlib.sha256(f"upload:{uploaded.name}:{digest}".encode()).hexdigest()[:24]
-    )
-    captured = (
-        CapturedKnowledgeBaseSource(
-            source_id=source_id,
-            filename=f"source-1{suffix}",
-            media_type=media_type,
-            role=role,
-            content=original,
-            original_content=original,
-            origin={
-                "source_id": source_id,
-                "kind": "upload",
-                "upload_id": digest,
-                "original_name": uploaded.name,
-                "original_sha256": digest,
-                "parsed_sha256": digest,
-                "upstream_revision": None,
-            },
-        ),
-    )
-    return _prepare_captured(environment, captured, current_ref)
+        captured.append(
+            CapturedKnowledgeBaseSource(
+                source_id=source_id,
+                filename=f"source-{index}{suffix}",
+                media_type=media_type,
+                role=role,
+                content=original,
+                original_content=original,
+                origin={
+                    "source_id": source_id,
+                    "kind": "upload",
+                    "upload_id": digest,
+                    "original_name": item.name,
+                    "original_sha256": digest,
+                    "parsed_sha256": digest,
+                    "upstream_revision": None,
+                },
+            )
+        )
+    return _prepare_captured(environment, tuple(captured), current_ref)
 
 
 def _require_import_basis(
@@ -382,7 +464,7 @@ def _load_staged(import_ref: str, environment) -> dict:
         "environment_version_id": str(environment.environment_version_id),
     }
     if not isinstance(token, dict) or any(
-        token.get(k) != v for k, v in expected.items()
+        token.get(k) != v for k, v in expected.items() if k != "environment_version_id"
     ):
         raise HostedHarnessError(
             "source_access_denied",
@@ -462,6 +544,12 @@ def accept_source_import(
     head = environment.__class__.no_workspace_objects.select_related(
         "environment_version", "suite_version"
     ).get(id=environment.id)
+    if str(head.environment_version_id) != staged["environment_version_id"]:
+        raise HostedHarnessError(
+            "source_review_stale",
+            "The source review no longer matches the current Environment version.",
+            status_code=409,
+        )
     environment_version = (
         drafts.fresh_draft(head, "environment") or head.environment_version
     )
@@ -522,7 +610,8 @@ def accept_source_import(
             "compiled": result["compiled"],
         }
     )
-    private_key = f"{SNAPSHOT_PREFIX}/{environment.organization_id}/{snapshot_digest.removeprefix('sha256:')}.json"
+    private_object_digest = "sha256:" + hashlib.sha256(private).hexdigest()
+    private_key = f"{SNAPSHOT_PREFIX}/{environment.organization_id}/{private_object_digest.removeprefix('sha256:')}.json"
     _put_private(private_key, private)
 
     compiled = result["compiled"]
@@ -532,20 +621,23 @@ def accept_source_import(
         if isinstance(existing_manifest, dict)
         else {}
     )
-    source_snapshot_digests.update(dict.fromkeys(pins, snapshot_digest))
+    source_snapshot_digests.update(dict.fromkeys(pins, private_object_digest))
     private_snapshot_digests = sorted(set(source_snapshot_digests.values()))
+    aggregate_payload = {
+        "schema_version": 1,
+        "private_snapshot_digests": private_snapshot_digests,
+        "source_snapshot_digests": source_snapshot_digests,
+    }
     aggregate_digest = (
-        "sha256:" + hashlib.sha256(_canonical(private_snapshot_digests)).hexdigest()
+        "sha256:" + hashlib.sha256(_canonical(aggregate_payload)).hexdigest()
     )
     aggregate_key = f"{SNAPSHOT_PREFIX}/{environment.organization_id}/{aggregate_digest.removeprefix('sha256:')}.json"
     _put_private(
         aggregate_key,
         _canonical(
             {
-                "schema_version": 1,
+                **aggregate_payload,
                 "snapshot_digest": aggregate_digest,
-                "private_snapshot_digests": private_snapshot_digests,
-                "source_snapshot_digests": source_snapshot_digests,
             }
         ),
     )
@@ -579,7 +671,8 @@ def accept_source_import(
     environment_files["sources/tested-agent.json"] = _canonical(agent_projection)
     if (
         isinstance(existing_manifest, dict)
-        and snapshot_digest in (existing_manifest.get("private_snapshot_digests") or [])
+        and private_object_digest
+        in (existing_manifest.get("private_snapshot_digests") or [])
         and environment_version.status == "draft"
     ):
         return {

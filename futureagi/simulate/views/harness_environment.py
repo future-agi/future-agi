@@ -504,7 +504,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(
             prepare_upload_import(
                 job,
-                body["file"],
+                body["files"],
                 purpose=body.get("purpose"),
                 expected_environment_version_id=body["expected_environment_version_id"],
                 expected_draft={

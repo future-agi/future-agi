@@ -558,7 +558,21 @@ class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
     purpose = serializers.ChoiceField(
         choices=("policy", "reference", "seed_records"), required=False
     )
-    file = serializers.FileField()
+    file = serializers.FileField(required=False)
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+    )
+
+    def validate(self, attrs):
+        file = attrs.pop("file", None)
+        files = attrs.get("files")
+        if (file is None) == (files is None):
+            raise serializers.ValidationError("Upload one file or a files list.")
+        attrs["files"] = files or [file]
+        return attrs
 
 
 class HarnessSourceAcceptSerializer(StrictInputSerializer):

@@ -14,6 +14,22 @@ MAX_RESPONSE_BYTES = 512 * 1024 * 1024
 
 
 def execute_source_request(payload: dict) -> dict:
+    sandbox_url = str(getattr(settings, "ALK_HARNESS_SANDBOX_URL", "") or "").strip()
+    if sandbox_url:
+        from simulate.services.harness_sandbox import HarnessSandboxClient
+
+        try:
+            return HarnessSandboxClient(
+                sandbox_url,
+                getattr(settings, "ALK_HARNESS_SANDBOX_TOKEN", "") or None,
+            ).environment_sources(payload)
+        except Exception as exc:
+            raise HostedHarnessError(
+                "source_processor_unavailable",
+                "Environment source processing is temporarily unavailable",
+                status_code=503,
+                retryable=True,
+            ) from exc
     request = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     try:
         client = get_sandbox_provider()

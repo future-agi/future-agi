@@ -16,6 +16,11 @@ export const WORKSPACE_TABS = [
     icon: "solar:document-text-linear",
   },
   {
+    id: "sources",
+    label: "Sources",
+    icon: "solar:folder-with-files-linear",
+  },
+  {
     id: "scenarios",
     label: "Scenarios",
     icon: "solar:layers-minimalistic-linear",

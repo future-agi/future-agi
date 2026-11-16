@@ -7,6 +7,7 @@ import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
+import SourcesPanel from "./sources/SourcesPanel";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
@@ -116,6 +117,8 @@ export default function WorkspacePanels({
     switch (current.id) {
       case "contract":
         return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
+      case "sources":
+        return <SourcesPanel env={env} locked={locked || !backed} />;
       case "scenarios":
         return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
       case "evals":
