@@ -480,7 +480,15 @@ def test_invalid_cancellation_is_rejected_without_state_changes(
 
 
 @pytest.mark.parametrize(
-    "reason", ["user_canceled", "ttl_exceeded", "environment_deleted", "fix_ended"]
+    "reason",
+    [
+        "user_canceled",
+        "ttl_exceeded",
+        "environment_deleted",
+        "fix_ended",
+        "superseded_move",
+        "validation_timed_out",
+    ],
 )
 def test_supported_cancellation_persists_job_and_attempt_reason(organization, reason):
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="valid-cancel")

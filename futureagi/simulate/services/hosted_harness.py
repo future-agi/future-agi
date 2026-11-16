@@ -1919,6 +1919,10 @@ _TERMINAL_STATES = frozenset(
 
 
 DELETE_CANCEL_REASON = "environment_deleted"
+# How a pair check (harness_versioning.validation) stops its own job: a newer default
+# move replaced the one it was checking for, or it ran past its deadline.
+SUPERSEDED_MOVE_CANCEL_REASON = "superseded_move"
+CHECK_TIMED_OUT_CANCEL_REASON = "validation_timed_out"
 
 
 def delete_environment(job: HostedHarnessJob) -> None:
@@ -2003,6 +2007,8 @@ def validate_cancellation_reason(reason: str) -> None:
         "ttl_exceeded",
         DELETE_CANCEL_REASON,
         "fix_ended",
+        SUPERSEDED_MOVE_CANCEL_REASON,
+        CHECK_TIMED_OUT_CANCEL_REASON,
     }:
         raise HostedHarnessError(
             "invalid_cancellation_reason",
