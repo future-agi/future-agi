@@ -13,25 +13,7 @@ from simulate.services.harness_readiness.evidence import Evidence
 from simulate.tests.test_harness_readiness import readiness_on as readiness_on  # noqa: F401
 from simulate.tests.test_harness_readiness import storage as storage  # noqa: F401
 
-# As ALK seals them: each tool reached on the agent's own tool service, which the world's door fronts as tools-api.
-_SERVICE = {"mode": "service", "service": "tools-api"}
 CONTRACT = {
-    "tool_entrypoints": [
-        {"tool": "get_order", "endpoint": "/orders/get", "method": "POST", **_SERVICE},
-        {
-            "tool": "list_refunds",
-            "endpoint": "/refunds/list",
-            "method": "POST",
-            **_SERVICE,
-        },
-        {
-            "tool": "update_order_status",
-            "endpoint": "/orders/update_status",
-            "method": "POST",
-            **_SERVICE,
-        },
-        {"tool": "issue_refund", "endpoint": "/refunds/issue", **_SERVICE},
-    ],
     "workers": [
         {
             "id": "order_lookup",
@@ -52,6 +34,18 @@ CONTRACT = {
     ],
 }
 DOOR = {"worker_deadlines": "per_worker"}
+# What ALK seals with the bundle: its door decision, each worker's limits, and each world action's tool.
+DOOR_OUTCOME = {"present": True, "surface": "tool_proxy"}
+WORKER_LIMITS = {
+    "workers": {"order_lookup": {"limited": True}, "refund": {"limited": True}},
+    "scenarios": {},
+}
+ACTIONS = {
+    "POST orders.get": "get_order",
+    "POST refunds.list": "list_refunds",
+    "POST orders.update_status": "update_order_status",
+    "POST refunds.issue": "issue_refund",
+}
 PERMISSIONS = {
     "worker:order_lookup": {"allow": ["POST orders.get", "POST refunds.list"]},
     "worker:refund": {"allow": ["POST refunds.issue", "POST refunds.list"]},
@@ -71,7 +65,14 @@ def _evidence(**fields):
         tools=[],
         actions=[],
         checked_at="2026-11-14T10:00:00+00:00",
-        **{"door": DOOR, "worker_permissions": PERMISSIONS, **fields},
+        **{
+            "door": DOOR,
+            "worker_permissions": PERMISSIONS,
+            "door_outcome": DOOR_OUTCOME,
+            "worker_limits": WORKER_LIMITS,
+            "actions_to_tools": ACTIONS,
+            **fields,
+        },
     )
 
 
@@ -126,8 +127,11 @@ def test_shared_worker_reads_unavailable_not_enforced():
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
 
-def test_old_seal_with_allowed_tools_is_blocked_with_a_rebuild_fix():
-    row = _rows(evidence=_evidence(door=None))["order_lookup"]
+def test_a_bundle_sealed_before_alk_wrote_its_door_decision_reads_sealed_before_worker_limits():
+    old = _evidence(
+        door=None, door_outcome=None, worker_limits=None, actions_to_tools=None
+    )
+    row = _rows(evidence=old)["order_lookup"]
     assert (row["status"], row["reason_code"]) == (
         "blocked",
         "sealed_before_worker_limits",
@@ -137,63 +141,52 @@ def test_old_seal_with_allowed_tools_is_blocked_with_a_rebuild_fix():
 
 
 @pytest.mark.parametrize(
-    "entry",
+    ("reason", "code"),
     [
-        # Built today with the tool service under another name: no door in front of it.
-        {"mode": "service", "service": "ledger"},
-        # Built today with the tools imported from the agent's own module.
-        {"mode": "import", "module": "agent", "service": ""},
+        ("tool_service_not_fronted", "no_world_door"),
+        ("in_process_unbound", "in_process_tools"),
+        ("no_tool_service", "in_process_tools"),
     ],
 )
-def test_a_build_without_a_world_door_says_so_not_that_it_is_old(entry):
-    contract = {
-        **CONTRACT,
-        "tool_entrypoints": [{**one, **entry} for one in CONTRACT["tool_entrypoints"]],
-    }
-    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))[
-        "order_lookup"
-    ]
-    assert (row["status"], row["reason_code"]) == ("blocked", "no_world_door")
-    assert "sealed before" not in row["reason"]
-    assert "door" in row["reason"]
+def test_a_build_alk_sealed_without_a_door_reads_its_reason_not_that_it_is_old(
+    reason, code
+):
+    no_door = _evidence(door_outcome={"present": False, "reason": reason})
+    row = _rows(evidence=no_door)["order_lookup"]
+    assert (row["status"], row["reason_code"]) == ("blocked", code)
     assert row["fix"]["type"] == "rebuild_environment"
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
 
-def test_in_process_tools_block_a_limited_worker_and_leave_an_unlimited_one_unavailable():
-    unlimited = {
-        "id": "notes",
-        "name": "Notes worker",
-        "tools": ["get_order"],
-        "binding": "shared",
+def test_a_worker_alk_seals_as_unlimited_is_unavailable_not_blocked_where_no_door_stands():
+    unlimited = {"id": "notes", "name": "Notes worker", "tools": ["get_order"]}
+    contract = {**CONTRACT, "workers": [*CONTRACT["workers"], unlimited]}
+    limits = {
+        **WORKER_LIMITS,
+        "workers": {**WORKER_LIMITS["workers"], "notes": {"limited": False}},
     }
-    in_process = {
-        **CONTRACT,
-        "tool_entrypoints": [{"tool": "get_order", "endpoint": ""}],
-        "workers": [*CONTRACT["workers"], unlimited],
-    }
-    rows = _rows(_pairing(in_process))
-    # Nothing holds the limits a case about this worker relies on, so such a case is held back, not run ungraded.
-    assert (rows["order_lookup"]["status"], rows["order_lookup"]["reason_code"]) == (
-        "blocked",
-        "in_process_tools",
+    rows = _rows(
+        _pairing(contract),
+        _evidence(
+            door_outcome={"present": False, "reason": "in_process_unbound"},
+            worker_limits=limits,
+        ),
     )
-    assert rows["order_lookup"]["fix"]["type"] == "rebuild_environment"
+    # Nothing holds the limits a case about a limited worker relies on, so such a case is held back.
+    assert rows["order_lookup"]["status"] == "blocked"
     assert (rows["notes"]["status"], rows["notes"]["fix"]) == ("unavailable", None)
 
 
-def test_a_separate_worker_without_an_allow_list_is_blocked_when_no_door_holds_its_deadline():
-    contract = {
-        **CONTRACT,
-        "tool_entrypoints": [
-            {**one, "service": "ledger"} for one in CONTRACT["tool_entrypoints"]
-        ],
-        "workers": [{**one, "allowed_tools": []} for one in CONTRACT["workers"]],
+def test_each_tool_takes_its_world_action_from_the_sealed_actions_file():
+    # The tool proxy sealed no action for update_order_status: it has no route, so nothing holds it.
+    actions = {k: v for k, v in ACTIONS.items() if v != "update_order_status"}
+    lookup = _rows(evidence=_evidence(actions_to_tools=actions))["order_lookup"]
+    assert {one["tool"]: one["action"] for one in lookup["tools"]} == {
+        "get_order": "POST orders.get",
+        "list_refunds": "POST refunds.list",
+        "update_order_status": None,
     }
-    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))[
-        "refund"
-    ]
-    assert (row["status"], row["reason_code"]) == ("blocked", "no_world_door")
+    assert _boundaries(lookup)["update_order_status"] == "not_enforced"
 
 
 def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
@@ -246,7 +239,11 @@ def _archive_members(files):
 
     return assembly._filled_files(
         files,
-        ["generated/tool-proxy/door.json", "generated/tool-proxy/permissions.json"],
+        [
+            "door.json",
+            "generated/tool-proxy/door.json",
+            "generated/tool-proxy/permissions.json",
+        ],
     )
 
 
@@ -262,6 +259,7 @@ def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
             "bundle/generated/tool-proxy/permissions.json": json.dumps(
                 PERMISSIONS
             ).encode(),
+            "bundle/door.json": json.dumps(DOOR_OUTCOME).encode(),
         }
     )
     assert assembly.DOOR_FILE_PATH in members
@@ -302,26 +300,15 @@ def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
     assert reads == ["k1"]
     assert files["door"] == DOOR
     assert files["worker_permissions"] == PERMISSIONS
-    assert saved[0]["files_version"] == 2
+    assert files["door_outcome"] == DOOR_OUTCOME
+    # A bundle sealed before ALK wrote these files reads them as absent, never as an error.
+    assert files["worker_limits"] is None
+    assert saved[0]["files_version"] == assembly.CERTIFICATION_FILES_VERSION
     # Kept on the row now: the second read touches no archive.
     row.certification_files = saved[0]
     again = evidence_module._certification_files(row, "k1")
     assert reads == ["k1"]
     assert again["door"] == DOOR
-
-
-def test_sealed_action_names_match_alk():
-    assert (
-        workers._method_action("GET", workers._world_action("/orders/{order_id}?x=1"))
-        == "GET orders.{order_id}"
-    )
-    assert (
-        workers._method_action("", workers._world_action("/refunds/issue"))
-        == "POST refunds.issue"
-    )
-    assert workers._method_action(
-        "patch", workers._world_action("orders/update_status/")
-    ) == ("PATCH orders.update_status")
 
 
 class _Calls(list):
@@ -430,13 +417,22 @@ def test_children_not_applicable_for_a_single_agent_and_not_run_without_runs(
     assert (waiting.finding, waiting.reason_code) == ("not_run", "no_run")
 
 
-def test_a_compose_build_says_its_workers_need_the_door_it_does_not_have():
-    compose = {**CONTRACT, "agent": {"execution": "compose", "service": "agent"}}
-    row = _rows(_pairing(compose), _evidence(door=None, worker_permissions=None))[
-        "refund"
-    ]
-    assert (row["status"], row["reason_code"]) == ("blocked", "compose_no_door")
-    assert "sealed before" not in row["reason"]
-    assert "Docker Compose" in row["reason"]
-    # Rebuilding the same compose app would not add a door, so no rebuild is offered.
-    assert row["fix"] is None
+def test_the_workers_a_scenario_relies_on_come_from_the_sealed_limits_when_the_bundle_has_them():
+    from simulate.services import harness_scenario_needs
+
+    document = {
+        "name": "refund_over_limit",
+        "sub_goals": [],
+        "worker_budget_seconds": {"order_lookup": 5},
+    }
+
+    def relied(sealed):
+        return harness_scenario_needs._needs(
+            "refund_over_limit", 1, document, document, {}, False, frozenset(), sealed
+        ).workers
+
+    # The bundle names the workers: the scenario's own fields are not read again.
+    assert relied(frozenset({"refund"})) == {"refund"}
+    assert relied(frozenset()) == frozenset()
+    # Sealed before ALK wrote them: read from the scenario, as before.
+    assert relied(None) == {"order_lookup"}

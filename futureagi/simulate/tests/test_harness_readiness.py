@@ -21,6 +21,7 @@ from simulate.serializers.harness_environment import (
 )
 from simulate.services import harness_readiness
 from simulate.services.agent_setup import store_agent
+from simulate.services.harness_readiness import catalogue as catalogue_module
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
@@ -1907,7 +1908,7 @@ class TestConsequence:
             "Audio checks do not apply to a chat connection"
         )
         assert rows["browser"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "9"
+        assert report["rules_version"] == catalogue_module.RULES_VERSION
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(
