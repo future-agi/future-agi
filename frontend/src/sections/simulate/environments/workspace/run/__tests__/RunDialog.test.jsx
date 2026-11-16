@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import PropTypes from "prop-types";
 
 // Each hook is stubbed; tests set what the server answered.
-const state = { versions: undefined, plans: {}, members: {}, drafts: null };
+const state = {
+  versions: undefined,
+  plans: {},
+  members: {},
+  drafts: null,
+  view: null,
+};
 const planCalls = [];
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
@@ -56,7 +63,18 @@ vi.mock("src/api/simulate-environments/readinessFix", () => ({
     "checking",
   ]),
 }));
-vi.mock("../readiness/ReadyToRunSection", () => ({ default: () => null }));
+// Hands the dialog the view Ready to run would read (`state.view`).
+vi.mock("../readiness/ReadyToRunSection", async () => {
+  const { useEffect } = await vi.importActual("react");
+  function ReadyToRunStub({ onView }) {
+    useEffect(() => {
+      if (state.view) onView?.(state.view);
+    }, [onView]);
+    return null;
+  }
+  ReadyToRunStub.propTypes = { onView: PropTypes.func };
+  return { default: ReadyToRunStub };
+});
 
 const { default: RunDialog } = await import("../RunDialog");
 
@@ -128,6 +146,7 @@ describe("RunDialog", () => {
     state.members = { s3: members("k1", "k2", "k3"), s2: members("k1", "k9") };
     planCalls.length = 0;
     state.drafts = null;
+    state.view = null;
   });
 
   it("pre-selects the defaults and offers only active versions", async () => {
@@ -792,11 +811,34 @@ describe("RunDialog", () => {
     },
   );
 
+  it("explains a pair_validating refusal in our words, not the check's longest wait", () => {
+    renderDialog({
+      error: {
+        statusCode: 409,
+        error: "pair_validating",
+        message:
+          "These versions are being checked together. Run them again when the check ends, at the latest in 45 minutes.",
+      },
+    });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(
+      "These versions are being checked together. Run them once the check ends.",
+    );
+  });
+
+  it("leaves a pair_validating refusal to Ready to run once it reads the check, and holds Run", async () => {
+    const user = userEvent.setup();
+    state.view = { state: "checking", canRun: false, open: [] };
+    renderDialog({ error: { statusCode: 409, error: "pair_validating" } });
+
+    expect(screen.queryByTestId("run-error")).toBeNull();
+    expect(runButton()).toBeDisabled();
+    await user.hover(runButton().parentElement);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Checking these versions · runs wait until it finishes",
+    );
+  });
+
   it.each([
-    [
-      "pair_validating",
-      "These versions are being checked together. Run them again when the check ends, at the latest in 45 minutes.",
-    ],
     [
       "pair_failed",
       "These versions failed their check together: the agent did not pass this environment's checks. Fix them, or check again from Ready to run.",

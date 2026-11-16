@@ -35,8 +35,8 @@ from simulate.services.harness_readiness.selection import (
     CasePage,
     SelectionReport,
     case_page,
-    select_for_run,
     scenario_readiness,
+    select_for_run,
     selection_report,
 )
 

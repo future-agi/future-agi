@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
 from simulate.models import HarnessAgentVersionRuntime, HarnessAssembledBundle
-from simulate.services.harness_readiness import release
+from simulate.services.harness_readiness import fix_groups
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
     GATE_OPEN,
@@ -25,7 +25,6 @@ from simulate.services.harness_readiness.catalogue import (
 from simulate.services.harness_readiness.evidence import (
     Evidence,
     connection,
-    hidden_material,
     observed,
     readings,
 )
@@ -48,7 +47,7 @@ def _status(reading: Reading) -> tuple[Status, str | None, str | None]:
         return (
             "unavailable",
             reading.reason_code or "not_applicable",
-            reading.reason or "This agent's connection cannot have this check",
+            reading.reason or "This agent's lane cannot have this check",
         )
     if reading.finding == "limited":
         return "partial", reading.reason_code, reading.reason
@@ -85,6 +84,7 @@ def _row(
         "evidence": list(reading.evidence) if reading is not None else [],
         "checked_at": checked_at if reading is not None else None,
         "fix": None,
+        "fix_group": None,
         "consequence": "",
     }
 
@@ -95,7 +95,6 @@ def rows(
     bundle: HarnessAssembledBundle | None,
     *,
     agent_tools: list[Mapping[str, Any]] | None = None,
-    runs: list[Any],
 ) -> list[RowView]:
     """One row per capability, first matching rule wins.
 
@@ -129,11 +128,7 @@ def rows(
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
     fresh: dict[str, Status] = {}
-    seen = {
-        **observed(pairing, runs),
-        # Recorded by the check that made the evidence; until production runs per user it never holds a case.
-        "hidden_material": hidden_material(evidence.certificate),
-    }
+    seen = observed(pairing)
     for capability in CATALOGUE:
         reading = measured.get(capability.id)
         if not capability.measured and capability.id in seen:
@@ -153,9 +148,7 @@ def rows(
                 capability,
                 "untested",
                 reason_code="no_check_yet",
-                reason=_NOT_MEASURED_WHY.get(
-                    capability.id, "No check measures this yet"
-                ),
+                reason="No check measures this yet",
             )
         elif capability.id == "start" and preflight is not None:
             row = _row(
@@ -188,7 +181,7 @@ def rows(
                 found = Reading(
                     found.finding,
                     found.reason_code,
-                    f"{found.reason}; failed its check: " + ", ".join(names),
+                    f"{found.reason}; failed its probe: " + ", ".join(names),
                     found.targets + targets("action", names, "failed"),
                 )
             status, _, _ = _status(found)
@@ -211,7 +204,7 @@ def rows(
             failed = Reading(
                 "failed",
                 "action_failed",
-                "Failed its check: " + ", ".join(names),
+                "Failed its probe: " + ", ".join(names),
                 targets("action", names, "failed"),
                 reading.evidence,
             )
@@ -263,24 +256,11 @@ def rows(
             _keep_structural(row, structural)
         statuses[capability.id] = row["status"]
         fresh.setdefault(capability.id, row["status"])
-        # A certificate made by an earlier harness is checked again by a Re-check.
-        row["fix"] = _fix(
-            pairing,
-            row,
-            certified=evidence.source == "pair_certificate"
-            and stale != "harness_version",
-        )
+        row["fix"] = _fix(pairing, row, certified=evidence.source == "pair_certificate")
         row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
+    fix_groups.annotate(rows, gap=gap, structural=structural)
     return rows
-
-
-# What an unmeasured row lacks, so its Untested reason names what would measure it;
-# files are read from the agent's runs (``observed``).
-_NOT_MEASURED_WHY: dict[str, str] = {
-    "browser": "Nothing records the agent's browser yet, so checks on pages are not"
-    " verified",
-}
 
 
 def _keep_structural(row: RowView, structural: Any) -> None:
@@ -376,12 +356,10 @@ def failed_actions(bundle: HarnessAssembledBundle | None) -> list[Mapping[str, A
 _UNKNOWN = {
     "built_with_unknown": "The agent this environment was built with is not known",
     "saved_without_check": "Saved while the check was unavailable. Re-check before"
-    " relying on these versions",
+    " relying on this pairing",
 }
 
-StaleBecause = Literal[
-    "agent_version", "environment_version", "suite_version", "harness_version"
-]
+StaleBecause = Literal["agent_version", "environment_version", "suite_version"]
 
 
 def _stale(
@@ -390,16 +368,9 @@ def _stale(
     """Rule 3: evidence other than the pairing's own was measured with the agent the
     environment version was built with, on the environment version that holds the
     build certificate (an edit saves a new one without certifying it) and on the
-    scenarios that build made. Any certificate, the pairing's own included, is Stale
-    once runs use another harness version than the one that made it."""
-    harness_moved = (
-        release.harness_outdated(
-            evidence.certificate, pairing.environment.organization_id
-        )
-        is not None
-    )
+    scenarios that build made."""
     if evidence.source == "pair_certificate":
-        return "harness_version" if harness_moved else None
+        return None
     if any(
         (version.documents or {}).get("uncertified")
         for version in (pairing.environment_version, pairing.suite_version)
@@ -415,50 +386,13 @@ def _stale(
         return "environment_version"
     if evidence.covers_suite is False:
         return "suite_version"
-    if harness_moved:
-        return "harness_version"
     return None
 
 
-def _picked_agent_frameworks(pairing: Pairing) -> dict[str, str]:
-    """The frameworks the newest certificate of the picked agent version, on any
-    version of this environment, records."""
-    if pairing.agent_version is None:
-        return {}
-    certificate = (
-        HarnessAssembledBundle._base_manager.filter(
-            job_id=pairing.environment.id,
-            agent_version_id=pairing.agent_version.id,
-            state=HarnessAssembledBundle.State.READY,
-            certificate__runtime__frameworks__isnull=False,
-        )
-        .order_by("-updated_at", "-id")
-        .values_list("certificate", flat=True)
-        .first()
-    )
-    return release.frameworks(certificate)
-
-
-def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str, str]:
-    if stale == "harness_version":
-        moved = release.harness_outdated(
-            evidence.certificate, pairing.environment.organization_id
-        )
-        was, now = moved if moved is not None else ("an earlier version", "another")
-        return (
-            "harness_changed",
-            f"Checked with test release {was}; runs now use {now}",
-        )
+def _stale_reason(
+    stale: StaleBecause, pairing: Pairing, evidence: Evidence
+) -> tuple[str, str]:
     if stale == "agent_version":
-        changed = release.framework_change(
-            release.frameworks(evidence.certificate), _picked_agent_frameworks(pairing)
-        )
-        if changed is not None:
-            dist, was, now = changed
-            return (
-                "framework_changed",
-                f"Checked with {dist} {was}; this agent version uses {now}",
-            )
         return (
             "agent_changed",
             "Checked with the agent version the environment was built with",
@@ -468,12 +402,12 @@ def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str
         was = _label(evidence.made_for.version_number)
         return (
             "environment_changed",
-            f"Checked with environment version {was}; these versions use {now}",
+            f"Checked with environment version {was}; this pairing uses {now}",
         )
     return (
         "suite_changed",
-        f"Checked with the scenarios environment version {now} was built with; these"
-        f" versions use suite version {_label(pairing.suite_version.version_number)}",
+        f"Checked with the scenarios environment version {now} was built with; this"
+        f" pairing uses suite version {_label(pairing.suite_version.version_number)}",
     )
 
 
@@ -493,19 +427,19 @@ _FIXES: dict[str, tuple[str, str]] = {
         "A test message reaches the agent and it answers",
     ),
     "tool_discovery": (
-        "Expose {target} so the test can find and call it",
+        "Expose {target} so the harness can find and call it",
         "{target} is discovered before calls",
     ),
     "tool_routing": (
         "Point {target} at the test world",
-        "{target} lands in the test world and its check passes",
+        "{target} lands in the test world and its probe passes",
     ),
     "state": (
         "Give the environment a copy of the data the agent reads",
-        "The world has its starting records and their check passes",
+        "The world is seeded and its state check passes",
     ),
     "reset": (
-        "Make the world return to its starting records between cases",
+        "Make the world return to its seeded state between cases",
         "The world resets and its reset check passes",
     ),
 }
@@ -515,7 +449,7 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
     "tool_not_in_world": (
         "Add {target} to this environment in the builder, or test this agent version"
         " in an environment that has it",
-        "{target} is simulated in the test world and its check passes",
+        "{target} is simulated in the test world and its probe passes",
     ),
     "tool_not_in_agent": (
         "Give this agent version {target}, or pick an agent version that has it",
@@ -524,7 +458,7 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
     "tool_signature_changed": (
         "Rebuild this environment from this agent version so {target} takes the"
         " arguments the agent sends, or test it in an environment built for them",
-        "{target} takes the agent's arguments in the test world and its check passes",
+        "{target} takes the agent's arguments in the test world and its probe passes",
     ),
 }
 
@@ -577,22 +511,23 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
         " world",
     },
     "state": {
-        "supported": "Every case starts from the same starting records",
-        "blocked": "Cases that read the world's data cannot run until it has its starting records",
-        "unavailable": "This connection keeps its own data; there are no starting records of ours",
+        "supported": "Every case starts from the seeded test data",
+        "blocked": "Cases that read the world's data cannot run until it is seeded",
+        "unavailable": "This connection keeps its own data; there is no seeded world of"
+        " ours",
     },
     "reset": {
-        "supported": "Every trial starts from the same starting point, agent included",
+        "supported": "Every trial starts from the same seed, agent included",
         "partial": "The world resets between trials; the agent may carry its own memory",
         "partial:isolation_not_run": "The world resets between trials, but cases run at"
         " the same time were not shown to stay apart",
         "blocked": "Trials can see each other's changes, so repeated results are not"
         " independent",
-        "unavailable": "No starting records of ours to reset for this connection",
+        "unavailable": "No seeded world of ours to reset for this connection",
     },
 }
 _SHARED_CONSEQUENCES: dict[Status, str] = {
-    "supported": "Shown to work with these versions",
+    "supported": "Shown to work for this pairing",
     "partial": "Works within the limits the reason names",
     "blocked": "Cases that need this cannot run until it is fixed",
     "unavailable": "This connection does not offer this",
@@ -630,7 +565,7 @@ _OBSERVED: dict[str, dict[str, str]] = {
         "unavailable:voice_call": "Voice cases are heard over the call; no chat stream"
         " applies",
         "unavailable:transport_not_qualified": "This transport is not supported for"
-        " runs until it is approved for runs",
+        " runs until it passes qualification",
         "untested": "How this connection replies is not recorded, so where a case ends"
         " is not verified",
     },
@@ -647,12 +582,6 @@ _OBSERVED: dict[str, dict[str, str]] = {
         "supported": "An interrupted run finished on a new attempt, keeping the cases"
         " it had finished",
         "untested": "No interrupted run of this agent has been resumed yet",
-    },
-    "hidden_material": {
-        "supported": "Checks and reference answers were kept out of the agent's reach, so a blind run stays blind",
-        "partial": "The agent could reach the grading material here, so its results are not from a blind test",
-        "untested": "Whether the agent could reach the grading material is not known, so its results are not"
-        " from a blind test",
     },
     "cost": {
         "partial": "Shown where measured: our side of a run, never the agent's own model"
@@ -726,7 +655,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
             "category": "startup",
             "target": None,
             "action": _preflight_action(pairing.runtime),
-            "would": "The agent passes its start-up check and can start",
+            "would": "The agent passes its preflight and can start",
             "recheck": {
                 "scope": "agent",
                 "method": "POST",
@@ -810,7 +739,7 @@ def _preflight_action(runtime: HarnessAgentVersionRuntime | None) -> str:
         if isinstance(check, Mapping) and check.get("status") == "failed"
     ]
     if not failed:
-        return "Wait for the agent's start-up check, or check the agent again"
+        return "Wait for the agent's preflight, or check the agent again"
     parts = []
     for check in failed:
         missing = [str(name) for name in check.get("missing") or []]
@@ -819,7 +748,7 @@ def _preflight_action(runtime: HarnessAgentVersionRuntime | None) -> str:
             if missing
             else f"{check.get('id')}: fix it in the agent's connection"
         )
-    return "Fix the agent's start-up checks (" + "; ".join(parts) + ")"
+    return "Fix the agent's preflight checks (" + "; ".join(parts) + ")"
 
 
 def worst(statuses: Iterable[Status]) -> Status:
@@ -828,15 +757,10 @@ def worst(statuses: Iterable[Status]) -> Status:
 
 
 def answer(
-    rows: list[RowView],
-    *,
-    validating: bool,
-    failed: bool,
-    named: bool,
-    blocked_workers: int = 0,
+    rows: list[RowView], *, validating: bool, failed: bool, named: bool
 ) -> AnswerView:
-    """Read from the measured rows and the blocked workers: unmeasured rows hold no case back. A failed pair whose
-    failure names no action blocks the answer without blocking a row."""
+    """Read from the measured rows: unmeasured ones hold no case back. A failed pair
+    whose failure names no action blocks the answer without blocking a row."""
     lowest = worst(
         row["status"]
         for row in rows
@@ -848,7 +772,7 @@ def answer(
     kind: Literal["ready", "blocked", "stale", "unchecked", "validating"]
     if validating:
         kind = "validating"
-    elif lowest == "blocked" or pair_failed or blocked_workers:
+    elif lowest == "blocked" or pair_failed:
         kind = "blocked"
     elif lowest == "stale":
         kind = "stale"

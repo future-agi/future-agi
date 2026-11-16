@@ -8,19 +8,17 @@ the candidates (`candidate_promotion`).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TypedDict
+from typing import Any
 
 import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import AgentVersion, HarnessSuiteVersion, HostedHarnessJob
+from simulate.models import AgentVersion, HostedHarnessJob
 from simulate.models.harness_versioning import HashKind, VersionStatus
 from simulate.services.harness_versioning import archives, review, validation
 from simulate.services.harness_versioning.candidate_sets import (
-    CandidateDraft,
     CandidateSet,
-    CandidateValidation,
     current_defaults,
     live_set,
     store_set,
@@ -31,42 +29,67 @@ from simulate.services.harness_versioning.candidate_sets import (
 )
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
-    active_twin,
     draft_content,
+    exempted_keys,
+    is_stale,
+    open_draft,
     piece_files,
     piece_model,
     prepare_tree,
+    refuse_scenario_keys,
+    version_error,
 )
 from simulate.services.harness_versioning.drafts import (
-    open_drafts,
-    require_revisions,
-    require_saveable,
+    require_chat_idle,
+    require_no_fix_waiting,
+    require_no_rebuild,
 )
-from simulate.services.harness_versioning.review import DraftReview
 from simulate.services.harness_versioning.versions import (
     lock_environment,
+    require_not_busy,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
-
-class CandidateIds(TypedDict):
-    environment_version_id: str
-    suite_version_id: str
+UNAVAILABLE = {"validation": {"state": "unavailable"}, "candidates": None}
 
 
-class Unavailable(TypedDict):
-    state: Literal["unavailable"]
+def open_drafts(locked: HostedHarnessJob) -> dict[str, Any]:
+    """The locked environment's open drafts by piece; refuses `draft_not_found` when there are none."""
+    opened = {piece: open_draft(locked, piece, lock=True) for piece in DRAFT_PIECES}
+    opened = {piece: draft for piece, draft in opened.items() if draft is not None}
+    if not opened:
+        raise version_error("draft_not_found", "No unsaved changes", 404)
+    return opened
 
 
-class ValidateBody(TypedDict):
-    """Validate's answer: where the validation stands, and the candidate versions it is proving."""
+def _require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
+    """The checks today's Save makes before anything moves: no stale draft, and no retired or taken scenario key."""
+    for piece, draft in opened.items():
+        if is_stale(draft, locked):
+            raise version_error(
+                "draft_stale",
+                "The environment changed since you started editing; discard or re-apply in chat",
+                409,
+                piece=piece,
+            )
+        if piece == "suite":
+            refuse_scenario_keys(
+                locked,
+                (draft.documents or {}).get("scenarios") or [],
+                origin="manual",
+                exempt=exempted_keys(draft),
+            )
 
-    validation: CandidateValidation | Unavailable
-    candidates: CandidateIds | None
 
-
-UNAVAILABLE = ValidateBody(validation=Unavailable(state="unavailable"), candidates=None)
+def edits_moved(piece: str) -> HostedHarnessError:
+    return version_error(
+        "draft_changed",
+        "Someone changed these edits a moment ago; review them and try again",
+        409,
+        piece=piece,
+    )
 
 
 def _candidate(
@@ -85,7 +108,16 @@ def _candidate(
     content_hash = (
         prepared.environment_hash if piece == "environment" else prepared.suite_hash
     )
-    twin = active_twin(model, locked, content_hash, HashKind.TREE_V1)
+    twin = (
+        model.no_workspace_objects.filter(
+            job=locked,
+            hash=content_hash,
+            hash_kind=HashKind.TREE_V1,
+            status=VersionStatus.ACTIVE,
+        )
+        .order_by("-version_number")
+        .first()
+    )
     if twin is not None:
         return twin
     live = model.no_workspace_objects.filter(
@@ -93,10 +125,7 @@ def _candidate(
         status=VersionStatus.CANDIDATE,
         hash=content_hash,
         documents__base_defaults=documents["base_defaults"],
-    )
-    if model is HarnessSuiteVersion:
-        live = live.filter(fix_run__isnull=True)
-    live = live.first()
+    ).first()
     if live is not None:
         live.documents = {**(live.documents or {}), **documents}
         live.save(update_fields=["documents", "updated_at"])
@@ -130,7 +159,7 @@ def _candidate(
 def create_candidates(
     locked: HostedHarnessJob,
     opened: Mapping[str, Any],
-    reviewed: DraftReview,
+    reviewed: Mapping[str, Any],
     *,
     user: Any,
 ) -> dict[str, Any]:
@@ -178,7 +207,7 @@ def validate_drafts(
     expected_revisions: Mapping[str, int],
     expected_review_digest: str | None,
     user: Any,
-) -> tuple[ValidateBody, bool]:
+) -> tuple[dict[str, Any], bool]:
     """Build candidates from the open drafts and the decisions on them, and start validating them.
 
     Returns the body and whether a validation job is running (202) rather than already settled (200). Refuses as
@@ -190,7 +219,12 @@ def validate_drafts(
     with transaction.atomic():
         locked = lock_environment(environment)
         opened = open_drafts(locked)
-        require_saveable(locked, opened, expected_revisions={})
+        first = next(iter(opened))
+        require_not_busy(locked, first)
+        require_no_rebuild(locked, piece=first)
+        require_no_fix_waiting(locked)
+        require_chat_idle(locked)
+        _require_fresh(locked, opened)
         review.heal_suite_index(locked)
         # Read again: a healed suite draft has a new archive.
         opened = open_drafts(locked)
@@ -198,7 +232,9 @@ def validate_drafts(
         review.check_review(
             reviewed, expected_review_digest, digest_required=True, environment=locked
         )
-        require_revisions(opened, expected_revisions, required=True)
+        for piece, draft in opened.items():
+            if expected_revisions.get(piece) != draft.revision:
+                raise edits_moved(piece)
         # A pairing that can be validated pins an agent version.
         if not validation_available(locked) or locked.agent_version_id is None:
             return UNAVAILABLE, False
@@ -227,7 +263,7 @@ def validate_drafts(
             "assembly_key": started.bundle.assembly_key,
             "base_defaults": current_defaults(locked),
             "drafts": {
-                piece: CandidateDraft(id=str(draft.id), revision=draft.revision)
+                piece: {"id": str(draft.id), "revision": draft.revision}
                 for piece, draft in opened.items()
             },
             "review_digest": reviewed["review_digest"],
@@ -245,11 +281,11 @@ def validate_drafts(
         state=state["state"],
         job_id=entry["job_id"],
     )
-    body = ValidateBody(
-        validation=state,
-        candidates=CandidateIds(
-            environment_version_id=entry["environment_version_id"],
-            suite_version_id=entry["suite_version_id"],
-        ),
-    )
+    body = {
+        "validation": state,
+        "candidates": {
+            "environment_version_id": entry["environment_version_id"],
+            "suite_version_id": entry["suite_version_id"],
+        },
+    }
     return body, state["state"] == "validating"

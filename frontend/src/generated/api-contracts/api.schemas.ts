@@ -21108,6 +21108,73 @@ export interface HarnessCapabilityFixApi {
   /** @minLength 1 */
   would: string;
   recheck: HarnessCapabilityFixRecheckApi;
+  /**
+   * What a builder fix sends to the builder chat; null for the others.
+   * @minLength 1
+   */
+  message?: string;
+}
+
+/**
+ * Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.
+ */
+export type HarnessCapabilitySelectionRowApiFixGroup =
+  (typeof HarnessCapabilitySelectionRowApiFixGroup)[keyof typeof HarnessCapabilitySelectionRowApiFixGroup];
+
+export const HarnessCapabilitySelectionRowApiFixGroup = {
+  needs_you: "needs_you",
+  builder: "builder",
+  recheck: "recheck",
+} as const;
+
+export type HarnessCapabilityFixProgressApiState =
+  (typeof HarnessCapabilityFixProgressApiState)[keyof typeof HarnessCapabilityFixProgressApiState];
+
+export const HarnessCapabilityFixProgressApiState = {
+  queued: "queued",
+  fixing: "fixing",
+  waiting_on_you: "waiting_on_you",
+  waiting_on_other: "waiting_on_other",
+  fixed: "fixed",
+  could_not_fix: "could_not_fix",
+} as const;
+
+export interface HarnessReadinessFixReasonApi {
+  /** @minLength 1 */
+  code: string;
+  message: string;
+}
+
+/**
+ * Where a fix run stands on this row; on live reads only.
+ */
+export interface HarnessCapabilityFixProgressApi {
+  state: HarnessCapabilityFixProgressApiState;
+  reason: HarnessReadinessFixReasonApi;
+  /**
+   * The row this one waits on to be fixed first.
+   * @minLength 1
+   */
+  waiting_on: string;
+  fix_id: string;
+}
+
+export type HarnessCapabilityFixResultApiState =
+  (typeof HarnessCapabilityFixResultApiState)[keyof typeof HarnessCapabilityFixResultApiState];
+
+export const HarnessCapabilityFixResultApiState = {
+  fixed: "fixed",
+  could_not_fix: "could_not_fix",
+} as const;
+
+/**
+ * What a saved fix did for this row, on the versions it saved from.
+ */
+export interface HarnessCapabilityFixResultApi {
+  state: HarnessCapabilityFixResultApiState;
+  environment: RunVersionLabelApi;
+  suite: RunVersionLabelApi;
+  fix_id: string;
 }
 
 /**
@@ -21148,11 +21215,15 @@ export interface HarnessCapabilitySelectionRowApi {
   /** @minLength 1 */
   checked_at: string;
   fix: HarnessCapabilityFixApi;
+  /** Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix. */
+  fix_group?: HarnessCapabilitySelectionRowApiFixGroup;
   /**
    * What the status means for the cases, their spend and their independence.
    * @minLength 1
    */
   consequence: string;
+  fix_progress?: HarnessCapabilityFixProgressApi;
+  fix_result?: HarnessCapabilityFixResultApi;
   /**
    * Selected cases that need this row.
    * @minimum 0
@@ -21418,6 +21489,19 @@ export interface HarnessCapabilitySelectionCountsApi {
   requirements_recorded: boolean;
 }
 
+export interface HarnessCapabilityFixGroupApi {
+  rows: string[];
+}
+
+/**
+ * The rows of each fix group; present only once fixes are switched on.
+ */
+export interface HarnessCapabilityFixGroupsApi {
+  builder: HarnessCapabilityFixGroupApi;
+  needs_you: HarnessCapabilityFixGroupApi;
+  recheck: HarnessCapabilityFixGroupApi;
+}
+
 export interface HarnessCapabilitySelectionReportApi {
   pairing: HarnessCapabilityPairingApi;
   validation: HarnessPairValidationApi;
@@ -21439,6 +21523,7 @@ export interface HarnessCapabilitySelectionReportApi {
   /** @minLength 1 */
   computed_at: string;
   selection: HarnessCapabilitySelectionCountsApi;
+  fix_groups?: HarnessCapabilityFixGroupsApi;
 }
 
 export interface HarnessCapabilitySelectionApi {
@@ -21471,6 +21556,145 @@ export interface HarnessCapabilityCasePageApi {
    * @minLength 1
    */
   next: string;
+}
+
+export type HarnessReadinessFixApiState =
+  (typeof HarnessReadinessFixApiState)[keyof typeof HarnessReadinessFixApiState];
+
+export const HarnessReadinessFixApiState = {
+  queued: "queued",
+  fixing: "fixing",
+  waiting_on_you: "waiting_on_you",
+  saving: "saving",
+  checking: "checking",
+  done: "done",
+  failed: "failed",
+  stopped: "stopped",
+} as const;
+
+export type HarnessReadinessFixApiGroup =
+  (typeof HarnessReadinessFixApiGroup)[keyof typeof HarnessReadinessFixApiGroup];
+
+export const HarnessReadinessFixApiGroup = {
+  needs_you: "needs_you",
+  builder: "builder",
+  recheck: "recheck",
+} as const;
+
+/**
+ * Messages waiting for the builder chat, in order.
+ */
+export interface HarnessReadinessFixQueuedApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export type HarnessReadinessFixLineApiState =
+  (typeof HarnessReadinessFixLineApiState)[keyof typeof HarnessReadinessFixLineApiState];
+
+export const HarnessReadinessFixLineApiState = {
+  queued: "queued",
+  fixing: "fixing",
+  waiting_on_you: "waiting_on_you",
+  waiting_on_other: "waiting_on_other",
+  fixed: "fixed",
+  could_not_fix: "could_not_fix",
+} as const;
+
+export interface HarnessReadinessFixLineApi {
+  /** @minLength 1 */
+  row_id: string;
+  /** @minLength 1 */
+  area: string;
+  state: HarnessReadinessFixLineApiState;
+  reason: HarnessReadinessFixReasonApi;
+  /** @minLength 1 */
+  waiting_on: string;
+}
+
+/**
+ * The versions the run saved; only moved pieces.
+ */
+export interface HarnessReadinessFixSavedApi {
+  environment: RunVersionLabelApi;
+  suite: RunVersionLabelApi;
+}
+
+export interface HarnessReadinessFixErrorApi {
+  /** @minLength 1 */
+  code: string;
+  message: string;
+  /**
+   * The refusal's own code when ``code`` is validation_refused.
+   * @minLength 1
+   */
+  code_detail?: string;
+}
+
+/**
+ * The environment and suite versions the run started from.
+ */
+export interface HarnessReadinessFixPairingApi {
+  environment_version: RunVersionLabelApi;
+  suite_version: RunVersionLabelApi;
+}
+
+/**
+ * The environment's latest fix run; null for none.
+ */
+export interface HarnessReadinessFixApi {
+  id: string;
+  state: HarnessReadinessFixApiState;
+  group: HarnessReadinessFixApiGroup;
+  /**
+   * When something the run shows last changed.
+   * @minLength 1
+   */
+  updated_at: string;
+  /** @minLength 1 */
+  started_at: string;
+  /** @minLength 1 */
+  finished_at: string;
+  /** The rows still being fixed. */
+  rows: string[];
+  /** Messages waiting for the builder chat, in order. */
+  queue: HarnessReadinessFixQueuedApi[];
+  lines: HarnessReadinessFixLineApi[];
+  saved: HarnessReadinessFixSavedApi;
+  /** Ended without saving; its changes wait in unsaved edits. */
+  draft: boolean;
+  error: HarnessReadinessFixErrorApi;
+  pairing: HarnessReadinessFixPairingApi;
+}
+
+export interface HarnessReadinessFixResponseApi {
+  fix: HarnessReadinessFixApi;
+}
+
+export type HarnessReadinessFixStartApiGroup =
+  (typeof HarnessReadinessFixStartApiGroup)[keyof typeof HarnessReadinessFixStartApiGroup];
+
+export const HarnessReadinessFixStartApiGroup = {
+  needs_you: "needs_you",
+  builder: "builder",
+  recheck: "recheck",
+} as const;
+
+export interface HarnessReadinessFixStartApi {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
+  group: HarnessReadinessFixStartApiGroup;
+  /**
+   * The rows to fix; absent fixes every row of the group.
+   * @maxItems 16
+   */
+  rows?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
 }
 
 export interface HarnessCertifiedPairingApi {
@@ -30591,6 +30815,18 @@ export const HarnessCapabilityRowApiWas = {
   stale: "stale",
 } as const;
 
+/**
+ * Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.
+ */
+export type HarnessCapabilityRowApiFixGroup =
+  (typeof HarnessCapabilityRowApiFixGroup)[keyof typeof HarnessCapabilityRowApiFixGroup];
+
+export const HarnessCapabilityRowApiFixGroup = {
+  needs_you: "needs_you",
+  builder: "builder",
+  recheck: "recheck",
+} as const;
+
 export interface HarnessCapabilityRowApi {
   /** @minLength 1 */
   id: string;
@@ -30617,11 +30853,15 @@ export interface HarnessCapabilityRowApi {
   /** @minLength 1 */
   checked_at: string;
   fix: HarnessCapabilityFixApi;
+  /** Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix. */
+  fix_group?: HarnessCapabilityRowApiFixGroup;
   /**
    * What the status means for the cases, their spend and their independence.
    * @minLength 1
    */
   consequence: string;
+  fix_progress?: HarnessCapabilityFixProgressApi;
+  fix_result?: HarnessCapabilityFixResultApi;
 }
 
 /**
@@ -41960,9 +42200,6 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
-  autoreload_maxcharge?: string;
-  autoreload_consent?: boolean;
-  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =

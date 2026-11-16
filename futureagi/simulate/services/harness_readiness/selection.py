@@ -12,8 +12,9 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Literal, TypedDict
+from datetime import UTC, datetime
+from typing import Any, Literal, NotRequired, TypedDict, cast
+from uuid import UUID
 
 from simulate.models import (
     HarnessAssembledBundle,
@@ -22,19 +23,29 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_readiness import fix_groups
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
     GATE_OPEN,
     AnswerView,
     AreaView,
+    FixGroupsView,
     Pairing,
     PairingView,
     RowView,
     Status,
     VersionRef,
 )
-from simulate.services.harness_readiness.evidence import certified, pair_bundle
-from simulate.services.harness_readiness.report import readiness_report
+from simulate.services.harness_readiness.evidence import (
+    certified,
+    pair_bundle,
+    read_evidence,
+)
+from simulate.services.harness_readiness.report import (
+    ReadinessReport,
+    evidence_revision,
+    readiness_report,
+)
 from simulate.services.harness_readiness.rules import answer
 from simulate.services.harness_scenario_needs import TOOL_ROWS, CaseNeeds, case_needs
 from simulate.services.harness_versioning import validation
@@ -45,6 +56,8 @@ BUCKETS: tuple[Bucket, ...] = ("eligible", "blocked", "stale", "untested")
 LIST_LIMIT = 200
 PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
+# Held-back key for a selected case certifying the pair dropped.
+DROPPED_ROW = "scenario_dropped"
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
@@ -119,6 +132,9 @@ class Affected(TypedDict):
 class SelectionRowView(RowView):
     needed_by: int
     affected: Affected
+    # Laid on by ``fix_runs.with_progress`` on live reads only.
+    fix_progress: NotRequired[dict[str, Any]]
+    fix_result: NotRequired[dict[str, Any]]
 
 
 class SelectionReport(TypedDict):
@@ -131,6 +147,7 @@ class SelectionReport(TypedDict):
     catalog_version: str
     rules_version: str
     computed_at: str
+    fix_groups: NotRequired[FixGroupsView]
     selection: SelectionView
 
 
@@ -198,14 +215,17 @@ def selection_report(
                 "affected": {"count": len(held), "of": requested, **_capped(held)},
             }
         )
-    return {
+    selected: SelectionReport = {
         **report,
         "answer": _selected_answer(report["answer"], rows, placed),
         "rows": rows,
         "selection": {
             **_scope(pairing, placement, keys),
             "requested": requested,
-            **{bucket: len(by_bucket[bucket]) for bucket in BUCKETS},
+            "eligible": len(by_bucket["eligible"]),
+            "blocked": len(by_bucket["blocked"]),
+            "stale": len(by_bucket["stale"]),
+            "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
             "dropped": placement.dropped,
             "grading": {
@@ -216,6 +236,12 @@ def selection_report(
             "requirements_recorded": placement.recorded,
         },
     }
+    # Live reads only: a run's snapshot never keeps it.
+    if fix_groups.enabled():
+        selected["fix_groups"] = fix_groups.fix_groups(report["rows"])
+    from simulate.services.harness_readiness.fix_runs import with_progress
+
+    return cast(SelectionReport, with_progress(pairing, selected))
 
 
 ProofState = Literal["proved", "failed", "not_proved"]
@@ -346,7 +372,7 @@ def _proof_views(pairing: Pairing, ready: bool):
             )
         )
     earlier.sort(
-        key=lambda one: one[0] or datetime.min.replace(tzinfo=timezone.utc),
+        key=lambda one: one[0] or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )
 
@@ -392,7 +418,7 @@ def _selected_answer(
     if not unused or found["kind"] != "blocked" or found["reason_code"] is not None:
         return found
     return answer(
-        [{**row, "status": "supported"} if row["id"] in unused else row for row in rows],
+        [_supported(row) if row["id"] in unused else row for row in rows],
         validating=False,
         failed=False,
         named=False,
@@ -421,6 +447,9 @@ class RunPlan:
 
     view: RunSelection
     held: frozenset[str]
+    # The report the decision was made from, and the evidence revision it read.
+    report: ReadinessReport
+    revision: str
 
 
 def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
@@ -428,18 +457,36 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     them: a case in the blocked bucket is held back and named, never sent.
 
     Raises:
-        HostedHarnessError: as ``selection_report``.
+        HostedHarnessError: as ``selection_report``; 503 ``readiness_unavailable``
+            (retryable) when the pair's certification cannot be read. A selected case
+            certifying the pair dropped is held back and named, never sent.
     """
-    report = readiness_report(pairing)
+    bundle = pair_bundle(pairing)
+    revision = evidence_revision(pairing, bundle)
+    if read_evidence(pairing, bundle).unreadable:
+        raise HostedHarnessError(
+            "readiness_unavailable",
+            "Couldn't read this pairing's readiness, so no run was created."
+            " Try again in a moment.",
+            status_code=503,
+            retryable=True,
+        )
+    report = readiness_report(pairing, bundle=bundle)
     placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    dropped = [
+        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
+    ]
     placed = placement.placed
-    held = [one.case.key for one in placed if one.bucket == "blocked"]
+    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
     by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
     reasons = {
         row["id"]: row["reason"] or row["label"]
         for row in report["rows"]
         if row["id"] in by
     }
+    if dropped:
+        by[DROPPED_ROW] = len(dropped)
+        reasons[DROPPED_ROW] = DROPPED_REASON
     return RunPlan(
         view={
             **_scope(pairing, placement, keys),
@@ -449,6 +496,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             "reasons": reasons,
         },
         held=frozenset(held),
+        report=report,
+        revision=revision,
     )
 
 
@@ -539,14 +588,21 @@ def changed_since_last_run(
         return None, []
     since: ChangedSince = {
         "run_id": str(last.id),
-        "suite_version": version_refs(None, None, last.suite_version)["suite"],
+        "suite_version": cast(
+            "VersionRef | None", version_refs(None, None, last.suite_version)["suite"]
+        ),
     }
     before = _digests(last.suite_version_id, keys)
     now = _digests(pairing.suite_version.id, keys)
     return since, [key for key in keys if before.get(key) != now.get(key)]
 
 
-def _digests(suite_version_id: object, keys: list[str]) -> dict[str, str]:
+def _supported(row: SelectionRowView) -> SelectionRowView:
+    supported: SelectionRowView = {**row, "status": "supported"}
+    return supported
+
+
+def _digests(suite_version_id: UUID | None, keys: list[str]) -> dict[str, str]:
     return {
         key: canonical_digest(content)
         for key, content in HarnessSuiteMember.no_workspace_objects.filter(
@@ -686,8 +742,8 @@ def _voice(pairing: Pairing) -> bool:
 
 def _status_for(row: RowView, case: CaseNeeds) -> Status:
     """The row's status for this case: a tool row failing only on tools the case
-    does not need is Supported for it. An agent tool the world lacks may be called
-    in any case."""
+    does not need is Supported for it, unless its evidence is Stale or waits on its
+    gate. An agent tool the world lacks may be called in any case."""
     if (
         row["id"] in TOOL_ROWS
         and row["targets"]
@@ -696,7 +752,12 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        return "supported"
+        if (
+            row["stale_because"] in ("built_with_unknown", "saved_without_check")
+            or row["blocked_by"]
+        ):
+            return "untested"
+        return "stale" if row["stale_because"] else "supported"
     return row["status"]
 
 

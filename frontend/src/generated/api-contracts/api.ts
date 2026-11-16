@@ -675,6 +675,8 @@ import type {
   HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
+  HarnessReadinessFixResponseApi,
+  HarnessReadinessFixStartApi,
   HarnessResultReceiptApi,
   HarnessReviewDecisionsApi,
   HarnessRunCreateApi,
@@ -60785,6 +60787,101 @@ export const simulateApiHarnessEnvironmentsCapabilityCases = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse200 = {
+  data: HarnessReadinessFixResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesFixReadUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/capabilities/fix/`;
+};
+
+/**
+ * The environment's latest run readiness fix, or null. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesFixRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesFixReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse202 = {
+  data: HarnessReadinessFixResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesFixCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/capabilities/fix/`;
+};
+
+/**
+ * Fix a group's rows in the builder chat on the current versions, or add
+them to the running fix; a repeated idempotency key returns its run.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesFixCreate = async (
+  id: string,
+  harnessReadinessFixStartApi: HarnessReadinessFixStartApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesFixCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReadinessFixStartApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsCapabilityHistoryResponse200 = {
   data: HarnessCertifiedPairingPageApi;
   status: 200;
@@ -94883,12 +94980,6 @@ export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
   return `/usage/update-auto-reload-settings/`;
 };
 
-/**
- * Owner/Admin only. Enabling needs a positive cap and consent, recorded
-on the Stripe customer against the current default card. Saving never
-charges; ``autoreload_charge_now`` asks for one capped reload now.
-Disabling clears the consent.
- */
 export const usageUpdateAutoReloadSettingsCreate = async (
   autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi,
   options?: RequestInit,

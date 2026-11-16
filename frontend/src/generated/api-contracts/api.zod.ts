@@ -44660,12 +44660,64 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
           .describe(
             "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
           ),
+        message: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "What a builder fix sends to the builder chat; null for the others.",
+          ),
       }),
+      fix_group: zod
+        .enum(["needs_you", "builder", "recheck"])
+        .optional()
+        .describe(
+          "Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.",
+        ),
       consequence: zod
         .string()
         .min(1)
         .describe(
           "What the status means for the cases, their spend and their independence.",
+        ),
+      fix_progress: zod
+        .object({
+          state: zod.enum([
+            "queued",
+            "fixing",
+            "waiting_on_you",
+            "waiting_on_other",
+            "fixed",
+            "could_not_fix",
+          ]),
+          reason: zod.object({
+            code: zod.string().min(1),
+            message: zod.string(),
+          }),
+          waiting_on: zod
+            .string()
+            .min(1)
+            .describe("The row this one waits on to be fixed first."),
+          fix_id: zod.string().uuid(),
+        })
+        .optional()
+        .describe("Where a fix run stands on this row; on live reads only."),
+      fix_result: zod
+        .object({
+          state: zod.enum(["fixed", "could_not_fix"]),
+          environment: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          suite: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          fix_id: zod.string().uuid(),
+        })
+        .optional()
+        .describe(
+          "What a saved fix did for this row, on the versions it saved from.",
         ),
       needed_by: zod
         .number()
@@ -44959,6 +45011,22 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "Every selected case's needs were read from its stored documents.",
       ),
   }),
+  fix_groups: zod
+    .object({
+      builder: zod.object({
+        rows: zod.array(zod.string().min(1)),
+      }),
+      needs_you: zod.object({
+        rows: zod.array(zod.string().min(1)),
+      }),
+      recheck: zod.object({
+        rows: zod.array(zod.string().min(1)),
+      }),
+    })
+    .optional()
+    .describe(
+      "The rows of each fix group; present only once fixes are switched on.",
+    ),
 });
 
 /**
@@ -45195,12 +45263,64 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
             .describe(
               "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
             ),
+          message: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "What a builder fix sends to the builder chat; null for the others.",
+            ),
         }),
+        fix_group: zod
+          .enum(["needs_you", "builder", "recheck"])
+          .optional()
+          .describe(
+            "Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.",
+          ),
         consequence: zod
           .string()
           .min(1)
           .describe(
             "What the status means for the cases, their spend and their independence.",
+          ),
+        fix_progress: zod
+          .object({
+            state: zod.enum([
+              "queued",
+              "fixing",
+              "waiting_on_you",
+              "waiting_on_other",
+              "fixed",
+              "could_not_fix",
+            ]),
+            reason: zod.object({
+              code: zod.string().min(1),
+              message: zod.string(),
+            }),
+            waiting_on: zod
+              .string()
+              .min(1)
+              .describe("The row this one waits on to be fixed first."),
+            fix_id: zod.string().uuid(),
+          })
+          .optional()
+          .describe("Where a fix run stands on this row; on live reads only."),
+        fix_result: zod
+          .object({
+            state: zod.enum(["fixed", "could_not_fix"]),
+            environment: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+            suite: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+            fix_id: zod.string().uuid(),
+          })
+          .optional()
+          .describe(
+            "What a saved fix did for this row, on the versions it saved from.",
           ),
         needed_by: zod
           .number()
@@ -45501,6 +45621,22 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           "Every selected case's needs were read from its stored documents.",
         ),
     }),
+    fix_groups: zod
+      .object({
+        builder: zod.object({
+          rows: zod.array(zod.string().min(1)),
+        }),
+        needs_you: zod.object({
+          rows: zod.array(zod.string().min(1)),
+        }),
+        recheck: zod.object({
+          rows: zod.array(zod.string().min(1)),
+        }),
+      })
+      .optional()
+      .describe(
+        "The rows of each fix group; present only once fixes are switched on.",
+      ),
   });
 
 /**
@@ -45591,6 +45727,150 @@ export const SimulateApiHarnessEnvironmentsCapabilityCasesResponse = zod.object(
       .describe("The cursor for the next page; null on the last."),
   },
 );
+
+/**
+ * The environment's latest run readiness fix, or null. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesFixReadParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesFixReadResponse =
+  zod.object({
+    fix: zod
+      .object({
+        id: zod.string().uuid(),
+        state: zod.enum([
+          "queued",
+          "fixing",
+          "waiting_on_you",
+          "saving",
+          "checking",
+          "done",
+          "failed",
+          "stopped",
+        ]),
+        group: zod.enum(["needs_you", "builder", "recheck"]),
+        updated_at: zod
+          .string()
+          .min(1)
+          .describe("When something the run shows last changed."),
+        started_at: zod.string().min(1),
+        finished_at: zod.string().min(1),
+        rows: zod
+          .array(zod.string().min(1))
+          .describe("The rows still being fixed."),
+        queue: zod
+          .array(
+            zod
+              .object({
+                message: zod.string().min(1),
+              })
+              .describe("Messages waiting for the builder chat, in order."),
+          )
+          .describe("Messages waiting for the builder chat, in order."),
+        lines: zod.array(
+          zod.object({
+            row_id: zod.string().min(1),
+            area: zod.string().min(1),
+            state: zod.enum([
+              "queued",
+              "fixing",
+              "waiting_on_you",
+              "waiting_on_other",
+              "fixed",
+              "could_not_fix",
+            ]),
+            reason: zod.object({
+              code: zod.string().min(1),
+              message: zod.string(),
+            }),
+            waiting_on: zod.string().min(1),
+          }),
+        ),
+        saved: zod
+          .object({
+            environment: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+            suite: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+          })
+          .describe("The versions the run saved; only moved pieces."),
+        draft: zod
+          .boolean()
+          .describe("Ended without saving; its changes wait in unsaved edits."),
+        error: zod.object({
+          code: zod.string().min(1),
+          message: zod.string(),
+          code_detail: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "The refusal's own code when ``code`` is validation_refused.",
+            ),
+        }),
+        pairing: zod
+          .object({
+            environment_version: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+            suite_version: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+          })
+          .describe("The environment and suite versions the run started from."),
+      })
+      .describe("The environment's latest fix run; null for none."),
+  });
+
+/**
+ * Fix a group's rows in the builder chat on the current versions, or add
+them to the running fix; a repeated idempotency key returns its run.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesFixCreateParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyRowsItemMax = 64;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyRowsMax = 16;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyIdempotencyKeyMax = 128;
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesFixCreateBody =
+  zod.object({
+    agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
+    group: zod.enum(["needs_you", "builder", "recheck"]),
+    rows: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyRowsItemMax,
+          ),
+      )
+      .max(simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyRowsMax)
+      .optional()
+      .describe("The rows to fix; absent fixes every row of the group."),
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsCapabilitiesFixCreateBodyIdempotencyKeyMax,
+      ),
+  });
 
 /**
  * The pairings certified on this environment, newest first, with the exact
@@ -66160,12 +66440,66 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                 .describe(
                   "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
                 ),
+              message: zod
+                .string()
+                .min(1)
+                .optional()
+                .describe(
+                  "What a builder fix sends to the builder chat; null for the others.",
+                ),
             }),
+            fix_group: zod
+              .enum(["needs_you", "builder", "recheck"])
+              .optional()
+              .describe(
+                "Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.",
+              ),
             consequence: zod
               .string()
               .min(1)
               .describe(
                 "What the status means for the cases, their spend and their independence.",
+              ),
+            fix_progress: zod
+              .object({
+                state: zod.enum([
+                  "queued",
+                  "fixing",
+                  "waiting_on_you",
+                  "waiting_on_other",
+                  "fixed",
+                  "could_not_fix",
+                ]),
+                reason: zod.object({
+                  code: zod.string().min(1),
+                  message: zod.string(),
+                }),
+                waiting_on: zod
+                  .string()
+                  .min(1)
+                  .describe("The row this one waits on to be fixed first."),
+                fix_id: zod.string().uuid(),
+              })
+              .optional()
+              .describe(
+                "Where a fix run stands on this row; on live reads only.",
+              ),
+            fix_result: zod
+              .object({
+                state: zod.enum(["fixed", "could_not_fix"]),
+                environment: zod.object({
+                  id: zod.string().uuid().optional(),
+                  label: zod.string().min(1).optional(),
+                }),
+                suite: zod.object({
+                  id: zod.string().uuid().optional(),
+                  label: zod.string().min(1).optional(),
+                }),
+                fix_id: zod.string().uuid(),
+              })
+              .optional()
+              .describe(
+                "What a saved fix did for this row, on the versions it saved from.",
               ),
           }),
         ),
@@ -97868,28 +98202,10 @@ export const UsageSubscriptionTierReadResponse = zod.object({
   ),
 });
 
-/**
- * Owner/Admin only. Enabling needs a positive cap and consent, recorded
-on the Stripe customer against the current default card. Saving never
-charges; ``autoreload_charge_now`` asks for one capped reload now.
-Disabling clears the consent.
- */
-export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault =
-  false;
-export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault =
-  false;
-
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   autoreload_enabled: zod.boolean(),
   autoreload_walletamount: zod.string(),
   autoreload_walletthreshold: zod.string(),
-  autoreload_maxcharge: zod.string().optional(),
-  autoreload_consent: zod
-    .boolean()
-    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault),
-  autoreload_charge_now: zod
-    .boolean()
-    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({

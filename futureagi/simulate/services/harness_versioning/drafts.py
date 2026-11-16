@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -23,7 +23,6 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from minio.error import S3Error
-from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     HarnessEnvironmentVersion,
@@ -187,6 +186,13 @@ def require_no_rebuild(
         raise rebuild_running(piece)
 
 
+def require_no_fix_waiting(environment: HostedHarnessJob) -> None:
+    """Refuse a manual Save while a run readiness fix waits on the person's answer."""
+    from simulate.services.harness_readiness import fix_runs
+
+    fix_runs.require_no_fix_waiting(environment)
+
+
 def rebuild_running(piece: str | None) -> HostedHarnessError:
     return version_error(
         "rebuild_running",
@@ -200,11 +206,10 @@ def rebuild_running(piece: str | None) -> HostedHarnessError:
 
 
 def _conversations(environment: HostedHarnessJob):
-    """The environment's chat and its runs' chats, which publish into it. An
-    evidence import's drafting chat never publishes, so it holds up no Save."""
+    """The environment's chat and its runs' chats, which publish into it."""
     return HostedHarnessConversation.no_workspace_objects.filter(
         Q(job_id=environment.id) | Q(job__environment_id=environment.id)
-    ).exclude(job__evidence_drafting__isnull=False)
+    )
 
 
 def _awaiting_answer(conversation: HostedHarnessConversation) -> bool:
@@ -287,99 +292,6 @@ def require_chat_idle(environment: HostedHarnessJob) -> None:
             409,
             conversation_id=str(conversation.id),
         )
-
-
-def require_idle(locked: HostedHarnessJob, piece: str) -> None:
-    """Refuse a Save, a Validate or a promotion while the environment builds, an update
-    rebuilds it, or its builder chat is working."""
-    require_not_busy(locked, piece)
-    require_no_rebuild(locked, piece=piece)
-    require_chat_idle(locked)
-
-
-def open_drafts(
-    locked: HostedHarnessJob, pieces: Iterable[str] | None = None
-) -> dict[str, Any]:
-    """The locked environment's open drafts by piece, locked. Refuses `draft_not_found`
-    for a named piece with no draft, or when no piece has one."""
-    wanted = [piece for piece in DRAFT_PIECES if pieces is None or piece in pieces]
-    opened: dict[str, Any] = {}
-    for piece in wanted:
-        draft = open_draft(locked, piece, lock=True)
-        if draft is None:
-            if pieces is not None:
-                raise version_error(
-                    "draft_not_found", "No unsaved changes", 404, piece=piece
-                )
-            continue
-        opened[piece] = draft
-    if not opened:
-        raise version_error("draft_not_found", "No unsaved changes", 404)
-    return opened
-
-
-def require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
-    """Refuse a draft the defaults moved under (`draft_stale`), and a suite draft whose
-    scenario keys are retired or taken."""
-    for piece, draft in opened.items():
-        if is_stale(draft, locked):
-            logger.info(
-                "harness_draft_stale environment=%s piece=%s replaced=false",
-                locked.id,
-                piece,
-            )
-            raise version_error(
-                "draft_stale",
-                "The environment changed since you started editing; discard "
-                "or re-apply in chat",
-                409,
-                piece=piece,
-            )
-        if piece == "suite":
-            refuse_scenario_keys(
-                locked,
-                (draft.documents or {}).get("scenarios") or [],
-                origin="manual",
-                exempt=exempted_keys(draft),
-            )
-
-
-def edits_moved(piece: str) -> HostedHarnessError:
-    """A draft the person read moved before they acted on it."""
-    return version_error(
-        "draft_changed",
-        "Someone changed these edits a moment ago; review them and try again",
-        409,
-        piece=piece,
-    )
-
-
-def require_saveable(
-    locked: HostedHarnessJob,
-    opened: Mapping[str, Any],
-    *,
-    expected_revisions: Mapping[str, int | None],
-) -> None:
-    """Everything a Save, a Validate and a promotion check before any version moves:
-    the environment is idle, each draft is fresh, and each is at the revision the person
-    read (a missing revision is not checked)."""
-    require_idle(locked, next(iter(opened)))
-    require_fresh(locked, opened)
-    require_revisions(opened, expected_revisions)
-
-
-def require_revisions(
-    opened: Mapping[str, Any],
-    expected_revisions: Mapping[str, int | None],
-    *,
-    required: bool = False,
-) -> None:
-    """Refuse a draft that is no longer at the revision the person read; with
-    ``required``, also one whose revision was not sent."""
-    for piece, draft in opened.items():
-        expected = expected_revisions.get(piece)
-        if (expected is not None or required) and expected != draft.revision:
-            raise edits_moved(piece)
 
 
 def retire_chat_runtime(
@@ -582,32 +494,6 @@ def _pairs(
     return pairs
 
 
-def prepare_sealed_tree(environment: HostedHarnessJob, files: Mapping[str, bytes]):
-    """An edited tree prepared as a draft stores it; a bundle the chat sealed from this very tree runs the contract
-    it sealed."""
-    split = archives.split_authoring(files)
-    return prepare_tree(
-        environment, files, built=SEALED_MANIFEST in split.sealed and _stamped(split)
-    )
-
-
-def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
-    """The fault targets of the environment's files before this write; None when they cannot be read or the contract
-    says nothing about the door, so every scenario's faults are checked."""
-    from simulate.selectors.environment_documents import version_contract
-    from simulate.services.harness_actor_rules import actor_rules, cast_records
-    from simulate.services.harness_tool_reach import door_targets
-
-    try:
-        files = edit_sides(environment)["environment"]
-    except (S3Error, HTTPError, HostedHarnessError, ValueError):
-        # Unreadable earlier files: every fault is checked, never one waved through.
-        return None
-    # The contract those files run with, as a build sealed it.
-    contract = version_contract(environment, fresh_draft(environment, "environment"))
-    return door_targets(contract, actor_rules(files), cast_records(files))
-
-
 def record_draft(
     environment: HostedHarnessJob,
     body: bytes,
@@ -637,34 +523,11 @@ def record_draft(
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
     checked = wanted | set(checked or ())
     published = index_in_step(archives.read_archive(body))
-    split, prepared = prepare_sealed_tree(environment, published)
+    split, prepared = prepare_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
-    from simulate.selectors.environment_documents import recorded_contract
-    from simulate.selectors.stage_outputs import stage_output
-    from simulate.services.harness_actor_rules import actor_rules, cast_records
-    from simulate.services.harness_tool_reach import door_targets
-    from simulate.services.scenario_faults import require_valid_faults
+    from simulate.services.harness_actors import require_valid_faults
 
-    # Only the scenarios whose faults this write changes, judged against the contract they will run on.
-    base = fresh_draft(environment, "suite") or getattr(
-        environment, "suite_version", None
-    )
-    before = (base.documents or {}).get("scenarios") if base is not None else None
-    cast = cast_records(split.environment)
-    require_valid_faults(
-        prepared.scenarios,
-        # Judged on the contract the draft runs with, as its build reaches each tool, not the authored one.
-        targets=door_targets(
-            recorded_contract(prepared.environment_documents),
-            actor_rules(split.environment),
-            cast,
-        ),
-        cast=cast,
-        before=before
-        if isinstance(before, list)
-        else stage_output(environment, "scenarios"),
-        before_targets=_targets_before(environment),
-    )
+    require_valid_faults(prepared.scenarios)
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,
@@ -848,22 +711,23 @@ def edit_side(
     environment: HostedHarnessJob, piece: str
 ) -> tuple[dict[str, bytes], str]:
     """One piece's files the next edit builds on (its open draft, else its saved default), with the archive key they
-    were read from ("" when there is none). ``environment`` is the caller's scoped job."""
-    version = fresh_draft(environment, piece) or getattr(
-        environment, f"{piece}_version"
-    )
+    were read from ("" when there is none)."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
     key = str(getattr(version, "archive_object_key", "") or "")
-    return piece_files(environment, piece, version), key
+    return piece_files(head, piece, version), key
 
 
 def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
-    """The files the next edit builds on, per piece: its open draft, else its saved default. ``environment`` is the
-    caller's scoped job."""
+    """The files the next edit builds on, per piece: its open draft, else its saved default."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
     return {
         piece: piece_files(
-            environment,
-            piece,
-            fresh_draft(environment, piece) or getattr(environment, f"{piece}_version"),
+            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
         )
         for piece in DRAFT_PIECES
     }
@@ -1213,7 +1077,7 @@ def activate_drafts(
             drafts[piece] = draft
     current = {piece: getattr(locked, f"{piece}_version") for piece in DRAFT_PIECES}
     twins = {
-        piece: active_twin(piece_model(piece), locked, draft.hash, draft.hash_kind)
+        piece: active_twin(piece_model(piece), locked, draft)
         for piece, draft in drafts.items()
     }
     targets = {
@@ -1270,45 +1134,20 @@ def activate_drafts(
             draft.nudge = nudge
         draft.save()
         result[piece] = (draft, True)
-    suite, suite_created = result.get("suite", (None, False))
-    make_defaults(
-        locked,
-        targets,
-        pair=pair,
-        payload=payload,
-        metadata=metadata,
-        created_suite=suite if suite_created else None,
-        moved={
-            piece
-            for piece in DRAFT_PIECES
-            if targets[piece].id != getattr(current[piece], "id", None)
-        },
-        outgoing_agent_version_id=outgoing_agent,
-    )
-    return result
-
-
-def make_defaults(
-    locked: HostedHarnessJob,
-    targets: Mapping[str, Any],
-    *,
-    pair: Any,
-    payload: dict[str, Any],
-    metadata: dict[str, Any],
-    created_suite: Any,
-    moved: set[str],
-    outgoing_agent_version_id: Any,
-) -> None:
-    """Make ``targets`` (each piece's version) the environment's defaults with ``pair``
-    as their runnable archive: the one step a Save and a validated promotion share."""
     for version in (targets["environment"], targets["suite"]):
         note_revision(version, pair.revision)
-    if created_suite is not None:
+    suite, suite_created = result.get("suite", (None, False))
+    if suite_created:
         # Paired while the old suite is still the default, as a recorded save pairs.
         add_members(
-            created_suite,
-            member_rows(locked, (created_suite.documents or {}).get("scenarios") or []),
+            suite,
+            member_rows(locked, (suite.documents or {}).get("scenarios") or []),
         )
+    moved = {
+        piece
+        for piece in DRAFT_PIECES
+        if targets[piece].id != getattr(current[piece], "id", None)
+    }
     set_defaults(
         locked,
         payload,
@@ -1317,8 +1156,9 @@ def make_defaults(
         targets["suite"],
         pair,
         pieces=moved,
-        outgoing_agent_version_id=outgoing_agent_version_id,
+        outgoing_agent_version_id=outgoing_agent,
     )
+    return result
 
 
 def _replayed(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str, Any]:
@@ -1411,7 +1251,11 @@ def save_drafts(
         replayed = replayed_save(locked, idempotency_key, pieces)
         if replayed is not None:
             return replayed
-        require_idle(locked, next(piece for piece in DRAFT_PIECES if piece in pieces))
+        first = next(piece for piece in DRAFT_PIECES if piece in pieces)
+        require_not_busy(locked, first)
+        require_no_rebuild(locked, piece=first)
+        require_no_fix_waiting(locked)
+        require_chat_idle(locked)
         expected_review_digest = next(
             (
                 one.expected_review_digest
@@ -1420,25 +1264,56 @@ def save_drafts(
             ),
             None,
         )
-        if must_validate(locked, expected_review_digest):
+        if validation_available(locked) and (
+            expected_review_digest
+            or any_decision(locked)
+            or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
+        ):
             raise version_error(
                 "validation_required",
-                "Validate these changes first, then save the validated versions",
+                "Validate the reviewed changes first, then save the validated versions",
                 409,
             )
-        opened = open_drafts(locked, pieces)
-        require_saveable(
-            locked,
-            opened,
-            expected_revisions={
-                piece: request.expected_revision for piece, request in requests.items()
-            },
-        )
-        for piece, draft in opened.items():
-            if str(requests[piece].expected_parent_id or "") != str(
-                draft.parent_id or ""
+        for piece in DRAFT_PIECES:
+            if piece not in pieces:
+                continue
+            draft = open_draft(locked, piece, lock=True)
+            if draft is None:
+                raise version_error(
+                    "draft_not_found", "No unsaved changes", 404, piece=piece
+                )
+            if is_stale(draft, locked):
+                logger.info(
+                    "harness_draft_stale environment=%s piece=%s replaced=false",
+                    locked.id,
+                    piece,
+                )
+                raise version_error(
+                    "draft_stale",
+                    "The environment changed since you started editing; discard "
+                    "or re-apply in chat",
+                    409,
+                    piece=piece,
+                )
+            request = requests[piece]
+            if str(request.expected_parent_id or "") != str(draft.parent_id or "") or (
+                request.expected_revision is not None
+                and request.expected_revision != draft.revision
             ):
-                raise edits_moved(piece)
+                raise version_error(
+                    "draft_changed",
+                    "Someone changed these edits a moment ago; review them and save "
+                    "again",
+                    409,
+                    piece=piece,
+                )
+            if piece == "suite":
+                refuse_scenario_keys(
+                    locked,
+                    (draft.documents or {}).get("scenarios") or [],
+                    origin="manual",
+                    exempt=exempted_keys(draft),
+                )
         apply_review(locked, pieces, expected_review_digest=expected_review_digest)
         drafts = {
             piece: open_draft(locked, piece).id
@@ -1577,7 +1452,6 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
         ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
-        "contract_fields": size(contract.get("fields")),
         "sub_goals": size(
             sub_goals.get("added"), sub_goals.get("removed"), sub_goals.get("changed")
         ),
@@ -1606,18 +1480,6 @@ def _draft_item(draft: Any, environment: HostedHarnessJob) -> dict[str, Any]:
         "default_label": read._label(getattr(default, "version_number", None)),
         "changes": _changes(draft, piece),
     }
-
-
-def must_validate(
-    environment: HostedHarnessJob, expected_review_digest: str | None = None
-) -> bool:
-    """Whether a Save of the open drafts must go through Validate first: where the environment's pairings can be
-    validated, once a change was reviewed, or always while Validate before Save is required."""
-    return validation_available(environment) and bool(
-        expected_review_digest
-        or any_decision(environment)
-        or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
-    )
 
 
 def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
@@ -1651,7 +1513,6 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
         if entry is not None
         else None
     )
-    body["validation_required"] = must_validate(environment)
     return body
 
 

@@ -312,8 +312,25 @@ export default function RunDialog({
     blocked = COPY.noneInSuite(named(suite));
   }
 
+  // A check of the pair started meanwhile: once Ready to run reads it, it says so.
+  const pairChecking = readiness?.state === "checking";
+  // Once that check ends, its refusal no longer applies.
+  const wasChecking = useRef(false);
+  useEffect(() => {
+    if (
+      wasChecking.current &&
+      !pairChecking &&
+      error?.error === "pair_validating"
+    )
+      setDismissedError(error);
+    wasChecking.current = pairChecking;
+  }, [pairChecking, error]);
   const submitError =
-    error && error !== dismissedError ? inlineRunError(error) : null;
+    error &&
+    error !== dismissedError &&
+    !(pairChecking && error.error === "pair_validating")
+      ? inlineRunError(error)
+      : null;
   // A re-run's refused versions fall back to the defaults instead.
   const shownError = submitError || (rerun === "checking" ? null : refusedPlan);
   const pickerError =
@@ -322,8 +339,10 @@ export default function RunDialog({
       ? shownError.piece
       : null;
   const dialogError = shownError && !pickerError ? shownError : null;
+  // The server's wait is the check's longest; ours says to wait for it to end.
   const errorText = shownError
-    ? shownError.message ||
+    ? (shownError.error === "pair_validating" && COPY.errors.pair_validating) ||
+      shownError.message ||
       shownError.detail ||
       COPY.errors[shownError.error] ||
       COPY.refused
@@ -883,14 +902,23 @@ export default function RunDialog({
           <Button color="inherit" onClick={close} disabled={submitting}>
             {COPY.cancel}
           </Button>
-          <Button
-            variant="contained"
-            onClick={submit}
-            disabled={!canSubmit}
-            startIcon={<Iconify icon="solar:play-bold" width={16} />}
+          <CustomTooltip
+            show={pairChecking}
+            size="small"
+            arrow
+            title={READY_TO_RUN_COPY.states.checking}
           >
-            {runLabel}
-          </Button>
+            <span>
+              <Button
+                variant="contained"
+                onClick={submit}
+                disabled={!canSubmit}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
+              >
+                {runLabel}
+              </Button>
+            </span>
+          </CustomTooltip>
         </Stack>
       </Stack>
     </Drawer>

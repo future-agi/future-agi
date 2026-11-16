@@ -801,7 +801,7 @@ export default function ReadyToRunSection({
             {COPY.title}
           </Box>
           <Box component="span" sx={{ color: "text.secondary" }}>
-            {` · ${COPY.blockers(blockers)}`}
+            {` · ${checking ? COPY.checkingPair : COPY.blockers(blockers)}`}
           </Box>
         </Typography>
         <Button

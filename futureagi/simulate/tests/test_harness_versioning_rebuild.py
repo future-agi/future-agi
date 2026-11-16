@@ -2361,7 +2361,11 @@ class TestDeferredActivation:
             updated_at=timezone.now() - timedelta(minutes=6),
         )
 
-        assert rebuild.tick_nudges() == {"environments": 1, "versions": 1}
+        assert rebuild.tick_nudges() == {
+            "environments": 1,
+            "versions": 1,
+            "fixes": 0,
+        }
 
         assert _names(inline, "check_harness_nudges") == [[str(environment.id)]]
         assert _names(inline, "retry_harness_deferred_activations") == [[str(a2.id)]]

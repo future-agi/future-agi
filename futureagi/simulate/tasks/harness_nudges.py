@@ -8,6 +8,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 __all__ = [
     "check_harness_nudges",
+    "check_harness_readiness_fix",
     "discard_expired_harness_candidates",
     "finish_harness_nudge_turn",
     "raise_harness_environment_nudge",
@@ -15,6 +16,7 @@ __all__ = [
     "retry_harness_deferred_activations",
     "schedule_deferred_activations",
     "schedule_finish_turn",
+    "schedule_fix_check",
     "schedule_nudge",
     "schedule_nudge_check_task",
     "schedule_reconcile_task",
@@ -185,6 +187,28 @@ def schedule_nudge_check_task(environment_id: Any):
         check_harness_nudges,
         [str(environment_id)],
         f"harness-nudge-check-{environment_id}",
+    )
+
+
+@temporal_activity(time_limit=300, max_retries=0, queue="default")
+def check_harness_readiness_fix(environment_id: str) -> str:
+    """Dispatch, follow or end one environment's run readiness fix."""
+    from simulate.services.harness_readiness.fix_driver import check
+
+    close_old_connections()
+    try:
+        check(environment_id)
+        return "checked"
+    finally:
+        close_old_connections()
+
+
+def schedule_fix_check(environment_id: Any):
+    """Check one environment's fix; requests coalesce while one runs."""
+    return _unique(
+        check_harness_readiness_fix,
+        [str(environment_id)],
+        f"harness-readiness-fix-check-{environment_id}",
     )
 
 

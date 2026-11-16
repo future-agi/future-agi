@@ -23,6 +23,8 @@ export const READY_TO_RUN_COPY = {
   namesTooMany: "Names show when 200 or fewer scenarios are selected.",
   recheck: "Re-check",
   checking: "Checking…",
+  // The header while the pair is being checked, in place of the blocker count.
+  checkingPair: "Checking these versions together…",
   areas: {
     start_and_message: "Starts and replies",
     tool_binding: "Tools wired to the test world",

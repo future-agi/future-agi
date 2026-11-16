@@ -142,20 +142,53 @@ def turn_command(conversation: HostedHarnessConversation) -> Message | None:
     )
 
 
-def only_agent_moved(command: Message | None, environment: HostedHarnessJob) -> bool:
+def held_basis(
+    basis: str,
+    environment_version: Any,
+    suite_version: Any,
+    commands: list[Message],
+) -> bool:
+    """A workspace built on the held environment and suite pairing under any agent:
+    a revision both were recorded from, or one a held command was queued on."""
+    from simulate.services.harness_versioning.versions import recorded_revisions
+
+    queued = {(one.payload or {}).get("_environment_revision") for one in commands}
+    return bool(basis) and (
+        basis in queued
+        or (
+            environment_version is not None
+            and suite_version is not None
+            and basis in recorded_revisions(environment_version)
+            and basis in recorded_revisions(suite_version)
+        )
+    )
+
+
+def only_agent_moved(
+    command: Message | None, environment: HostedHarnessJob, basis: str
+) -> bool:
     """A rebuild's save whose environment and suite defaults are still the ones it
-    was queued on: they are held, so only a move of the default agent changed the
-    authored revision since, and the rebuild still lands (Q2)."""
+    was queued on, from a workspace built on them: they are held, so only a move of
+    the default agent changed the authored revision since, and the rebuild still
+    lands (Q2)."""
+    from simulate.services.harness_readiness import fix_driver
     from simulate.services.harness_versioning import drafts
 
     nudge = nudge_for_command(command)
     return (
         nudge is not None
+        and command is not None
         and nudge.state in OPEN
         and environment.environment_version_id == nudge.base_environment_version_id
         and environment.suite_version_id == nudge.base_suite_version_id
         and drafts.drafts_apply(environment)
-    )
+        and held_basis(
+            basis,
+            nudge.base_environment_version,
+            nudge.base_suite_version,
+            [command],
+        )
+    ) or fix_driver.only_agent_moved(command, environment, basis)
 
 
 def landing_pending(environment: HostedHarnessJob) -> bool:
@@ -245,7 +278,10 @@ def _runs_as_another_agent(conversation: HostedHarnessConversation) -> bool:
 
 def holds_conversation(conversation: HostedHarnessConversation) -> bool:
     """A rebuild's command waits in this conversation, or its result is landing: the
-    conversation's messages are not abandoned meanwhile."""
+    conversation's messages are not abandoned meanwhile. A fix's message is held
+    the same way."""
+    from simulate.services.harness_readiness import fix_driver
+
     if conversation.job.environment_id is not None:
         return False
     return (
@@ -255,11 +291,15 @@ def holds_conversation(conversation: HostedHarnessConversation) -> bool:
             state__in=OPEN,
             command_message__state__in=(Message.State.QUEUED, Message.State.DELIVERED),
         ).exists()
+        or fix_driver.holds_conversation(conversation)
     )
 
 
 def waiting_since(conversation: HostedHarnessConversation, message: Message):
-    """When a message started waiting: a rebuild it queued behind restarts the clock."""
+    """When a message started waiting: a rebuild or fix command it queued behind
+    restarts the clock."""
+    from simulate.services.harness_readiness import fix_driver
+
     closed = (
         HarnessNudge.no_workspace_objects.filter(
             job_id=conversation.job_id, closed_at__isnull=False
@@ -268,7 +308,8 @@ def waiting_since(conversation: HostedHarnessConversation, message: Message):
         .values_list("closed_at", flat=True)
         .first()
     )
-    return max(message.created_at, closed) if closed else message.created_at
+    settled = fix_driver.last_settled_at(conversation.job_id)
+    return max(one for one in (message.created_at, closed, settled) if one)
 
 
 # --- answer and stop -------------------------------------------------------------------
@@ -304,6 +345,7 @@ def answer_rebuild(
 ) -> HarnessNudge:
     """Queue the rebuild a pending (or failed, "Rebuild again") nudge offers."""
     from simulate.services.harness_agent_versions import _busy
+    from simulate.services.harness_readiness import fix_runs
     from simulate.services.harness_usage import require_harness_authoring
     from simulate.services.harness_versioning import drafts
 
@@ -320,6 +362,7 @@ def answer_rebuild(
             raise drafts.version_error(
                 "environment_building", "The environment is still being built", 409
             )
+        fix_runs.require_no_active_fix(locked)
         nudge = _lock_nudge(locked, nudge_id)
         if nudge is None:
             raise nudges.nudge_not_found()
@@ -428,13 +471,18 @@ def stop_rebuild(
 # --- closing -------------------------------------------------------------------------
 
 
-def fail_nudge_turn(nudge: HarnessNudge) -> None:
-    """Mark only the rebuild's own builder message failed, so no sandbox runs it."""
-    if nudge.command_message_id:
+def fail_command(message_id: Any) -> None:
+    """Mark one waiting builder message failed, so no sandbox runs it."""
+    if message_id:
         Message.no_workspace_objects.filter(
-            id=nudge.command_message_id,
+            id=message_id,
             state__in=(Message.State.QUEUED, Message.State.DELIVERED),
         ).update(state=Message.State.FAILED, updated_at=timezone.now())
+
+
+def fail_nudge_turn(nudge: HarnessNudge) -> None:
+    """Mark only the rebuild's own builder message failed, so no sandbox runs it."""
+    fail_command(nudge.command_message_id)
 
 
 def close_nudge(
@@ -933,6 +981,19 @@ def _chat_idle(conversation: HostedHarnessConversation) -> bool:
     )
 
 
+def _idle_after(conversation: HostedHarnessConversation, promoted: int) -> bool:
+    """Idle, and no successful turn finished since the one published at ``promoted``."""
+    return (
+        _chat_idle(conversation)
+        and not HostedHarnessConversationEvent.no_workspace_objects.filter(
+            conversation=conversation,
+            kind="turn_completed",
+            payload__outcome="success",
+            sequence__gt=promoted,
+        ).exists()
+    )
+
+
 def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
     """Put a queued rebuild's builder message into an idle chat."""
     from simulate.services.hosted_harness_conversation import (
@@ -982,16 +1043,7 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
                 id=conversation.id
             )
         )
-        idle = (
-            _chat_idle(conversation)
-            and not HostedHarnessConversationEvent.no_workspace_objects.filter(
-                conversation=conversation,
-                kind="turn_completed",
-                payload__outcome="success",
-                sequence__gt=promoted,
-            ).exists()
-        )
-        if not idle:
+        if not _idle_after(conversation, promoted):
             return False
         head = HostedHarnessJob.no_workspace_objects.get(id=environment_id)
         _same, message, _created = enqueue_message(
@@ -1884,6 +1936,26 @@ def _no_runtime(conversation: HostedHarnessConversation | None, now: Any) -> boo
     )
 
 
+def _not_started(
+    command: Message, conversation: HostedHarnessConversation | None, now: Any
+) -> bool:
+    """A command whose turn has not started will not start: it failed, nobody took it,
+    or it was taken but no sandbox runs it."""
+    return (
+        command.state == Message.State.FAILED
+        or (
+            command.state == Message.State.QUEUED
+            and now - command.created_at > NUDGE_NOT_STARTED_AFTER
+        )
+        or (
+            # Taken, but its turn never started here and no sandbox runs it.
+            command.state == Message.State.DELIVERED
+            and now - command.updated_at > NUDGE_NOT_STARTED_AFTER
+            and _no_runtime(conversation, now)
+        )
+    )
+
+
 def check_nudges(environment_id: Any) -> None:
     """Make any agent move a settled validation left unmade, then move the
     environment's rebuild along, or end it when it can't go on."""
@@ -1902,19 +1974,7 @@ def check_nudges(environment_id: Any) -> None:
     if nudge.state == State.QUEUED:
         if command is None:
             dispatch_nudge(environment_id)
-        elif (
-            command.state == Message.State.FAILED
-            or (
-                command.state == Message.State.QUEUED
-                and now - command.created_at > NUDGE_NOT_STARTED_AFTER
-            )
-            or (
-                # Taken, but its turn never started here and no sandbox runs it.
-                command.state == Message.State.DELIVERED
-                and now - command.updated_at > NUDGE_NOT_STARTED_AFTER
-                and _no_runtime(conversation, now)
-            )
-        ):
+        elif _not_started(command, conversation, now):
             _close_if_open(environment_id, nudge.id, "rebuild_not_started")
         return
     snapshot = nudge.draft_snapshot or {}
@@ -1965,6 +2025,7 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     validation left unmade, and a retry per version whose activation waited for a busy
     environment. Least recently ticked first, so every organization's rows come round."""
     from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_readiness import fix_driver
     from simulate.services.harness_versioning.validation import unfinished_moves
     from simulate.tasks import harness_nudges as tasks
 
@@ -1995,7 +2056,11 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     )
     for version_id in versions:
         tasks.schedule_deferred_activations(version_id)
-    return {"environments": len(environments) + len(unmade), "versions": len(versions)}
+    return {
+        "environments": len(environments) + len(unmade),
+        "versions": len(versions),
+        "fixes": fix_driver.tick(limit=limit),
+    }
 
 
 def _busy_entries(version_id: Any) -> list[str]:

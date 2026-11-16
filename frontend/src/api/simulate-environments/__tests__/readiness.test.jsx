@@ -57,7 +57,7 @@ describe("useReadiness", () => {
     });
   });
 
-  it("asks again every 15 seconds while the pair is being checked, then stops", async () => {
+  it("asks again every 5 seconds while the pair is being checked, then stops", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     axios.get
       .mockResolvedValueOnce({ data: report("validating") })
@@ -70,7 +70,7 @@ describe("useReadiness", () => {
       expect(result.current.data?.validation.state).toBe("validating"),
     );
 
-    await act(() => vi.advanceTimersByTimeAsync(15000));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     await waitFor(() =>
       expect(result.current.data?.validation.state).toBe("ready"),
     );
@@ -112,7 +112,7 @@ describe("useReadiness", () => {
 
     renderHook(() => useReadiness("env-1", {}), { wrapper });
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
-    await act(() => vi.advanceTimersByTimeAsync(15000));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
     await act(() => vi.advanceTimersByTimeAsync(30000));
     expect(axios.get).toHaveBeenCalledTimes(2);

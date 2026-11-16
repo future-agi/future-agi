@@ -52367,6 +52367,72 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/capabilities/fix/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_capabilities_fix_read",
+                "description": "The environment's latest run readiness fix, or null. No writes.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReadinessFixResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_harness-environments_capabilities_fix_create",
+                "description": "Fix a group's rows in the builder chat on the current versions, or add\nthem to the running fix; a repeated idempotency key returns its run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReadinessFixStart"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReadinessFixResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/capabilities/history/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_capability_history",
@@ -83512,7 +83578,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
+                "description": "",
                 "parameters": [
                     {
                         "name": "data",
@@ -146533,6 +146599,104 @@
                 },
                 "recheck": {
                     "$ref": "#/definitions/HarnessCapabilityFixRecheck"
+                },
+                "message": {
+                    "title": "Message",
+                    "description": "What a builder fix sends to the builder chat; null for the others.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReadinessFixReason": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessCapabilityFixProgress": {
+            "description": "Where a fix run stands on this row; on live reads only.",
+            "required": [
+                "state",
+                "reason",
+                "waiting_on",
+                "fix_id"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "fixing",
+                        "waiting_on_you",
+                        "waiting_on_other",
+                        "fixed",
+                        "could_not_fix"
+                    ]
+                },
+                "reason": {
+                    "$ref": "#/definitions/HarnessReadinessFixReason"
+                },
+                "waiting_on": {
+                    "title": "Waiting on",
+                    "description": "The row this one waits on to be fixed first.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "fix_id": {
+                    "title": "Fix id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessCapabilityFixResult": {
+            "description": "What a saved fix did for this row, on the versions it saved from.",
+            "required": [
+                "state",
+                "environment",
+                "suite",
+                "fix_id"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "fixed",
+                        "could_not_fix"
+                    ]
+                },
+                "environment": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                },
+                "suite": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                },
+                "fix_id": {
+                    "title": "Fix id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             },
             "x-nullable": true
@@ -146697,11 +146861,28 @@
                 "fix": {
                     "$ref": "#/definitions/HarnessCapabilityFix"
                 },
+                "fix_group": {
+                    "title": "Fix group",
+                    "description": "Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.",
+                    "type": "string",
+                    "enum": [
+                        "needs_you",
+                        "builder",
+                        "recheck"
+                    ],
+                    "x-nullable": true
+                },
                 "consequence": {
                     "title": "Consequence",
                     "description": "What the status means for the cases, their spend and their independence.",
                     "type": "string",
                     "minLength": 1
+                },
+                "fix_progress": {
+                    "$ref": "#/definitions/HarnessCapabilityFixProgress"
+                },
+                "fix_result": {
+                    "$ref": "#/definitions/HarnessCapabilityFixResult"
                 },
                 "needed_by": {
                     "title": "Needed by",
@@ -147252,6 +147433,41 @@
                 }
             }
         },
+        "HarnessCapabilityFixGroup": {
+            "required": [
+                "rows"
+            ],
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessCapabilityFixGroups": {
+            "description": "The rows of each fix group; present only once fixes are switched on.",
+            "required": [
+                "builder",
+                "needs_you",
+                "recheck"
+            ],
+            "type": "object",
+            "properties": {
+                "builder": {
+                    "$ref": "#/definitions/HarnessCapabilityFixGroup"
+                },
+                "needs_you": {
+                    "$ref": "#/definitions/HarnessCapabilityFixGroup"
+                },
+                "recheck": {
+                    "$ref": "#/definitions/HarnessCapabilityFixGroup"
+                }
+            }
+        },
         "HarnessCapabilitySelectionReport": {
             "required": [
                 "pairing",
@@ -147323,6 +147539,9 @@
                 },
                 "selection": {
                     "$ref": "#/definitions/HarnessCapabilitySelectionCounts"
+                },
+                "fix_groups": {
+                    "$ref": "#/definitions/HarnessCapabilityFixGroups"
                 }
             }
         },
@@ -147421,6 +147640,284 @@
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessReadinessFixQueued": {
+            "description": "Messages waiting for the builder chat, in order.",
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReadinessFixLine": {
+            "required": [
+                "row_id",
+                "area",
+                "state",
+                "reason",
+                "waiting_on"
+            ],
+            "type": "object",
+            "properties": {
+                "row_id": {
+                    "title": "Row id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "area": {
+                    "title": "Area",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "fixing",
+                        "waiting_on_you",
+                        "waiting_on_other",
+                        "fixed",
+                        "could_not_fix"
+                    ]
+                },
+                "reason": {
+                    "$ref": "#/definitions/HarnessReadinessFixReason"
+                },
+                "waiting_on": {
+                    "title": "Waiting on",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessReadinessFixSaved": {
+            "description": "The versions the run saved; only moved pieces.",
+            "required": [
+                "environment",
+                "suite"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                },
+                "suite": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReadinessFixError": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                },
+                "code_detail": {
+                    "title": "Code detail",
+                    "description": "The refusal's own code when ``code`` is validation_refused.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReadinessFixPairing": {
+            "description": "The environment and suite versions the run started from.",
+            "required": [
+                "environment_version",
+                "suite_version"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                },
+                "suite_version": {
+                    "$ref": "#/definitions/RunVersionLabel"
+                }
+            }
+        },
+        "HarnessReadinessFix": {
+            "description": "The environment's latest fix run; null for none.",
+            "required": [
+                "id",
+                "state",
+                "group",
+                "updated_at",
+                "started_at",
+                "finished_at",
+                "rows",
+                "queue",
+                "lines",
+                "saved",
+                "draft",
+                "error",
+                "pairing"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "fixing",
+                        "waiting_on_you",
+                        "saving",
+                        "checking",
+                        "done",
+                        "failed",
+                        "stopped"
+                    ]
+                },
+                "group": {
+                    "title": "Group",
+                    "type": "string",
+                    "enum": [
+                        "needs_you",
+                        "builder",
+                        "recheck"
+                    ]
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "description": "When something the run shows last changed.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "rows": {
+                    "description": "The rows still being fixed.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "queue": {
+                    "description": "Messages waiting for the builder chat, in order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReadinessFixQueued"
+                    }
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReadinessFixLine"
+                    }
+                },
+                "saved": {
+                    "$ref": "#/definitions/HarnessReadinessFixSaved"
+                },
+                "draft": {
+                    "title": "Draft",
+                    "description": "Ended without saving; its changes wait in unsaved edits.",
+                    "type": "boolean"
+                },
+                "error": {
+                    "$ref": "#/definitions/HarnessReadinessFixError"
+                },
+                "pairing": {
+                    "$ref": "#/definitions/HarnessReadinessFixPairing"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReadinessFixResponse": {
+            "required": [
+                "fix"
+            ],
+            "type": "object",
+            "properties": {
+                "fix": {
+                    "$ref": "#/definitions/HarnessReadinessFix"
+                }
+            }
+        },
+        "HarnessReadinessFixStart": {
+            "required": [
+                "group",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "group": {
+                    "title": "Group",
+                    "type": "string",
+                    "enum": [
+                        "needs_you",
+                        "builder",
+                        "recheck"
+                    ]
+                },
+                "rows": {
+                    "description": "The rows to fix; absent fixes every row of the group.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 16
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
                 }
             }
         },
@@ -168525,11 +169022,28 @@
                 "fix": {
                     "$ref": "#/definitions/HarnessCapabilityFix"
                 },
+                "fix_group": {
+                    "title": "Fix group",
+                    "description": "Who fixes the row: the builder chat, the user, or a re-check alone; null without a fix.",
+                    "type": "string",
+                    "enum": [
+                        "needs_you",
+                        "builder",
+                        "recheck"
+                    ],
+                    "x-nullable": true
+                },
                 "consequence": {
                     "title": "Consequence",
                     "description": "What the status means for the cases, their spend and their independence.",
                     "type": "string",
                     "minLength": 1
+                },
+                "fix_progress": {
+                    "$ref": "#/definitions/HarnessCapabilityFixProgress"
+                },
+                "fix_result": {
+                    "$ref": "#/definitions/HarnessCapabilityFixResult"
                 }
             }
         },
@@ -195109,22 +195623,6 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
-                },
-                "autoreload_maxcharge": {
-                    "title": "Autoreload maxcharge",
-                    "type": "string",
-                    "format": "decimal",
-                    "x-nullable": true
-                },
-                "autoreload_consent": {
-                    "title": "Autoreload consent",
-                    "type": "boolean",
-                    "default": false
-                },
-                "autoreload_charge_now": {
-                    "title": "Autoreload charge now",
-                    "type": "boolean",
-                    "default": false
                 }
             }
         },

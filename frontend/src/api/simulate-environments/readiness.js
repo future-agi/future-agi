@@ -9,10 +9,10 @@ import { augmentReport, dummyOn } from "./readinessFix.dummy"; // dummy:
  * Run readiness for an agent version, environment version and scenario
  * version together (the pair): what can run, what is blocked and how to fix
  * it. The report is worked out on every read; Re-check starts a new check of
- * the pair, and while it runs the report is read again every 15 seconds.
+ * the pair, and while it runs the report is read again every 5 seconds.
  */
 
-const CHECK_POLL_MS = 15000;
+const CHECK_POLL_MS = 5000;
 
 const capabilitiesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/capabilities/", {

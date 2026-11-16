@@ -98,9 +98,9 @@ class TestProofState:
         self, user, workspace, storage
     ):
         environment, a2 = _with_a2(user, workspace, storage, "sr-other-agent")
-        assert harness_readiness.readiness_report(_pairing(environment))[
-            "validation"
-        ]["state"] in ("ready", "certified")
+        assert harness_readiness.readiness_report(_pairing(environment))["validation"][
+            "state"
+        ] in ("ready", "certified")
 
         flags = harness_readiness.scenario_readiness(_pairing(environment, a2))
 

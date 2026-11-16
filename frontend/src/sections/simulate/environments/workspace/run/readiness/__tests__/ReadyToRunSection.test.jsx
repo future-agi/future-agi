@@ -211,7 +211,7 @@ describe("ReadyToRunSection", () => {
     report = blockedReport("pair");
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(screen.getByText(/Checking these versions/)).toHaveAttribute(
+    expect(screen.getByText(/Checking these versions · runs wait/)).toHaveAttribute(
       "aria-live",
       "polite",
     );
@@ -341,9 +341,28 @@ describe("ReadyToRunSection", () => {
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
-    expect(screen.getByText(/Checking these versions/)).toBeVisible();
+    expect(screen.getByText(/Checking these versions · runs wait/)).toBeVisible();
     // The lines are the last results until the check ends: no Fix on them.
     expect(screen.queryByRole("button", { name: /^Details for/ })).toBeNull();
+  });
+
+  it("says the pair is being checked in place of its blockers, and holds Run", () => {
+    report = {
+      ...blockedReport("pair"),
+      validation: { state: "validating", error: null },
+      answer: { kind: "validating" },
+    };
+    const onView = vi.fn();
+    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
+    expect(
+      screen.getByText(/Checking these versions together…/),
+    ).toBeVisible();
+    expect(screen.queryByText(/blocker/)).toBeNull();
+    expect(screen.queryByText(/Not checked yet/)).toBeNull();
+    expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
+    expect(onView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: "checking", canRun: false }),
+    );
   });
 
   it("holds Run from the moment a re-check is sent", () => {

@@ -1,30 +1,9 @@
-"""What run readiness reads: its rows, their panel areas and gates, and its shapes.
-
-What the Run dialog and the Ready to run panel read, from ``GET``/``POST capabilities/`` (and a run's
-``capability_snapshot``, the same shape less ``selection``):
-
-=====================  ==========================================================================================
-Field                  Meaning
-=====================  ==========================================================================================
-``rows[]``             One row per capability: ``status``, ``reason``, ``evidence[]``, ``fix``, ``consequence``.
-``rows[].affected``    Selected cases the row holds back, with ``count``, ``of`` and the first keys.
-``rows[].fix``         The repair: ``category``, ``action`` and what it ``would`` change.
-``workers[]``          One per declared worker: ``status``, ``tools[]`` each Allowed, Blocked or Not enforced,
-                       ``bypassed[]`` and ``bypassed_count``. Never Supported.
-``children`` row       ``evidence[]`` holds the sub-agent checklist, one result per item.
-``hidden_material``    Supported only when the check ran each process as its own user and the door apart.
-``blockers``           Blocked rows plus blocked workers.
-``selection.held_by``  Each row or ``worker:<id>`` holding selected cases back: ``count``, ``reason``, ``text``.
-=====================  ==========================================================================================
-
-``GET capabilities/cases/`` pages the cases of one bucket or one row; ``POST capabilities/recheck/`` re-validates
-the pairing without a run; ``GET capabilities/history/`` lists certified pairings.
-"""
+"""What run readiness reads: its rows, their panel areas and gates, and its shapes."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from simulate.models import (
     AgentVersion,
@@ -35,13 +14,15 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "13"
+RULES_VERSION = "9"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
 Finding = Literal["passed", "failed", "limited", "not_applicable", "not_run"]
 # The four kinds of repair a blocker sends the user to.
 FixCategory = Literal["startup", "message_mapping", "tool_routing", "evidence"]
+# Who fixes a row: the builder chat, the user, or a re-check alone.
+FixGroup = Literal["needs_you", "builder", "recheck"]
 # An area, and the answer, read as their worst row.
 WORST_FIRST: tuple[Status, ...] = (
     "blocked",
@@ -70,21 +51,23 @@ CATALOGUE: tuple[Capability, ...] = (
     Capability("message", "Takes a test message", "start_and_message", True, "start"),
     Capability("continuity", "Keeps context across turns", "start_and_message", False),
     Capability("streaming", "Streams its replies", "start_and_message", False),
-    Capability("tool_discovery", "Agent's tools found", "tool_binding", True, "start"),
+    Capability("tool_discovery", "Tools discovered", "tool_binding", True, "start"),
     Capability(
         "tool_routing",
-        "Tool calls stay in the test",
+        "Controlled tool routing",
         "tool_binding",
         True,
         "tool_discovery",
     ),
-    Capability("state", "Starting records", "evidence", True, "start"),
-    Capability("audio", "Call recordings", "evidence", False),
-    Capability("files", "Files the agent writes", "evidence", False),
-    Capability("browser", "Pages the agent opens", "evidence", False),
-    Capability("children", "Sub-agents", "evidence", False),
-    Capability("hidden_material", "Answers hidden from the agent", "evidence", False),
-    Capability("reset", "Starts fresh for each case", "reset", True, "state"),
+    Capability("state", "Seeded world state", "evidence", True, "start"),
+    Capability("audio", "Audio evidence", "evidence", False),
+    Capability("files", "File evidence", "evidence", False),
+    Capability("browser", "Browser evidence", "evidence", False),
+    Capability("children", "Sub-agent evidence", "evidence", False),
+    Capability(
+        "hidden_material", "Grading material kept from the agent", "evidence", False
+    ),
+    Capability("reset", "World resets between cases", "reset", True, "state"),
     Capability("resume", "Resumes an interrupted case", "reset", False),
     Capability("cancel", "Stops cleanly when cancelled", "cancellation", True),
     Capability("cost", "Run cost", None, False),
@@ -151,38 +134,8 @@ class Fix(TypedDict):
     would: str
     # None when checking this pairing again cannot change the row.
     recheck: FixRecheck | None
-
-
-class WorkerToolView(TypedDict):
-    # The contract tool name.
-    tool: str
-    # The sealed world action; None when the tool has no route.
-    action: str | None
-    boundary: Literal["allowed", "blocked", "not_enforced"]
-
-
-class WorkerBypass(TypedDict):
-    run_id: str
-    call_execution_id: str
-
-
-class WorkerBoundaryView(TypedDict):
-    """One declared worker's limits as this pairing holds them. Never "supported": the limit is cooperative."""
-
-    worker_id: str
-    name: str
-    binding: Literal["separate", "shared"]
-    status: Status
-    # The status word the row shows, e.g. "Checked through the world's tools".
-    status_label: str
-    reason_code: str
-    reason: str
-    tools: list[WorkerToolView]
-    # Newest first, at most five; `bypassed_count` counts them all.
-    bypassed: list[WorkerBypass]
-    bypassed_count: int
-    fix: Fix | None
-    checked_at: str | None
+    # What a builder fix sends to the builder chat; None for other groups.
+    message: NotRequired[str | None]
 
 
 class RowView(TypedDict):
@@ -201,8 +154,19 @@ class RowView(TypedDict):
     evidence: list[EvidenceCheck]
     checked_at: str | None
     fix: Fix | None
+    fix_group: FixGroup | None
     # What the status means for the cases, their spend and their independence.
     consequence: str
+
+
+class FixGroupRows(TypedDict):
+    rows: list[str]
+
+
+class FixGroupsView(TypedDict):
+    builder: FixGroupRows
+    needs_you: FixGroupRows
+    recheck: FixGroupRows
 
 
 @dataclass(frozen=True)

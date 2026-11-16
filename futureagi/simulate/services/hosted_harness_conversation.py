@@ -39,7 +39,6 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
-from simulate.services.hosted_harness_validation import validate_jsonb_strings
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -686,7 +685,7 @@ def issue_conversation_capability(
         return None
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/conversations/{conversation.id}"
-    document: dict[str, Any] = {
+    document = {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "conversation_id": str(conversation.id),
         "job_id": str(conversation.job_id),
@@ -714,11 +713,6 @@ def issue_conversation_capability(
             "overview": f"{prefix}/overview/",
         },
     }
-    from simulate.services import evidence_drafts
-
-    if evidence_drafts.is_drafting_job(conversation.job):
-        for name in evidence_drafts.UNOFFERED_ENDPOINTS:
-            document["endpoints"].pop(name, None)
     return ConversationCapability(
         lease=lease, token=token, fence=fence, document=document
     )
@@ -828,10 +822,6 @@ def append_provider_transcript(
     subpath: str,
     entries: list[dict[str, Any]],
 ) -> dict[str, int]:
-    validate_jsonb_strings(entries, field="entries")
-    validate_jsonb_strings(
-        [project_key, provider_session_id, subpath], field="transcript key"
-    )
     with transaction.atomic():
         HostedHarnessConversation.no_workspace_objects.select_for_update().only(
             "id"
@@ -970,8 +960,6 @@ def ingest_conversation_events(
     acknowledged_through: int,
     events: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    # Validate the entire raw batch before digest encoding or acknowledgement writes.
-    validate_jsonb_strings(events, field="events")
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -1016,7 +1004,7 @@ def ingest_conversation_events(
                 state=HostedHarnessConversationMessage.State.QUEUED,
             ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
         for event in events:
-            _ingest_event(conversation, event, chat_only=lease.attempt_id is None)
+            _ingest_event(conversation, event)
         lease.command_watermark = max(
             lease.command_watermark, conversation.command_acked_through
         )
@@ -1051,10 +1039,7 @@ def ingest_conversation_events(
 
 
 def _ingest_event(
-    conversation: HostedHarnessConversation,
-    event: dict[str, Any],
-    *,
-    chat_only: bool = False,
+    conversation: HostedHarnessConversation, event: dict[str, Any]
 ) -> None:
     canonical = {key: value for key, value in event.items() if key != "digest"}
     if canonical_digest(canonical) != event["digest"]:
@@ -1115,20 +1100,20 @@ def _ingest_event(
                 event["emitted_at"],
             )
         )
-    if chat_only and event["kind"] == "turn_completed":
-        from simulate.services.harness_usage import bill_builder_turn
+    from simulate.services.harness_readiness import fix_driver
 
-        # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
+    if event["kind"] in fix_driver.EVENT_KINDS:
         transaction.on_commit(
-            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
+            partial(
+                fix_driver.on_conversation_event,
+                str(conversation.id),
+                event["kind"],
+                event.get("payload") or {},
+                event["sequence"],
+                event.get("message_id"),
+            )
         )
     _project_event(conversation, event)
-
-
-# Why an answer was not taken: the builder asked its question again, to be answered with one of its options.
-ASKED_AGAIN = (
-    "Not taken as the answer: the builder asked again. Answer with one of the options."
-)
 
 
 def _project_event(
@@ -1143,10 +1128,6 @@ def _project_event(
         conversation.active_invocation_id = event["invocation_id"]
     if kind == "turn_started":
         conversation.state = HostedHarnessConversation.State.RESPONDING
-        if not payload.get("resumed"):
-            # A fresh turn means the turn that asked has ended, so its question can no longer be answered; a resumed
-            # turn asks it again itself.
-            conversation.blocking_input = None
         command_id = payload.get("command_message_id")
         if command_id:
             conversation.messages.filter(
@@ -1221,16 +1202,6 @@ def _project_event(
         ).exists():
             # Asked again after a restart, but already answered.
             return
-        # An answer still queued for another question can't be taken any more: that question is closed and the builder
-        # asks this one in its place, so the person answers this one. The answer says why it stopped.
-        for stale in conversation.messages.filter(
-            role=HostedHarnessConversationMessage.Role.USER,
-            state=HostedHarnessConversationMessage.State.QUEUED,
-            reply_to__isnull=False,
-        ).exclude(reply_to=message_id):
-            stale.state = HostedHarnessConversationMessage.State.FAILED
-            stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
-            stale.save(update_fields=["state", "payload", "updated_at"])
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),
@@ -1274,17 +1245,6 @@ def _project_event(
         ):
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
-        if command_id:
-            from simulate.services import evidence_drafts
-
-            transaction.on_commit(
-                partial(
-                    evidence_drafts.turn_ended,
-                    str(conversation.id),
-                    str(command_id),
-                    str(payload.get("outcome") or ""),
-                )
-            )
         # Only a finished turn leaves a complete suite; checkpoints taken mid-turn are scratch.
         if payload.get("outcome") == "success":
             conversation_id, sequence = str(conversation.id), event["sequence"]
@@ -1739,13 +1699,10 @@ def start_conversation_run(
     operation_id: str = "",
 ) -> dict[str, Any]:
     """Run the scenarios the chat names by tab number, the way the Scenarios tab does."""
-    from simulate.services.evidence_drafts import refuse_run
     from simulate.services.harness_usage import require_harness_call_usage
-    from simulate.services.harness_versioning.rebuild import turn_command
     from simulate.services.hosted_harness import create_selected_harness_run
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
-    refuse_run(turn_command(conversation))
     job = conversation.job
     environment = job.environment or job
     wanted = _numbers_meant(numbers, ranges)
@@ -1835,7 +1792,8 @@ def promote_turn_checkpoint(
     ).first()
     if turn is None:
         return None
-    from simulate.services.harness_versioning import rebuild
+    from simulate.services.harness_readiness import fix_driver
+    from simulate.services.harness_versioning import drafts, rebuild
 
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation=conversation,
@@ -1843,6 +1801,8 @@ def promote_turn_checkpoint(
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     nudge = rebuild.nudge_for_command(command)
+    fix = fix_driver.run_for_command(command)
+    refs_before = drafts.draft_refs(conversation.job) if fix else None
     checkpoints = HostedHarnessConversationEvent.no_workspace_objects.filter(
         conversation=conversation,
         kind="checkpoint_committed",
@@ -1858,6 +1818,8 @@ def promote_turn_checkpoint(
     if committed is None:
         if nudge is not None:
             rebuild.land_nudge_result(nudge, checkpoint_key=None, turn_event=turn)
+        if fix:
+            fix_driver.on_published(fix, turn, wrote=False)
         return None
     sequence, payload = committed
     digest = str(payload["digest"])
@@ -1877,12 +1839,18 @@ def promote_turn_checkpoint(
             command=command,
         )
     except HostedHarnessError as exc:
+        if fix and not exc.retryable:
+            fix_driver.on_publish_refused(fix, exc, turn)
         if nudge is None or exc.retryable:
             raise
         rebuild.fail_landing(nudge, exc, turn_event=turn)
         return None
     if nudge is not None:
         rebuild.land_nudge_result(nudge, checkpoint_key=object_key, turn_event=turn)
+    if fix and environment is not None:
+        fix_driver.on_published(
+            fix, turn, wrote=drafts.draft_refs(conversation.job) != refs_before
+        )
     return environment
 
 
@@ -1957,13 +1925,17 @@ class _DraftCommand:
 def _draft_command(
     command: HostedHarnessConversationMessage | None, environment: HostedHarnessJob
 ) -> _DraftCommand | None:
-    """``None`` drops the save: it is a rebuild's, and that rebuild is over."""
+    """``None`` drops the save: it is a rebuild's, and that rebuild is over, or a
+    fix's whose run ended or whose command settled."""
+    from simulate.services.harness_readiness import fix_driver
     from simulate.services.harness_versioning.drafts import command_author
     from simulate.services.harness_versioning.rebuild import draft_command
 
     payload = (command.payload or {}) if command is not None else {}
     rebuild = draft_command(command)
     if rebuild is None:
+        return None
+    if rebuild == ("", {}) and fix_driver.draft_command(command) is None:
         return None
     origin, draft_kwargs = rebuild
     return _DraftCommand(
@@ -2014,7 +1986,7 @@ def promote_conversation_checkpoint(
 
     Only a completed environment is published to; while authoring runs, its pipeline owns
     these. A checkpoint older than the published one is ignored, so a late delivery never
-    rolls the environment back. A fix's request for variations lands in the fix instead.
+    rolls the environment back.
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import drafts, rebuild
@@ -2040,18 +2012,6 @@ def promote_conversation_checkpoint(
             status_code=409,
         )
     archive = _authoring_archive(checkpoint)
-    from simulate.services import agent_fix_variations, evidence_drafts
-
-    if command is not None and evidence_drafts.is_evidence_command(command):
-        # An evidence turn read untrusted production text: its saves never reach
-        # the environment; its scenarios become proposals on the import.
-        evidence_drafts.land(environment, conversation, archive, command)
-        return environment
-    if command is not None and agent_fix_variations.is_fix_command(command):
-        # A fix's variations land in the fix's own suite version, never in the
-        # environment's drafts or defaults.
-        agent_fix_variations.land(environment, conversation, archive, command)
-        return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
     outputs = {
@@ -2061,9 +2021,6 @@ def promote_conversation_checkpoint(
     }
     suite = (outputs.get("scenarios") or {}).get("data")
     require_checkpoint_scenarios(suite)
-    from simulate.services.harness_starting_record_rework import refuse_invented
-
-    refuse_invented(environment, archive, command)
 
     observed_revision = environment_authoring_revision(environment)
     stale_revision = None
@@ -2109,7 +2066,7 @@ def promote_conversation_checkpoint(
 
         basis = checkpoint_basis or expected_revision
         if basis != current_revision and not rebuild.only_agent_moved(
-            command, environment
+            command, environment, basis
         ):
             stale_revision = current_revision
         elif drafts.drafts_apply(environment):

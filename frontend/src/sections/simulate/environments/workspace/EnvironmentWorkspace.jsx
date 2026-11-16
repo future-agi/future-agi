@@ -234,6 +234,10 @@ export default function EnvironmentWorkspace() {
           queryKey: environmentVersionsKey(env.id),
         });
       }
+      // A check of the pair is running: Ready to run reads it and waits on it.
+      if (error?.error === "pair_validating") {
+        queryClient.invalidateQueries({ queryKey: ["harness-readiness", env.id] });
+      }
       // The open run dialog explains its own refusals.
       if (picks !== undefined && inlineRunError(error)) return;
       handleCreditError(error);

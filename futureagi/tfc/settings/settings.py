@@ -1247,6 +1247,10 @@ HARNESS_ACTORS_SHARE = (
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Run readiness offers its Fix groups; only takes effect while versioning is enabled.
+HARNESS_READINESS_FIX_ENABLED = os.getenv(
+    "HARNESS_READINESS_FIX_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
