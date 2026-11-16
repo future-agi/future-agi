@@ -10,8 +10,9 @@ import pytest
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import workers
 from simulate.services.harness_readiness.evidence import Evidence
-from simulate.tests.test_harness_readiness import readiness_on as readiness_on  # noqa: F401
 from simulate.tests.test_harness_readiness import storage as storage  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("readiness_on")
 
 CONTRACT = {
     "workers": [

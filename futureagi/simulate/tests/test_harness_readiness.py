@@ -46,7 +46,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 )
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 BASE = "/simulate/api/harness-environments"
 PASSED = {
@@ -90,14 +90,6 @@ OWN_TOOLS_SERVICE = {
         }
     ],
 }
-
-
-@pytest.fixture(autouse=True)
-def readiness_on(settings):
-    settings.HARNESS_VERSIONING_ENABLED = True
-    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
-    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
-    cache.clear()
 
 
 def _environment(user, workspace, storage, key):

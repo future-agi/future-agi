@@ -23,13 +23,10 @@ from simulate.tests.test_harness_readiness import (
     _environment,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 # Two workers wired separately with their own allow-lists, sealed without the world door's worker limits.
 WORKERS = [

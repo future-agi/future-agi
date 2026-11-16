@@ -28,9 +28,6 @@ from simulate.tests.test_harness_readiness import (
     _with_a2,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
@@ -39,7 +36,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 from simulate.tests.test_harness_versioning_assembly import _row
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 LOOKUP = "lookup_order"
 REFUND = "issue_refund"
