@@ -142,6 +142,10 @@ WORKSPACE_WRITE_EXEMPT_PATHS = (
 )
 _WRITE_METHODS = ("post", "put", "patch", "delete")
 NO_ORGANIZATION_WRITE_DENIED = "You're not a member of any organization."
+NO_ORGANIZATION_WRITE_PATHS = (
+    "/accounts/organizations/create/",
+    "/accounts/organizations/new/",
+)
 
 
 def _is_workspace_write(request) -> bool:
@@ -411,7 +415,9 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
-            if _is_workspace_write(request):
+            if _is_workspace_write(request) and not request.path.startswith(
+                NO_ORGANIZATION_WRITE_PATHS
+            ):
                 logger.info(
                     "access_denied",
                     reason="no_organization",

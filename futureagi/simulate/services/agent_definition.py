@@ -105,7 +105,7 @@ def merge_websocket_secrets(
     """Masked websocket values sent back on save take their stored values, but only
     while the URL still points at the same host; otherwise they must be typed again."""
     url = incoming.get("websocket_url", stored_url)
-    moved = bool(stored_url and url) and _destination(url) != _destination(stored_url)
+    moved = bool(stored_url and url and _destination(url) != _destination(stored_url))
     merged: dict[str, Any] = {}
     if "websocket_url" in incoming:
         merged["websocket_url"] = _restore_url(
@@ -342,13 +342,13 @@ def resolve_server_url_for_version(version) -> str:
         return ""
     try:
         if version.credentials.server_url:
-            return version.credentials.server_url
+            return str(version.credentials.server_url)
     except AgentVersion.credentials.RelatedObjectDoesNotExist:
         pass
     try:
         legacy = version.agent_definition.credentials_legacy
         if legacy and legacy.server_url:
-            return legacy.server_url
+            return str(legacy.server_url)
     except ProviderCredentials.DoesNotExist:
         pass
     return ""

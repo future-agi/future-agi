@@ -582,7 +582,7 @@ class ValidateLiveKitCredentialsView(APIView):
             agent = AgentDefinition.objects.filter(
                 id=agent_definition_id,
                 organization=getattr(request, "organization", None)
-                or request.user.organization,
+                or getattr(request.user, "organization", None),
                 deleted=False,
             ).first()
             version = (agent.active_version or agent.latest_version) if agent else None
@@ -600,7 +600,8 @@ class ValidateLiveKitCredentialsView(APIView):
                         api_secret=api_secret,
                     )
                 except CredentialsNeedReentry as error:
-                    return self.gm.bad_request(error.message)
+                    refused: Response = self.gm.bad_request(error.message)
+                    return refused
                 if is_masked(api_key):
                     api_key = creds.get_api_key()
                 if is_masked(api_secret):

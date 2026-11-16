@@ -267,6 +267,17 @@ def test_a_user_with_no_organization_cannot_write(organization, workspace):
     assert response.data["detail"] == NO_ORGANIZATION_WRITE_DENIED
 
 
+@pytest.mark.parametrize(
+    "path", ["/accounts/organizations/create/", "/accounts/organizations/new/"]
+)
+def test_a_user_with_no_organization_can_still_make_one(organization, workspace, path):
+    response = _client_without_an_organization(organization, workspace).post(
+        path, {"name": "Recovered"}, format="json"
+    )
+
+    assert response.status_code != 403, response.content
+
+
 def test_a_user_with_no_organization_still_manages_their_second_factor(
     organization, workspace
 ):

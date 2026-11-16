@@ -1,3 +1,5 @@
+from typing import Any
+
 from rest_framework import serializers
 
 from simulate.services.agent_definition import (
@@ -8,7 +10,8 @@ from simulate.services.agent_definition import (
 
 class WebsocketHeadersField(serializers.JSONField):
     def to_representation(self, value):
-        return mask_websocket_headers(super().to_representation(value))
+        headers: Any = super().to_representation(value)
+        return mask_websocket_headers(headers)
 
 
 class WebsocketUrlField(serializers.URLField):

@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
 from accounts.key_cache import publish_key_revocation as _publish_key_revocation
-from accounts.models import OrgApiKey
+from accounts.models import OrgApiKey, User
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
@@ -63,8 +63,13 @@ KEY_SWITCH_DENIED = (
 
 
 def _is_organization_admin(request: Request) -> bool:
-    organization = getattr(request, "organization", None) or request.user.organization
-    return is_organization_admin(request.user, organization)
+    user = request.user
+    if not isinstance(user, User):
+        return False
+    organization = getattr(request, "organization", None) or user.organization
+    if organization is None:
+        return False
+    return is_organization_admin(user, organization)
 
 
 def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
@@ -75,7 +80,8 @@ def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
         key_id=str(apikey.id),
         key_type=apikey.type,
     )
-    return GeneralMethods().forbidden_response(KEY_SWITCH_DENIED)
+    denied: Response = GeneralMethods().forbidden_response(KEY_SWITCH_DENIED)
+    return denied
 
 
 class CanReadOrganizationKey(BasePermission):
