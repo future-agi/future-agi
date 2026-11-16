@@ -18012,11 +18012,40 @@ export const AgentFixVerdictTierApiStatus = {
   skipped: "skipped",
 } as const;
 
+export type AgentFixVerdictTierPartApiStatus =
+  (typeof AgentFixVerdictTierPartApiStatus)[keyof typeof AgentFixVerdictTierPartApiStatus];
+
+export const AgentFixVerdictTierPartApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixVerdictTierPartApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  status: AgentFixVerdictTierPartApiStatus;
+  detail?: string;
+}
+
+export interface AgentFixCeilingNumbersApi {
+  baseline?: number;
+  candidate?: number;
+  allowed?: number;
+  limit?: number;
+}
+
 export interface AgentFixVerdictTierApi {
   /** @minLength 1 */
   name: string;
   status: AgentFixVerdictTierApiStatus;
   detail?: string;
+  parts?: AgentFixVerdictTierPartApi[];
+  latency?: AgentFixCeilingNumbersApi;
+  cost?: AgentFixCeilingNumbersApi;
 }
 
 export interface AgentFixVerdictApi {
@@ -18055,6 +18084,18 @@ export interface AgentFixEngineFailureApi {
   message: string;
 }
 
+export interface AgentFixFlakyProtectedApi {
+  /** @minLength 1 */
+  key: string;
+  name?: string;
+  /** @minLength 1 */
+  sub_goal: string;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 1 */
+  runs: number;
+}
+
 export interface AgentFixEngineReportApi {
   /**
    * @minLength 1
@@ -18069,6 +18110,7 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
   /** @maxItems 50 */
   lost_models?: string[];
   last_error?: string;
@@ -18140,6 +18182,12 @@ export interface AgentFixRequestApi {
   max_minutes: number;
   variations_pending?: boolean;
   variation_parents?: AgentFixRequestApiVariationParents;
+  allowed_models?: string[];
+  reply_latency_margin_pct?: number;
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
+  observes_models?: boolean;
+  meters_agent_cost?: boolean;
 }
 
 export interface AgentFixReportApi {
@@ -18148,6 +18196,7 @@ export interface AgentFixReportApi {
   summary: string;
   /** @minLength 1 */
   winner_candidate_id: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
 export interface AgentFixFailureApi {
@@ -18284,6 +18333,19 @@ export interface AgentFixLaunchApi {
    * @maximum 1440
    */
   max_minutes?: number;
+  /** @maxItems 50 */
+  allowed_models?: string[];
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  reply_latency_margin_pct?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -18309,6 +18371,8 @@ export interface AgentFixLaunchScenarioApi {
   name: string;
   passed: boolean;
   failing_sub_goals: string[];
+  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
+  evidence_import_id: string;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -18349,6 +18413,11 @@ export interface AgentFixLaunchDefaultsApi {
   surfaces: AgentFixLaunchDefaultsApiSurfacesItem[];
   budget_credits: number;
   max_minutes: number;
+  allowed_models: string[];
+  agent_cost_metered: boolean;
+  agent_calls_unmeasured: boolean;
+  reply_latency_margin_pct: number;
+  cost_margin_pct: number;
 }
 
 export interface AgentFixLaunchLimitsApi {
@@ -18404,6 +18473,16 @@ export const AgentFixRunDetailApiStep = {
   done: "done",
 } as const;
 
+export type AgentFixRunDetailApiEvalGrading =
+  (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
+
+export const AgentFixRunDetailApiEvalGrading = {
+  none: "none",
+  pending: "pending",
+  done: "done",
+  incomplete: "incomplete",
+} as const;
+
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
   name: string;
@@ -18444,6 +18523,7 @@ export interface AgentFixRunDetailApi {
   finished_at?: string;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+  readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
 }
 
 export interface AgentFixShipApi {
@@ -20058,6 +20138,498 @@ export interface SimulateEvalConfigResponseApi {
   readonly eval_type?: string;
   readonly regradable?: boolean;
   readonly editable?: boolean;
+}
+
+export type EvidenceImportListItemApiSourceKind =
+  (typeof EvidenceImportListItemApiSourceKind)[keyof typeof EvidenceImportListItemApiSourceKind];
+
+export const EvidenceImportListItemApiSourceKind = {
+  session: "session",
+  call: "call",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+/**
+ * drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.
+ */
+export type EvidenceImportListItemApiStatus =
+  (typeof EvidenceImportListItemApiStatus)[keyof typeof EvidenceImportListItemApiStatus];
+
+export const EvidenceImportListItemApiStatus = {
+  waiting: "waiting",
+  drafting: "drafting",
+  drafted: "drafted",
+  partly_added: "partly_added",
+  blocked: "blocked",
+} as const;
+
+export interface EvidenceImportListItemApi {
+  id: string;
+  source_kind: EvidenceImportListItemApiSourceKind;
+  /**
+   * The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.
+   * @minLength 1
+   */
+  source_name: string;
+  /** False once the Observe project or dataset was deleted. */
+  source_available: boolean;
+  /** @minimum 0 */
+  case_count: number;
+  /**
+   * Cases already added to the suite.
+   * @minimum 0
+   */
+  added_count: number;
+  /** drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard. */
+  status: EvidenceImportListItemApiStatus;
+  created_at: string;
+  /** False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added. */
+  can_discard: boolean;
+}
+
+export type EvidenceImportCreateApiSourceKind =
+  (typeof EvidenceImportCreateApiSourceKind)[keyof typeof EvidenceImportCreateApiSourceKind];
+
+export const EvidenceImportCreateApiSourceKind = {
+  session: "session",
+  call: "call",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+/**
+ * Dataset imports: the columns to read.
+ */
+export interface EvidenceDatasetColumnsApi {
+  /** The conversation: chat messages as JSON, or lines that start "User:" or "Agent:". */
+  conversation: string;
+  /**
+   * Columns read as the row's labels.
+   * @maxItems 10
+   */
+  labels?: string[];
+  /** The column that says what should happen. */
+  expected?: string;
+}
+
+/**
+ * json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.
+ */
+export type EvidenceTranscriptInputApiFormat =
+  (typeof EvidenceTranscriptInputApiFormat)[keyof typeof EvidenceTranscriptInputApiFormat];
+
+export const EvidenceTranscriptInputApiFormat = {
+  json: "json",
+  text: "text",
+  csv: "csv",
+} as const;
+
+export interface EvidenceTranscriptInputApi {
+  /**
+   * What the person calls it, such as the file's name; redacted before it is stored.
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  /** json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column. */
+  format: EvidenceTranscriptInputApiFormat;
+  /**
+   * The transcript as pasted or uploaded.
+   * @minLength 1
+   * @maxLength 500000
+   */
+  text: string;
+}
+
+export interface EvidenceImportCreateApi {
+  source_kind: EvidenceImportCreateApiSourceKind;
+  /** Session and call imports: the Observe project. */
+  project_id?: string;
+  /**
+   * Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.
+   * @minItems 1
+   * @maxItems 20
+   */
+  ids?: string[];
+  /** Dataset imports: the dataset. */
+  dataset_id?: string;
+  columns?: EvidenceDatasetColumnsApi;
+  /**
+   * Transcript imports: one case each, in this order.
+   * @minItems 1
+   * @maxItems 20
+   */
+  transcripts?: EvidenceTranscriptInputApi[];
+  /** Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence. */
+  production?: boolean;
+}
+
+export type EvidenceImportApiSourceKind =
+  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
+
+export const EvidenceImportApiSourceKind = {
+  session: "session",
+  call: "call",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+export type EvidenceImportCaseApiStatus =
+  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
+
+export const EvidenceImportCaseApiStatus = {
+  pending: "pending",
+  unavailable: "unavailable",
+  drafted: "drafted",
+  blocked: "blocked",
+  added: "added",
+  discarded: "discarded",
+  duplicate: "duplicate",
+} as const;
+
+/**
+ * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
+ */
+export interface EvidenceNewCheckApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+}
+
+/**
+ * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
+ */
+export interface EvidenceDuplicateOfApi {
+  /** The import holding the case. */
+  import_id: string;
+  case_id: string;
+  /** Its drafted scenario's title; blank until drafted. */
+  scenario_name: string;
+}
+
+export type EvidenceTranscriptApiStatus =
+  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
+
+export const EvidenceTranscriptApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export type EvidenceTurnApiRole =
+  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
+
+export const EvidenceTurnApiRole = {
+  user: "user",
+  agent: "agent",
+} as const;
+
+export interface EvidenceTurnApi {
+  role: EvidenceTurnApiRole;
+  text: string;
+  truncated: boolean;
+  /** Blank for a turn no trace recorded. */
+  trace_id: string;
+  at: string | null;
+}
+
+export interface EvidenceTranscriptApi {
+  status: EvidenceTranscriptApiStatus;
+  reason: string;
+  turns: EvidenceTurnApi[];
+}
+
+export type EvidenceToolCallsApiStatus =
+  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
+
+export const EvidenceToolCallsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export interface EvidenceToolCallApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  at: string;
+  failed: boolean;
+  error: string;
+  input: string;
+  output: string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+}
+
+export interface EvidenceToolCallsApi {
+  status: EvidenceToolCallsApiStatus;
+  reason: string;
+  calls: EvidenceToolCallApi[];
+}
+
+export type EvidencePartApiStatus =
+  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
+
+export const EvidencePartApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * Whether the tool calls recorded their inputs.
+ */
+export interface EvidencePartApi {
+  status: EvidencePartApiStatus;
+  reason: string;
+}
+
+export type EvidenceLabelsApiStatus =
+  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
+
+export const EvidenceLabelsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * row: a dataset row's label column.
+ */
+export type EvidenceLabelApiTarget =
+  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
+
+export const EvidenceLabelApiTarget = {
+  session: "session",
+  trace: "trace",
+  span: "span",
+  row: "row",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvidenceLabelApiValue = JsonValueApi;
+
+export interface EvidenceLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  /** Any valid JSON value. */
+  value: EvidenceLabelApiValue;
+  notes: string;
+  /** row: a dataset row's label column. */
+  target: EvidenceLabelApiTarget;
+}
+
+export interface EvidenceLabelsApi {
+  status: EvidenceLabelsApiStatus;
+  reason: string;
+  labels: EvidenceLabelApi[];
+}
+
+export type EvidenceExpectedOutcomeApiStatus =
+  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
+
+export const EvidenceExpectedOutcomeApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * What a dataset row's expected outcome column says should happen.
+ */
+export interface EvidenceExpectedOutcomeApi {
+  status: EvidenceExpectedOutcomeApiStatus;
+  reason: string;
+  text: string;
+}
+
+export interface EvidenceImportCaseApi {
+  id: string;
+  /** @minLength 1 */
+  source_id: string;
+  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
+  name: string;
+  status: EvidenceImportCaseApiStatus;
+  reason: string;
+  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
+  source_available: boolean;
+  /** The drafted scenario's key, once drafted. */
+  scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
+  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
+  new_checks: EvidenceNewCheckApi[];
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
+  changed_since_import: boolean | null;
+  /**
+   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
+   * @minimum 0
+   */
+  also_from: number;
+  duplicate_of: EvidenceDuplicateOfApi;
+  trace_ids: string[];
+  started_at: string | null;
+  ended_at: string | null;
+  transcript: EvidenceTranscriptApi;
+  tool_calls: EvidenceToolCallsApi;
+  tool_inputs: EvidencePartApi;
+  tool_outputs: EvidencePartApi;
+  starting_state: EvidencePartApi;
+  labels: EvidenceLabelsApi;
+  expected_outcome: EvidenceExpectedOutcomeApi;
+}
+
+/**
+ * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
+ */
+export type EvidenceRedactionApiMethod =
+  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
+
+export const EvidenceRedactionApiMethod = {
+  presidio: "presidio",
+  basic: "basic",
+} as const;
+
+export type EvidenceRedactionFindingApiPart =
+  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
+
+export const EvidenceRedactionFindingApiPart = {
+  transcript: "transcript",
+  tool_calls: "tool_calls",
+  labels: "labels",
+  expected_outcome: "expected_outcome",
+} as const;
+
+export type EvidenceRedactionFindingApiField =
+  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
+
+export const EvidenceRedactionFindingApiField = {
+  text: "text",
+  input: "input",
+  output: "output",
+  error: "error",
+  notes: "notes",
+  value: "value",
+  name: "name",
+} as const;
+
+export interface EvidenceRedactionFindingApi {
+  case_id: string;
+  part: EvidenceRedactionFindingApiPart;
+  /** @minimum 0 */
+  index: number;
+  field: EvidenceRedactionFindingApiField;
+  /** @minLength 1 */
+  entity: string;
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  replacement: string;
+}
+
+export interface EvidenceRedactionApi {
+  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
+  method: EvidenceRedactionApiMethod;
+  reason: string;
+  findings: EvidenceRedactionFindingApi[];
+  /**
+   * Every finding, including those past the listed ones.
+   * @minimum 0
+   */
+  total: number;
+}
+
+export interface EvidenceImportApi {
+  id: string;
+  environment_id: string;
+  /** The Observe project; null for evidence from outside Observe. */
+  project_id: string | null;
+  /** A dataset import's dataset; null otherwise. */
+  dataset_id: string;
+  agent_version_id: string | null;
+  source_kind: EvidenceImportApiSourceKind;
+  created_at: string;
+  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
+  simulated: boolean;
+  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
+  production: boolean;
+  /** True while the environment's builder is drafting cases. */
+  drafting: boolean;
+  cases: EvidenceImportCaseApi[];
+  redaction: EvidenceRedactionApi;
+}
+
+export interface EvidenceDraftRefApi {
+  id: string | null;
+  /** @minimum 0 */
+  revision: number;
+}
+
+/**
+ * The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.
+ */
+export interface EvidenceExpectedDraftsApi {
+  environment: EvidenceDraftRefApi;
+  suite: EvidenceDraftRefApi;
+}
+
+export interface EvidenceImportAddApi {
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+  expected_drafts: EvidenceExpectedDraftsApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export interface EvidenceImportAddResponseApi {
+  /** True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits. */
+  saved: boolean;
+  evidence_import: EvidenceImportApi;
+}
+
+/**
+ * What the person says each case records, by case id.
+ */
+export type EvidenceImportDraftApiShows = {
+  [key: string]: "failure" | "success" | "partial";
+};
+
+export interface EvidenceImportDraftApi {
+  /**
+   * The import's waiting cases the environment's builder drafts.
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+  /** What the person says each case records, by case id. */
+  shows?: EvidenceImportDraftApiShows;
 }
 
 export type HarnessNudgeApiTarget =
