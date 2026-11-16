@@ -105,18 +105,26 @@ def _published(
 
 
 def _not_saved(message: HostedHarnessConversationMessage) -> str | None:
-    """What the chat said when the turn's save was refused: a failed reply after the request."""
-    return (
+    """What the chat said when this request's own save was refused: a failed reply before the next request."""
+    replies = _Message.no_workspace_objects.filter(
+        conversation_id=message.conversation_id,
+        role=_Message.Role.ASSISTANT,
+        state=_Message.State.FAILED,
+        sequence__gt=message.sequence,
+    )
+    next_request = (
         _Message.no_workspace_objects.filter(
             conversation_id=message.conversation_id,
-            role=_Message.Role.ASSISTANT,
-            state=_Message.State.FAILED,
+            role=_Message.Role.USER,
             sequence__gt=message.sequence,
         )
         .order_by("sequence")
-        .values_list("content", flat=True)
+        .values_list("sequence", flat=True)
         .first()
     )
+    if next_request is not None:
+        replies = replies.filter(sequence__lt=next_request)
+    return replies.order_by("sequence").values_list("content", flat=True).first()
 
 
 def _outcome(

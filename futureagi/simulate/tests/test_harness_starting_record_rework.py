@@ -160,6 +160,8 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         # A proof made before the request is not a proof of the rework.
         ({}, {"starts_from": "rdr_priya", "stale": True}, "refused"),
         ({}, {"starts_from": "rdr_arjun"}, "refused"),
+        # A later, unrelated request whose turn fails never reaches back to this rework.
+        ({"later_failure": True}, {"starts_from": "rdr_priya"}, "proven"),
     ],
     ids=[
         "running",
@@ -169,6 +171,7 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         "proof fails",
         "unproven",
         "unchanged",
+        "later unrelated failure",
     ],
 )
 def test_the_served_state_follows_the_builder_s_turn(
@@ -184,7 +187,20 @@ def test_the_served_state_follows_the_builder_s_turn(
         )
         _land(environment, user, **landed, proved_at=made.isoformat())
     if turn is not None:
+        later_failure = turn.pop("later_failure", False)
         _turn_ends(environment, message, **turn)
+        if later_failure:
+            for offset, role, state in (
+                (10, Message.Role.USER, Message.State.COMPLETED),
+                (11, Message.Role.ASSISTANT, Message.State.FAILED),
+            ):
+                Message.no_workspace_objects.create(
+                    conversation_id=message.conversation_id,
+                    role=role,
+                    state=state,
+                    sequence=message.sequence + offset,
+                    content="another request",
+                )
 
     rework = auth_client.get(_url(environment)).json()["rework"]
 
