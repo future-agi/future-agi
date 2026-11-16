@@ -786,6 +786,8 @@ def test_an_unknown_choice_is_answered_in_the_form_s_labels(
         "'juggle' is not a choice. Pick one of: Only the actions each scenario gives them; "
         "Decide their own actions when reached; Both" in play.json()["message"]
     )
+    # On the play field itself, as kind and gender are: never the actor's id.
+    assert "colleague's play" not in play.json()["message"]
     assert "must be one of: Straight away; After a delay" in timing.json()["message"]
     for code in ("mocked", "immediate, delayed"):
         assert code not in play.json()["message"] + timing.json()["message"]
@@ -839,7 +841,7 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
         "actor_invalid",
     )
     assert (
-        "colleague's channel: 'smoke_signal' is not a choice. Pick one of: "
+        "'smoke_signal' is not a choice. Pick one of: "
         "Takes the phone; Heard nearby; Writes in the chat; Phone menu."
         in bad_channel.json()["message"]
     )
