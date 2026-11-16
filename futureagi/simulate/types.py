@@ -52,6 +52,21 @@ class WorkerSpan(TypedDict):
     tokens: NotRequired[int]
 
 
+class SealedWorkerEvent(TypedDict, total=False):
+    """One worker event the harness sealed on a tool-call row; `worker_id` names the runtime's agent, times are epoch."""
+
+    type: str
+    id: str
+    worker_id: str | None
+    by: str | None
+    parent_id: str
+    relationship: str
+    tool: str
+    at: float
+    ended_at: float | None
+    status: str
+
+
 class SealedToolCall(TypedDict, total=False):
     """One row of `provider_call_data.livekit.tool_calls` as the sandbox sealed it; times are epoch seconds."""
 
@@ -76,6 +91,7 @@ class SealedToolCall(TypedDict, total=False):
     task_id: str
     input_omitted: bool
     output_omitted: bool
+    worker_events: list[SealedWorkerEvent]
 
 
 class DeclaredWorker(TypedDict):

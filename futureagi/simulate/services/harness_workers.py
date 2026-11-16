@@ -13,13 +13,9 @@ from django.utils import timezone
 from simulate.models import CallExecution, CallTranscript, HostedHarnessJob
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallExecutionSnapshot
+from simulate.services.harness_worker_events import recorded_timeline
 from simulate.services.harness_worker_text import digest, utc_iso
-from simulate.services.harness_worker_timeline import (
-    HAND_OFF_TYPES,
-    bounded,
-    in_order,
-    worker_timeline,
-)
+from simulate.services.harness_worker_timeline import HAND_OFF_TYPES, bounded, in_order
 from simulate.services.run_traces_v3 import list_run_traces
 from simulate.services.scoring_status import locked_call_metadata_update
 from simulate.types import (
@@ -363,7 +359,10 @@ def record_call_workers(
     traced_calls = [
         one
         for one in sealed
-        if one.get("worker_id") or one.get("worker_label") or one.get("delegated_to")
+        if one.get("worker_id")
+        or one.get("worker_label")
+        or one.get("delegated_to")
+        or one.get("worker_events")
     ]
     job = HostedHarnessJob.no_workspace_objects.filter(
         test_execution=call.test_execution
@@ -407,7 +406,7 @@ def record_call_workers(
             spans = _begun_after(spans, since)
         if len(spans) > MAX_SPANS:
             spans, partial = spans[:MAX_SPANS], True
-    timeline = worker_timeline(
+    timeline = recorded_timeline(
         [_span_dict(one) for one in spans],
         declared,
         run_key=str(job.run_id) if job is not None else str(call.test_execution_id),

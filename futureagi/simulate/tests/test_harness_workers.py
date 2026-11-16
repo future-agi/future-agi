@@ -2974,3 +2974,52 @@ def test_a_hand_off_or_a_world_actor_s_action_is_not_one_of_the_call_s_tool_call
         {"name": "cancel", "kind": "world_actor_action"},
     ]
     assert tool_call_count(transcript, calls) == 2
+
+
+def test_a_call_sealed_with_worker_events_is_read_from_them_and_an_older_one_from_its_spans():
+    from simulate.services.harness_worker_events import recorded_timeline
+
+    row = {
+        "name": "refund",
+        "arguments": {"input": "refund order 1042"},
+        "result": "RF-8",
+        "ok": True,
+        "at": 1_763_000_000.0,
+        "ended_at": 1_763_000_004.0,
+        "worker_id": "Returns coordinator",
+        "delegated_to": "refund",
+    }
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "parent_id": "",
+        "relationship": "observed",
+        "tool": "refund",
+        "at": 1_763_000_000.0,
+    }
+    events = [
+        handed,
+        {**handed, "type": "returned", "at": 1_763_000_004.0, "status": "ok"},
+    ]
+
+    sealed = recorded_timeline(
+        SPANS, DECLARED, run_key=RUN, traced_calls=[{**row, "worker_events": events}]
+    )
+    older = recorded_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[row])
+
+    # The sealed events are the record: the spans' hand-offs and calls are not placed beside them.
+    assert [
+        (one["type"], one["worker_id"], one.get("delegation_id"))
+        for one in sealed["events"]
+    ] == [("delegated", "run-1/refund", "ev-1"), ("returned", "run-1/refund", "ev-1")]
+    assert sealed["coordinator"] == {"name": "Returns coordinator"}
+    observed = {one["id"] for one in sealed["workers"] if one["observed"]}
+    assert observed == {"refund"}
+    # A row sealed before worker events is still read with the call's spans.
+    assert {one["id"] for one in older["workers"] if one["observed"]} >= {
+        "order_lookup",
+        "refund",
+    }
+    assert any(one.get("tool") == "get_order" for one in older["events"])
