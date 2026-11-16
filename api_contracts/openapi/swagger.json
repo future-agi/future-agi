@@ -146236,7 +146236,7 @@
                 "area",
                 "count",
                 "reason",
-                "label"
+                "text"
             ],
             "type": "object",
             "properties": {
@@ -146268,8 +146268,8 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
-                "label": {
-                    "title": "Label",
+                "text": {
+                    "title": "Text",
                     "description": "What the run dialog shows for it.",
                     "type": "string",
                     "minLength": 1
@@ -146423,7 +146423,7 @@
                 },
                 "blocking_area": {
                     "title": "Blocking area",
-                    "description": "The first area, in report order, that reads blocked: what the run dialog names as holding cases back.",
+                    "description": "The area of the first row in held_by that holds selected cases back, never a worker: what the run dialog names as holding them; null when only workers hold them.",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

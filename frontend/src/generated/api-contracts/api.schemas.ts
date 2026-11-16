@@ -21108,7 +21108,7 @@ export interface HarnessCapabilityHeldByApi {
    * What the run dialog shows for it.
    * @minLength 1
    */
-  label: string;
+  text: string;
 }
 
 /**
@@ -21177,7 +21177,7 @@ export interface HarnessCapabilitySelectionCountsApi {
   /** Each blocked row, then each blocked worker, holding selected cases back, with how many. */
   held_by: HarnessCapabilityHeldByApi[];
   /**
-   * The first area, in report order, that reads blocked: what the run dialog names as holding cases back.
+   * The area of the first row in held_by that holds selected cases back, never a worker: what the run dialog names as holding them; null when only workers hold them.
    * @minLength 1
    */
   blocking_area: string;
