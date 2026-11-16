@@ -29,6 +29,18 @@ func TestRuntimeR5LegacyCheckInputPrecedence(t *testing.T) {
 			t.Fatal("selected view leaked into legacy or lost complete output")
 		}
 	}
+	// Without a separately owned selected view, selected inspection still uses
+	// the declared projection. Legacy checks alone prefer the carrier request.
+	rc.SelectedGuardrailRequest = nil
+	for _, withResponse := range []bool{false, true} {
+		selected := selectedCheckInput(rc, withResponse)
+		if selected.Request != rc.GuardrailRequest || !selected.InspectionOnly || inspectionPayload(rc, StagePre) != selected.Request {
+			t.Fatal("selected checker and completeness receipt disagree on projection")
+		}
+		if checkInput(rc, withResponse).Request != rc.Request {
+			t.Fatal("selected fallback changed legacy carrier precedence")
+		}
+	}
 	rc.Request = nil
 	if checkInput(rc, false).Request != rc.GuardrailRequest || checkInput(rc, false).InspectionOnly {
 		t.Fatal("native legacy fallback differs from dev")

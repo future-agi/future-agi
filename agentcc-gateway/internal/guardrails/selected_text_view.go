@@ -43,6 +43,10 @@ func selectedCheckInput(rc *models.RequestContext, withResponse bool) *CheckInpu
 	if rc.SelectedGuardrailRequest != nil {
 		input.Request = rc.SelectedGuardrailRequest
 		input.InspectionOnly = true
+	} else if rc.GuardrailRequest != nil {
+		// Match inspectionPayload's projection precedence, not the legacy
+		// carrier-first working view inherited from checkInput.
+		input.Request = rc.GuardrailRequest
 	}
 	if withResponse && rc.SelectedGuardrailResponse != nil {
 		input.Response = rc.SelectedGuardrailResponse
