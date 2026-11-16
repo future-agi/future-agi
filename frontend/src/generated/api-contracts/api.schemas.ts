@@ -21176,6 +21176,11 @@ export interface HarnessCapabilitySelectionCountsApi {
   lists: HarnessCapabilityCaseListsApi;
   /** Each blocked row, then each blocked worker, holding selected cases back, with how many. */
   held_by: HarnessCapabilityHeldByApi[];
+  /**
+   * The first area, in report order, that reads blocked: what the run dialog names as holding cases back.
+   * @minLength 1
+   */
+  blocking_area: string;
   dropped: HarnessCapabilityDroppedCaseApi[];
   grading: HarnessCapabilityGradingApi;
   /** Every selected case's needs were read from its stored documents. */

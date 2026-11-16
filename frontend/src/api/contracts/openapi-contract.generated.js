@@ -106844,6 +106844,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "untested",
         "lists",
         "held_by",
+        "blocking_area",
         "dropped",
         "grading",
         "requirements_recorded",
@@ -106897,6 +106898,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessCapabilityHeldBy",
           },
+        },
+        blocking_area: {
+          title: "Blocking area",
+          description:
+            "The first area, in report order, that reads blocked: what the run dialog names as holding cases back.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
         dropped: {
           type: "array",
