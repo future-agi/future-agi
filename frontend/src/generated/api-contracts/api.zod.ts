@@ -41222,8 +41222,6 @@ export const simulateApiHarnessEnvironmentsValidateActorBodyChangesFallbackMax =
 
 export const simulateApiHarnessEnvironmentsValidateActorBodyChangesModelMax = 200;
 
-export const simulateApiHarnessEnvironmentsValidateActorBodyIdMax = 64;
-
 export const simulateApiHarnessEnvironmentsValidateActorBodyShareActionsItemMax = 200;
 
 export const simulateApiHarnessEnvironmentsValidateActorBodyShareActionsMax = 100;
@@ -41428,11 +41426,7 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
       max_lines: zod.number().min(1).optional(),
     })
     .optional(),
-  id: zod
-    .string()
-    .min(1)
-    .max(simulateApiHarnessEnvironmentsValidateActorBodyIdMax)
-    .optional(),
+  id: zod.string().min(1).optional(),
   share_actions: zod
     .array(
       zod
@@ -48089,9 +48083,9 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
       .object({
         id: zod.string().uuid().describe("The builder request's id."),
         state: zod
-          .enum(["pending", "proven", "refused"])
+          .enum(["pending", "waiting", "proven", "refused"])
           .describe(
-            "pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
+            "pending: the builder is working on it. waiting: the builder asks the person to confirm its change in its chat (confirm_message_id). proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
           ),
         table: zod.string().min(1),
         key_field: zod.string().min(1),
@@ -48101,6 +48095,22 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
           .min(1)
           .describe("Why it was refused, in words to show."),
         requested_at: zod.string().datetime({ offset: true }),
+        confirm_message_id: zod
+          .string()
+          .uuid()
+          .describe(
+            "While waiting: the builder chat's message asking the person to confirm; null otherwise.",
+          ),
+        builder_reply: zod
+          .string()
+          .min(1)
+          .describe(
+            "On a refusal the builder explained: its reply as written, in Markdown; null otherwise.",
+          ),
+        reply_message_id: zod
+          .string()
+          .uuid()
+          .describe("The builder chat's message holding that reply."),
       })
       .describe(
         "The latest request to start this scenario from another record, or null if none was made.",

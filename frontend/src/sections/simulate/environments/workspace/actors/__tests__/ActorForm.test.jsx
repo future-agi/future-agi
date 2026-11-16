@@ -196,6 +196,29 @@ describe("ActorForm", () => {
     ).toBeDisabled();
   });
 
+  it("shows a too-long id's problem on the Id field, as the check answers it", () => {
+    verdict = {
+      problems: [
+        { field: "id", message: "This must be at most 64 characters." },
+      ],
+      conflicts: [],
+      suggested_id: null,
+      over_by: 0,
+    };
+    renderForm(newActor("world"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Raman" },
+    });
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "a".repeat(70) },
+    });
+
+    expect(screen.getByLabelText("Id")).toHaveAccessibleDescription(
+      "This must be at most 64 characters.",
+    );
+    expect(screen.queryByText(/Couldn't check this change/)).toBeNull();
+  });
+
   it("says Discard keeps an uploaded document in the draft", () => {
     verdict = CLEAN;
     renderForm(typedActor({ id: "ops", name: "Ops" }));

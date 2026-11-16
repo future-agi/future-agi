@@ -25,6 +25,20 @@ describe("OpenAPI runtime contract", () => {
     expect(run("79020650596891030661")).toMatchObject({ ok: false });
   });
 
+  it("sends an actor check whatever id was typed, so the check itself says what is wrong with it", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "Priya Raman" },
+          id: "a".repeat(70),
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
     const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
     expect(

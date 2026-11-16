@@ -12,6 +12,7 @@ import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
+import { subscribeBuilderChatFocus } from "./builderChatFocusBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
 const INITIAL = { draft: "", scaffolds: [] };
@@ -25,7 +26,10 @@ function composerReducer(state, action) {
         ? state
         : { ...state, scaffolds: [...state.scaffolds, action.text] };
     case "unscaffold":
-      return { ...state, scaffolds: state.scaffolds.filter((_, i) => i !== action.index) };
+      return {
+        ...state,
+        scaffolds: state.scaffolds.filter((_, i) => i !== action.index),
+      };
     case "clear":
       return INITIAL;
     default:
@@ -97,7 +101,25 @@ export default function BuilderConsole({
   const [seenMessages, setSeenMessages] = useState(messageCount);
 
   useEffect(
-    () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
+    () =>
+      subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
+    [],
+  );
+  // Asked to show one of its messages: scroll the list to it and stop following the latest.
+  useEffect(
+    () =>
+      subscribeBuilderChatFocus((messageId) => {
+        const list = listRef.current;
+        const target = list?.querySelector(
+          `[data-message-id="${CSS.escape(messageId)}"]`,
+        );
+        if (!list || !target) return;
+        setFollowing(false);
+        list.scrollTo?.({
+          top: target.offsetTop - list.offsetTop,
+          behavior: "smooth",
+        });
+      }),
     [],
   );
 
@@ -119,7 +141,8 @@ export default function BuilderConsole({
   // paint already follows.
   const [prev, setPrev] = useState({ running, active });
   if (prev.running !== running || prev.active !== active) {
-    if ((running && !prev.running) || (active && !prev.active)) setFollowing(true);
+    if ((running && !prev.running) || (active && !prev.active))
+      setFollowing(true);
     setPrev({ running, active });
   }
 
@@ -129,7 +152,10 @@ export default function BuilderConsole({
     const { scrollTop, scrollHeight, clientHeight } = list;
     if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
       setFollowing(true);
-    } else if (scrollTop < lastScrollRef.current.top && scrollHeight === lastScrollRef.current.height) {
+    } else if (
+      scrollTop < lastScrollRef.current.top &&
+      scrollHeight === lastScrollRef.current.height
+    ) {
       // Only moving up counts as leaving: a big event can land mid smooth scroll
       // and put the list far from the bottom without the user doing anything. A
       // changed height means text rewrapped and moved the list, not the user.
@@ -158,7 +184,9 @@ export default function BuilderConsole({
   const send = () => {
     const text = draft.trim();
     const scaffoldText = scaffolds.join(". ");
-    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    const combined = [scaffoldText, text]
+      .filter(Boolean)
+      .join(scaffoldText && text ? ". " : "");
     if (!combined || blocked) return;
     dispatch({ type: "clear" });
     onSend?.(combined);
@@ -168,15 +196,27 @@ export default function BuilderConsole({
     <Stack sx={{ height: "100%", minWidth: 0 }}>
       {/* Same height as the workspace tab rail, so the two headers line up. */}
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         sx={{
-          flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
-          borderBottom: "1px solid", borderColor: "divider",
+          flexShrink: 0,
+          pl: 2,
+          pr: 1,
+          height: ENV_TAB_RAIL_HEIGHT,
+          boxSizing: "content-box",
+          borderBottom: "1px solid",
+          borderColor: "divider",
         }}
       >
         <Box
           sx={{
-            width: 24, height: 24, borderRadius: "4px", display: "grid", placeItems: "center", flexShrink: 0,
+            width: 24,
+            height: 24,
+            borderRadius: "4px",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
             bgcolor: "action.selected",
             color: "text.secondary",
           }}
@@ -184,7 +224,11 @@ export default function BuilderConsole({
           <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography role="status" noWrap sx={{ typography: "s1", color: "text.secondary" }}>
+          <Typography
+            role="status"
+            noWrap
+            sx={{ typography: "s1", color: "text.secondary" }}
+          >
             {frozen
               ? reason
               : stopping
@@ -197,7 +241,12 @@ export default function BuilderConsole({
         {onCollapse && (
           // Only while open, so the tooltip can't linger over the right pane
           // after a click hides the console.
-          <CustomTooltip show={active} size="small" arrow title={CONSOLE_COPY.collapse}>
+          <CustomTooltip
+            show={active}
+            size="small"
+            arrow
+            title={CONSOLE_COPY.collapse}
+          >
             <IconButton
               ref={collapseRef}
               aria-label={CONSOLE_COPY.collapse}
@@ -218,21 +267,39 @@ export default function BuilderConsole({
         ref={listRef}
         data-testid="builder-console-list"
         onScroll={handleScroll}
-        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 3, py: 3 }}
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: "auto",
+          overflowWrap: "anywhere",
+          px: 3,
+          py: 3,
+        }}
       >
         <Stack spacing={3}>
           {(turns || []).length === 0 && !busy ? (
             <Stack alignItems="center" spacing={1} sx={{ py: 6, opacity: 0.7 }}>
               <Box
                 sx={{
-                  width: 36, height: 36, borderRadius: "50%", display: "grid", placeItems: "center",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
                   bgcolor: "action.selected",
                   color: "text.secondary",
                 }}
               >
                 <Iconify icon="solar:chat-round-line-linear" width={17} />
               </Box>
-              <Typography sx={{ typography: "s1", color: "text.secondary", textAlign: "center", maxWidth: 320 }}>
+              <Typography
+                sx={{
+                  typography: "s1",
+                  color: "text.secondary",
+                  textAlign: "center",
+                  maxWidth: 320,
+                }}
+              >
                 {CONSOLE_COPY.empty}
               </Typography>
             </Stack>
@@ -246,7 +313,10 @@ export default function BuilderConsole({
         {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
       </Box>
       {!following && (hasNewMessage || busy) && (
-        <JumpToLatestBar hasNewMessage={hasNewMessage} onClick={() => setFollowing(true)} />
+        <JumpToLatestBar
+          hasNewMessage={hasNewMessage}
+          onClick={() => setFollowing(true)}
+        />
       )}
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
@@ -256,7 +326,9 @@ export default function BuilderConsole({
       <Box sx={{ px: 3, pb: 3, pt: 1 }}>
         <Box
           sx={{
-            p: 1.5, borderRadius: "8px", border: "1px solid",
+            p: 1.5,
+            borderRadius: "8px",
+            border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
             transition: "border-color 0.15s ease",
@@ -264,22 +336,40 @@ export default function BuilderConsole({
           }}
         >
           {scaffolds.length > 0 && (
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
+            >
               {scaffolds.map((s, i) => (
                 <Stack
                   key={`${s}-${i}`}
-                  direction="row" alignItems="center" spacing={0.5}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
                   sx={{
-                    pl: 1, pr: 0.5, py: 0.25, borderRadius: "4px",
+                    pl: 1,
+                    pr: 0.5,
+                    py: 0.25,
+                    borderRadius: "4px",
                     bgcolor: "action.selected",
                     maxWidth: "100%",
                   }}
                 >
-                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                  <Iconify
+                    icon="solar:magic-stick-3-linear"
+                    width={12}
+                    sx={{ color: "text.secondary", flexShrink: 0 }}
+                  />
                   <Typography
                     sx={{
-                      typography: "s3", fontWeight: 500, color: "text.secondary",
-                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      typography: "s3",
+                      fontWeight: 500,
+                      color: "text.secondary",
+                      maxWidth: 260,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     {s}
@@ -290,7 +380,11 @@ export default function BuilderConsole({
                     onClick={() => dispatch({ type: "unscaffold", index: i })}
                     sx={{ p: 0, ml: 0.25 }}
                   >
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: "text.disabled" }} />
+                    <Iconify
+                      icon="solar:close-circle-linear"
+                      width={13}
+                      sx={{ color: "text.disabled" }}
+                    />
                   </IconButton>
                 </Stack>
               ))}
@@ -308,13 +402,24 @@ export default function BuilderConsole({
             disabled={blocked}
             onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
             }}
-            InputProps={{ disableUnderline: true, sx: { typography: "m3", px: 0.5, py: 0.5 } }}
+            InputProps={{
+              disableUnderline: true,
+              sx: { typography: "m3", px: 0.5, py: 0.5 },
+            }}
           />
 
           {/* Row 2: toolbar — flex-spacer · stop · send. */}
-          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.25}
+            sx={{ mt: 0.5, pl: 0.25 }}
+          >
             {/* Voice input disabled for now: the Web Speech API is blocked in
                 Brave, so it only works in Chrome/Edge/Safari. Re-enable once a
                 server-side transcription endpoint (record -> /audio/transcriptions)
@@ -334,7 +439,8 @@ export default function BuilderConsole({
                   size="small"
                   sx={{
                     color: "text.secondary",
-                    border: "1px solid", borderColor: busy ? "transparent" : "divider",
+                    border: "1px solid",
+                    borderColor: busy ? "transparent" : "divider",
                   }}
                 >
                   <Iconify icon="solar:stop-bold" width={13} />
@@ -348,9 +454,16 @@ export default function BuilderConsole({
                 size="small"
                 sx={{
                   bgcolor: hasContent && !blocked ? "primary.main" : undefined,
-                  color: hasContent && !blocked ? "primary.contrastText" : undefined,
-                  "&:hover": { bgcolor: hasContent && !blocked ? "primary.dark" : undefined },
-                  "&.Mui-disabled": { bgcolor: "action.selected", color: "text.disabled" },
+                  color:
+                    hasContent && !blocked ? "primary.contrastText" : undefined,
+                  "&:hover": {
+                    bgcolor:
+                      hasContent && !blocked ? "primary.dark" : undefined,
+                  },
+                  "&.Mui-disabled": {
+                    bgcolor: "action.selected",
+                    color: "text.disabled",
+                  },
                 }}
               >
                 <Iconify icon="solar:arrow-up-bold" width={15} />
@@ -377,6 +490,9 @@ BuilderConsole.propTypes = {
   frozenReason: PropTypes.string,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.
-  collapseRef: PropTypes.oneOfType([PropTypes.func, PropTypes.shape({ current: PropTypes.any })]),
+  collapseRef: PropTypes.oneOfType([
+    PropTypes.func,
+    PropTypes.shape({ current: PropTypes.any }),
+  ]),
   active: PropTypes.bool,
 };

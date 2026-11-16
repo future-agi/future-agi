@@ -131,8 +131,44 @@ def _not_saved(message: HostedHarnessConversationMessage) -> str | None:
     return replies.order_by("sequence").values_list("content", flat=True).first()
 
 
-def _reply(message: HostedHarnessConversationMessage) -> str | None:
-    """What the builder said in answer to this request: its last reply before the next request."""
+def _asking(message: HostedHarnessConversationMessage) -> str | None:
+    """The builder's open question or confirmation on this request's turn, which waits for the person: its message
+    id; None when the chat is not waiting on this request."""
+    conversation = HostedHarnessConversation.no_workspace_objects.filter(
+        id=message.conversation_id,
+        state=HostedHarnessConversation.State.WAITING_FOR_USER,
+    ).first()
+    asked = (
+        str((conversation.blocking_input or {}).get("message_id") or "")
+        if conversation
+        else ""
+    )
+    if not asked:
+        return None
+    later = _Message.no_workspace_objects.filter(
+        conversation_id=message.conversation_id,
+        role=_Message.Role.USER,
+        sequence__gt=message.sequence,
+    )
+    asked_at = (
+        _Message.no_workspace_objects.filter(
+            id=asked, conversation_id=message.conversation_id
+        )
+        .values_list("sequence", flat=True)
+        .first()
+    )
+    if asked_at is None or asked_at < message.sequence:
+        return None
+    # Asked on a later request's turn: that request's, not this one's.
+    if later.filter(sequence__lt=asked_at).exclude(reply_to__isnull=False).exists():
+        return None
+    return asked
+
+
+def _reply(
+    message: HostedHarnessConversationMessage,
+) -> HostedHarnessConversationMessage | None:
+    """The builder's answer to this request: its last reply before the next request."""
     replies = _Message.no_workspace_objects.filter(
         conversation_id=message.conversation_id,
         role=_Message.Role.ASSISTANT,
@@ -151,8 +187,8 @@ def _reply(message: HostedHarnessConversationMessage) -> str | None:
     )
     if next_request is not None:
         replies = replies.filter(sequence__lt=next_request)
-    said = replies.order_by("-sequence").values_list("content", flat=True).first()
-    return str(said).strip() or None if said else None
+    said = replies.order_by("-sequence").first()
+    return said if said is not None and str(said.content or "").strip() else None
 
 
 def _same(value: JsonValue, seeded: JsonValue) -> bool:
@@ -258,8 +294,14 @@ def _outcome(
         for one in records
     )
     if not starts:
-        return "refused", _reply(message) or (
-            "The builder's change did not start the scenario from that record."
+        if _reply(message) is not None:
+            return (
+                "refused",
+                f"The builder says this scenario can't start from {wanted['table']} {wanted['key']} as seeded.",
+            )
+        return (
+            "refused",
+            "The builder's change did not start the scenario from that record.",
         )
     invented = _not_as_seeded(files, records, wanted)
     if invented:
@@ -275,7 +317,10 @@ def _request(
     records: list[StartingRecord],
 ) -> ReworkRequest:
     record = message.payload["_record"]
-    state, reason = _outcome(message, files, records)
+    asking = _asking(message)
+    state, reason = ("waiting", None) if asking else _outcome(message, files, records)
+    # A refusal the builder explained keeps its own words, to show in full beside the short reason.
+    answer = _reply(message) if state == "refused" else None
     return ReworkRequest(
         id=str(message.id),
         state=state,
@@ -284,6 +329,9 @@ def _request(
         key=str(record["key"]),
         reason=reason,
         requested_at=message.created_at.isoformat(),
+        confirm_message_id=asking,
+        builder_reply=str(answer.content) if answer is not None else None,
+        reply_message_id=str(answer.id) if answer is not None else None,
     )
 
 
@@ -311,9 +359,18 @@ def latest_rework(
     return _request(message, files, records) if message is not None else None
 
 
+def _current_document(environment: HostedHarnessJob, scenario_key: str) -> object:
+    """The scenario as its unsaved changes, else its saved version, hold it now; None when it has none."""
+    try:
+        return scenario_files(environment, scenario_key).document
+    except HostedHarnessError:
+        return None
+
+
 def refuse_invented(environment: HostedHarnessJob, archive: bytes) -> None:
     """Refuse a builder's save that starts a scenario from a record it was asked to, with facts about that record
-    that are not the record as seeded. Checked on every save, so an invented record never reaches the scenario."""
+    that are not the record as seeded. Checked on every save, for the scenarios it changes, so an invented record never
+    reaches the scenario and a mismatch made outside the builder never holds up another scenario's save."""
     latest: dict[str, HostedHarnessConversationMessage] = {}
     for message in _Message.no_workspace_objects.filter(
         conversation__job=environment,
@@ -323,7 +380,9 @@ def refuse_invented(environment: HostedHarnessJob, archive: bytes) -> None:
         latest[str(message.payload.get("_scenario_key") or "")] = message
     for scenario_key, message in latest.items():
         files = archive_scenario_files(archive, scenario_key) if scenario_key else None
-        if files is None:
+        if files is None or files.document == _current_document(
+            environment, scenario_key
+        ):
             continue
         why = _not_as_seeded(
             files, scenario_records(files)[0], message.payload["_record"]

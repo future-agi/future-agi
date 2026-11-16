@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -10,6 +11,8 @@ import {
   seededValueText,
 } from "./startingRecordsUtils";
 import StartingRecordRework from "./StartingRecordRework";
+import { focusBuilderChat } from "../../buildEnvironment/console/builderChatFocusBus";
+import ChatMarkdown from "../../buildEnvironment/console/ChatMarkdown";
 
 /** The scenario editor's starting records: the seeded rows its facts name, as the server reads them, and the request
  * to the builder to start the scenario from another one. */
@@ -91,7 +94,7 @@ export default function StartingRecords({ envId, scenarioKey }) {
           envId={envId}
           scenarioKey={scenarioKey}
           record={record}
-          disabled={data.rework?.state === "pending"}
+          disabled={["pending", "waiting"].includes(data.rework?.state)}
         />
       </Stack>
     ));
@@ -125,6 +128,22 @@ export default function StartingRecords({ envId, scenarioKey }) {
           {reworkLine(data.rework)}
         </Typography>
       )}
+      {data?.rework?.builder_reply && (
+        <BuilderReply
+          text={data.rework.builder_reply}
+          messageId={data.rework.reply_message_id}
+        />
+      )}
+      {data?.rework?.state === "waiting" && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => focusBuilderChat(data.rework.confirm_message_id)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          {COPY.openChat}
+        </Button>
+      )}
       {body()}
       {data?.setup_note && (
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -139,4 +158,40 @@ StartingRecords.propTypes = {
   envId: PropTypes.string.isRequired,
   // The scenario's key, as the server names it.
   scenarioKey: PropTypes.string.isRequired,
+};
+
+/** The builder's own reply to a refused request, as it wrote it, shown on asking, with a way to its chat message. */
+function BuilderReply({ text, messageId }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Stack spacing={1} sx={{ alignItems: "flex-start" }}>
+      <Button
+        size="small"
+        color="inherit"
+        onClick={() => setOpen((shown) => !shown)}
+      >
+        {COPY.showReply}
+      </Button>
+      <Collapse in={open} sx={{ width: "100%" }}>
+        <Stack spacing={1}>
+          <ChatMarkdown text={text} />
+          {messageId && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => focusBuilderChat(messageId)}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              {COPY.openReply}
+            </Button>
+          )}
+        </Stack>
+      </Collapse>
+    </Stack>
+  );
+}
+
+BuilderReply.propTypes = {
+  text: PropTypes.string.isRequired,
+  messageId: PropTypes.string,
 };

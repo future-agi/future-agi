@@ -64,13 +64,18 @@ class ReworkRequest(TypedDict):
     """The latest request to the builder to start a scenario from another record, as its turn left it."""
 
     id: str
-    state: Literal["pending", "proven", "refused"]
+    state: Literal["pending", "waiting", "proven", "refused"]
     table: str
     key_field: str
     key: str
     # Why it was refused, in words to show; null otherwise.
     reason: str | None
     requested_at: str
+    # The builder chat's message asking the person to confirm the change, while `waiting`; null otherwise.
+    confirm_message_id: str | None
+    # On a refusal the builder explained: its reply as written (Markdown), and that chat message's id.
+    builder_reply: str | None
+    reply_message_id: str | None
 
 
 class RowsUnavailable(TypedDict):

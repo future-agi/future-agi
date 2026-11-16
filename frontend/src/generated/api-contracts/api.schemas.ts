@@ -20539,10 +20539,7 @@ export interface HarnessActorValidateApi {
    */
   actor_id?: string;
   changes?: HarnessActorChangesApi;
-  /**
-   * @minLength 1
-   * @maxLength 64
-   */
+  /** @minLength 1 */
   id?: string;
   /** @maxItems 100 */
   share_actions?: string[];
@@ -22030,13 +22027,14 @@ export interface HarnessRowsUnavailableApi {
 }
 
 /**
- * pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.
+ * pending: the builder is working on it. waiting: the builder asks the person to confirm its change in its chat (confirm_message_id). proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.
  */
 export type HarnessStartingRecordReworkApiState =
   (typeof HarnessStartingRecordReworkApiState)[keyof typeof HarnessStartingRecordReworkApiState];
 
 export const HarnessStartingRecordReworkApiState = {
   pending: "pending",
+  waiting: "waiting",
   proven: "proven",
   refused: "refused",
 } as const;
@@ -22047,7 +22045,7 @@ export const HarnessStartingRecordReworkApiState = {
 export interface HarnessStartingRecordReworkApi {
   /** The builder request's id. */
   id: string;
-  /** pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why. */
+  /** pending: the builder is working on it. waiting: the builder asks the person to confirm its change in its chat (confirm_message_id). proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why. */
   state: HarnessStartingRecordReworkApiState;
   /** @minLength 1 */
   table: string;
@@ -22061,6 +22059,15 @@ export interface HarnessStartingRecordReworkApi {
    */
   reason: string;
   requested_at: string;
+  /** While waiting: the builder chat's message asking the person to confirm; null otherwise. */
+  confirm_message_id: string;
+  /**
+   * On a refusal the builder explained: its reply as written, in Markdown; null otherwise.
+   * @minLength 1
+   */
+  builder_reply: string;
+  /** The builder chat's message holding that reply. */
+  reply_message_id: string;
 }
 
 export interface HarnessStartingRecordsApi {

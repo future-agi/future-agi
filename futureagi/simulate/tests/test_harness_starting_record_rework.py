@@ -178,7 +178,9 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         ({}, {"starts_from": "rdr_priya", "first_name": "Priyanka"}, "refused"),
         # The builder found the scenario cannot hold with that record and changed nothing: its reason is served.
         (
-            {"reply": "rdr_priya has no completed rides, so the refund can't apply."},
+            {
+                "reply": "### Ruling value\n- **`completed_rides: 0`**: the refund can't apply."
+            },
             None,
             "refused",
         ),
@@ -244,7 +246,12 @@ def test_the_served_state_follows_the_builder_s_turn(
             == "first_name is Priyanka in the scenario, but users rdr_priya is seeded with Priya."
         )
     if reply is not None:
-        assert rework["reason"] == reply
+        # The line is a short sentence of the server's own; the builder's words come whole, to show apart.
+        assert (
+            rework["reason"]
+            == "The builder says this scenario can't start from users rdr_priya as seeded."
+        )
+        assert rework["builder_reply"] == reply and rework["reply_message_id"]
 
 
 def test_a_second_request_waits_for_the_first(user, workspace, storage, auth_client):
@@ -350,3 +357,78 @@ def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario
     environment.refresh_from_db()
     # Neither the saved scenario nor its unsaved changes hold the invented record: a run reads the original.
     assert scenario_files(environment, KEY).document["fixture"] == FIXTURE
+
+
+def test_a_save_that_leaves_a_scenario_as_it_is_is_never_held_up_by_its_record(
+    user, workspace, storage, auth_client
+):
+    # A mismatch made outside the builder (here, the scenario saved with an invented name) never refuses a builder
+    # save that does not change that scenario.
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.harness_starting_records import scenario_files
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    environment = _rides(user, workspace, storage, "rework-unrelated")
+    assert _rework(auth_client, environment).status_code == 202
+    _author(
+        environment,
+        user,
+        fixture={
+            **FIXTURE,
+            "identity": {"rider_id": "rdr_priya", "first_name": "Priyanka"},
+        },
+    )
+    document = scenario_files(environment, KEY).document
+    unchanged = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(STORE),
+        },
+    )
+
+    refuse_invented(environment, unchanged)
+
+
+def test_a_rework_waiting_on_the_person_says_so_with_the_chat_message_that_asks(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessConversation
+
+    environment = _rides(user, workspace, storage, "rework-waiting")
+    assert _rework(auth_client, environment).status_code == 202
+    message = _requests(environment).get()
+    Message.no_workspace_objects.filter(id=message.id).update(
+        state=Message.State.DELIVERED
+    )
+    asked = Message.no_workspace_objects.create(
+        conversation_id=message.conversation_id,
+        role=Message.Role.ASSISTANT,
+        kind=Message.Kind.CONFIRMATION,
+        state=Message.State.COMPLETED,
+        sequence=message.sequence + 3,
+        content="Confirm this change: edit_scenario",
+    )
+    HostedHarnessConversation.no_workspace_objects.filter(
+        id=message.conversation_id
+    ).update(
+        state=HostedHarnessConversation.State.WAITING_FOR_USER,
+        blocking_input={"message_id": str(asked.id), "kind": "confirmation_requested"},
+    )
+
+    waiting = auth_client.get(_url(environment)).json()["rework"]
+    assert (waiting["state"], waiting["confirm_message_id"]) == (
+        "waiting",
+        str(asked.id),
+    )
+
+    # Answered, the builder works on: no longer waiting on the person.
+    HostedHarnessConversation.no_workspace_objects.filter(
+        id=message.conversation_id
+    ).update(state=HostedHarnessConversation.State.RESPONDING, blocking_input=None)
+    working = auth_client.get(_url(environment)).json()["rework"]
+    assert (working["state"], working["confirm_message_id"]) == ("pending", None)

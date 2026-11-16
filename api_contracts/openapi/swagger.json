@@ -144785,7 +144785,6 @@
                 "id": {
                     "title": "Id",
                     "type": "string",
-                    "maxLength": 64,
                     "minLength": 1
                 },
                 "share_actions": {
@@ -148250,7 +148249,10 @@
                 "key_field",
                 "key",
                 "reason",
-                "requested_at"
+                "requested_at",
+                "confirm_message_id",
+                "builder_reply",
+                "reply_message_id"
             ],
             "type": "object",
             "properties": {
@@ -148262,10 +148264,11 @@
                 },
                 "state": {
                     "title": "State",
-                    "description": "pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
+                    "description": "pending: the builder is working on it. waiting: the builder asks the person to confirm its change in its chat (confirm_message_id). proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
                     "type": "string",
                     "enum": [
                         "pending",
+                        "waiting",
                         "proven",
                         "refused"
                     ]
@@ -148296,6 +148299,27 @@
                     "title": "Requested at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "confirm_message_id": {
+                    "title": "Confirm message id",
+                    "description": "While waiting: the builder chat's message asking the person to confirm; null otherwise.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "builder_reply": {
+                    "title": "Builder reply",
+                    "description": "On a refusal the builder explained: its reply as written, in Markdown; null otherwise.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_message_id": {
+                    "title": "Reply message id",
+                    "description": "The builder chat's message holding that reply.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             },
             "x-nullable": true

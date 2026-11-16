@@ -52,10 +52,11 @@ class HarnessStartingRecordSerializer(serializers.Serializer):
 class HarnessStartingRecordReworkSerializer(serializers.Serializer):
     id = serializers.UUIDField(help_text="The builder request's id.")
     state = serializers.ChoiceField(
-        choices=("pending", "proven", "refused"),
+        choices=("pending", "waiting", "proven", "refused"),
         help_text=(
-            "pending: the builder is working on it. proven: the scenario now starts from the record and its proof "
-            "holds, in the unsaved changes. refused: it did not, and reason says why."
+            "pending: the builder is working on it. waiting: the builder asks the person to confirm its change in "
+            "its chat (confirm_message_id). proven: the scenario now starts from the record and its proof holds, in "
+            "the unsaved changes. refused: it did not, and reason says why."
         ),
     )
     table = serializers.CharField()
@@ -65,6 +66,17 @@ class HarnessStartingRecordReworkSerializer(serializers.Serializer):
         allow_null=True, help_text="Why it was refused, in words to show."
     )
     requested_at = serializers.DateTimeField()
+    confirm_message_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="While waiting: the builder chat's message asking the person to confirm; null otherwise.",
+    )
+    builder_reply = serializers.CharField(
+        allow_null=True,
+        help_text="On a refusal the builder explained: its reply as written, in Markdown; null otherwise.",
+    )
+    reply_message_id = serializers.UUIDField(
+        allow_null=True, help_text="The builder chat's message holding that reply."
+    )
 
 
 class HarnessRowsUnavailableSerializer(serializers.Serializer):

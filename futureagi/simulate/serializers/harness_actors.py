@@ -28,6 +28,10 @@ TRIGGER_KINDS = (
 )
 
 
+# The longest actor id the cast takes.
+ACTOR_ID_MAX_CHARS = 64
+
+
 class HarnessActorRecordField(JsonObjectRequestField):
     """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
 
@@ -450,12 +454,21 @@ class HarnessActorValidateSerializer(serializers.Serializer):
     actor_id = serializers.CharField(required=False, max_length=64)
     # The patch a create or replace would send; a removal sends none.
     changes = HarnessActorChangesSerializer(required=False)
-    # On a create only; left out, the id the server would make from the name is checked.
-    id = serializers.CharField(required=False, max_length=64)
+    # On a create only; left out, the id the server would make from the name is checked. Its length is judged by the
+    # check itself, never refused before it is sent: judging it is what the check is for.
+    id = serializers.CharField(required=False)
     # Actions already confirmed as shared; every other conflicting action is listed.
     share_actions = serializers.ListField(
         child=serializers.CharField(max_length=200), required=False, max_length=100
     )
+
+    def validate_id(self, value: str) -> str:
+        if len(value) > ACTOR_ID_MAX_CHARS:
+            raise serializers.ValidationError(
+                f"This must be at most {ACTOR_ID_MAX_CHARS} characters.",
+                code="id_too_long",
+            )
+        return value
 
     def validate(self, attrs):
         op = attrs["op"]

@@ -12,6 +12,9 @@ export const STARTING_RECORDS_COPY = {
   cancel: "Cancel",
   noChoices: "The world seeds no other row of this table.",
   askFailed: "Couldn't send the request. Try again.",
+  openChat: "Open the builder chat",
+  showReply: "The builder's reply",
+  openReply: "Open in the builder chat",
 };
 
 // A seeded value in one line: a list or object as its JSON.
@@ -25,6 +28,8 @@ export const reworkLine = (rework) => {
   const record = `${rework.table} ${rework.key_field} ${rework.key}`;
   if (rework.state === "pending")
     return `The builder is reworking this scenario to start from ${record}.`;
+  if (rework.state === "waiting")
+    return `The builder needs you to confirm its change to start from ${record}, in its chat.`;
   if (rework.state === "proven")
     return `Reworked to start from ${record} and proven. It's in your unsaved changes.`;
   return `Not reworked to start from ${record}: ${rework.reason}`;

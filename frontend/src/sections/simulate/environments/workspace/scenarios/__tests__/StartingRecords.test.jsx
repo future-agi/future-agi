@@ -10,6 +10,9 @@ vi.mock("src/api/simulate-environments/startingRecords", () => ({
 }));
 
 const { default: StartingRecords } = await import("../StartingRecords");
+const { subscribeBuilderChatFocus } = await import(
+  "../../../buildEnvironment/console/builderChatFocusBus"
+);
 
 const RIDER = {
   path: ["identity", "rider_id"],
@@ -172,6 +175,37 @@ describe("StartingRecords", () => {
     ).toBeDisabled();
   });
 
+  it("says the builder is waiting on the person, and opens its chat at the message that asks", () => {
+    const focused = [];
+    const stop = subscribeBuilderChatFocus((id) => focused.push(id));
+    reads({
+      ...RECORDS,
+      rework: {
+        id: "m1",
+        state: "waiting",
+        table: "users",
+        key_field: "rider_id",
+        key: "rdr_priya",
+        reason: null,
+        requested_at: "2026-11-16T10:00:00Z",
+        confirm_message_id: "ask-1",
+      },
+    });
+    open();
+
+    expect(screen.getByTestId("starting-records-rework")).toHaveTextContent(
+      "needs you to confirm",
+    );
+    expect(
+      screen.getByRole("button", { name: "Start from another record" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open the builder chat" }),
+    );
+    stop();
+    expect(focused).toEqual(["ask-1"]);
+  });
+
   it("shows a refused request's reason in the server's words", () => {
     reads({
       ...RECORDS,
@@ -190,6 +224,43 @@ describe("StartingRecords", () => {
     expect(screen.getByTestId("starting-records-rework")).toHaveTextContent(
       "The server's reason.",
     );
+  });
+
+  it("keeps a builder's refusal to the server's plain line, its own reply rendered on asking, with a way to it", () => {
+    const focused = [];
+    const stop = subscribeBuilderChatFocus((id) => focused.push(id));
+    reads({
+      ...RECORDS,
+      rework: {
+        id: "m1",
+        state: "refused",
+        table: "orders",
+        key_field: "order_id",
+        key: "1044",
+        reason:
+          "The builder says this scenario can't start from orders 1044 as seeded.",
+        requested_at: "2026-11-16T10:00:00Z",
+        confirm_message_id: null,
+        builder_reply: "### Ruling value\n- **`days_since_delivery: 41`**",
+        reply_message_id: "reply-1",
+      },
+    });
+    open();
+
+    const line = screen.getByTestId("starting-records-rework");
+    expect(line).toHaveTextContent(
+      "The builder says this scenario can't start from orders 1044 as seeded.",
+    );
+    expect(line).not.toHaveTextContent("**");
+    fireEvent.click(
+      screen.getByRole("button", { name: "The builder's reply" }),
+    );
+    expect(screen.getByRole("heading", { name: "Ruling value" })).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open in the builder chat" }),
+    );
+    stop();
+    expect(focused).toEqual(["reply-1"]);
   });
 
   it("shows the server's problem with a choice under the picker", () => {

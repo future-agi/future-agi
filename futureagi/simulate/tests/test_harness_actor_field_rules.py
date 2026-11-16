@@ -172,6 +172,25 @@ def test_a_new_actor_without_a_name_is_asked_for_one_on_the_name_field(
     ]
 
 
+def test_a_new_actor_s_too_long_id_is_a_problem_on_its_id_field(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-long-id")
+
+    check = _check(
+        auth_client,
+        environment,
+        op="create",
+        changes={"name": "Priya Raman"},
+        id="a" * 70,
+    )
+
+    assert check.status_code == 200, check.content
+    assert check.json()["problems"] == [
+        {"field": "id", "message": "This must be at most 64 characters."}
+    ]
+
+
 def test_a_value_stored_before_that_the_field_does_not_offer_is_kept_on_another_edit(
     user, workspace, storage, auth_client
 ):
