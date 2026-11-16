@@ -1,3 +1,4 @@
+from datetime import UTC
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -64,6 +65,46 @@ def test_staged_credential_files_are_treated_as_sensitive_bodies():
         "exception": {
             "values": [
                 {"stacktrace": {"frames": [{"vars": {"content": "PRIVATE KEY"}}]}}
+            ]
+        },
+    }
+
+    scrubbed = _scrub_deployment_telemetry_event(event)
+
+    assert "data" not in scrubbed["request"]
+    assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "harness/conversations/{id}/events/",
+        "harness/conversations/{id}/session-store/append/",
+        "agent-fix-engine/{id}/v1/chat/completions",
+        "agent-fix-engine/{id}/check-runs/",
+    ],
+)
+def test_guest_and_fix_engine_bodies_stay_off_spans_and_sentry(suffix):
+    path = "/simulate/api/" + suffix.format(id=uuid4())
+    request = RequestFactory().post(
+        path,
+        data='{"events":[{"type":"tool_result","text":"the customer said"}]}',
+        content_type="application/json",
+    )
+    span = MagicMock()
+
+    OTelContextMiddleware(lambda request: None)._capture_request(span, request)
+
+    captured_attributes = [call.args[0] for call in span.set_attribute.call_args_list]
+    assert "http.request.body" not in captured_attributes
+    event = {
+        "request": {
+            "url": f"https://api.futureagi.com{path}",
+            "data": {"events": [{"text": "the customer said"}]},
+        },
+        "exception": {
+            "values": [
+                {"stacktrace": {"frames": [{"vars": {"text": "the customer said"}}]}}
             ]
         },
     }
@@ -190,10 +231,10 @@ def test_heartbeat_payload_shape_matches_contract(counts):
     """Any field added to the heartbeat payload that isn't on the documented
     HEARTBEAT_FIELDS contract is a wire leak — fail loudly instead of letting
     it ship to PostHog/HubSpot."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 1, 1, 6, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 6, tzinfo=UTC)
 
     payload = build_heartbeat_payload(uuid4(), start, end, counts)
 

@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0103_harness_job_verify_of"),
+        ("simulate", "0106_harness_job_graded_for"),
     ]
 
     operations = [
