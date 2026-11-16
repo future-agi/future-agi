@@ -1787,7 +1787,7 @@ class HostedHarnessProvider:
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(job, reason=reason)
             except Exception:
                 logger.exception(
                     "hosted harness direct cancellation fallback failed job=%s",

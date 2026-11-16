@@ -1,4 +1,4 @@
-// Copy for the Workers card on the Contract tab.
+// Copy for the declared workers, on the Contract tab's Workers card and the agent's Participants card.
 export const WORKERS_COPY = {
   title: "Workers",
   subtitle: "The agents this app hands work to, as its source declares them",
@@ -6,9 +6,9 @@ export const WORKERS_COPY = {
   binding: {
     separate: "Own channel",
     shared: "Shared channel",
+    not_declared: "Channel not declared",
   },
   ownProcess: "Own process",
-  mayUse: (tools) => `May use: ${tools.join(", ")}`,
   footer:
     "Declared by the app's source. A run shows which of them actually took part.",
 };

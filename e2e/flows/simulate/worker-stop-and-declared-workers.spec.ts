@@ -11,7 +11,7 @@ const WORKERS_FOOTER = "Declared by the app's source. A run shows which of them 
 const PARTICIPANTS_TAB = 'Participants';
 
 interface EnvironmentDetail {
-  contract?: { workers?: { id: string; allowed_tools?: string[]; binding?: string }[] };
+  contract?: { workers?: { id: string; tools_shown: string[]; binding: string }[] };
 }
 
 test('SIM-E2E-011: the Contract tab lists the declared workers, and a worker the harness stopped at its deadline says so', {
@@ -25,11 +25,11 @@ test('SIM-E2E-011: the Contract tab lists the declared workers, and a worker the
       'open that call and its Participants tab',
     ],
     backendChecks: [
-      'the environment detail serves both declared workers with their binding and allowed tools',
+      'the environment detail serves both declared workers with their binding and the tools each may use',
       'the workers API serves the stopped worker as past its deadline with cleanup stopped',
     ],
     browserChecks: [
-      'the Workers card lists each worker with its channel, and allowed tools only where narrower than its code holds',
+      'the Workers card lists each worker with its channel and only the tools it may use',
       'the stopped call says the refund worker was stopped when its deadline passed',
     ],
   }),
@@ -43,19 +43,20 @@ test('SIM-E2E-011: the Contract tab lists the declared workers, and a worker the
     const detail = await actor.api.get<EnvironmentDetail>(`/simulate/api/harness-environments/${seed.environmentId}/`);
     const workers = detail.contract?.workers ?? [];
     expect(workers.map((one) => [one.id, one.binding])).toEqual([['order_lookup', 'separate'], ['refund', 'shared']]);
-    expect(workers[0].allowed_tools).toEqual(['get_order', 'list_refunds']);
+    expect(workers.map((one) => one.tools_shown)).toEqual([['get_order', 'list_refunds'], ['list_refunds', 'issue_refund']]);
   });
 
-  await test.step('ui: the Workers card lists each worker with its channel and allowed tools', async () => {
+  await test.step('ui: the Workers card lists each worker with its channel and the tools it may use', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=contract`);
-    const rows = page.getByTestId('contract-worker');
+    const rows = page.getByTestId('declared-worker');
     await expect(rows).toHaveCount(2, { timeout: UI_READY });
     await expect(rows.nth(0)).toContainText('Order-lookup worker');
     await expect(rows.nth(0)).toContainText('Own channel');
-    await expect(rows.nth(0).getByText('May use: get_order, list_refunds', { exact: true })).toBeVisible();
+    await expect(rows.nth(0).getByText('get_order', { exact: true })).toBeVisible();
+    await expect(rows.nth(0)).not.toContainText('update_order_status');
     await expect(rows.nth(1)).toContainText('Shared channel');
     await expect(rows.nth(1)).toContainText('Own process');
-    await expect(rows.nth(1)).not.toContainText('May use:');
+    await expect(rows.nth(1).getByText('issue_refund', { exact: true })).toBeVisible();
     await expect(page.getByText(WORKERS_FOOTER)).toBeVisible();
   });
 

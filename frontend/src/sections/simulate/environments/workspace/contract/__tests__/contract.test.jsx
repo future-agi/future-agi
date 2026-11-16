@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
+import { WORKERS_COPY } from "../workers.constants";
 
 const tool = (name, description, writes) => ({
   tool: name,
@@ -181,44 +182,39 @@ describe("RlContractPanel", () => {
 });
 
 describe("Workers card", () => {
+  // As the API serves them: a non-null channel and the tools each may use.
   const workers = [
     {
       id: "order_lookup",
       name: "Order-lookup worker",
       tools: ["get_order", "list_refunds", "update_order_status"],
       allowed_tools: ["get_order", "list_refunds"],
+      tools_shown: ["get_order", "list_refunds"],
       binding: "separate",
-      address_env: "ORDER_LOOKUP_API_URL",
     },
     {
       id: "refund",
       name: "Refund worker",
       tools: ["list_refunds", "issue_refund"],
       allowed_tools: [],
-      binding: "shared",
+      tools_shown: ["list_refunds", "issue_refund"],
+      binding: "not_declared",
     },
   ];
 
-  it("lists each declared worker with its channel and allowed tools", () => {
+  it("lists each declared worker with its served channel and only the tools it may use", () => {
     renderPanel({ env: { ...voiceEnv, workers } });
-    const rows = screen.getAllByTestId("contract-worker");
+    const rows = screen.getAllByTestId("declared-worker");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("Order-lookup worker");
-    expect(rows[0]).toHaveTextContent("Own channel");
-    // Exactly the allowed tools, never everything the worker's code holds.
-    expect(within(rows[0]).getByText("May use: get_order, list_refunds")).toBeTruthy();
-    expect(rows[1]).toHaveTextContent("Shared channel");
-    // A worker that may use everything its code holds shows no narrower list.
-    expect(rows[1]).not.toHaveTextContent("May use:");
-    expect(
-      screen.getByText(
-        "Declared by the app's source. A run shows which of them actually took part.",
-      ),
-    ).toBeTruthy();
+    expect(within(rows[0]).getByText("get_order")).toBeTruthy();
+    expect(within(rows[0]).queryByText("update_order_status")).toBeNull();
+    // No channel is claimed for a worker whose contract entry does not say.
+    expect(rows[1]).not.toHaveTextContent(WORKERS_COPY.binding.shared);
+    expect(rows[1]).toHaveTextContent(WORKERS_COPY.binding.not_declared);
   });
 
   it("hides the workers card when the contract declares none", () => {
     renderPanel();
-    expect(screen.queryByTestId("contract-workers")).toBeNull();
+    expect(screen.queryByTestId("declared-workers")).toBeNull();
   });
 });

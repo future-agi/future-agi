@@ -2607,6 +2607,51 @@ def test_environment_detail_lists_declared_workers():
     assert worker["id"] == "order_lookup"
 
 
+def test_a_worker_with_no_binding_and_an_allow_list_is_served_alike_to_both_cards():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.models import AgentVersion
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentWorkerSerializer,
+    )
+    from simulate.services import harness_environment
+
+    worker = {
+        "id": "refund",
+        "tools": ["issue_refund", "get_order"],
+        "allowed_tools": ["get_order"],
+    }
+    with (
+        patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+        patch.object(harness_environment, "_call_actor_list", return_value=[]),
+        patch.object(harness_environment, "_stage_output", return_value=None),
+        patch.object(harness_environment, "_end_conditions", return_value={}),
+        patch.object(harness_environment, "_provenance", return_value={}),
+    ):
+        (contract_card,) = harness_environment._contract_section(
+            SimpleNamespace(), {"workers": [worker]}, None, None, None
+        )["workers"]
+    built = SimpleNamespace(documents={"contract": {"workers": [worker]}})
+    with patch.object(
+        harness_environment.HarnessEnvironmentVersion, "no_workspace_objects"
+    ) as versions:
+        versions.filter.return_value.order_by.return_value.only.return_value.first.return_value = built
+        (participants_card,) = harness_environment.version_participants(
+            AgentVersion(organization_id=None)
+        )
+    contract, participants = (
+        HarnessEnvironmentWorkerSerializer(one).data
+        for one in (contract_card, participants_card)
+    )
+    assert contract == participants
+    # Nothing says how it reaches the world, so neither card claims a channel; both list only what it may use.
+    assert (contract["binding"], contract["tools_shown"]) == (
+        "not_declared",
+        ["get_order"],
+    )
+
+
 @pytest.mark.django_db
 def test_an_agent_version_serves_the_workers_its_newest_built_environment_declares(
     auth_client, user, workspace, storage

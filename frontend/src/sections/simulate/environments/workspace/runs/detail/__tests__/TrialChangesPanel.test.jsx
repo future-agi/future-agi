@@ -794,7 +794,7 @@ describe("TrialChangesPanel", () => {
 });
 
 describe("TrialChangesPanel shared records", () => {
-  const trial = (shared) => ({
+  const trial = (shared, listTruncated = false) => ({
     state_changes: [],
     duplicates: [],
     decisions: [],
@@ -804,6 +804,7 @@ describe("TrialChangesPanel shared records", () => {
     notices: [],
     unreadable: false,
     shared_records: shared,
+    shared_records_truncated: listTruncated,
   });
   const record = {
     key: "order_id=1042",
@@ -820,6 +821,7 @@ describe("TrialChangesPanel shared records", () => {
     ],
     committed_writes: 1,
     truncated: false,
+    actions_truncated: false,
   };
 
   it("names each participant's call on a record two of them touched, and shows nothing when none did", () => {
@@ -830,5 +832,26 @@ describe("TrialChangesPanel shared records", () => {
     unmount();
     render(<TrialChangesPanel trialState={trial([])} />);
     expect(screen.queryByTestId("shared-records")).toBeNull();
+  });
+
+  it("says only a record's calls were cut when only its actions were, and more records only when the list was", () => {
+    const cut = { ...record, truncated: true, actions_truncated: true };
+    const { unmount } = render(<TrialChangesPanel trialState={trial([cut])} />);
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedActionsTruncated),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(TRIAL_CHANGES_COPY.sharedTruncated)).toBeNull();
+    unmount();
+    render(
+      <TrialChangesPanel
+        trialState={trial([{ ...record, truncated: true }], true)}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedTruncated),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(TRIAL_CHANGES_COPY.sharedActionsTruncated),
+    ).toBeNull();
   });
 });

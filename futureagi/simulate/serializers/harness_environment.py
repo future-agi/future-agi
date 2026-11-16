@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import get_args
+
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -27,6 +29,7 @@ from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
+from simulate.types import WorkerBinding
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -639,10 +642,13 @@ class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
 class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField(required=False, allow_blank=True)
-    tools = serializers.ListField(child=serializers.CharField(), required=False)
+    tools = serializers.ListField(child=serializers.CharField())
     # The tools it may use when narrower than what its code holds; empty means all of `tools`.
-    allowed_tools = serializers.ListField(child=serializers.CharField(), required=False)
-    binding = serializers.ChoiceField(choices=("separate", "shared"), required=False)
+    allowed_tools = serializers.ListField(child=serializers.CharField())
+    # The tools the cards list: its allowed tools when narrower, else every tool its code holds.
+    tools_shown = serializers.ListField(child=serializers.CharField())
+    # `not_declared` when its contract entry does not say how it reaches the world.
+    binding = serializers.ChoiceField(choices=get_args(WorkerBinding))
     address_env = serializers.CharField(required=False, allow_blank=True)
     # The process that runs it alone, when the app serves it as its own service.
     process = serializers.CharField(required=False, allow_blank=True)

@@ -8,23 +8,26 @@ const ORDER_LOOKUP = {
   name: "Order-lookup worker",
   tools: ["get_order", "update_order_status"],
   allowed_tools: ["get_order"],
+  tools_shown: ["get_order"],
   binding: "separate",
 };
 const REFUND = {
   id: "refund",
   tools: ["issue_refund"],
   allowed_tools: [],
+  tools_shown: ["issue_refund"],
+  binding: "not_declared",
 };
 
 describe("ParticipantsCard", () => {
   it("lists each served worker with the tools it may use, read-only", () => {
     render(<ParticipantsCard participants={[ORDER_LOOKUP, REFUND]} />);
-    const [lookup, refund] = screen.getAllByTestId("participant-row");
+    const [lookup, refund] = screen.getAllByTestId("declared-worker");
     expect(lookup).toHaveTextContent(ORDER_LOOKUP.name);
     expect(within(lookup).getByText("get_order")).toBeInTheDocument();
-    // The narrower allow-list is what it may use, so a tool outside it is not offered.
+    // Only the tools the API serves as shown.
     expect(within(lookup).queryByText("update_order_status")).toBeNull();
-    // No name: its id; no allow-list: every tool its code holds.
+    // No name: its id.
     expect(refund).toHaveTextContent(REFUND.id);
     expect(within(refund).getByText("issue_refund")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
@@ -33,7 +36,7 @@ describe("ParticipantsCard", () => {
 
   it("shows nothing for an agent with no declared workers", () => {
     render(<ParticipantsCard participants={[]} />);
-    expect(screen.queryByTestId("participant-row")).toBeNull();
+    expect(screen.queryByTestId("declared-worker")).toBeNull();
     expect(screen.queryByText(C.note)).toBeNull();
   });
 });

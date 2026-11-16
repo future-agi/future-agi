@@ -221,3 +221,42 @@ def test_a_stopped_call_reads_cancelled_in_every_view_and_a_skipped_case_stays_a
         row["outcome_errored"],
         row["outcome_skipped"],
     ) == ("Cancelled", 1, 0, 1)
+
+
+@pytest.mark.django_db
+def test_the_cancel_seal_waits_on_a_call_in_flight_until_its_receipt_lands(
+    running_run, monkeypatch, settings
+):
+    from simulate.services import hosted_harness_gateway as gateway_module
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+    run, attempt = running_run
+    settings.HARNESS_CANCEL_SEAL_SECONDS = 10
+    now = {"t": 0.0}
+    monkeypatch.setattr(gateway_module.time, "monotonic", lambda: now["t"])
+    monkeypatch.setattr(
+        gateway_module.time,
+        "sleep",
+        lambda seconds: now.__setitem__("t", now["t"] + seconds),
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+
+    # One call under way and one still pending, neither sealed: the wait runs to its bound.
+    gateway._await_guest_seal(attempt)
+    assert now["t"] >= 10
+
+    # Once both receipts land, a later stop has nothing to wait for.
+    _seal(attempt, run, SKIPPED, status="skipped")
+    _seal(
+        attempt,
+        run,
+        STOPPED,
+        status="errored",
+        failure={"code": "user_canceled", "domain": "platform_sync"},
+    )
+    from django.core.cache import cache
+
+    cache.delete(f"hosted-cancel-seal:{attempt.id}")
+    now["t"] = 0.0
+    gateway._await_guest_seal(attempt)
+    assert now["t"] == 0.0

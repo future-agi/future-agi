@@ -1026,13 +1026,27 @@ def _max_turns(docs: Any) -> int | None:
     return max(budgets) if budgets else None
 
 
-def _contract_worker(worker: dict[str, Any]) -> dict[str, Any]:
+def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
     """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
-    tools: list[Any] = worker["tools"] if isinstance(worker.get("tools"), list) else []
+    tools = [str(one) for one in worker.get("tools") or [] if isinstance(one, str)]
     allowed = worker.get("allowed_tools")
-    allowed = allowed if isinstance(allowed, list) else []
+    allowed = [str(one) for one in allowed] if isinstance(allowed, list) else []
     narrower = bool(allowed) and any(tool not in allowed for tool in tools)
-    return {**worker, "allowed_tools": allowed if narrower else []}
+    binding = worker.get("binding")
+    out: ContractWorker = {
+        "id": str(worker["id"]),
+        "tools": tools,
+        "allowed_tools": allowed if narrower else [],
+        "tools_shown": allowed if narrower else tools,
+        "binding": binding if binding in ("separate", "shared") else "not_declared",
+    }
+    if isinstance(worker.get("name"), str):
+        out["name"] = worker["name"]
+    if isinstance(worker.get("address_env"), str):
+        out["address_env"] = worker["address_env"]
+    if isinstance(worker.get("process"), str):
+        out["process"] = worker["process"]
+    return out
 
 
 def version_participants(version: AgentVersion) -> list[ContractWorker]:
@@ -1051,7 +1065,7 @@ def version_participants(version: AgentVersion) -> list[ContractWorker]:
     contract = (built.documents or {}).get("contract") if built is not None else None
     declared = contract.get("workers") if isinstance(contract, dict) else None
     return [
-        cast(ContractWorker, _contract_worker(one))
+        _contract_worker(one)
         for one in (declared if isinstance(declared, list) else [])
         if isinstance(one, dict) and one.get("id")
     ]

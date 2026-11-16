@@ -55,8 +55,6 @@ _OUTRANK_NO_SCORE = ("passed", "failed", "error", "queued", "in_progress")
 END_REASONS = [
     ("Caller hung up", r"(during|before|after).*(warm.?transfer)"),
     ("Error", r"transfer.?(cancel|fail)|warm.?transfer.*(fail|error)"),
-    # A call the user stopped (hosted user_canceled, "Cancelled by user"): not an error.
-    ("Cancelled", r"^user[-_]cancel+ed$|cancel+ed by user"),
     (
         "Error",
         r"error|fail|unavailable|^sip-|twilio|busy|no-answer|did-not-answer|dial|"
@@ -91,6 +89,8 @@ END_REASONS = [
 def annotate_goal_outcome(queryset: QuerySet) -> QuerySet:
     """Use the same chart outcome for aggregation and call drill-downs."""
     end_reason = Case(
+        # A call the user stopped, by its outcome (a skipped scenario stored cancelled is an error there): not an error.
+        When(result_outcome="cancelled", then=Value("Cancelled")),
         *[
             When(ended_reason__iregex=pattern, then=Value(label))
             for label, pattern in END_REASONS

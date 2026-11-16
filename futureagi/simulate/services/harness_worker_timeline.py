@@ -106,66 +106,6 @@ def in_order(events: list[WorkerEvent]) -> None:
         event["seq"] = seq
 
 
-# Where LangGraph and traceAI record a background job's run, and where its launching call names the run it started.
-_ASYNC_RUN_KEYS = ("gen_ai.conversation.id", "session.id", "thread_id", "run_id")
-_ASYNC_LAUNCH_OUTPUT_KEYS = ("output.value", "gen_ai.tool.call.result")
-
-
-def _names_id(text: str, value: str) -> bool:
-    """Whether `value` appears in `text` as a whole id, not inside a longer one."""
-    start = text.find(value)
-    while start != -1:
-        before = text[start - 1] if start else " "
-        end = start + len(value)
-        after = text[end] if end < len(text) else " "
-        if not any(c.isalnum() or c in "-_" for c in (before, after)):
-            return True
-        start = text.find(value, start + 1)
-    return False
-
-
-def _async_launches(spans: list[Mapping[str, Any]]) -> dict[str, str]:
-    """Each top agent span of a background job, by span id, with the tool call that launched it: the one tool call
-    whose output names the job's run key, in another trace. A run key no launch names, or more than one, has none."""
-    ids = {str(span["span_id"]) for span in spans}
-    tools = [span for span in spans if span_kind(span) == TOOL_KIND]
-    found: dict[str, str] = {}
-    for span in spans:
-        if (
-            span_kind(span) != AGENT_KIND
-            or str(span.get("parent_span_id") or "") in ids
-        ):
-            continue
-        attributes = span.get("attributes") or {}
-        run = next(
-            (str(attributes[key]) for key in _ASYNC_RUN_KEYS if attributes.get(key)), ""
-        )
-        if not run:
-            continue
-        launches = [
-            tool
-            for tool in tools
-            if tool.get("trace_id") != span.get("trace_id")
-            and _names_id(
-                " ".join(
-                    str(one)
-                    for one in (
-                        tool.get("output"),
-                        *(
-                            (tool.get("attributes") or {}).get(key)
-                            for key in _ASYNC_LAUNCH_OUTPUT_KEYS
-                        ),
-                    )
-                    if one
-                ),
-                run,
-            )
-        ]
-        if len(launches) == 1:
-            found[str(span["span_id"])] = str(launches[0]["span_id"])
-    return found
-
-
 class Roster:
     """The call's workers as they are found, each under one id per run, matched to the contract's declared workers."""
 
@@ -238,10 +178,6 @@ class _SpanTree:
     def __init__(self, spans: Iterable[WorkerSpan], roster: Roster) -> None:
         self.by_id = {str(span["span_id"]): span for span in spans}
         self.roster = roster
-        # A background job's top span, whose run key a tool call returned, is placed under that call.
-        self.launched = _async_launches(list(self.by_id.values()))
-        for root, launch in self.launched.items():
-            self.by_id[root] = {**self.by_id[root], "parent_span_id": launch}
         agents = [span for span in self.by_id.values() if span_kind(span) == AGENT_KIND]
         busy: set[str] = set()
         for span in self.by_id.values():
@@ -366,8 +302,6 @@ def _span_hand_offs(
             "at": span.get("start_time"),
             "attribution": "reported",
         }
-        if str(span["span_id"]) in tree.launched:
-            hand_off["launch"] = "async"
         if by is not None and maker is not None:
             # The hand-off the maker was itself running in, read from the span tree.
             hand_off["parent_delegation_id"] = tree.delegation_of(maker)

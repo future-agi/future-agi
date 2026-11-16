@@ -44,6 +44,7 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessSecret,
+    TestExecution,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
@@ -4359,7 +4360,11 @@ class HostedHarnessGateway:
         )
         return True
 
-    def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
+    def cancel(
+        self, job: HostedHarnessJob, *, reason: str, await_seal: bool = False
+    ) -> HostedHarnessJob:
+        """Stop the job and remove its sandbox; `await_seal` (the cancel activity only, never a request) first waits,
+        bounded, for the guest to seal the call in flight."""
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
         validate_cancellation_reason(reason)
@@ -4402,8 +4407,6 @@ class HostedHarnessGateway:
                         "sandbox_created": False,
                     },
                 )
-            from simulate.models import TestExecution
-
             job.state = HostedHarnessJob.State.CANCELED
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
@@ -4501,8 +4504,9 @@ class HostedHarnessGateway:
                 ]
             )
 
-        # The guest seals the call in flight with what it kept before its sandbox goes.
-        self._await_guest_seal(attempt)
+        # The guest seals the call in flight with what it kept before its sandbox goes; off the request path only.
+        if await_seal:
+            self._await_guest_seal(attempt)
         return self._delete_and_record(
             attempt,
             # Re-run after sandbox termination to close the create/delete race. Do
@@ -4512,7 +4516,7 @@ class HostedHarnessGateway:
         )
 
     def _await_guest_seal(self, attempt: HostedHarnessAttempt) -> None:
-        """Wait, bounded, until every call still in flight on this attempt has its receipt or the guest's terminal
+        """Wait, bounded, until every call of this job still in flight has its receipt or the attempt's terminal
         event arrived. Never raises; a retried cancel never waits twice."""
 
         def in_flight() -> bool:
@@ -4534,7 +4538,8 @@ class HostedHarnessGateway:
                 if cache.get(key):
                     return
                 cache.set(key, True, timeout=3600)
-            except Exception:  # noqa: BLE001 - without the cache a retry may wait again; the seal still gets its wait
+            except Exception:
+                # Without the cache a retry may wait again; the seal still gets its wait.
                 logger.warning(
                     "hosted_cancel_seal_cache_unavailable attempt=%s", attempt.id
                 )

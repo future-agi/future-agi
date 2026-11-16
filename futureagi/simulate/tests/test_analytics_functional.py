@@ -519,6 +519,28 @@ class TestRunResultsV3Views:
         assert detail.json()["sub_goal_results"] == expected
         assert detail.json()["sub_goals"] == [goal["name"] for goal in expected]
 
+    def test_a_call_reads_cancelled_by_its_outcome_never_by_its_end_reason_text(
+        self, test_execution, scenario
+    ):
+        from simulate.services.run_dashboard_v3 import annotate_goal_outcome
+        from simulate.services.run_results_v3_queries import run_calls_queryset
+
+        stopped = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status="cancelled",
+            ended_reason="pipeline-error",
+        )
+        worded = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status="completed",
+            ended_reason="Cancelled by user",
+        )
+        rows = annotate_goal_outcome(run_calls_queryset(test_execution))
+        assert rows.get(pk=stopped.pk).dashboard_disconnection == "Cancelled"
+        assert rows.get(pk=worded.pk).dashboard_disconnection != "Cancelled"
+
     @pytest.mark.parametrize(
         "execution_status,expected,label",
         [

@@ -242,12 +242,15 @@ function WorldState({ trialState }) {
                   {C.sharedAction(action, action.name)}
                 </Typography>
               ))}
+              {record.actions_truncated && (
+                <Typography sx={quiet}>{C.sharedActionsTruncated}</Typography>
+              )}
               <Typography sx={quiet}>
                 {C.committedWrites(record.committed_writes)}
               </Typography>
             </Box>
           ))}
-          {shared.some((record) => record.truncated) && (
+          {trialState.shared_records_truncated && (
             <Typography sx={quiet}>{C.sharedTruncated}</Typography>
           )}
         </Box>
@@ -332,6 +335,7 @@ WorldState.propTypes = {
       PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
     ),
     shared_records: PropTypes.arrayOf(PropTypes.object),
+    shared_records_truncated: PropTypes.bool,
     notices: PropTypes.arrayOf(
       PropTypes.shape({
         code: PropTypes.string,
