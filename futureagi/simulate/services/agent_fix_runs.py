@@ -44,6 +44,7 @@ from simulate.selectors.agent_fix import (
     variations_blocker,
     written_variations,
 )
+from simulate.selectors.evidence_import import evidence_origins
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.alk_simulate_ingestion import GROUPED_SCENARIOS_ORIGIN
 from simulate.services.harness_agent_versions import discard_agent_version
@@ -219,6 +220,7 @@ def launch_fix_run(
         locked_paths=locked_paths,
         budget_usd=budget_usd,
         max_minutes=max_minutes,
+        evidence=evidence_origins(environment, target_scenario_keys),
         variations_pending=variations,
         allowed_models=allowed,
         reply_latency_margin_pct=(

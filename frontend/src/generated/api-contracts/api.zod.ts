@@ -36691,6 +36691,12 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
       name: zod.string().min(1),
       passed: zod.boolean(),
       failing_sub_goals: zod.array(zod.string().min(1)),
+      evidence_import_id: zod
+        .string()
+        .uuid()
+        .describe(
+          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+        ),
     }),
   ),
   suggested: zod.object({
@@ -40568,6 +40574,855 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
   id: zod.string(),
   eval_config_id: zod.string(),
 });
+
+/**
+ * This environment's imports a person can still finish, newest first.
+Read from what each import stores: no source is read again.
+ */
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin = 0;
+
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem =
+  zod.object({
+    id: zod.string().uuid(),
+    source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+    source_name: zod
+      .string()
+      .min(1)
+      .describe(
+        "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
+      ),
+    source_available: zod
+      .boolean()
+      .describe("False once the Observe project or dataset was deleted."),
+    case_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin,
+      ),
+    added_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin,
+      )
+      .describe("Cases already added to the suite."),
+    status: zod
+      .enum(["waiting", "drafting", "drafted", "partly_added", "blocked"])
+      .describe(
+        "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
+      ),
+    created_at: zod.string().datetime({ offset: true }),
+    can_discard: zod
+      .boolean()
+      .describe(
+        "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+      ),
+  });
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponse =
+  zod.array(SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem);
+
+/**
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax = 20;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault =
+  [];
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax = 10;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax = 120;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax = 500000;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax = 20;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Session and call imports: the Observe project."),
+  ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax)
+    .optional()
+    .describe(
+      "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+    ),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Dataset imports: the dataset."),
+  columns: zod
+    .object({
+      conversation: zod
+        .string()
+        .uuid()
+        .describe(
+          'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+        ),
+      labels: zod
+        .array(zod.string().uuid())
+        .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax)
+        .default(
+          simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault,
+        )
+        .describe("Columns read as the row's labels."),
+      expected: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("The column that says what should happen."),
+    })
+    .optional()
+    .describe("Dataset imports: the columns to read."),
+  transcripts: zod
+    .array(
+      zod.object({
+        name: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax,
+          )
+          .describe(
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          ),
+        format: zod
+          .enum(["json", "text", "csv"])
+          .describe(
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          ),
+        text: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax,
+          )
+          .describe("The transcript as pasted or uploaded."),
+      }),
+    )
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax)
+    .optional()
+    .describe("Transcript imports: one case each, in this order."),
+  production: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
+    ),
+});
+
+/**
+ * One evidence import, read from Observe again: a source deleted since
+reads as unavailable, and a changed one says so.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
+  id: zod.string(),
+  import_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemEndMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionTotalMin = 0;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
+  id: zod.string().uuid(),
+  environment_id: zod.string().uuid(),
+  project_id: zod
+    .string()
+    .uuid()
+    .nullable()
+    .describe("The Observe project; null for evidence from outside Observe."),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .describe("A dataset import's dataset; null otherwise."),
+  agent_version_id: zod.string().uuid().nullable(),
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+  created_at: zod.string().datetime({ offset: true }),
+  simulated: zod
+    .boolean()
+    .describe(
+      "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+    ),
+  production: zod
+    .boolean()
+    .describe(
+      "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
+    ),
+  drafting: zod
+    .boolean()
+    .describe("True while the environment's builder is drafting cases."),
+  cases: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      source_id: zod.string().min(1),
+      name: zod
+        .string()
+        .describe(
+          "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+        ),
+      status: zod.enum([
+        "pending",
+        "unavailable",
+        "drafted",
+        "blocked",
+        "added",
+        "discarded",
+        "duplicate",
+      ]),
+      reason: zod.string(),
+      source_available: zod
+        .boolean()
+        .describe(
+          "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+        ),
+      scenario_key: zod
+        .string()
+        .describe("The drafted scenario's key, once drafted."),
+      scenario_name: zod
+        .string()
+        .describe(
+          "The drafted scenario's title, once drafted; blank when the builder gave none.",
+        ),
+      new_checks: zod
+        .array(
+          zod
+            .object({
+              name: zod.string().min(1),
+              what: zod.string(),
+            })
+            .describe(
+              "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+            ),
+        )
+        .describe(
+          "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+        ),
+      changed_since_import: zod
+        .boolean()
+        .nullable()
+        .describe(
+          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+        ),
+      also_from: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin,
+        )
+        .describe(
+          "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+        ),
+      duplicate_of: zod
+        .object({
+          import_id: zod
+            .string()
+            .uuid()
+            .describe("The import holding the case."),
+          case_id: zod.string().uuid(),
+          scenario_name: zod
+            .string()
+            .describe("Its drafted scenario's title; blank until drafted."),
+        })
+        .describe(
+          "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+        ),
+      trace_ids: zod.array(zod.string().min(1)),
+      started_at: zod.string().datetime({ offset: true }).nullable(),
+      ended_at: zod.string().datetime({ offset: true }).nullable(),
+      transcript: zod.object({
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
+        reason: zod.string(),
+        turns: zod.array(
+          zod.object({
+            role: zod.enum(["user", "agent"]),
+            text: zod.string(),
+            truncated: zod.boolean(),
+            trace_id: zod
+              .string()
+              .describe("Blank for a turn no trace recorded."),
+            at: zod.string().datetime({ offset: true }).nullable(),
+          }),
+        ),
+      }),
+      tool_calls: zod.object({
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
+        reason: zod.string(),
+        calls: zod.array(
+          zod.object({
+            span_id: zod.string().min(1),
+            trace_id: zod.string().min(1),
+            name: zod.string(),
+            at: zod.string().datetime({ offset: true }),
+            failed: zod.boolean(),
+            error: zod.string(),
+            input: zod.string(),
+            output: zod.string(),
+            input_truncated: zod.boolean(),
+            output_truncated: zod.boolean(),
+          }),
+        ),
+      }),
+      tool_inputs: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs."),
+      tool_outputs: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs."),
+      starting_state: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs."),
+      labels: zod.object({
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
+        reason: zod.string(),
+        labels: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            kind: zod.string().min(1),
+            value: jsonValueSchema.describe("Any valid JSON value."),
+            notes: zod.string(),
+            target: zod
+              .enum(["session", "trace", "span", "row"])
+              .describe("row: a dataset row's label column."),
+          }),
+        ),
+      }),
+      expected_outcome: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+          text: zod.string(),
+        })
+        .describe(
+          "What a dataset row's expected outcome column says should happen.",
+        ),
+    }),
+  ),
+  redaction: zod.object({
+    method: zod
+      .enum(["presidio", "basic"])
+      .describe(
+        "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
+      ),
+    reason: zod.string(),
+    findings: zod.array(
+      zod.object({
+        case_id: zod.string().uuid(),
+        part: zod.enum([
+          "transcript",
+          "tool_calls",
+          "labels",
+          "expected_outcome",
+        ]),
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin,
+          ),
+        field: zod.enum([
+          "text",
+          "input",
+          "output",
+          "error",
+          "notes",
+          "value",
+          "name",
+        ]),
+        entity: zod.string().min(1),
+        start: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin,
+          ),
+        end: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemEndMin,
+          ),
+        value: zod.string().min(1),
+        replacement: zod.string().min(1),
+      }),
+    ),
+    total: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionTotalMin,
+      )
+      .describe("Every finding, including those past the listed ones."),
+  }),
+});
+
+/**
+ * Discard an import never added, and a transcript's stored text with it.
+Of an import with added cases, only the cases not added are discarded.
+ */
+export const SimulateApiHarnessEnvironmentsDiscardEvidenceImportParams =
+  zod.object({
+    id: zod.string(),
+    import_id: zod.string(),
+  });
+
+/**
+ * Add an import's drafted cases to the suite: saved with them when the
+review saw no unsaved changes, else beside those changes in the draft.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesParams =
+  zod.object({
+    id: zod.string(),
+    import_id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyCaseIdsMax = 20;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyExpectedDraftsEnvironmentRevisionMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyExpectedDraftsSuiteRevisionMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyIdempotencyKeyMax = 128;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
+  zod.object({
+    case_ids: zod
+      .array(zod.string().uuid())
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyCaseIdsMax,
+      ),
+    expected_drafts: zod
+      .object({
+        environment: zod.object({
+          id: zod.string().uuid().nullable(),
+          revision: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyExpectedDraftsEnvironmentRevisionMin,
+            ),
+        }),
+        suite: zod.object({
+          id: zod.string().uuid().nullable(),
+          revision: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyExpectedDraftsSuiteRevisionMin,
+            ),
+        }),
+      })
+      .describe(
+        "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+      ),
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBodyIdempotencyKeyMax,
+      ),
+  });
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemEndMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionTotalMin = 0;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse =
+  zod.object({
+    saved: zod
+      .boolean()
+      .describe(
+        "True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits.",
+      ),
+    evidence_import: zod.object({
+      id: zod.string().uuid(),
+      environment_id: zod.string().uuid(),
+      project_id: zod
+        .string()
+        .uuid()
+        .nullable()
+        .describe(
+          "The Observe project; null for evidence from outside Observe.",
+        ),
+      dataset_id: zod
+        .string()
+        .uuid()
+        .describe("A dataset import's dataset; null otherwise."),
+      agent_version_id: zod.string().uuid().nullable(),
+      source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+      created_at: zod.string().datetime({ offset: true }),
+      simulated: zod
+        .boolean()
+        .describe(
+          "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+        ),
+      production: zod
+        .boolean()
+        .describe(
+          "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
+        ),
+      drafting: zod
+        .boolean()
+        .describe("True while the environment's builder is drafting cases."),
+      cases: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          source_id: zod.string().min(1),
+          name: zod
+            .string()
+            .describe(
+              "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+            ),
+          status: zod.enum([
+            "pending",
+            "unavailable",
+            "drafted",
+            "blocked",
+            "added",
+            "discarded",
+            "duplicate",
+          ]),
+          reason: zod.string(),
+          source_available: zod
+            .boolean()
+            .describe(
+              "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+            ),
+          scenario_key: zod
+            .string()
+            .describe("The drafted scenario's key, once drafted."),
+          scenario_name: zod
+            .string()
+            .describe(
+              "The drafted scenario's title, once drafted; blank when the builder gave none.",
+            ),
+          new_checks: zod
+            .array(
+              zod
+                .object({
+                  name: zod.string().min(1),
+                  what: zod.string(),
+                })
+                .describe(
+                  "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+                ),
+            )
+            .describe(
+              "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+            ),
+          changed_since_import: zod
+            .boolean()
+            .nullable()
+            .describe(
+              "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+            ),
+          also_from: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin,
+            )
+            .describe(
+              "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+            ),
+          duplicate_of: zod
+            .object({
+              import_id: zod
+                .string()
+                .uuid()
+                .describe("The import holding the case."),
+              case_id: zod.string().uuid(),
+              scenario_name: zod
+                .string()
+                .describe("Its drafted scenario's title; blank until drafted."),
+            })
+            .describe(
+              "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+            ),
+          trace_ids: zod.array(zod.string().min(1)),
+          started_at: zod.string().datetime({ offset: true }).nullable(),
+          ended_at: zod.string().datetime({ offset: true }).nullable(),
+          transcript: zod.object({
+            status: zod.enum([
+              "present",
+              "partial",
+              "truncated",
+              "missing",
+              "unreadable",
+            ]),
+            reason: zod.string(),
+            turns: zod.array(
+              zod.object({
+                role: zod.enum(["user", "agent"]),
+                text: zod.string(),
+                truncated: zod.boolean(),
+                trace_id: zod
+                  .string()
+                  .describe("Blank for a turn no trace recorded."),
+                at: zod.string().datetime({ offset: true }).nullable(),
+              }),
+            ),
+          }),
+          tool_calls: zod.object({
+            status: zod.enum([
+              "present",
+              "partial",
+              "truncated",
+              "missing",
+              "unreadable",
+            ]),
+            reason: zod.string(),
+            calls: zod.array(
+              zod.object({
+                span_id: zod.string().min(1),
+                trace_id: zod.string().min(1),
+                name: zod.string(),
+                at: zod.string().datetime({ offset: true }),
+                failed: zod.boolean(),
+                error: zod.string(),
+                input: zod.string(),
+                output: zod.string(),
+                input_truncated: zod.boolean(),
+                output_truncated: zod.boolean(),
+              }),
+            ),
+          }),
+          tool_inputs: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+            })
+            .describe("Whether the tool calls recorded their inputs."),
+          tool_outputs: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+            })
+            .describe("Whether the tool calls recorded their inputs."),
+          starting_state: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+            })
+            .describe("Whether the tool calls recorded their inputs."),
+          labels: zod.object({
+            status: zod.enum([
+              "present",
+              "partial",
+              "truncated",
+              "missing",
+              "unreadable",
+            ]),
+            reason: zod.string(),
+            labels: zod.array(
+              zod.object({
+                name: zod.string().min(1),
+                kind: zod.string().min(1),
+                value: jsonValueSchema.describe("Any valid JSON value."),
+                notes: zod.string(),
+                target: zod
+                  .enum(["session", "trace", "span", "row"])
+                  .describe("row: a dataset row's label column."),
+              }),
+            ),
+          }),
+          expected_outcome: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+              text: zod.string(),
+            })
+            .describe(
+              "What a dataset row's expected outcome column says should happen.",
+            ),
+        }),
+      ),
+      redaction: zod.object({
+        method: zod
+          .enum(["presidio", "basic"])
+          .describe(
+            "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
+          ),
+        reason: zod.string(),
+        findings: zod.array(
+          zod.object({
+            case_id: zod.string().uuid(),
+            part: zod.enum([
+              "transcript",
+              "tool_calls",
+              "labels",
+              "expected_outcome",
+            ]),
+            index: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin,
+              ),
+            field: zod.enum([
+              "text",
+              "input",
+              "output",
+              "error",
+              "notes",
+              "value",
+              "name",
+            ]),
+            entity: zod.string().min(1),
+            start: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin,
+              ),
+            end: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemEndMin,
+              ),
+            value: zod.string().min(1),
+            replacement: zod.string().min(1),
+          }),
+        ),
+        total: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionTotalMin,
+          )
+          .describe("Every finding, including those past the listed ones."),
+      }),
+    }),
+  });
+
+/**
+ * Ask the environment's builder to draft a scenario for each of an import's
+waiting cases. The turn runs in a chat of the import's own; nothing it does
+reaches the environment until a person adds the drafted cases.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesParams =
+  zod.object({
+    id: zod.string(),
+    import_id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyCaseIdsMax = 20;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyShowsDefault =
+  {};
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBody =
+  zod.object({
+    case_ids: zod
+      .array(zod.string().uuid())
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyCaseIdsMax,
+      )
+      .describe("The import's waiting cases the environment's builder drafts."),
+    shows: zod
+      .record(zod.string(), zod.enum(["failure", "success", "partial"]))
+      .default(
+        simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyShowsDefault,
+      )
+      .describe("What the person says each case records, by case id."),
+  });
 
 /**
  * This environment's offers to rebuild after a change, newest first.

@@ -156,7 +156,16 @@ ChipsInput.propTypes = {
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
 // parts that may change and the limit; everything else is shown, not asked.
-export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
+// ``initialTargets`` (Run Epoch) picks the cases to fix instead of the
+// suggested ones.
+export default function LaunchFixDialog({
+  open,
+  onClose,
+  envId,
+  sourceRunId,
+  initialTargets,
+  initialNote,
+}) {
   const navigate = useNavigate();
   const { options, error: optionsError } = useFixLaunchOptions(sourceRunId, {
     enabled: open,
@@ -176,8 +185,12 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const [confirmingAddCases, setConfirmingAddCases] = useState(false);
 
   useEffect(() => {
-    if (!options) return;
-    setTargets(options.suggested.target_scenario_keys);
+    if (!options || !open) return;
+    setTargets(
+      initialTargets?.length
+        ? initialTargets
+        : options.suggested.target_scenario_keys,
+    );
     setProtectedKeys(options.suggested.protected_scenario_keys);
     setSurfaces(options.defaults.surfaces);
     setLocked([]);
@@ -187,7 +200,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
     setLatencyMargin(options.defaults.reply_latency_margin_pct);
     setCostMargin(options.defaults.cost_margin_pct);
     setCostLimit("");
-  }, [options]);
+  }, [options, open, initialTargets]);
 
   if (!options) {
     return (
@@ -327,6 +340,14 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             <Typography sx={{ typography: "s2" }}>
               {countsLine(targets.length, protectedKeys.length, limits)}
             </Typography>
+            {initialNote ? (
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary" }}
+                data-testid="epoch-targets-note"
+              >
+                {initialNote}
+              </Typography>
+            ) : null}
             {variations && (
               <Typography
                 sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
@@ -616,4 +637,6 @@ LaunchFixDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
   envId: PropTypes.string.isRequired,
   sourceRunId: PropTypes.string,
+  initialTargets: PropTypes.arrayOf(PropTypes.string),
+  initialNote: PropTypes.string,
 };
