@@ -138,11 +138,12 @@ func main() {
 	keyStore := auth.NewKeyStore(cfg.Auth)
 	var plugins []pipeline.Plugin
 
-	// Create IP ACL plugin (priority 50: runs before auth).
-	var ipaclPlugin *ipaclplugin.Plugin
+	// Create IP ACL plugin (priority 10: runs before auth). It is always
+	// registered: an org's own ip_acl applies whether or not the global list
+	// is enabled, and the plugin checks the global list only when it is.
+	ipaclPlugin := ipaclplugin.New(cfg.IPACL, tenantStore)
+	plugins = append(plugins, ipaclPlugin)
 	if cfg.IPACL.Enabled {
-		ipaclPlugin = ipaclplugin.New(cfg.IPACL, tenantStore)
-		plugins = append(plugins, ipaclPlugin)
 		slog.Info("ip acl enabled", "allow_rules", ipaclPlugin.AllowCount(), "deny_rules", ipaclPlugin.DenyCount())
 	}
 
@@ -370,9 +371,6 @@ func main() {
 			if budgetPlugin != nil {
 				budgetPlugin.InvalidateOrg(orgID)
 			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
 		}
 		slog.Info("guardrails enabled",
 			"pre_guardrails", grEngine.PreCount(),
@@ -543,23 +541,17 @@ func main() {
 	}
 
 	// The logging plugin is deliberately absent here: its redactor cache moved
-	// onto tenantStore, which invalidates itself on every config change.
-	if onOrgConfigChange != nil {
-		prev := onOrgConfigChange
-		onOrgConfigChange = func(orgID string) {
-			prev(orgID)
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
+	// onto tenantStore, which invalidates itself on every config change. The
+	// ip_acl plugin is always registered, so its cached org lists are dropped
+	// whichever of guardrails, budgets and alerting are enabled.
+	prevOnOrgConfigChange := onOrgConfigChange
+	onOrgConfigChange = func(orgID string) {
+		if prevOnOrgConfigChange != nil {
+			prevOnOrgConfigChange(orgID)
 		}
-	} else if alertingPlugin != nil || ipaclPlugin != nil {
-		onOrgConfigChange = func(orgID string) {
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
+		ipaclPlugin.InvalidateOrg(orgID)
+		if alertingPlugin != nil {
+			alertingPlugin.InvalidateOrg(orgID)
 		}
 	}
 

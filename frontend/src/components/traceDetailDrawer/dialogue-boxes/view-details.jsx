@@ -390,7 +390,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                     })()}
                 </Box>
               ) : (
-                <Typography fontSize="13px" color="text.primary">
+                <Typography fontSize="12px" color="text.primary">
                   No errors found.
                 </Typography>
               )}

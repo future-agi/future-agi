@@ -1,4 +1,3 @@
-
 from agentic_eval.core_evals.fi_utils.fi_interfaces import FiFilters
 
 
@@ -19,7 +18,6 @@ class ConversationLoader:
         """
         self._raw_dataset = {}
         self._processed_dataset = []
-
 
     def load_fi_inferences(
         self,
@@ -54,7 +52,13 @@ class ConversationLoader:
 
         for msg_list in messages:
             for msg in msg_list:
-                if not isinstance(msg, dict) or 'role' not in msg or 'content' not in msg:
-                    raise ValueError("Each message must be a dict with 'role' and 'content' keys")
-                prefix = "AI: " if msg['role'] == "assistant" else "User: "
-                self._processed_dataset.append(prefix + msg['content'])
+                if (
+                    not isinstance(msg, dict)
+                    or "role" not in msg
+                    or "content" not in msg
+                ):
+                    raise ValueError(
+                        "Each message must be a dict with 'role' and 'content' keys"
+                    )
+                prefix = "AI: " if msg["role"] == "assistant" else "User: "
+                self._processed_dataset.append(prefix + msg["content"])

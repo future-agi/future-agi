@@ -39,6 +39,7 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
+from simulate.services.hosted_harness_validation import validate_jsonb_strings
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -822,6 +823,10 @@ def append_provider_transcript(
     subpath: str,
     entries: list[dict[str, Any]],
 ) -> dict[str, int]:
+    validate_jsonb_strings(entries, field="entries")
+    validate_jsonb_strings(
+        [project_key, provider_session_id, subpath], field="transcript key"
+    )
     with transaction.atomic():
         HostedHarnessConversation.no_workspace_objects.select_for_update().only(
             "id"
@@ -960,6 +965,8 @@ def ingest_conversation_events(
     acknowledged_through: int,
     events: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or acknowledgement writes.
+    validate_jsonb_strings(events, field="events")
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
