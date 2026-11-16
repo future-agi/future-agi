@@ -35994,6 +35994,11 @@ export const simulateApiAgentFixEngineReportBodyDiagnosisCausesDefault = [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersDefault =
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesDefault = [];
@@ -36002,6 +36007,9 @@ export const simulateApiAgentFixEngineReportBodyFailureCodeMax = 64;
 
 export const simulateApiAgentFixEngineReportBodyFailureMessageMax = 500;
 
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedDefault = [];
 export const simulateApiAgentFixEngineReportBodyLostModelsItemMax = 200;
 
 export const simulateApiAgentFixEngineReportBodyLostModelsDefault = [];
@@ -36072,6 +36080,42 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
                     .default(
                       simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault,
                     ),
+                  parts: zod
+                    .array(
+                      zod.object({
+                        name: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemNameMax,
+                          ),
+                        status: zod.enum(["passed", "failed", "skipped"]),
+                        detail: zod
+                          .string()
+                          .default(
+                            simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                          ),
+                      }),
+                    )
+                    .default(
+                      simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsDefault,
+                    ),
+                  latency: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
+                  cost: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
                 }),
               )
               .default(
@@ -36107,6 +36151,19 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
     })
     .optional(),
   winner_candidate_id: zod.string().uuid().optional(),
+  flaky_protected: zod
+    .array(
+      zod.object({
+        key: zod.string().min(1),
+        name: zod.string().optional(),
+        sub_goal: zod.string().min(1),
+        passed: zod
+          .number()
+          .min(simulateApiAgentFixEngineReportBodyFlakyProtectedItemPassedMin),
+        runs: zod.number().min(1),
+      }),
+    )
+    .default(simulateApiAgentFixEngineReportBodyFlakyProtectedDefault),
   lost_models: zod
     .array(
       zod
@@ -36192,6 +36249,19 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationsPend
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsListResponseResultsItemRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsListResponseResultsItemRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault =
+  false;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault =
+  [];
 
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
@@ -36199,6 +36269,11 @@ export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttempt
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault =
   [];
 
@@ -36320,6 +36395,32 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           .default(
             simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault,
           ),
+        allowed_models: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestAllowedModelsDefault,
+          ),
+        reply_latency_margin_pct: zod
+          .number()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestReplyLatencyMarginPctDefault,
+          ),
+        cost_margin_pct: zod
+          .number()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestCostMarginPctDefault,
+          ),
+        cost_limit_usd: zod.number().optional(),
+        observes_models: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestObservesModelsDefault,
+          ),
+        meters_agent_cost: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault,
+          ),
       }),
       spent_credits: zod.number(),
       committed_credits: zod.number(),
@@ -36327,6 +36428,23 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         ending: zod.string().min(1),
         summary: zod.string(),
         winner_candidate_id: zod.string().min(1),
+        flaky_protected: zod
+          .array(
+            zod.object({
+              key: zod.string().min(1),
+              name: zod.string().optional(),
+              sub_goal: zod.string().min(1),
+              passed: zod
+                .number()
+                .min(
+                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin,
+                ),
+              runs: zod.number().min(1),
+            }),
+          )
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault,
+          ),
       }),
       failure: zod.object({
         code: zod.string().min(1),
@@ -36384,6 +36502,42 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
                     .default(
                       simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault,
                     ),
+                  parts: zod
+                    .array(
+                      zod.object({
+                        name: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax,
+                          ),
+                        status: zod.enum(["passed", "failed", "skipped"]),
+                        detail: zod
+                          .string()
+                          .default(
+                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                          ),
+                      }),
+                    )
+                    .default(
+                      simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault,
+                    ),
+                  latency: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
+                  cost: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
                 }),
               )
               .default(
@@ -36449,6 +36603,16 @@ export const simulateApiAgentFixRunsCreateBodyBudgetCreditsMax = 50000;
 
 export const simulateApiAgentFixRunsCreateBodyMaxMinutesMax = 1440;
 
+export const simulateApiAgentFixRunsCreateBodyAllowedModelsItemMax = 200;
+
+export const simulateApiAgentFixRunsCreateBodyAllowedModelsMax = 50;
+
+export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin = 0;
+export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax = 1000;
+
+export const simulateApiAgentFixRunsCreateBodyCostMarginPctMin = 0;
+export const simulateApiAgentFixRunsCreateBodyCostMarginPctMax = 1000;
+
 export const SimulateApiAgentFixRunsCreateBody = zod.object({
   source_run_id: zod.string().uuid(),
   target_scenario_keys: zod
@@ -36487,6 +36651,26 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
     .min(1)
     .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax)
     .optional(),
+  allowed_models: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyAllowedModelsItemMax),
+    )
+    .max(simulateApiAgentFixRunsCreateBodyAllowedModelsMax)
+    .optional(),
+  reply_latency_margin_pct: zod
+    .number()
+    .min(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin)
+    .max(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax)
+    .optional(),
+  cost_margin_pct: zod
+    .number()
+    .min(simulateApiAgentFixRunsCreateBodyCostMarginPctMin)
+    .max(simulateApiAgentFixRunsCreateBodyCostMarginPctMax)
+    .optional(),
+  cost_limit_usd: zod.number().optional(),
 });
 
 /**
@@ -36540,6 +36724,11 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     surfaces: zod.array(zod.enum(["prompt", "tools", "settings", "code"])),
     budget_credits: zod.number(),
     max_minutes: zod.number(),
+    allowed_models: zod.array(zod.string().min(1)),
+    agent_cost_metered: zod.boolean(),
+    agent_calls_unmeasured: zod.boolean(),
+    reply_latency_margin_pct: zod.number(),
+    cost_margin_pct: zod.number(),
   }),
   limits: zod.object({
     budget_credits_max: zod.number(),
@@ -36596,6 +36785,19 @@ export const simulateApiAgentFixRunsReadResponseRequestVariationsPendingDefault 
   false;
 export const simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsReadResponseRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsReadResponseRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsReadResponseRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
+  false;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault =
+  [];
 
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
@@ -36603,6 +36805,11 @@ export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
   [];
 
@@ -36707,6 +36914,26 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       .default(
         simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault,
       ),
+    allowed_models: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsReadResponseRequestAllowedModelsDefault),
+    reply_latency_margin_pct: zod
+      .number()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestReplyLatencyMarginPctDefault,
+      ),
+    cost_margin_pct: zod
+      .number()
+      .default(simulateApiAgentFixRunsReadResponseRequestCostMarginPctDefault),
+    cost_limit_usd: zod.number().optional(),
+    observes_models: zod
+      .boolean()
+      .default(simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault),
+    meters_agent_cost: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault,
+      ),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
@@ -36714,6 +36941,21 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
     winner_candidate_id: zod.string().min(1),
+    flaky_protected: zod
+      .array(
+        zod.object({
+          key: zod.string().min(1),
+          name: zod.string().optional(),
+          sub_goal: zod.string().min(1),
+          passed: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin,
+            ),
+          runs: zod.number().min(1),
+        }),
+      )
+      .default(simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault),
   }),
   failure: zod.object({
     code: zod.string().min(1),
@@ -36767,6 +37009,42 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
                 .default(
                   simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault,
                 ),
+              parts: zod
+                .array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
+                      ),
+                    status: zod.enum(["passed", "failed", "skipped"]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                      ),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault,
+                ),
+              latency: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+              cost: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
             }),
           )
           .default(
@@ -36817,6 +37095,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       }),
     )
     .optional(),
+  eval_grading: zod.enum(["none", "pending", "done", "incomplete"]).optional(),
 });
 
 /**
@@ -36930,6 +37209,19 @@ export const simulateApiAgentFixRunsStopResponseRequestVariationsPendingDefault 
   false;
 export const simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsStopResponseRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsStopResponseRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsStopResponseRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
+  false;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault =
+  [];
 
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
@@ -36937,6 +37229,11 @@ export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault =
   [];
 
@@ -37041,6 +37338,26 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       .default(
         simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault,
       ),
+    allowed_models: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsStopResponseRequestAllowedModelsDefault),
+    reply_latency_margin_pct: zod
+      .number()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestReplyLatencyMarginPctDefault,
+      ),
+    cost_margin_pct: zod
+      .number()
+      .default(simulateApiAgentFixRunsStopResponseRequestCostMarginPctDefault),
+    cost_limit_usd: zod.number().optional(),
+    observes_models: zod
+      .boolean()
+      .default(simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault),
+    meters_agent_cost: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault,
+      ),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
@@ -37048,6 +37365,21 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
     winner_candidate_id: zod.string().min(1),
+    flaky_protected: zod
+      .array(
+        zod.object({
+          key: zod.string().min(1),
+          name: zod.string().optional(),
+          sub_goal: zod.string().min(1),
+          passed: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin,
+            ),
+          runs: zod.number().min(1),
+        }),
+      )
+      .default(simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault),
   }),
   failure: zod.object({
     code: zod.string().min(1),
@@ -37101,6 +37433,42 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
                 .default(
                   simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault,
                 ),
+              parts: zod
+                .array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
+                      ),
+                    status: zod.enum(["passed", "failed", "skipped"]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                      ),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault,
+                ),
+              latency: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+              cost: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
             }),
           )
           .default(

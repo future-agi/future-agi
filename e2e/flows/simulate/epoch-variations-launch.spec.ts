@@ -40,11 +40,16 @@ const LIMITS = {
   verified_cases_min: 6,
   scenarios_max: 200,
 };
-const DEFAULTS = { surfaces: ['prompt'], budget_credits: 1500, max_minutes: 150 };
+// An untraced agent: no model to lock, its cost unmetered; the limit margins at their default.
+const DEFAULTS = {
+  surfaces: ['prompt'], budget_credits: 1500, max_minutes: 150,
+  allowed_models: [], agent_cost_metered: false, agent_calls_unmeasured: false,
+  reply_latency_margin_pct: 25, cost_margin_pct: 25,
+};
 
 // What the form says for that pick: countsLine and variationsNote in
 // frontend/src/sections/simulate/environments/workspace/improvements/launchFormView.js.
-const SCENARIOS_LINE = '6 failing, and up to 18 variations of them · 6 must keep passing';
+const SCENARIOS_LINE = '6 failing, and up to 18 variations of them · 6 protected';
 const VARIATIONS_NOTE =
   'An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.';
 // The epoch page's first step for a fix that writes variations (fixRunView.js variationLines).
@@ -145,6 +150,12 @@ function queuedEpoch(fixId: string, executionId: string, body: Json): Json {
       locked_paths: body.locked_paths,
       budget_credits: body.budget_credits,
       max_minutes: body.max_minutes,
+      allowed_models: [],
+      reply_latency_margin_pct: body.reply_latency_margin_pct,
+      cost_margin_pct: body.cost_margin_pct,
+      cost_limit_usd: body.cost_limit_usd,
+      observes_models: false,
+      meters_agent_cost: false,
       variations_pending: true,
     },
     spent_credits: 0,
@@ -217,11 +228,11 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   annotation: flowAnnotation({
     id: 'SIM-E2E-007', area: 'simulate',
     userGoal: 'A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step',
-    steps: ['open a finished run of the environment', 'open Debug failures', 'press Improve',
-            'read the Scenarios row of the launch form', 'press Start improvement', 'read the epoch page'],
+    steps: ['open a finished run of the environment', 'open Debug failures', 'press Run Epoch',
+            'read the Scenarios row of the launch form', 'press Run Epoch in the form', 'read the epoch page'],
     browserChecks: [
-      'the Scenarios row reads "6 failing, and up to 18 variations of them · 6 must keep passing", with the note that an epoch needs 12 failing cases and first writes 3 variations of each',
-      'the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits and 150 minutes',
+      'the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each',
+      'the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit',
       'the browser lands on the environment\'s improvements/<id> URL of the epoch the POST returned',
       'the epoch page\'s steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
       'the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)',
@@ -245,21 +256,21 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
     await expect(page.getByRole('button', { name: 'Debug failures' })).toBeEnabled({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  await test.step('ui: the diagnosis offers Improve', async () => {
+  await test.step('ui: the diagnosis offers Run Epoch', async () => {
     await page.getByRole('button', { name: 'Debug failures' }).click();
-    await expect(page.getByRole('button', { name: 'Improve', exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByRole('button', { name: 'Run Epoch', exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  const dialog = page.getByRole('dialog').filter({ hasText: `Improve ${AGENT_NAME}` });
+  const dialog = page.getByRole('dialog').filter({ hasText: `Run Epoch on ${AGENT_NAME}` });
   await test.step('ui: check 1, the launch form says it writes variations first', async () => {
-    await page.getByRole('button', { name: 'Improve', exact: true }).click();
+    await page.getByRole('button', { name: 'Run Epoch', exact: true }).click();
     await expect(dialog.getByText(SCENARIOS_LINE, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(dialog.getByText(VARIATIONS_NOTE, { exact: true })).toBeVisible({ timeout: UI_READY });
     expect(seen.launchSourceRunIds).toEqual([executionId]);
   }, { timeout: UI_READY });
 
   await test.step('ui: check 2, Start sends exactly the pick', async () => {
-    await dialog.getByRole('button', { name: 'Start improvement' }).click();
+    await dialog.getByRole('button', { name: 'Run Epoch', exact: true }).click();
     await expect.poll(() => seen.launchBodies.length, { timeout: UI_READY }).toBe(1);
     expect(seen.launchBodies[0]).toEqual({
       source_run_id: executionId,
@@ -269,6 +280,9 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
       locked_paths: [],
       budget_credits: 1500,
       max_minutes: 150,
+      reply_latency_margin_pct: 25,
+      cost_margin_pct: 25,
+      cost_limit_usd: null,
     });
   }, { timeout: UI_READY });
 

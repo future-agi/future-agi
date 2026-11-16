@@ -2951,7 +2951,7 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:215`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
 
 **Tags:** —
 
@@ -2959,15 +2959,42 @@
 
 1. open a finished run of the environment
 2. open Debug failures
-3. press Improve
+3. press Run Epoch
 4. read the Scenarios row of the launch form
-5. press Start improvement
+5. press Run Epoch in the form
 6. read the epoch page
 
 **Browser observations:**
 
-- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 must keep passing", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
-- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits and 150 minutes
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 - the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
+
+### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
+
+**Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
+
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the finished epoch
+2. read its ending
+3. open How it was decided
+4. press Run a new epoch
+5. read the model lock
+6. type a cost limit of 0.01
+7. press Run Epoch
+8. read the new epoch's page
+
+**Browser observations:**
+
+- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
+- the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
+- the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
