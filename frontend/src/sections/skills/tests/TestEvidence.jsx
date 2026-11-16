@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import {
@@ -26,8 +26,9 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
 import { fDateTime } from "src/utils/format-time";
 import { TestExecutionConfiguration } from "./TestRunResults";
+import { canAttachRun } from "../utils/evidence";
 
-function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
+function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recordedWith = "It is saved when you confirm." }) {
   const evidence = useSkillTestEvidence(skillId, candidate);
   const skill = useSkill(skillId);
   const [inspectId, setInspectId] = useState(null);
@@ -44,12 +45,19 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
   );
   const link = (runId) =>
     `${paths.dashboard.skills.detail(skillId)}?${new URLSearchParams({ tab: "tests", ...(runId ? { run: runId } : {}) })}`;
-  const attachable =
-    row?.canAttach &&
-    row.visibility === "workspace" &&
-    row.currentness.content &&
-    row.currentness.payloadAvailable &&
-    !isActiveSkillJob(row.status);
+  const attachable = canAttachRun(row);
+  // "Attach" only selects the run here; the move or publication sends it and the server checks it again.
+  const selected = selectedRunId ? runs.find((item) => item.runId === selectedRunId) : undefined;
+  const attached = canAttachRun(selected);
+  // The Attach button gives way to the attached row, so focus follows it there.
+  const attachedRef = useRef(null);
+  const [focusAttached, setFocusAttached] = useState(false);
+  useEffect(() => {
+    if (focusAttached && attached) {
+      attachedRef.current?.focus();
+      setFocusAttached(false);
+    }
+  }, [focusAttached, attached]);
   if (evidence.isLoading)
     return (
       <ContentSkeleton variant="rows" rows={3} label="Loading test evidence" />
@@ -69,14 +77,20 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
     >
       <Stack spacing={1.5}>
         {error && <Alert severity="error">{error}</Alert>}
-        {selectedRunId &&
-          !runs.some((item) => item.runId === selectedRunId) && (
-            <Alert severity="warning">
-              The selected evidence no longer matches this candidate or is
-              unavailable. Review the conflict or explicitly remove the
-              attachment.
-            </Alert>
-          )}
+        {selectedRunId && !attached && (
+          <Alert
+            severity="warning"
+            action={
+              <Button color="inherit" size="small" onClick={() => onSelectRun(null)}>
+                Continue without attachment
+              </Button>
+            }
+          >
+            The selected evidence no longer matches this candidate or is
+            unavailable. Review the conflict or explicitly remove the
+            attachment.
+          </Alert>
+        )}
         {!runs.length ? (
           <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
             <Typography variant="s1">No tests run for {candidate.kind === 'draft' ? 'this draft' : 'these files'}. Not tested is not a pass.</Typography>
@@ -208,31 +222,53 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
                       Share evidence
                     </Button>
                   )}
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={
-                      !attachable || !canWrite || row.runId === selectedRunId
-                    }
-                    onClick={() => onSelectRun(row.runId)}
-                  >
-                    Attach this evidence
-                  </Button>
+                  {!(attached && row.runId === selectedRunId) && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={
+                        !attachable || !canWrite || row.runId === selectedRunId
+                      }
+                      onClick={() => {
+                        onSelectRun(row.runId);
+                        setFocusAttached(true);
+                      }}
+                    >
+                      Attach this evidence
+                    </Button>
+                  )}
                 </Stack>
               </>
             )}
           </>
         )}
-        <Stack direction="row" spacing={1}>
-          {runs.length > 0 && <Button size="small" component={RouterLink} to={link()}>
-            Run tests
-          </Button>}
-          {selectedRunId && (
-            <Button size="small" onClick={() => onSelectRun(null)}>
-              Continue without attachment
+        {attached && (
+          <Alert ref={attachedRef} tabIndex={-1} role="status" severity="success">
+            <Typography variant="s1" fontWeight={500}>
+              Evidence attached: test run from {fDateTime(selected.createdAt)}
+            </Typography>
+            <Typography variant="s3" component="p">
+              {selected.selectedCases} test case{selected.selectedCases === 1 ? "" : "s"} ·{" "}
+              {selected.answerRegressions} answer regression{selected.answerRegressions === 1 ? "" : "s"} ·{" "}
+              shared with workspace.{recordedWith ? ` ${recordedWith}` : ""}
+            </Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.5, ml: -1 }}>
+              <Button color="inherit" size="small" component={RouterLink} to={link(selected.runId)}>
+                View attached results
+              </Button>
+              <Button color="inherit" size="small" onClick={() => onSelectRun(null)}>
+                Remove attachment
+              </Button>
+            </Stack>
+          </Alert>
+        )}
+        {runs.length > 0 && (
+          <Stack direction="row" spacing={1}>
+            <Button size="small" component={RouterLink} to={link()}>
+              Run tests
             </Button>
-          )}
-        </Stack>
+          </Stack>
+        )}
       </Stack>
       <ConfirmDialog
         open={shareOpen}
@@ -270,6 +306,8 @@ EvidenceContent.propTypes = {
   candidate: PropTypes.object.isRequired,
   onSelectRun: PropTypes.func.isRequired,
   selectedRunId: PropTypes.string,
+  // Says when the attachment is saved; empty when the dialog says it beside its action.
+  recordedWith: PropTypes.string,
 };
 
 export default function TestEvidence(props) {

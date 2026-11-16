@@ -148,7 +148,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         setFailure('Release policy or labels changed. Reload and review the current targets. Your note and evidence selection are preserved.');
         currentSkill.refetch();
       } else if (['candidate_changed', 'evidence_mismatch', 'evidence_expired', 'evidence_share_required'].includes(code)) {
-        setFailure('The selected content or evidence cannot be released as reviewed. Review the evidence below, run tests again, or explicitly continue without the attachment.');
+        setFailure('The selected content or evidence cannot be released as reviewed. Review the evidence below, run tests again, or remove the attachment and continue without it.');
         currentDraft.refetch();
       } else if (code === "stale_base") {
         setStale(true);
@@ -234,7 +234,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           {checks && <ChecksList checks={checks} />}
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
         </ReviewSection>
-        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
+        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="It is saved with the new version when you publish." />
         {/* With AI drafting off for the workspace nothing about it is shown; a missing permission keeps the disabled button and its reason. */}
         {options.data?.assistEnabled && <>
           <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />

@@ -34,6 +34,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { fDateTime } from "src/utils/format-time";
 import TestAttemptDrawer from "./TestAttemptDrawer";
+import Money from "../components/Money";
+import TechnicalDetails from "../components/TechnicalDetails";
 
 const FILTERS = {
   all: "All test cases",
@@ -76,11 +78,13 @@ export function TestExecutionConfiguration({ configuration }) {
           ? `Judge: ${configuration.judge.modelId} · temperature ${configuration.judge.temperature} · output allowance ${configuration.judge.maxOutputTokens} tokens/call`
           : "No AI judge"}
       </Typography>
-      <Typography variant="s3" color="text.secondary">
-        Harness {configuration.harnessVersion} · adapter{" "}
-        {configuration.adapterVersion} · evaluator{" "}
-        {configuration.evaluatorVersion}
-      </Typography>
+      <TechnicalDetails title="Technical details">
+        <Typography variant="s3" color="text.secondary">
+          Harness {configuration.harnessVersion} · adapter{" "}
+          {configuration.adapterVersion} · evaluator{" "}
+          {configuration.evaluatorVersion}
+        </Typography>
+      </TechnicalDetails>
     </Stack>
   );
 }
@@ -388,15 +392,9 @@ export default function TestRunResults({
         ))}
       </Stack>
       <Typography variant="s3" color="text.secondary">
-        Task estimate{" "}
-        {run.metrics.taskCost.knownEstimateUsd === null
-          ? "unknown"
-          : `USD ${run.metrics.taskCost.knownEstimateUsd}`}{" "}
+        Task estimate <Money value={run.metrics.taskCost.knownEstimateUsd} />{" "}
         · judge estimate{" "}
-        {run.metrics.judgeCost.knownEstimateUsd === null
-          ? "unknown"
-          : `USD ${run.metrics.judgeCost.knownEstimateUsd}`}{" "}
-        ·{" "}
+        <Money value={run.metrics.judgeCost.knownEstimateUsd} /> ·{" "}
         {run.metrics.taskCost.unknownCalls + run.metrics.judgeCost.unknownCalls}{" "}
         unknown calls ·{" "}
         {run.metrics.taskCost.complete && run.metrics.judgeCost.complete

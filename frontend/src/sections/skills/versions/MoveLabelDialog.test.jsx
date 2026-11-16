@@ -20,7 +20,10 @@ vi.mock("src/api/skills", () => ({
   useSetSkillLabel: () => ({ mutateAsync: mocks.move, isPending: false }),
   getSkillErrorCode: (error) => error.code,
 }));
-vi.mock("src/api/skills/testing", () => ({ useSkillTestEvidence: () => mocks.evidence() }));
+vi.mock("src/api/skills/testing", () => ({
+  useSkillTestEvidence: (...args) => mocks.evidence(...args),
+  isActiveSkillJob: (status) => ["queued", "running", "cancelling"].includes(status),
+}));
 vi.mock("notistack", () => ({ enqueueSnackbar: mocks.toast }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/sections/skills/components/VersionSelect", () => {
@@ -240,7 +243,8 @@ describe("MoveLabelDialog", () => {
   });
 });
 
-vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: () => <div>Test evidence</div> }));
+// eslint-disable-next-line react/prop-types
+vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: ({ onSelectRun }) => <div>Test evidence<button type="button" onClick={() => onSelectRun("run-1")}>Attach mocked evidence</button></div> }));
 
 it('defaults to the newest different version and explains an explicit no-op', async () => {
   mocks.labels.mockReturnValue(labelsResult(3));
@@ -276,6 +280,31 @@ describe("moving production states its consequence at the point of decision", ()
     open();
     expect(await screen.findByText("Test evidence")).toBeInTheDocument();
     expect(screen.queryByText(/Not tested is not a pass/)).not.toBeInTheDocument();
+  });
+  const sharedRun = { runId: "run-1", canAttach: true, visibility: "workspace", status: "completed", currentness: { content: true, payloadAvailable: true } };
+  it("says beside the unchanged move action that attached evidence is saved with the move", async () => {
+    mocks.evidence.mockReturnValue({ data: { runs: [sharedRun] } });
+    open();
+    await screen.findByText("Test evidence");
+    expect(screen.queryByText(/saves the attached test evidence/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Attach mocked evidence" }));
+    expect(screen.getByText("Moving saves the attached test evidence with this label change.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Move production from v1 to v3$/ }));
+    await waitFor(() => expect(mocks.move).toHaveBeenCalledTimes(1));
+    expect(mocks.move.mock.calls[0][0]).toMatchObject({ evidenceRunId: "run-1", expectedVersion: 1 });
+  });
+  it("stops promising the attachment once it no longer matches the target, without silently dropping it", async () => {
+    mocks.evidence.mockImplementation((_, candidate) => ({ data: { runs: candidate?.version === 3 ? [sharedRun] : [] } }));
+    open();
+    await screen.findByText("Test evidence");
+    fireEvent.click(screen.getByRole("button", { name: "Attach mocked evidence" }));
+    expect(screen.getByText("Moving saves the attached test evidence with this label change.")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Version" }), { target: { value: "2" } });
+    expect(screen.queryByText(/saves the attached test evidence/)).not.toBeInTheDocument();
+    expect(screen.getByText("Test evidence")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Move production from v1 to v2$/ }));
+    await waitFor(() => expect(mocks.move).toHaveBeenCalledTimes(1));
+    expect(mocks.move.mock.calls[0][0]).toMatchObject({ evidenceRunId: "run-1", version: 2 });
   });
   it("does not talk about production for another label", async () => {
     mocks.labels.mockReturnValue({ data: [{ name: "staging", version: 1, canMove: true }, { name: "production", version: 2, canMove: true }], refetch: mocks.refetch });

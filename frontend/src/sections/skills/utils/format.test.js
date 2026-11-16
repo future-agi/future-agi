@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { paths } from 'src/routes/paths';
-import { allowanceInput, formatBytes, formatExpiry, formatExpiryShort, formatTokens, formatUtcFull, formatWhen, shortDigest } from './format';
+import { allowanceInput, formatBytes, formatUsd, formatExpiry, formatExpiryShort, formatTokens, formatUtcFull, formatWhen, shortDigest } from './format';
 import { answerConclusion, impactSentence, publishSentence } from './conclusions';
 
 it.each([[0, '0 B'], [1023, '1023 B'], [1024, '1 KiB'], [1536, '1.5 KiB'], [2097152, '2 MiB']])('formats %s UTF-8 bytes', (bytes, expected) => expect(formatBytes(bytes)).toBe(expected));
@@ -106,5 +106,29 @@ describe('release impact', () => {
   ])('states %j in short sentences, in app words', (impact, expected) => {
     expect(impactSentence(impact)).toBe(expected);
     expect(impactSentence(impact)).not.toMatch(/consumer|label/);
+  });
+});
+
+describe('money', () => {
+  it.each([
+    ['0.23869440', 'nearest', '$0.24'],
+    ['0.00004770', 'nearest', 'under $0.01'],
+    ['0.00000000', 'nearest', '$0'],
+    ['25.00000000', 'nearest', '$25'],
+    ['1234.5', 'nearest', '$1,234.50'],
+    ['0.995', 'nearest', '$1.00'],
+    ['0.23100001', 'nearest', '$0.23'],
+    ['1.10000000', 'up', '$1.10'],
+    ['0.23100001', 'up', '$0.24'],
+    ['0.00004770', 'up', 'under $0.01'],
+    ['25.00999999', 'down', '$25.00'],
+    ['0.00400000', 'down', '$0'],
+  ])('formats %s (%s) as %s, rounding on the decimal text', (value, round, expected) => {
+    expect(formatUsd(value, { round })).toBe(expected);
+  });
+  it('keeps a missing amount missing and shows an unexpected one as reported', () => {
+    expect(formatUsd(null)).toBeNull();
+    expect(formatUsd('')).toBeNull();
+    expect(formatUsd('-1')).toBe('USD -1');
   });
 });
