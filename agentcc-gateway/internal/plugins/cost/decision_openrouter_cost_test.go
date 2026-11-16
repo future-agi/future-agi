@@ -26,8 +26,8 @@ func TestCostPlugin_DecisionOpenRouterJev(t *testing.T) {
 			if got := rc.Metadata["cost"]; got != "0.042000" {
 				t.Fatalf("cost = %q, want 0.042000", got)
 			}
-			if src, ok := rc.Metadata["cost_source"]; ok {
-				t.Fatalf("cost_source = %q, want none", src)
+			if src := rc.Metadata["cost_source"]; src != CostSourceCatalogue {
+				t.Fatalf("cost_source = %q, want catalogue", src)
 			}
 		})
 	}
