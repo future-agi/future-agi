@@ -60777,7 +60777,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
   tool_call_count: zod
     .number()
     .describe(
-      "The transcript's tool calls; a hand-off to another agent is a Participants step, not one of them.",
+      "The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
     ),
   call_actors: zod.array(
     zod.object({
