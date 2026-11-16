@@ -41,10 +41,10 @@ interface Report {
   counts: Record<string, number>;
 }
 
-test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a run waits for the check', {
+test('SIM-E2E-030: a pairing reads its readiness, a re-check validates it, and a run waits for the check', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-003', area: 'simulate',
+    id: 'SIM-E2E-030', area: 'simulate',
     userGoal: 'A developer reads whether an agent, environment and suite pairing can run and why, '
       + 'asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs',
     steps: ['seed a built, certified Environment whose contract routes issue_refund to production, '
@@ -147,10 +147,10 @@ test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a
   });
 });
 
-test('SIM-E2E-006: a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh', {
+test('SIM-E2E-032: a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-006', area: 'simulate',
+    id: 'SIM-E2E-032', area: 'simulate',
     userGoal: 'A developer whose agent failed its check with an environment is told why when a run is refused, '
       + 'without internal detail, and can check the pairing again',
     steps: ['seed a built Environment whose pairing\'s last check failed on issue_refund '

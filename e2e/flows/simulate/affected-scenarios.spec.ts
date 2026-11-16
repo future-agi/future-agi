@@ -22,10 +22,10 @@ interface Row { id: string; affected: { count: number; of: number } }
 interface Report { selection: Selection; rows: Row[] }
 interface CasePage { items: { key: string; number: number; by: string[] }[]; next: string | null }
 
-test('SIM-E2E-004: the cases a pairing holds back are bucketed and paged by scenario number', {
+test('SIM-E2E-031: the cases a pairing holds back are bucketed and paged by scenario number', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-004', area: 'simulate',
+    id: 'SIM-E2E-031', area: 'simulate',
     userGoal: 'A developer selecting scenarios to run sees how many of them the pairing can run, '
       + 'how many it holds back and why, and pages through the held-back cases',
     steps: [`seed a built, certified Environment of ${REFUNDS} refund and ${LOOKUPS} lookup scenarios whose contract `
