@@ -20,14 +20,19 @@ export const FIX_RUNS_PAGE_SIZE = 25;
 // The page and size sit after the env id, so invalidating fixRunsKey(envId)
 // refreshes every page of that environment.
 export const fixRunsKey = (envId, page, pageSize) =>
-  page == null ? ["agent-fix-runs", envId] : ["agent-fix-runs", envId, page, pageSize];
+  page == null
+    ? ["agent-fix-runs", envId]
+    : ["agent-fix-runs", envId, page, pageSize];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
 export const fixPollInterval = (fix) =>
   fix && FIX_LIVE_STATES.has(fix.state) ? FIX_POLL_MS : false;
 
 // One server page, 1-based, as { results, count }.
-export async function listFixRuns(envId, { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {}) {
+export async function listFixRuns(
+  envId,
+  { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
+) {
   const res = await axios.get(endpoints.agentFixRuns.list(), {
     params: { environment_id: envId, page, limit },
   });
@@ -117,17 +122,20 @@ export async function stopFixRun(fixId) {
   return res.data;
 }
 
-export async function shipCandidate(fix, candidateId) {
+// The winner ships as is; a trial only its must-pass check refused ships with
+// the user's reason (overrideReason).
+export async function shipCandidate(fix, candidateId, overrideReason) {
+  const body = overrideReason ? { override_reason: overrideReason } : {};
   if (fix.agent?.kind === "github") {
     const res = await axios.post(
       endpoints.agentFixRuns.pullRequest(fix.id, candidateId),
-      {},
+      body,
     );
     return { kind: "pull_request", url: res.data?.pull_request_url };
   }
   const res = await axios.post(
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
-    {},
+    body,
   );
   return {
     kind:
@@ -177,7 +185,8 @@ export function useShipCandidate(fix) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (candidateId) => shipCandidate(fix, candidateId),
+    mutationFn: ({ candidateId, overrideReason }) =>
+      shipCandidate(fix, candidateId, overrideReason),
     onSuccess: () => refreshFix(queryClient, fix),
   });
 }

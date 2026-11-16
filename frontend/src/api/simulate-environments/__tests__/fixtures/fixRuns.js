@@ -26,6 +26,30 @@ const tiers = (overrides = {}) => [
   ...Object.entries(overrides).map(([name, rest]) => ({ name, ...rest })),
 ];
 
+// Fixed its targets and passed every check but must-pass, on cases the user
+// did not protect: it may ship on the user's reason.
+const mustPassRefused = (fixId, attempt, regressions) =>
+  candidate(fixId, attempt, "rejected", {
+    verdict: {
+      accepted: false,
+      reason: "must-pass: 1 must-pass scenario regressed",
+      target_pass_rate: [0.0, 1.0],
+      held_back_pass_rate: [0.17, 0.83],
+      must_pass_regressions: regressions.map((r) => r.split(":")[0]),
+      must_pass_within_noise: [],
+      tiers: tiers().map((t) =>
+        t.name === "must-pass"
+          ? {
+              ...t,
+              status: "failed",
+              detail: "8 of 9 must-pass scenarios held",
+            }
+          : t,
+      ),
+    },
+    override: { allowed: true, regressions, reason: "", by: null, at: null },
+  });
+
 const candidate = (fixId, attempt, outcome, extra = {}) => ({
   id: `${fixId}-c${attempt}`,
   attempt,
@@ -76,6 +100,7 @@ const candidate = (fixId, attempt, outcome, extra = {}) => ({
     },
   ],
   pull_request_url: "",
+  override: { allowed: false, regressions: [], reason: "", by: null, at: null },
   created_at: `2026-10-29T08:${String(10 + attempt).padStart(2, "0")}:05Z`,
   ...extra,
 });
@@ -277,7 +302,7 @@ export const FIX_RUN_FIXTURES = [
     },
     candidates: [
       candidate("fix-no-improvement", 1, "rejected"),
-      candidate("fix-no-improvement", 2, "rejected"),
+      mustPassRefused("fix-no-improvement", 2, ["on-time-cancel: escalated"]),
     ],
   }),
   fix("fix-not-reproduced", 5, {

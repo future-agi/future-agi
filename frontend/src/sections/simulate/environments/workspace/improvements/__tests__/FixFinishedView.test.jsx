@@ -322,3 +322,119 @@ describe("Ship", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Ship anyway", () => {
+  it("ships a trial only its must-pass check refused, on a required reason, and says who shipped it", async () => {
+    const user = userEvent.setup();
+    renderPage("fix-no-improvement");
+    expect(
+      await screen.findByText("Broke must-pass: on-time-cancel: escalated"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Ship anyway" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", {
+      name: "Make default",
+    });
+    expect(confirm).toBeDisabled();
+    await user.type(
+      within(dialog).getByLabelText(/Why ship it anyway/),
+      "The escalation copy changed on purpose",
+    );
+    await user.click(confirm);
+    expect(shipPosts()[0]).toEqual([
+      expect.stringMatching(/fix-no-improvement-c2\/make-default\/$/),
+      { override_reason: "The escalation copy changed on purpose" },
+    ]);
+    expect(
+      await screen.findByText(
+        /Shipped anyway by Test User · .*: The escalation copy changed on purpose/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Default" })).toBeDisabled();
+  });
+
+  it("lets one Ship cover the winner and a trial only must-pass refused", async () => {
+    updateFixtureFixRun("fix-ready-archive", (f) => ({
+      ...f,
+      candidates: f.candidates.map((c) =>
+        c.attempt === 1
+          ? {
+              ...c,
+              override: {
+                ...c.override,
+                allowed: true,
+                regressions: ["late-fee: waived"],
+              },
+            }
+          : c,
+      ),
+    }));
+    const user = userEvent.setup();
+    renderPage("fix-ready-archive");
+    expect(screen.queryByRole("button", { name: "Ship anyway" })).toBeNull();
+    const { dialog, confirm } = await confirmShip(user, "Make default");
+    // The winner leads and ships without a reason.
+    expect(within(dialog).queryByLabelText(/Why ship it anyway/)).toBeNull();
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Trial to ship" }),
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Trial 1 · Broke must-pass checks",
+      }),
+    );
+    expect(
+      within(dialog).getByText("Must-pass late-fee: waived"),
+    ).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    await user.type(within(dialog).getByLabelText(/Why ship it anyway/), "ok");
+    await user.click(confirm);
+    expect(shipPosts()[0]).toEqual([
+      expect.stringMatching(/fix-ready-archive-c1\/make-default\/$/),
+      { override_reason: "ok" },
+    ]);
+  });
+
+  it.each([
+    [
+      "fix_override_reason_required",
+      422,
+      "Give a reason to ship this trial anyway.",
+    ],
+    [
+      "fix_override_not_needed",
+      422,
+      "This trial passed every check. Ship it without a reason.",
+    ],
+    [
+      "fix_candidate_not_proven",
+      422,
+      "This trial can't ship: it failed more than a must-pass check.",
+    ],
+    ["fix_run_active", 409, "Wait for the improvement to finish, then ship."],
+  ])(
+    "says why the platform refused it: %s",
+    async (error, statusCode, copy) => {
+      hooks.ship = {
+        isPending: false,
+        mutateAsync: vi
+          .fn()
+          .mockRejectedValue({ statusCode, error, message: error }),
+      };
+      const user = userEvent.setup();
+      renderPage("fix-no-improvement");
+      await user.click(
+        await screen.findByRole("button", { name: "Ship anyway" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.type(
+        within(dialog).getByLabelText(/Why ship it anyway/),
+        "ok",
+      );
+      await user.click(
+        within(dialog).getByRole("button", { name: "Make default" }),
+      );
+      expect(await screen.findByText(copy)).toBeInTheDocument();
+    },
+  );
+});

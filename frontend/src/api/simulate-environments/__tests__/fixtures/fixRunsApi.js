@@ -36,9 +36,47 @@ function readFix(fixId) {
   return ok(fix);
 }
 
-function makeDefault(fixId, candidateId) {
+// The backend's ship rules (require_shippable): the winner ships without a
+// reason; a trial only its must-pass check refused ships with one; nothing else.
+function refuseShip(fix, candidate, reason) {
+  const refuse = (error) =>
+    fail(error === "fix_run_active" ? 409 : 422, { error, message: error });
+  if (["queued", "running", "stopping"].includes(fix.state)) {
+    return refuse("fix_run_active");
+  }
+  if (candidate.outcome === "winner") {
+    return reason ? refuse("fix_override_not_needed") : null;
+  }
+  if (!candidate.override?.allowed) return refuse("fix_candidate_not_proven");
+  return reason ? null : refuse("fix_override_reason_required");
+}
+
+// Kept once, as the backend does: a later ship keeps the first reason.
+const recordOverride = (fixId, candidateId, reason) =>
+  reason &&
+  updateFixtureFixRun(fixId, (f) => ({
+    ...f,
+    candidates: f.candidates.map((c) =>
+      c.id === candidateId && !c.override.at
+        ? {
+            ...c,
+            override: {
+              ...c.override,
+              reason,
+              by: { id: "user-1", name: "Test User" },
+              at: "2026-11-16T10:00:00Z",
+            },
+          }
+        : c,
+    ),
+  }));
+
+function makeDefault(fixId, candidateId, body = {}) {
   const fix = fixtureFixRun(fixId);
   const candidate = fix.candidates.find((c) => c.id === candidateId);
+  const refused = refuseShip(fix, candidate, body.override_reason);
+  if (refused) return refused;
+  recordOverride(fixId, candidateId, body.override_reason);
   if (fix.environment.default_agent_version_id === candidate.agent_version_id) {
     return ok({ outcome: "already_default" });
   }
@@ -52,7 +90,12 @@ function makeDefault(fixId, candidateId) {
   return ok({ outcome: "activated" });
 }
 
-function openPullRequest(fixId, candidateId) {
+function openPullRequest(fixId, candidateId, body = {}) {
+  const fix = fixtureFixRun(fixId);
+  const candidate = fix.candidates.find((c) => c.id === candidateId);
+  const refused = refuseShip(fix, candidate, body.override_reason);
+  if (refused) return refused;
+  recordOverride(fixId, candidateId, body.override_reason);
   updateFixtureFixRun(fixId, (f) => ({
     ...f,
     candidates: f.candidates.map((c) =>
@@ -107,9 +150,11 @@ export function createFixRunsAxios(actual) {
     const retry = RETRY.exec(url);
     if (retry) return ok(fixtureRetry(retry[1]));
     const cand = CANDIDATE.exec(url);
-    if (cand && cand[3] === "make-default") return makeDefault(cand[1], cand[2]);
+    if (cand && cand[3] === "make-default") {
+      return makeDefault(cand[1], cand[2], body);
+    }
     if (cand && cand[3] === "pull-request") {
-      return openPullRequest(cand[1], cand[2]);
+      return openPullRequest(cand[1], cand[2], body);
     }
     const fix = FIX.exec(url);
     if (fix && fix[2]) {
