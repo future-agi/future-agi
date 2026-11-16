@@ -18,6 +18,7 @@ from typing import Any
 
 from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
 from model_hub.types import CompositeChildResult
+from tfc.utils.evaluation_denials import EvaluationDenied
 from model_hub.utils.composite_aggregation import (
     aggregate_error_localizers,
     aggregate_scores,
@@ -184,6 +185,18 @@ def _execute_child(
             output_type=result.get("output_type"),
             status="completed",
             log_id=result.get("log_id"),
+            weight=weight,
+        )
+
+    except EvaluationDenied as denial:
+        logger.warning("Composite child evaluation denied: %s", denial.code)
+        return CompositeChildResult(
+            child_id=str(child_template.id),
+            child_name=child_template.name,
+            order=link.order,
+            status="failed",
+            error=denial.code,
+            reason=str(denial),
             weight=weight,
         )
 

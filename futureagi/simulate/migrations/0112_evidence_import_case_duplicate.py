@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0107_evidence_import_case_discarded"),
+        ("simulate", "0111_evidence_import_case_discarded"),
     ]
 
     operations = [

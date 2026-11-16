@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
         # Depending on its latest migration made this one a dependent that
         # accounts' own migrate-back tests unapply and never re-apply.
         ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
-        ("simulate", "0103_harness_job_verify_of"),
+        ("simulate", "0107_builder_turn_usage"),
         ("tracer", "0130_observationspan_internal_type"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
