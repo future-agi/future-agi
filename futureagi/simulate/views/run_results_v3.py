@@ -20,6 +20,7 @@ from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -28,6 +29,7 @@ from simulate.models import CallExecution, TestExecution
 from simulate.selectors.call_detail import (
     call_actors,
     comparability,
+    earlier_attempts,
     has_customer,
     participants,
     tagged_function_calls,
@@ -35,11 +37,13 @@ from simulate.selectors.call_detail import (
     transcript_turns,
     trial_state,
 )
+from simulate.selectors.call_workers import call_workers
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
     CallCallActorSerializer,
     CallParticipantSerializer,
+    EarlierAttemptSerializer,
     FunctionCallSerializer,
     TrialStateSerializer,
 )
@@ -54,12 +58,6 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
-from simulate.services.harness_worker_steps import served_record
-from simulate.services.harness_workers import (
-    first_read_due,
-    read_pending,
-    stored_record,
-)
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -653,8 +651,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
     tool_call_count = serializers.IntegerField(
-        help_text="The agent's tool calls in the transcript and function calls; a world actor's action is not one, "
-        "and a hand-off to another agent is a Participants step, not one of them."
+        help_text="The agent's tool calls, from the tool trace when the call has one, else the transcript; a world "
+        "actor's action is not one, and a hand-off to another agent is a Participants step, not one of them."
     )
     call_actors = CallCallActorSerializer(many=True)
     participants = CallParticipantSerializer(
@@ -667,6 +665,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
         "started it and the person never spoke."
     )
     trial_state = TrialStateSerializer(allow_null=True)
+    earlier_attempts = EarlierAttemptSerializer(many=True)
     comparable = serializers.BooleanField(
         help_text="False when the trial did not start from the seeded records; it is then left out of "
         "repeatability, pass^k and run comparisons."
@@ -696,6 +695,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "participants",
             "has_customer",
             "trial_state",
+            "earlier_attempts",
             "comparable",
             "not_comparable_reason",
             "scoring_status",
@@ -985,6 +985,7 @@ def build_call_execution_detail(
             "has_customer": has_customer(data["transcript"]),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call, calls=calls),
+            "earlier_attempts": earlier_attempts(call),
             **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
@@ -1016,7 +1017,9 @@ class CallExecutionV3DetailView(APIView):
 
 
 def _call_for_request(
-    request, call_execution_id, calls: QuerySet[CallExecution] | None = None
+    request: Request,
+    call_execution_id: uuid.UUID | str,
+    calls: QuerySet[CallExecution] | None = None,
 ) -> CallExecution:
     """One call the requester's organization and workspace may read, or 404."""
     organization = getattr(request, "organization", None) or getattr(
@@ -1047,29 +1050,27 @@ class CallExecutionV3WorkersView(APIView):
         responses={
             200: CallWorkersResponseSerializer,
             202: CallWorkersPendingSerializer,
-            204: "No hand-off to other agents was seen in this call, or the earlier attempt asked for kept none",
+            204: "No hand-off to other agents was seen in this call or in the earlier attempt asked for",
         },
         operation_id="simulate_v3_call_execution_workers",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
         call = _call_for_request(request, call_execution_id)
-        attempt = request.validated_query_data.get("attempt")
-        timeline = stored_record(call, attempt)
-        now = timezone.now()
-        if timeline:
+        reply = call_workers(
+            call, request.validated_query_data.get("attempt"), timezone.now()
+        )
+        if reply.record is not None:
             return Response(
-                CallWorkersResponseSerializer(served_record(timeline, now)).data
+                CallWorkersResponseSerializer(reply.record).data, status=reply.status
             )
-        due = first_read_due(call) if attempt is None else None
-        if due is not None and read_pending(due, now):
-            # The first read has not run yet: the client checks again rather than reading "no workers".
+        if reply.next_read_at is not None:
             return Response(
                 CallWorkersPendingSerializer(
-                    {"pending": True, "next_read_at": due}
+                    {"pending": True, "next_read_at": reply.next_read_at}
                 ).data,
-                status=status.HTTP_202_ACCEPTED,
+                status=reply.status,
             )
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(status=reply.status)
 
 
 class RunAnalyticsV3View(APIView):

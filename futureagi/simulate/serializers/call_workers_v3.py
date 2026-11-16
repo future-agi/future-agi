@@ -11,6 +11,7 @@ from simulate.types import (
     WorkerCollection,
     WorkerEventType,
     WorkerRelationship,
+    WorkersState,
     WorkerStatus,
     WorkerStepKind,
 )
@@ -98,6 +99,10 @@ class CallWorkerStepSerializer(serializers.Serializer):
     ended_at = serializers.CharField(allow_null=True, required=False)
     parallel = serializers.BooleanField(required=False)
     end = serializers.ChoiceField(choices=get_args(HandOffEnd), required=False)
+    # A hand-off that failed or never returned, as `counts.did_not_finish` counts it.
+    did_not_finish = serializers.BooleanField(required=False)
+    # The worker's first hand-off, which carries its model and token totals.
+    first_of_worker = serializers.BooleanField(required=False)
     children = serializers.ListField(child=serializers.IntegerField(), required=False)
     call = CallWorkerEventSerializer(required=False)
     # Turn n starts at the caller's nth message, 0 is before they spoke; null when the record does not say.
@@ -115,6 +120,10 @@ class CallWorkerRoundSerializer(serializers.Serializer):
     response = CallWorkerTurnSerializer(allow_null=True)
     children = serializers.ListField(child=serializers.IntegerField())
     calls_outside = serializers.IntegerField()
+    # Every hand-off of the turn, nested ones included, in table order.
+    handoffs = serializers.ListField(child=serializers.IntegerField())
+    # False when a missing request or reply is not missed: work before the caller spoke, or in no recorded turn.
+    expects_messages = serializers.BooleanField()
 
 
 class HandOffCountsSerializer(serializers.Serializer):
@@ -129,7 +138,8 @@ class HandOffCountsSerializer(serializers.Serializer):
 class CallWorkersQuerySerializer(serializers.Serializer):
     attempt = serializers.UUIDField(
         required=False,
-        help_text="An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.",
+        help_text="An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this "
+        "call's, state `not_kept` when it was snapshotted before records were kept.",
     )
 
 
@@ -160,6 +170,8 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     # The record is not whole, so a missing return may only be one it did not keep.
     cut_off = serializers.BooleanField()
     beyond_boundary = serializers.BooleanField()
-    # A later read is still due and may change the record.
+    # A later read is still due and may change the record; the client reads again once, at `next_read_at`.
     pending = serializers.BooleanField()
     next_read_at = serializers.CharField(required=False)
+    # `not_kept`: an earlier attempt snapshotted before records were kept; `unreadable`: the read failed. Both empty.
+    state = serializers.ChoiceField(choices=get_args(WorkersState))

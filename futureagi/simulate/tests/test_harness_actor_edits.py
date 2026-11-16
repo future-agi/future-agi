@@ -74,11 +74,12 @@ def _with_manager_in_a_scenario(user, workspace, key, actors=None):
     "trigger, channel, said",
     [
         ({"kind": "always"}, None, "Present from the start"),
-        ({}, "audio_mix", "Present from the start: after the agent's first turn"),
+        # Someone who speaks comes in at the first moment the runtime lets them: after the agent's first turn.
+        ({}, "audio_mix", "After the agent's first turn"),
         (
             {"kind": "always"},
             "audio_handoff",
-            "Present from the start: after the agent's second turn",
+            "After the agent's second turn",
         ),
         ({"kind": "always"}, "ivr", "Answers the call"),
         # Someone who takes the phone never does so before the agent's second turn.
@@ -119,7 +120,7 @@ def _with_manager_in_a_scenario(user, workspace, key, actors=None):
         (
             {"kind": "probability", "p": 0.125},
             "audio_mix",
-            "In about 13% of calls, present from the start: after the agent's first turn",
+            "In about 13% of calls, after the agent's first turn",
         ),
         (
             {"kind": "probability"},

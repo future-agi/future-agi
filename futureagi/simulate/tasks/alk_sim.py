@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import CallExecution
-from simulate.services.harness_workers import SECOND_READ, attempt_reset
+from simulate.services.harness_workers import SECOND_READ, attempt_reset, mark_read
 from simulate.services.harness_workers import (
     record_call_workers as record_worker_timeline,
 )
@@ -40,6 +40,7 @@ logger = structlog.get_logger(__name__)
 
 # Retries of the CSAT activity after its first attempt.
 CSAT_MAX_RETRIES = 2
+WORKERS_MAX_RETRIES = 2
 
 _CSAT_RULE_PROMPT = (
     CSAT_SCORE_PROMPT["criteria"] + "\n\n## Inputs\n\n<output>{{output}}</output>"
@@ -47,7 +48,7 @@ _CSAT_RULE_PROMPT = (
 _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 
-@temporal_activity(time_limit=120, max_retries=2, queue="tasks_s")
+@temporal_activity(time_limit=120, max_retries=WORKERS_MAX_RETRIES, queue="tasks_s")
 def record_call_workers(payload: dict[str, object]) -> None:
     """Keep which worker did what in one call, and schedule the later read the record says is due."""
     read = CallWorkersRead.parse(payload)
@@ -56,9 +57,15 @@ def record_call_workers(payload: dict[str, object]) -> None:
     # A call rerun since this read was scheduled is the new attempt's to read.
     if read.attempt is not None and read.attempt != current:
         return
-    timeline = record_worker_timeline(
-        read.call_execution_id, second_read=read.second_read
-    )
+    try:
+        timeline = record_worker_timeline(
+            read.call_execution_id, second_read=read.second_read
+        )
+    except Exception:
+        # Out of retries, the call says its read failed rather than reading as one with no other agents.
+        if _is_last_attempt(WORKERS_MAX_RETRIES):
+            mark_read(read.call_execution_id, failed=True)
+        raise
     if timeline and timeline.get("next_read_at"):
         later = CallWorkersRead(
             read.call_execution_id, second_read=True, attempt=current
@@ -138,8 +145,8 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     )
 
 
-def _is_last_attempt() -> bool:
-    """Whether Temporal will not run the CSAT activity again after this attempt.
+def _is_last_attempt(max_retries: int = CSAT_MAX_RETRIES) -> bool:
+    """Whether Temporal will not run the activity again after this attempt.
 
     Called outside an activity (a direct call, a test) nothing retries it.
     Inside one, the attempt number is compared with the retry policy the
@@ -150,7 +157,7 @@ def _is_last_attempt() -> bool:
     if info is None:
         return True
     policy = info.retry_policy
-    limit = CSAT_MAX_RETRIES + 1 if policy is None else policy.maximum_attempts
+    limit = max_retries + 1 if policy is None else policy.maximum_attempts
     return limit > 0 and info.attempt >= limit
 
 

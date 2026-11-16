@@ -3,6 +3,8 @@ out by the server, never guessed by the page."""
 
 from types import SimpleNamespace
 
+import pytest
+
 from simulate.selectors.call_detail import (
     tagged_function_calls,
     transcript_turns,
@@ -54,23 +56,49 @@ def test_a_chat_row_an_actor_wrote_is_that_actor_s_turn_by_id_without_the_label_
     assert task["speaker_role"] == "task"
 
 
-def test_a_person_who_quotes_the_label_stays_the_person_and_an_unknown_actor_is_left_as_stored():
+def test_a_person_who_quotes_the_label_stays_the_person():
     quoted = {
         "role": "user",
         "content": [{"role": "user", "content": f"{call_actor_label('Sam')}: hello"}],
     }
-    stranger = {
-        "role": "user",
-        "content": [{"role": "user", "actor": "nobody", "content": "hi"}],
-    }
 
-    turns = transcript_turns([quoted, stranger], [SAM], chat=True)
+    [turn] = transcript_turns([quoted], [SAM], chat=True)
 
-    assert [turn["content"] for turn in turns] == [
-        quoted["content"],
-        stranger["content"],
-    ]
-    assert [turn["speaker_role"] for turn in turns] == ["user", "user"]
+    assert (turn["speaker_role"], turn["content"]) == ("user", quoted["content"])
+
+
+@pytest.mark.parametrize(
+    "item, speaker",
+    [
+        ({"content": f"{call_actor_label('alex_vance')}: Approved."}, "alex_vance"),
+        (
+            {
+                "name": "Alex Vance",
+                "content": f"{call_actor_label('Alex Vance')}: Approved.",
+            },
+            "Alex Vance",
+        ),
+    ],
+    ids=["by its id", "by the name its turn carries"],
+)
+def test_an_actor_the_cast_does_not_list_still_speaks_as_itself_without_the_label(
+    item, speaker
+):
+    row = {"role": "user", "content": [{"role": "user", "actor": "alex_vance", **item}]}
+
+    [turn] = transcript_turns([row], [SAM], chat=True)
+
+    assert (
+        turn["speaker_role"],
+        turn["actor_id"],
+        turn["speaker_name"],
+        turn["content"],
+    ) == (
+        "actor",
+        "alex_vance",
+        speaker,
+        "Approved.",
+    )
 
 
 def test_a_voice_actor_turn_carries_its_role_and_channel():
