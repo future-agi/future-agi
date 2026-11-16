@@ -483,6 +483,25 @@ export default function ImprovementRunsView({
                   <Iconify icon="solar:arrow-left-linear" width={16} />
                 </IconButton>
               </Tooltip>
+              {/* Where you came from, in view (#72): the issue, the run or
+                  the Improvements list. */}
+              {backLabel && (
+                <Box
+                  component="button"
+                  type="button"
+                  onClick={onBack}
+                  sx={{
+                    all: "unset",
+                    cursor: "pointer",
+                    typography: "s2",
+                    color: "text.tertiary",
+                    whiteSpace: "nowrap",
+                    "&:hover": { color: "text.primary" },
+                  }}
+                >
+                  {`${backLabel} /`}
+                </Box>
+              )}
               <Typography
                 noWrap
                 sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
@@ -656,19 +675,24 @@ export default function ImprovementRunsView({
             </Button>
           )}
           {kept && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => openRun(kept)}
-              endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-              sx={{
-                color: "text.primary",
-                borderColor: "divider",
-                flexShrink: 0,
-              }}
+            <Tooltip
+              arrow
+              describeChild
+              title={`Opens ${kept.name}: its changes, how it did on each scenario, and its runs.`}
             >
-              {`Review ${kept.name}`}
-            </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => openRun(kept)}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
+                {`Open ${kept.name}`}
+              </Button>
+            </Tooltip>
           )}
           {/* Only a verified change ships: a run chosen over the search's
               pick is verified first. */}
@@ -705,16 +729,21 @@ export default function ImprovementRunsView({
               </Button>
             ) : onShip && holdShip && onRecheck ? (
               /* Its proof is on an older version: re-checked first. */
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={onRecheck}
-                startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
-                sx={{ flexShrink: 0 }}
+              <Tooltip
+                arrow
+                describeChild
+                title={`Runs it again on ${behind.prod}, the version in production now — its proof is on an older one.`}
               >
-                {`Re-check on ${behind.prod}`}
-              </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={onRecheck}
+                  sx={{ flexShrink: 0 }}
+                >
+                  Re-check
+                </Button>
+              </Tooltip>
             ) : onShip ? (
               <Tooltip
                 arrow
@@ -1629,8 +1658,10 @@ function Verdict({ outcome, result, targetNow }) {
     result?.winner &&
       targetLift != null && {
         k: "Target",
+        /* When the targets were set (#76). */
+        tip: "Set when the fix started: the issue's scenarios that failed on the agent in production. Some of them are held back to check the change on cases it never saw.",
         v: `${result.base}% → ${targetNow}%`,
-        sub: "on the scenarios it was tuned on",
+        sub: "the issue's failing scenarios",
         pts: targetLift || null,
       },
     result?.winner &&
@@ -1642,12 +1673,16 @@ function Verdict({ outcome, result, targetNow }) {
       },
     result?.winner &&
       effect && {
-        k: "Cost · latency",
-        v: `${outcome.costKnown === false ? "—" : signedPct(effect.cost)} · ${outcome.latencyKnown === false ? "—" : signedPct(effect.latency)}`,
-        sub:
-          outcome.costKnown === false
-            ? "cost not measured"
-            : "per conversation",
+        /* Two tiles, as everywhere else (#73, #75). */
+        k: "Cost per conversation",
+        v: outcome.costKnown === false ? "—" : signedPct(effect.cost),
+        sub: outcome.costKnown === false ? "not measured" : "vs today",
+      },
+    result?.winner &&
+      effect && {
+        k: "Latency",
+        v: outcome.latencyKnown === false ? "—" : signedPct(effect.latency),
+        sub: outcome.latencyKnown === false ? "not measured" : "vs today",
       },
   ].filter(Boolean);
   const failed = checks.filter((c) => c.pass === false);
@@ -1749,9 +1784,22 @@ function Verdict({ outcome, result, targetNow }) {
         >
           {cells.map((c) => (
             <Box key={c.k} sx={{ px: 2, py: 0.875, minWidth: 0 }}>
-              <Typography noWrap sx={line}>
-                {c.k}
-              </Typography>
+              <Tooltip arrow placement="top-start" title={c.tip || ""}>
+                <Typography
+                  noWrap
+                  sx={{
+                    ...line,
+                    ...(c.tip && {
+                      width: "fit-content",
+                      maxWidth: "100%",
+                      textDecoration: "underline dotted",
+                      textUnderlineOffset: "3px",
+                    }),
+                  }}
+                >
+                  {c.k}
+                </Typography>
+              </Tooltip>
               <Stack
                 direction="row"
                 alignItems="baseline"

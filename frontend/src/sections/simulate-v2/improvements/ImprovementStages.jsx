@@ -400,7 +400,8 @@ export default function ImprovementStages({
               lineHeight: "20px",
             }}
           >
-            Held to
+            {/* One name for the agent's rules everywhere (#69). */}
+            Constraints
           </Typography>
           <Stack
             direction="row"

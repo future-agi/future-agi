@@ -2776,7 +2776,7 @@ function RunningConstraints({ record, model }) {
           letterSpacing: 0.5,
         }}
       >
-        Held to
+        Constraints
       </Typography>
       {rows.map((c) => (
         <Typography
