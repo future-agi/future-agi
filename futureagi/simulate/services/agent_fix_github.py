@@ -15,7 +15,12 @@ import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.selectors.agent_fix import limited_validation, overridable_regressions
+from simulate.pydantic_schemas.agent_fix import EvalGrading
+from simulate.selectors.agent_fix import (
+    eval_review,
+    limited_validation,
+    overridable_regressions,
+)
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import (
     base_moved,
@@ -37,7 +42,7 @@ _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
 _TITLE_CHARS = 120
 _LIMITED_NOTE = (
-    "**Limited validation.** Too few failing cases were held back to verify this fix."
+    "**Limited validation.** Too few failing cases were held back to verify this change."
     " Review it closely before you merge."
 )
 
@@ -134,12 +139,43 @@ def _evidence(verdict: dict) -> str:
     )
 
 
+# The FE says the same where the user ships.
+_EVALS_INCOMPLETE = (
+    "**Platform evals did not finish on this candidate,** so their results are missing."
+    " Review it closely before you merge."
+)
+
+
+def _evals_note(candidate: AgentFixCandidate) -> str:
+    """The platform evals the winner does worse on than the current version. They do not
+    decide a fix, so the reviewer reads them here, or that none did, or that they did not
+    finish. Only a winner is graded."""
+    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
+        return ""
+    review = eval_review(candidate.fix_run)
+    lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
+    if review.warnings:
+        lines.append(
+            "**Platform evals this change does worse on.** They do not pick the winner;"
+            " review them before you merge."
+        )
+        lines += [
+            f"- {one.name}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
+            f" {_percent(one.base_pass_rate)} on the current version"
+            f" ({one.base_trials} trials)"
+            for one in review.warnings
+        ]
+    elif review.grading == EvalGrading.DONE and review.compared:
+        lines.append("Platform evals: none did worse than the current version.")
+    return "\n".join(lines)
+
+
 def _override_note(candidate: AgentFixCandidate) -> str:
     """What a candidate the must-pass check refused ships with, and the user's reason."""
     checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
     reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
     return (
-        "**Known regression.** Fix my agent did not accept this change: these must-pass"
+        "**Known regression.** Epoch did not accept this change: these must-pass"
         f" checks regressed.\n\n{checks}\n\nIt ships anyway, for this reason:\n\n{reason}"
     )
 
@@ -162,8 +198,9 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
             _override_note(candidate) if overridden else "",
             _LIMITED_NOTE if limited else "",
             summary,
-            f"{proof} by Fix my agent: {reason}" if reason else "",
-            "Opened by Future AGI Fix my agent.",
+            f"{proof} by Epoch: {reason}" if reason else "",
+            _evals_note(candidate),
+            "Opened by Future AGI Epoch.",
         )
         if part
     )
@@ -175,7 +212,7 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         )
         if applies
     )
-    name = f"Fix my agent ({marks})" if marks else "Fix my agent"
+    name = f"Epoch ({marks})" if marks else "Epoch"
     return shorten(f"{name}: {first}", width=_TITLE_CHARS, placeholder="…"), body
 
 
