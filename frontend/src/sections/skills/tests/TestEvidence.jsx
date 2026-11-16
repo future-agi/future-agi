@@ -252,22 +252,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
           </>
         )}
         {attached && (
-          <Alert
-            ref={attachedRef}
-            tabIndex={-1}
-            role="status"
-            severity="success"
-            action={
-              <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-                <Button color="inherit" size="small" component={RouterLink} to={link(selected.runId)}>
-                  View attached results
-                </Button>
-                <Button color="inherit" size="small" onClick={() => onSelectRun(null)}>
-                  Remove attachment
-                </Button>
-              </Stack>
-            }
-          >
+          <Alert ref={attachedRef} tabIndex={-1} role="status" severity="success">
             <Typography variant="s1" fontWeight={500}>
               Evidence attached: test run from {fDateTime(selected.createdAt)}
             </Typography>
@@ -276,6 +261,14 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
               {selected.answerRegressions} answer regression{selected.answerRegressions === 1 ? "" : "s"} ·{" "}
               shared with workspace.{recordedWith ? ` ${recordedWith}` : ""}
             </Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.5, ml: -1 }}>
+              <Button color="inherit" size="small" component={RouterLink} to={link(selected.runId)}>
+                View attached results
+              </Button>
+              <Button color="inherit" size="small" onClick={() => onSelectRun(null)}>
+                Remove attachment
+              </Button>
+            </Stack>
           </Alert>
         )}
         {runs.length > 0 && (
