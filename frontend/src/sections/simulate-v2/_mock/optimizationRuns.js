@@ -129,9 +129,12 @@ export const OPTIMIZER_MODELS = [
   },
 ];
 
-/* The planner reads the failures and decides what to change — it decides
-   the outcome. The writer turns each plan into the exact edit, and can be a
-   cheaper model. Same as the planner unless someone picks otherwise. */
+/* The planner reads the failures and decides what to change; the writer
+   turns each plan into the exact edit. Both matter — in Kartik's 23 Oct runs
+   every planner named the same cause and the writer decided whether the fix
+   was accepted (Flash-Lite 1/3, Flash 2/3, Opus 3/3). Neither is picked in
+   the product (27 Oct: no optimizer settings); both default to the strongest
+   model the budget allows, OPTIMIZER_MODELS[0]. */
 export const SAME_AS_PLANNER = "same";
 export const modelLabelOf = (id) =>
   OPTIMIZER_MODELS.find((m) => m.id === id)?.label || id;
