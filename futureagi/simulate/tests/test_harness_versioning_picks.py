@@ -1433,3 +1433,93 @@ class TestSeed:
             409,
             "idempotency_conflict",
         )
+
+
+class TestProductionOnly:
+    """A tool reaching a system the environment has no copy of is blocked in a controlled test: a run whose every
+    selected scenario needs it is refused, naming the tool and the fix; one where only some do starts."""
+
+    def _blocked(self, user, workspace, storage, key):
+        environment = _environment(user, workspace, key, storage)
+        s1 = _suite(environment, 1)
+        _ready(
+            environment,
+            environment.agent_version_id,
+            environment.environment_version,
+            s1,
+        )
+        version = environment.environment_version
+        version.documents = {
+            **(version.documents or {}),
+            "contract": {
+                "dependencies": [
+                    {"name": "payments", "kind": "service", "used_by": ["issue_refund"]}
+                ],
+            },
+            "scenarios": [
+                {"name": NAMES[0], "solution": [{"tool": "issue_refund"}]},
+                {"name": NAMES[1], "solution": [{"tool": "lookup_ride"}]},
+            ],
+        }
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents=version.documents
+        )
+        return environment, s1
+
+    def test_a_run_every_scenario_of_which_needs_it_is_refused_naming_the_tool(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-all")
+
+        response = _post_run(
+            auth_client,
+            environment,
+            {
+                "scenario_ids": [_key(NAMES[0])],
+                "trials": 1,
+                "suite_version_id": str(s1.id),
+            },
+        )
+
+        assert response.status_code == 409, response.content
+        body = response.json()
+        assert body["error"] == "production_only"
+        assert "issue_refund" in body["message"]
+        assert "serve it from the agent's tools service or remove it" in body["message"]
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment
+        ).exists()
+
+    def test_a_run_where_only_some_scenarios_need_it_starts(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-some")
+
+        response = _post_run(
+            auth_client,
+            environment,
+            {
+                "scenario_ids": [_key(NAMES[0]), ONLY_IN_S1],
+                "trials": 1,
+                "suite_version_id": str(s1.id),
+            },
+        )
+
+        assert response.status_code == 202, response.content
+
+    def test_the_plan_lists_the_blocked_tool_and_the_scenarios_that_need_it(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-plan")
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/", {"suite_version_id": str(s1.id)}
+        )
+
+        assert response.status_code == 200, response.content
+        assert response.json()["blocked_tools"] == [
+            {
+                "tool": "issue_refund",
+                "scenarios": [{"key": _key(NAMES[0]), "name": NAMES[0]}],
+            }
+        ]

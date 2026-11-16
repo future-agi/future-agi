@@ -37,6 +37,48 @@ describe("TrialChangesPanel", () => {
     expect(screen.queryByText(/^Committed:/)).toBeNull();
   });
 
+  it("shows a call blocked outside the test world beside the refused count, never as a change", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 2,
+              committed: 0,
+              refused: 2,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+              no_change: true,
+              blocked: [
+                { host: "refunds.example.com", method: "CONNECT" },
+                {
+                  host: "pay.example.com",
+                  method: "POST",
+                  tool: "issue_refund",
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("2 attempted · 0 committed · 2 refused"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("blocked-call").map((one) => one.textContent),
+    ).toEqual([
+      "Blocked: refunds.example.com is outside the test world",
+      "Blocked: pay.example.com is outside the test world (issue_refund)",
+    ]);
+    expect(
+      screen.getByText("No change: it committed nothing"),
+    ).toBeInTheDocument();
+  });
+
   it("links the world as the trial ended when its end state was kept, and says nothing of it otherwise", () => {
     const changes = [
       {

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import jsonschema
+import structlog
 from django.db import transaction
 
 from simulate.models import HostedHarnessJob
@@ -18,6 +19,8 @@ from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
     from accounts.models.user import User
+
+logger = structlog.get_logger(__name__)
 
 ACTORS_FILE = "actors.json"
 # What ALK decides about actors, sealed into each bundle by the release that built it; never kept here.
@@ -229,6 +232,90 @@ def production_only(contract: Any) -> list[str]:
             and str(dependency.get("name") or "") not in served
             for tool in dependency.get("used_by") or []
         }
+    )
+
+
+PRODUCTION_ONLY_FIX = "serve it from the agent's tools service or remove it"
+
+
+def needed_production_tools(scenario: Any, blocked: list[str]) -> list[str]:
+    """The production-only tools a scenario cannot pass without: those its solution calls, unless one of its
+    alternative paths calls none of them."""
+
+    def calls(steps: Any) -> set[str]:
+        return (
+            {
+                str(step.get("tool"))
+                for step in steps
+                if isinstance(step, dict) and step.get("tool") in blocked
+            }
+            if isinstance(steps, list)
+            else set()
+        )
+
+    if any(
+        isinstance(path, list) and path and not calls(path)
+        for path in scenario.get("alternatives") or []
+    ):
+        return []
+    return sorted(calls(scenario.get("solution")))
+
+
+def blocked_tools(
+    environment: HostedHarnessJob, pins: Any = None
+) -> list[dict[str, Any]]:
+    """Each production-only tool of the run's environment version, with the scenarios that need it."""
+    from simulate.services.harness_environment import (
+        _contract_data,
+        _registration_key,
+        _stage_output,
+    )
+
+    documents = (
+        getattr(pins, "environment_version", None)
+        and pins.environment_version.documents
+    ) or {}
+    contract = documents.get("contract") or _contract_data(environment)
+    blocked = production_only(contract)
+    if not blocked:
+        return []
+    scenarios = documents.get("scenarios")
+    if not isinstance(scenarios, list):
+        scenarios = _stage_output(environment, "scenarios")
+    needs: dict[str, list[dict[str, str]]] = {tool: [] for tool in blocked}
+    for scenario in scenarios if isinstance(scenarios, list) else []:
+        if not isinstance(scenario, dict):
+            continue
+        key = _registration_key(scenario.get("scenario_key") or scenario.get("name"))
+        for tool in needed_production_tools(scenario, blocked):
+            needs[tool].append({"key": key, "name": str(scenario.get("name") or key)})
+    return [{"tool": tool, "scenarios": needs[tool]} for tool in blocked]
+
+
+def refuse_production_only(
+    environment: HostedHarnessJob, pins: Any, scenario_keys: list[str]
+) -> None:
+    """Refuse a run every selected scenario of which needs a production-only tool: none of it could pass."""
+    found = blocked_tools(environment, pins)
+    needing = {one["key"] for entry in found for one in entry["scenarios"]}
+    if not scenario_keys or not set(scenario_keys) <= needing:
+        return
+    tools = sorted(
+        entry["tool"]
+        for entry in found
+        if any(one["key"] in scenario_keys for one in entry["scenarios"])
+    )
+    logger.info(
+        "harness_run_refused_production_only",
+        environment_id=str(environment.id),
+        tools=tools,
+    )
+    raise HostedHarnessError(
+        "production_only",
+        f"Every selected scenario needs {', '.join(tools)}, which "
+        f"{'reaches production and is' if len(tools) == 1 else 'reach production and are'} blocked in this "
+        f"controlled test: {PRODUCTION_ONLY_FIX}, then run again.",
+        status_code=409,
     )
 
 

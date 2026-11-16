@@ -847,6 +847,18 @@ class HarnessRunPlanQuerySerializer(serializers.Serializer):
     suite_version_id = serializers.UUIDField(required=False)
 
 
+class HarnessBlockedScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HarnessBlockedToolSerializer(serializers.Serializer):
+    """A tool that reaches production, blocked in a controlled test, with the scenarios that cannot pass without it."""
+
+    tool = serializers.CharField()
+    scenarios = HarnessBlockedScenarioSerializer(many=True)
+
+
 class HarnessRunPlanSerializer(serializers.Serializer):
     """What a run of the picked versions would use and should be warned about."""
 
@@ -859,6 +871,12 @@ class HarnessRunPlanSerializer(serializers.Serializer):
             " null when it runs without one, as the defaults do before their bundle"
             " is cached."
         ),
+    )
+    blocked_tools = HarnessBlockedToolSerializer(
+        many=True,
+        required=False,
+        help_text="Tools blocked in this controlled test because they reach production; a run whose every "
+        "selected scenario needs one is refused.",
     )
 
 

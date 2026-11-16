@@ -20426,11 +20426,29 @@ export interface HarnessRunWarningApi {
   piece: HarnessRunWarningApiPiece | null;
 }
 
+export interface HarnessBlockedScenarioApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.
+ */
+export interface HarnessBlockedToolApi {
+  /** @minLength 1 */
+  tool: string;
+  scenarios: HarnessBlockedScenarioApi[];
+}
+
 export interface HarnessRunPlanApi {
   versions: HarnessRunPinnedVersionsApi;
   warnings: HarnessRunWarningApi[];
   /** Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached. */
   bundle_cached: boolean | null;
+  /** Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused. */
+  blocked_tools?: HarnessBlockedToolApi[];
 }
 
 export interface HarnessRunCreateApi {
@@ -25573,6 +25591,17 @@ export interface CallCallActorApi {
   delivery?: CallCallActorApiDelivery;
 }
 
+/**
+ * Calls to hosts outside the test world, refused before they left: counted in refused, never a change.
+ */
+export interface BlockedCallApi {
+  /** @minLength 1 */
+  host: string;
+  method?: string;
+  /** The tool that made it, when known. */
+  tool?: string;
+}
+
 export interface TrialStateChangeApi {
   /** @minLength 1 */
   who: string;
@@ -25590,6 +25619,8 @@ export interface TrialStateChangeApi {
   read_actions?: string[];
   /** True when this participant committed nothing: a result shown as 'no change', never left out. */
   no_change?: boolean;
+  /** Calls to hosts outside the test world, refused before they left: counted in refused, never a change. */
+  blocked?: BlockedCallApi[];
 }
 
 export type DuplicateCommitApiArguments = { [key: string]: unknown };

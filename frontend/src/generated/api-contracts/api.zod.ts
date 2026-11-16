@@ -41462,6 +41462,26 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
     .describe(
       "Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached.",
     ),
+  blocked_tools: zod
+    .array(
+      zod
+        .object({
+          tool: zod.string().min(1),
+          scenarios: zod.array(
+            zod.object({
+              key: zod.string().min(1),
+              name: zod.string().min(1),
+            }),
+          ),
+        })
+        .describe(
+          "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+        ),
+    )
+    .optional()
+    .describe(
+      "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+    ),
 });
 
 /**
@@ -53854,6 +53874,25 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             .optional()
             .describe(
               "True when this participant committed nothing: a result shown as 'no change', never left out.",
+            ),
+          blocked: zod
+            .array(
+              zod
+                .object({
+                  host: zod.string().min(1),
+                  method: zod.string().optional(),
+                  tool: zod
+                    .string()
+                    .optional()
+                    .describe("The tool that made it, when known."),
+                })
+                .describe(
+                  "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+                ),
+            )
+            .optional()
+            .describe(
+              "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
             ),
         }),
       )

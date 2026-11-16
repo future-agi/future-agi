@@ -113,6 +113,52 @@ describe("RunDialog", () => {
     state.drafts = null;
   });
 
+  it("lists a production-only tool as blocked with the fix and the selected scenarios that use it", () => {
+    state.plans["{}"] = {
+      warnings: [],
+      blocked_tools: [
+        {
+          tool: "issue_refund",
+          scenarios: [
+            { key: "k1", name: "Refund a late ride" },
+            { key: "k3", name: "Refund twice" },
+          ],
+        },
+      ],
+    };
+    renderDialog();
+
+    expect(screen.getByTestId("run-blocked-tool")).toHaveTextContent(
+      "Blocked: issue_refund reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it. Scenarios that use it: Refund a late ride.",
+    );
+    // k2 does not need it, so the run still starts.
+    expect(screen.queryByTestId("run-blocked")).toBeNull();
+    expect(runButton()).toBeEnabled();
+  });
+
+  it("does not start a run every selected scenario of which needs a blocked tool", () => {
+    state.plans["{}"] = {
+      warnings: [],
+      blocked_tools: [
+        { tool: "issue_refund", scenarios: [{ key: "k1", name: "Refund" }] },
+      ],
+    };
+    renderDialog({ scenarioIds: ["k1"] });
+
+    expect(screen.getByTestId("run-blocked")).toHaveTextContent(
+      "Every selected scenario needs issue_refund, which this test blocks. Serve it from the agent's tools service or remove it, then run again.",
+    );
+    expect(runButton()).toBeDisabled();
+  });
+
+  it("lists the environment's production-only tools when the plan cannot say which scenarios use them", () => {
+    renderDialog({ env: { ...ENV, productionOnly: ["issue_refund"] } });
+
+    expect(screen.getByTestId("run-blocked-tool")).toHaveTextContent(
+      "Blocked: issue_refund reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.",
+    );
+  });
+
   it("pre-selects the defaults and offers only active versions", async () => {
     const user = userEvent.setup();
     renderDialog();

@@ -235,13 +235,17 @@ def preview_run(
 ) -> dict[str, Any]:
     """The versions a run of ``picks`` would use, its warnings and whether its bundle
     is cached; ``bundle_cached`` is ``None`` when the run is not assembled."""
+    from simulate.services.harness_actors import blocked_tools
+
     pins = resolve_run_pins(environment, picks=picks)
+    blocked = blocked_tools(environment, pins)
     return {
         "versions": _versions(pins),
         "warnings": run_warnings(environment, pins),
         "bundle_cached": (
             pins.cached if pins is not None and _assembles(pins) else None
         ),
+        **({"blocked_tools": blocked} if blocked else {}),
     }
 
 

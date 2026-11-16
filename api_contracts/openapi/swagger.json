@@ -144100,6 +144100,46 @@
                 }
             }
         },
+        "HarnessBlockedScenario": {
+            "required": [
+                "key",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessBlockedTool": {
+            "description": "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+            "required": [
+                "tool",
+                "scenarios"
+            ],
+            "type": "object",
+            "properties": {
+                "tool": {
+                    "title": "Tool",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessBlockedScenario"
+                    }
+                }
+            }
+        },
         "HarnessRunPlan": {
             "required": [
                 "versions",
@@ -144122,6 +144162,13 @@
                     "description": "Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached.",
                     "type": "boolean",
                     "x-nullable": true
+                },
+                "blocked_tools": {
+                    "description": "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessBlockedTool"
+                    }
                 }
             }
         },
@@ -155666,6 +155713,29 @@
                 }
             }
         },
+        "BlockedCall": {
+            "description": "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+            "required": [
+                "host"
+            ],
+            "type": "object",
+            "properties": {
+                "host": {
+                    "title": "Host",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "method": {
+                    "title": "Method",
+                    "type": "string"
+                },
+                "tool": {
+                    "title": "Tool",
+                    "description": "The tool that made it, when known.",
+                    "type": "string"
+                }
+            }
+        },
         "TrialStateChange": {
             "required": [
                 "who",
@@ -155732,6 +155802,13 @@
                     "title": "No change",
                     "description": "True when this participant committed nothing: a result shown as 'no change', never left out.",
                     "type": "boolean"
+                },
+                "blocked": {
+                    "description": "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/BlockedCall"
+                    }
                 }
             }
         },

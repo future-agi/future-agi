@@ -458,6 +458,12 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  // A tool that reaches production: the test blocks its calls, and says how to test it.
+  blockedTool: (tool) =>
+    `Blocked: ${tool} reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.`,
+  usedBy: (names) => `Scenarios that use it: ${names.join(", ")}.`,
+  allBlocked: (tools) =>
+    `Every selected scenario needs ${tools.join(", ")}, which this test blocks. Serve it from the agent's tools service or remove it, then run again.`,
   cancel: "Cancel",
   run: "Run",
   runAnyway: "Run anyway",

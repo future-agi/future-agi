@@ -69065,6 +69065,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           "x-nullable": true,
         },
+        blocked_tools: {
+          description:
+            "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessBlockedTool",
+          },
+        },
       },
     },
     HarnessScenarioAmend: {
@@ -106396,6 +106404,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessBlockedTool: {
+      description:
+        "Tools blocked in this controlled test because they reach production; a run whose every selected scenario needs one is refused.",
+      required: ["tool", "scenarios"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessBlockedScenario",
+          },
+        },
+      },
+    },
     HarnessScenarioChange: {
       required: ["op"],
       type: "object",
@@ -120698,6 +120725,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "True when this participant committed nothing: a result shown as 'no change', never left out.",
           type: "boolean",
         },
+        blocked: {
+          description:
+            "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/BlockedCall",
+          },
+        },
       },
     },
     InvestigationEvidenceWindow: {
@@ -125901,6 +125936,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    HarnessBlockedScenario: {
+      required: ["key", "name"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
     },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
@@ -133580,6 +133631,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Why",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    BlockedCall: {
+      description:
+        "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+      required: ["host"],
+      type: "object",
+      properties: {
+        host: {
+          title: "Host",
+          type: "string",
+          minLength: 1,
+        },
+        method: {
+          title: "Method",
+          type: "string",
+        },
+        tool: {
+          title: "Tool",
+          description: "The tool that made it, when known.",
+          type: "string",
         },
       },
     },

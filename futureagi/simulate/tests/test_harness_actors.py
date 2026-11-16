@@ -1655,6 +1655,29 @@ def test_a_trial_s_reads_are_served_apart_from_its_committed_changes():
     assert TrialStateSerializer(data={"state_changes": [older]}).is_valid()
 
 
+def test_a_call_blocked_outside_the_test_world_is_served_beside_the_refused_count():
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    change = {
+        "who": "agent",
+        "name": "the agent",
+        "attempted": 1,
+        "committed": 0,
+        "refused": 1,
+        "faulted": 0,
+        "duplicate": 0,
+        "committed_actions": [],
+        "no_change": True,
+        "blocked": [
+            {"host": "refunds.example.com", "method": "CONNECT", "tool": "issue_refund"}
+        ],
+    }
+    served = TrialStateSerializer({"state_changes": [change]}).data["state_changes"][0]
+    assert served["blocked"] == change["blocked"]
+    assert served["refused"] == 1 and served["committed"] == 0
+    assert TrialStateSerializer(data={"state_changes": [change]}).is_valid()
+
+
 def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
     organization, workspace
 ):
@@ -2479,3 +2502,24 @@ def test_a_huge_record_change_is_cut_at_ingestion_and_says_how_much():
         ["body"],
         {"id": 1},
     )
+
+
+def test_a_scenario_needs_a_production_only_tool_only_when_every_path_calls_one():
+    from simulate.services.harness_actors import needed_production_tools
+
+    blocked = ["issue_refund"]
+    solution = [{"tool": "lookup_ride"}, {"tool": "issue_refund"}]
+    assert needed_production_tools({"solution": solution}, blocked) == ["issue_refund"]
+    assert (
+        needed_production_tools({"solution": [{"tool": "lookup_ride"}]}, blocked) == []
+    )
+    # Another way through that never calls it: the scenario can pass without it.
+    assert (
+        needed_production_tools(
+            {"solution": solution, "alternatives": [[{"tool": "escalate"}]]}, blocked
+        )
+        == []
+    )
+    assert needed_production_tools(
+        {"solution": solution, "alternatives": [[{"tool": "issue_refund"}]]}, blocked
+    ) == ["issue_refund"]

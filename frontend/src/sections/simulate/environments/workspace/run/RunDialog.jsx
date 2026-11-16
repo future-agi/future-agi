@@ -172,6 +172,25 @@ export default function RunDialog({
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
   }
+  // Tools that reach production are blocked in this controlled test; the plan
+  // names the scenarios that cannot pass without each.
+  const blockedTools =
+    plan.data?.blocked_tools ||
+    (env?.productionOnly || []).map((tool) => ({ tool, scenarios: [] }));
+  const chosen = runIds && new Set(runIds);
+  const usedBy = (entry) =>
+    entry.scenarios
+      .filter((one) => !chosen || chosen.has(one.key))
+      .map((one) => one.name);
+  const needing = new Set(
+    blockedTools.flatMap((entry) => entry.scenarios.map((one) => one.key)),
+  );
+  if (!blocked && chosen?.size && [...chosen].every((key) => needing.has(key)))
+    blocked = COPY.allBlocked(
+      blockedTools
+        .filter((entry) => usedBy(entry).length)
+        .map((entry) => entry.tool),
+    );
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
@@ -254,6 +273,17 @@ export default function RunDialog({
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
 
+  const blockedToolLines = blockedTools.map((entry) => (
+    <Alert key={entry.tool} severity="warning" data-testid="run-blocked-tool">
+      {[
+        COPY.blockedTool(entry.tool),
+        usedBy(entry).length && COPY.usedBy(usedBy(entry)),
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    </Alert>
+  ));
+
   const body = () => {
     if (versions.isLoading) {
       return (
@@ -267,11 +297,14 @@ export default function RunDialog({
     }
     if (!data) {
       return (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {isVersioningDisabled(versions.error)
-            ? COPY.disabled
-            : COPY.loadError}
-        </Typography>
+        <>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {isVersioningDisabled(versions.error)
+              ? COPY.disabled
+              : COPY.loadError}
+          </Typography>
+          {blockedToolLines}
+        </>
       );
     }
     const line = scenarioLine();
@@ -302,6 +335,7 @@ export default function RunDialog({
             {DRAFTS_COPY.notInRun}
           </Alert>
         )}
+        {blockedToolLines}
         {blocked && (
           <Typography
             sx={{ typography: "s2", color: "error.main" }}
@@ -391,6 +425,8 @@ RunDialog.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
+    // Tools that reach production, blocked in a controlled test.
+    productionOnly: PropTypes.arrayOf(PropTypes.string),
   }),
   // Undefined runs every scenario.
   scenarioIds: PropTypes.arrayOf(PropTypes.string),

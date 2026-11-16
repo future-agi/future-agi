@@ -1503,6 +1503,18 @@ def _with_simulation_mark(
     return document
 
 
+def _with_egress_allowed_hosts(
+    payload: Mapping[str, Any], allowed_domains: Iterable[str]
+) -> dict[str, Any]:
+    """A copy of the document naming the hosts the sandbox allows, so the harness points the agent at a proxy that
+    refuses and logs every other host."""
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata["egress_allowed_hosts"] = sorted(allowed_domains)
+    document["metadata"] = metadata
+    return document
+
+
 def _with_used_scenario_keys(
     payload: Mapping[str, Any], job: HostedHarnessJob
 ) -> dict[str, Any]:
@@ -2641,6 +2653,10 @@ class HostedHarnessGateway:
                     simulator_env,
                     max_domains=self.client.max_egress_domains,
                 )
+            if not unrestricted:
+                dispatch_payload = _with_egress_allowed_hosts(
+                    dispatch_payload, allowed_domains
+                )
             launch_spec = SandboxLaunchSpec(
                 cpu_units=capacity.cpu_units,
                 memory_mb=capacity.memory_mb,
@@ -3381,8 +3397,11 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(
                 json.dumps(
                     _with_used_scenario_keys(
-                        _with_simulation_mark(
-                            guest_job_document(job.payload), simulation_mark
+                        _with_egress_allowed_hosts(
+                            _with_simulation_mark(
+                                guest_job_document(job.payload), simulation_mark
+                            ),
+                            allowed_domains,
                         ),
                         job,
                     ),

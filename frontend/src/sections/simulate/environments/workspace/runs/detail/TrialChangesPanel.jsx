@@ -242,6 +242,15 @@ function WorldChanges({ trialState }) {
               {C.answerLost(one.answer_lost_actions)}
             </Typography>
           )}
+          {(one.blocked || []).map((call, index) => (
+            <Typography
+              key={`blocked-${index}`}
+              sx={quiet}
+              data-testid="blocked-call"
+            >
+              {C.blocked(call)}
+            </Typography>
+          ))}
           {one.no_change && !one.committed_actions?.length && (
             <Typography sx={quiet}>{C.noChange}</Typography>
           )}

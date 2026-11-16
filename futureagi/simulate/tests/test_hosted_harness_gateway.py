@@ -1863,8 +1863,9 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings, monkeypatch
+    organization, settings, monkeypatch, unrestricted
 ):
     payload = _payload()
     payload["source"] = {
@@ -1881,6 +1882,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
@@ -1952,7 +1954,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    assert client.params.unrestricted_egress is False
+    assert client.params.unrestricted_egress is unrestricted
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "*.vapi.ai",
@@ -1960,6 +1962,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+    # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
+    allowed = dispatched["metadata"].get("egress_allowed_hosts")
+    assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
 
 
 @pytest.mark.django_db

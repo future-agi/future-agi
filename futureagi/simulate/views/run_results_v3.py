@@ -660,6 +660,16 @@ class CallCallActorSerializer(serializers.Serializer):
     )
 
 
+class BlockedCallSerializer(serializers.Serializer):
+    """One call the agent made to a host outside the test world, refused before it left the sandbox."""
+
+    host = serializers.CharField()
+    method = serializers.CharField(required=False, allow_blank=True)
+    tool = serializers.CharField(
+        required=False, allow_blank=True, help_text="The tool that made it, when known."
+    )
+
+
 class TrialStateChangeSerializer(serializers.Serializer):
     """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
 
@@ -683,6 +693,12 @@ class TrialStateChangeSerializer(serializers.Serializer):
     no_change = serializers.BooleanField(
         required=False,
         help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",
+    )
+    blocked = BlockedCallSerializer(
+        many=True,
+        required=False,
+        help_text="Calls to hosts outside the test world, refused before they left: counted in refused, never "
+        "a change.",
     )
 
 

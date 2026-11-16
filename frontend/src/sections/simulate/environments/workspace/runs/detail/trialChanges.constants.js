@@ -23,6 +23,9 @@ export const TRIAL_CHANGES_COPY = {
     `Committed but answered with a timeout: ${actions.join(", ")}`,
   // A write the world made twice after the agent's answer was lost: the trial fails on it.
   committedTwice: (action) => `Committed twice: ${action}`,
+  // A call to a host outside the test world, refused before it left: counted in refused, never a change.
+  blocked: (one) =>
+    `Blocked: ${one.host} is outside the test world${one.tool ? ` (${one.tool})` : ""}`,
   // Doing nothing can be the right result, so it is said, never left blank.
   noChange: "No change: it committed nothing",
   decisionsHeading: "What the actors chose",
