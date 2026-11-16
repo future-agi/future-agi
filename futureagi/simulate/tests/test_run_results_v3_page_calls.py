@@ -453,6 +453,7 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     assert by_id[str(calls[0].id)]["sub_goal_results"][1] == {
         "name": "Verifies",
         "passed": None,
+        "subject_kind": "task",
     }
     assert by_id[str(calls[0].id)]["conversation_branch"] == "Own branch"
     assert by_id[str(calls[1].id)]["conversation_branch"] == "Environment branch"

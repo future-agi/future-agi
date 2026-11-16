@@ -29,8 +29,6 @@ WorkerState = Literal[
     "infrastructure",
     "not_observed",
 ]
-# Why the world refused a call, as its action log codes it.
-RefusalCode = Literal["not_permitted", "deadline_passed", "approval_missing"]
 # How a call's trial ended, which a worker still out when it ended takes.
 TrialEnding = Literal["ended", "infrastructure", "cancel_requested", "cancelled"]
 # Whose check a sub-goal is: the task's, or one of the agent's workers'.

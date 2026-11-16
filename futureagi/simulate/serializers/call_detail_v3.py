@@ -14,7 +14,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorFallbackSerializer,
     HarnessActorLimitsSerializer,
 )
-from simulate.types import CallActorDelivery, RefusalCode
+from simulate.types import CallActorDelivery
 
 FUNCTION_CALL_KINDS = ("agent_call", "world_actor_action")
 
@@ -114,7 +114,10 @@ class BlockedCallSerializer(serializers.Serializer):
 
 class TrialRefusedActionSerializer(serializers.Serializer):
     action = serializers.CharField()
-    code = serializers.ChoiceField(choices=get_args(RefusalCode))
+    code = serializers.CharField(
+        allow_blank=True,
+        help_text="The world's refusal code, as the harness sealed it.",
+    )
     reason = serializers.CharField(allow_blank=True)
 
 

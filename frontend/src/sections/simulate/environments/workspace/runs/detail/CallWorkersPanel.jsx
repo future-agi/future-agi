@@ -56,6 +56,11 @@ export default function CallWorkersPanel({
   };
   const start = data.started_at;
   const byKey = stepsByKey(data);
+  // Each failed or unsure check the API places on a step, shown on that step's row.
+  const placedOn = {};
+  data.placements.forEach((one) => {
+    if (one.step !== null) (placedOn[one.step] ||= []).push(one);
+  });
   const handOffs = data.counts.hand_offs;
   // With no hand-off there is nothing to tabulate, so the steps are the whole story.
   const showSteps = rawEvents || !handOffs;
@@ -153,6 +158,7 @@ export default function CallWorkersPanel({
                   rows={roundRows}
                   byKey={byKey}
                   names={names}
+                  placedOn={placedOn}
                   start={start}
                   onOpenTrace={onOpenTrace}
                   traceIds={traceIds}

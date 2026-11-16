@@ -984,6 +984,11 @@ describe("CallWorkersPanel", () => {
       expect(own).not.toHaveTextContent(C.untied.no_moment);
       expect(task).not.toHaveTextContent("Order-lookup worker");
       expect(task.dataset.step).toBe("");
+      // The placed check also shows on its hand-off's row; the task check on no row.
+      const [onRow] = screen.getAllByTestId("worker-row-check");
+      expect(screen.getAllByTestId("worker-row-check")).toHaveLength(1);
+      expect(onRow).toHaveTextContent(`${C.checkStatus.failed} · read_only`);
+      expect(onRow.closest("[data-testid='worker-row']")).toBeTruthy();
     });
 
     it("shows a worker's failed check failed and named by its worker, beside the call's passing verdict", () => {
