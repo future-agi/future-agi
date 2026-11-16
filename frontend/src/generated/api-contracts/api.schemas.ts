@@ -27932,6 +27932,15 @@ export interface TrialStateApi {
   notices: TrialNoticeApi[];
 }
 
+export interface EarlierAttemptApi {
+  /** Its id: `/workers/?attempt=` reads its worker record. */
+  attempt: string;
+  rerun_at: string;
+  /** False when it was snapshotted before attempts kept their worker record and trial state. */
+  kept: boolean;
+  trial_state: TrialStateApi;
+}
+
 export interface CallExecutionV3DetailResponseApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -28081,7 +28090,7 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
-  /** The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
+  /** The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
   tool_call_count: number;
   call_actors: CallCallActorApi[];
   /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */
@@ -28089,6 +28098,7 @@ export interface CallExecutionV3DetailResponseApi {
   /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
   has_customer: boolean;
   trial_state: TrialStateApi;
+  earlier_attempts: EarlierAttemptApi[];
   /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
   comparable: boolean;
   /** @minLength 1 */
@@ -28110,6 +28120,15 @@ export const CallWorkersResponseApiCollection = {
 } as const;
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
+
+export type CallWorkersResponseApiState =
+  (typeof CallWorkersResponseApiState)[keyof typeof CallWorkersResponseApiState];
+
+export const CallWorkersResponseApiState = {
+  recorded: "recorded",
+  not_kept: "not_kept",
+  unreadable: "unreadable",
+} as const;
 
 export interface CallWorkerApi {
   /** @minLength 1 */
@@ -28344,6 +28363,8 @@ export interface CallWorkerStepApi {
   ended_at?: string;
   parallel?: boolean;
   end?: CallWorkerStepApiEnd;
+  did_not_finish?: boolean;
+  first_of_worker?: boolean;
   children?: number[];
   call?: CallWorkerEventApi;
   turn: number;
@@ -28365,6 +28386,8 @@ export interface CallWorkerRoundApi {
   response: CallWorkerTurnApi;
   children: number[];
   calls_outside: number;
+  handoffs: number[];
+  expects_messages: boolean;
 }
 
 export interface HandOffCountsApi {
@@ -28399,6 +28422,7 @@ export interface CallWorkersResponseApi {
   pending: boolean;
   /** @minLength 1 */
   next_read_at?: string;
+  state: CallWorkersResponseApiState;
 }
 
 export interface CallWorkersPendingApi {
@@ -43736,7 +43760,7 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
 
 export type SimulateV3CallExecutionWorkersParams = {
   /**
-   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.
+   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.
    */
   attempt?: string;
 };

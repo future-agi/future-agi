@@ -57092,6 +57092,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "participants",
         "has_customer",
         "trial_state",
+        "earlier_attempts",
         "comparable",
         "not_comparable_reason",
         "scoring_status",
@@ -57570,7 +57571,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tool_call_count: {
           title: "Tool call count",
           description:
-            "The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
+            "The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
           type: "integer",
         },
         call_actors: {
@@ -57595,6 +57596,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trial_state: {
           $ref: "#/definitions/TrialState",
+        },
+        earlier_attempts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EarlierAttempt",
+          },
         },
         comparable: {
           title: "Comparable",
@@ -57813,6 +57820,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cut_off",
         "beyond_boundary",
         "pending",
+        "state",
       ],
       type: "object",
       properties: {
@@ -57905,6 +57913,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Next read at",
           type: "string",
           minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["recorded", "not_kept", "unreadable"],
         },
       },
     },
@@ -98327,6 +98340,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EarlierAttempt: {
+      required: ["attempt", "rerun_at", "kept", "trial_state"],
+      type: "object",
+      properties: {
+        attempt: {
+          title: "Attempt",
+          description: "Its id: `/workers/?attempt=` reads its worker record.",
+          type: "string",
+          format: "uuid",
+        },
+        rerun_at: {
+          title: "Rerun at",
+          type: "string",
+          format: "date-time",
+        },
+        kept: {
+          title: "Kept",
+          description:
+            "False when it was snapshotted before attempts kept their worker record and trial state.",
+          type: "boolean",
+        },
+        trial_state: {
+          $ref: "#/definitions/TrialState",
+        },
+      },
+    },
     PersonaDetails: {
       required: ["name", "voice", "age", "traits"],
       type: "object",
@@ -98913,7 +98952,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     CallWorkerRound: {
-      required: ["turn", "request", "response", "children", "calls_outside"],
+      required: [
+        "turn",
+        "request",
+        "response",
+        "children",
+        "calls_outside",
+        "handoffs",
+        "expects_messages",
+      ],
       type: "object",
       properties: {
         turn: {
@@ -98936,6 +98983,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls_outside: {
           title: "Calls outside",
           type: "integer",
+        },
+        handoffs: {
+          type: "array",
+          items: {
+            type: "integer",
+          },
+        },
+        expects_messages: {
+          title: "Expects messages",
+          type: "boolean",
         },
       },
     },
@@ -99006,6 +99063,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "End",
           type: "string",
           enum: ["finished", "failed", "passed", "no_return", "cut_off"],
+        },
+        did_not_finish: {
+          title: "Did not finish",
+          type: "boolean",
+        },
+        first_of_worker: {
+          title: "First of worker",
+          type: "boolean",
         },
         children: {
           type: "array",
