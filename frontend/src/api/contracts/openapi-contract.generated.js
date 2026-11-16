@@ -106902,7 +106902,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         blocking_area: {
           title: "Blocking area",
           description:
-            "The first area, in report order, that reads blocked: what the run dialog names as holding cases back.",
+            "The area of the first row in held_by that holds selected cases back, never a worker: what the run dialog names as holding them; null when only workers hold them.",
           type: "string",
           minLength: 1,
           "x-nullable": true,
@@ -129957,7 +129957,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessCapabilityHeldBy: {
       description:
         "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
-      required: ["id", "name", "area", "count", "reason", "label"],
+      required: ["id", "name", "area", "count", "reason", "text"],
       type: "object",
       properties: {
         id: {
@@ -129989,8 +129989,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
-        label: {
-          title: "Label",
+        text: {
+          title: "Text",
           description: "What the run dialog shows for it.",
           type: "string",
           minLength: 1,
