@@ -1,5 +1,5 @@
-"""Run readiness per declared worker: each tool Allowed, Blocked or Not enforced, never Supported; and the sub-agent
-evidence row read from the agent's own runs."""
+"""Run readiness per declared worker, read from what ALK sealed: each worker row from the bundle root's `door.json`,
+each case's hold from `worker-limits.json`, and the sub-agent evidence row from the worker record each call keeps."""
 
 import json
 from datetime import UTC, datetime
@@ -7,10 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
+from simulate.services.harness_readiness import children as children_module
 from simulate.services.harness_readiness import evidence as evidence_module
-from simulate.services.harness_readiness import workers
+from simulate.services.harness_readiness import selection, workers
 from simulate.services.harness_readiness.evidence import Evidence
-from simulate.tests.test_harness_readiness import storage as storage  # noqa: F401
+from simulate.services.harness_readiness.report import snapshot_as_read
+from simulate.services.harness_scenario_needs import CaseNeeds
+from simulate.services.harness_versioning import assembly
 
 pytestmark = pytest.mark.usefixtures("readiness_on")
 
@@ -34,13 +38,13 @@ CONTRACT = {
         },
     ],
 }
-DOOR = {"worker_deadlines": "per_worker"}
-# What ALK seals with the bundle: its door decision, each worker's limits, and each world action's tool.
-DOOR_OUTCOME = {"present": True, "surface": "tool_proxy"}
-WORKER_LIMITS = {
-    "workers": {"order_lookup": {"limited": True}, "refund": {"limited": True}},
-    "scenarios": {},
+# What ALK seals with the bundle, as it writes it.
+TOOL_PROXY_DOOR = {
+    "present": True,
+    "surface": "tool_proxy",
+    "worker_deadlines": "per_worker",
 }
+IN_PROCESS_DOOR = {"present": True, "surface": "in_process", "workers": ["refund"]}
 ACTIONS = {
     "POST orders.get": "get_order",
     "POST refunds.list": "list_refunds",
@@ -51,6 +55,25 @@ PERMISSIONS = {
     "worker:order_lookup": {"allow": ["POST orders.get", "POST refunds.list"]},
     "worker:refund": {"allow": ["POST refunds.issue", "POST refunds.list"]},
 }
+
+
+def _scenario(*, held, workers=(), relies=None, cause=None, deadline=None):
+    return {
+        "workers": list(workers),
+        "relies_on_worker_limits": bool(workers) if relies is None else relies,
+        "held": held,
+        "reason": "worker_limits_not_enforced" if held else None,
+        "cause": cause if held else None,
+        "limit": "all" if held else None,
+        "deadline": deadline,
+    }
+
+
+def _limits(scenarios=None, limited=True):
+    return {
+        "workers": {one["id"]: {"limited": limited} for one in CONTRACT["workers"]},
+        "scenarios": scenarios or {},
+    }
 
 
 def _pairing(contract=CONTRACT):
@@ -67,30 +90,20 @@ def _evidence(**fields):
         actions=[],
         checked_at="2026-11-14T10:00:00+00:00",
         **{
-            "door": DOOR,
             "worker_permissions": PERMISSIONS,
-            "door_outcome": DOOR_OUTCOME,
-            "worker_limits": WORKER_LIMITS,
+            "door_outcome": TOOL_PROXY_DOOR,
+            "worker_limits": _limits(),
             "actions_to_tools": ACTIONS,
             **fields,
         },
     )
 
 
-# The real reader, kept before the module's fixture stubs it for the row tests.
-_READ_BYPASSES = workers._bypasses
-
-
-@pytest.fixture(autouse=True)
-def no_bypasses(monkeypatch):
-    monkeypatch.setattr(workers, "_bypasses", lambda _pairing, _runs: {})
-
-
-def _rows(pairing=None, evidence=None):
+def _rows(pairing=None, evidence=None, calls=()):
     return {
         one["worker_id"]: one
         for one in workers.worker_boundaries(
-            pairing or _pairing(), evidence or _evidence(), []
+            pairing or _pairing(), evidence or _evidence(), list(calls)
         )
     }
 
@@ -99,216 +112,302 @@ def _boundaries(row):
     return {one["tool"]: one["boundary"] for one in row["tools"]}
 
 
-def test_separate_worker_on_a_new_seal_reads_partial_with_allowed_and_blocked_tools():
-    lookup = _rows()["order_lookup"]
-    assert (lookup["status"], lookup["reason_code"]) == (
-        "partial",
-        "held_at_world_cooperative",
-    )
-    assert _boundaries(lookup) == {
-        "get_order": "allowed",
-        "list_refunds": "allowed",
-        "update_order_status": "blocked",
-    }
-    # No rule ever yields Supported: the limit is cooperative.
-    assert all(one["status"] != "supported" for one in _rows().values())
-
-
-def test_shared_worker_reads_unavailable_not_enforced():
-    shared = {
-        **CONTRACT,
-        "workers": [
-            {**one, "binding": "shared", "allowed_tools": []}
-            for one in CONTRACT["workers"]
-        ],
-    }
-    # Even with an allow-list sealed for it, a shared worker's calls carry no channel, so nothing is held.
-    row = _rows(_pairing(shared), _evidence())["refund"]
-    assert (row["status"], row["reason_code"]) == ("unavailable", "shared_binding")
-    assert set(_boundaries(row).values()) == {"not_enforced"}
-
-
-def test_a_bundle_sealed_before_alk_wrote_its_door_decision_reads_sealed_before_worker_limits():
-    old = _evidence(
-        door=None, door_outcome=None, worker_limits=None, actions_to_tools=None
-    )
-    row = _rows(evidence=old)["order_lookup"]
-    assert (row["status"], row["reason_code"]) == (
-        "blocked",
-        "sealed_before_worker_limits",
-    )
-    assert row["fix"]["type"] == "rebuild_environment"
-    assert set(_boundaries(row).values()) == {"not_enforced"}
-
-
-@pytest.mark.parametrize(
-    ("reason", "code"),
-    [
-        ("tool_service_not_fronted", "no_world_door"),
-        ("in_process_unbound", "in_process_tools"),
-        ("no_tool_service", "in_process_tools"),
-    ],
-)
-def test_a_build_alk_sealed_without_a_door_reads_its_reason_not_that_it_is_old(
-    reason, code
-):
-    no_door = _evidence(door_outcome={"present": False, "reason": reason})
-    row = _rows(evidence=no_door)["order_lookup"]
-    assert (row["status"], row["reason_code"]) == ("blocked", code)
-    assert row["fix"]["type"] == "rebuild_environment"
-    assert set(_boundaries(row).values()) == {"not_enforced"}
-
-
-def test_a_worker_alk_seals_as_unlimited_is_unavailable_not_blocked_where_no_door_stands():
-    unlimited = {"id": "notes", "name": "Notes worker", "tools": ["get_order"]}
-    contract = {**CONTRACT, "workers": [*CONTRACT["workers"], unlimited]}
-    limits = {
-        **WORKER_LIMITS,
-        "workers": {**WORKER_LIMITS["workers"], "notes": {"limited": False}},
-    }
-    rows = _rows(
-        _pairing(contract),
-        _evidence(
-            door_outcome={"present": False, "reason": "in_process_unbound"},
-            worker_limits=limits,
-        ),
-    )
-    # Nothing holds the limits a case about a limited worker relies on, so such a case is held back.
-    assert rows["order_lookup"]["status"] == "blocked"
-    assert (rows["notes"]["status"], rows["notes"]["fix"]) == ("unavailable", None)
-
-
-def test_each_tool_takes_its_world_action_from_the_sealed_actions_file():
-    # The tool proxy sealed no action for update_order_status: it has no route, so nothing holds it.
-    actions = {k: v for k, v in ACTIONS.items() if v != "update_order_status"}
-    lookup = _rows(evidence=_evidence(actions_to_tools=actions))["order_lookup"]
-    assert {one["tool"]: one["action"] for one in lookup["tools"]} == {
-        "get_order": "POST orders.get",
-        "list_refunds": "POST refunds.list",
-        "update_order_status": None,
-    }
-    assert _boundaries(lookup)["update_order_status"] == "not_enforced"
-
-
-def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
-    seen = [{"run_id": "r1", "call_execution_id": "c1", "tool": None}]
-    monkeypatch.setattr(workers, "_bypasses", lambda _pairing, _runs: {"refund": seen})
-    rows = _rows()
-    assert (rows["refund"]["status"], rows["refund"]["reason_code"]) == (
-        "blocked",
-        "worker_channel_bypassed",
-    )
-    assert rows["refund"]["bypassed"] == seen
-    assert rows["refund"]["fix"]["type"] == "rebind_worker"
-    assert "REFUND_API_URL" in rows["refund"]["fix"]["action"]
-    assert rows["order_lookup"]["status"] == "partial"
-
-
-@pytest.mark.django_db
-def test_a_bypass_with_another_agent_version_does_not_block(
-    user, workspace, storage, django_capture_on_commit_callbacks
-):
-    """A run of agent v1 whose call says the refund worker bypassed its channel blocks the refund worker for v1's
-    pairing only: the pairing of v2 never reads v1's runs."""
-    from simulate.models import CallExecution
-    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
-    from simulate.tests import test_harness_readiness as base
-
-    environment, a2 = base._with_a2(user, workspace, storage, "rw-bypass-agent")
-    base._certify(environment, storage)
-    run = base._committed_run(environment, django_capture_on_commit_callbacks)
-    notice = {"code": workers.BYPASS_CODE, "workers": ["refund"]}
-    calls = CallExecution.objects.filter(test_execution_id=run.test_execution_id)
-    assert calls.exists()
-    calls.update(call_metadata={TRIAL_STATE_KEY: {"notices": [notice]}})
-
-    v1 = base._pairing(environment)
-    assert set(_READ_BYPASSES(v1, evidence_module._runs(v1))) == {"refund"}
-    v2 = base._pairing(environment, a2)
-    assert _READ_BYPASSES(v2, evidence_module._runs(v2)) == {}
-
-
-def test_an_unreadable_archive_reads_untested():
-    row = _rows(evidence=_evidence(unreadable=True))["refund"]
-    assert (row["status"], row["reason_code"]) == ("untested", "evidence_unreadable")
-
-
-def _archive_members(files):
-    """The sealed members as the real fill packs them: only the manifest's listed paths go under the bundle root."""
-    from simulate.services.harness_versioning import assembly
-
-    return assembly._filled_files(
-        files,
-        [
-            "door.json",
-            "generated/tool-proxy/door.json",
-            "generated/tool-proxy/permissions.json",
-        ],
+def _bypass_call(n, worker="refund"):
+    return SimpleNamespace(
+        id=f"c{n}",
+        test_execution_id=f"r{n}",
+        call_metadata={
+            "harness_trial_state": {
+                "notices": [{"code": workers.BYPASS_CODE, "workers": [worker]}]
+            }
+        },
     )
 
 
-@pytest.mark.django_db
-def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
-    from django.core.cache import cache
+class TestWorkerRows:
+    def test_a_tool_proxy_holds_a_separate_worker_to_its_sealed_allow_list(self):
+        lookup = _rows()["order_lookup"]
 
-    from simulate.services.harness_versioning import assembly
-
-    members = _archive_members(
-        {
-            "bundle/generated/tool-proxy/door.json": json.dumps(DOOR).encode(),
-            "bundle/generated/tool-proxy/permissions.json": json.dumps(
-                PERMISSIONS
-            ).encode(),
-            "bundle/door.json": json.dumps(DOOR_OUTCOME).encode(),
+        assert (lookup["status"], lookup["reason_code"]) == (
+            "partial",
+            "held_at_world_cooperative",
+        )
+        assert _boundaries(lookup) == {
+            "get_order": "allowed",
+            "list_refunds": "allowed",
+            "update_order_status": "blocked",
         }
+        # The limit is cooperative: no worker ever reads Supported.
+        assert all(one["status"] != "supported" for one in _rows().values())
+
+    def test_an_in_process_door_holds_deadlines_and_enforces_no_tool(self):
+        rows = _rows(
+            evidence=_evidence(door_outcome=IN_PROCESS_DOOR, worker_permissions=None)
+        )
+
+        for row in rows.values():
+            assert (row["status"], row["reason_code"], row["fix"]) == (
+                "partial",
+                "in_process_door",
+                None,
+            )
+            assert set(_boundaries(row).values()) == {"not_enforced"}
+
+    @pytest.mark.parametrize(
+        "reason", ["tool_service_not_fronted", "in_process_unbound", "no_tool_service"]
     )
-    assert assembly.DOOR_FILE_PATH in members
-    reads = []
+    def test_a_build_sealed_without_a_door_reads_alk_s_reason_and_offers_no_rebuild(
+        self, reason
+    ):
+        row = _rows(
+            evidence=_evidence(door_outcome={"present": False, "reason": reason})
+        )["order_lookup"]
 
-    def stream_members(object_key, names, _limit):
-        reads.append(object_key)
-        return {name: members[name] for name in names if name in members}
+        assert (row["status"], row["reason_code"], row["fix"]) == (
+            "blocked",
+            reason,
+            None,
+        )
+        assert set(_boundaries(row).values()) == {"not_enforced"}
 
-    monkeypatch.setattr(evidence_module.archives, "stream_members", stream_members)
-    cache.clear()
-    # A read cached before the door files were read, under the old key: never used again.
-    old_key = (
-        "harness-readiness-certification:"
-        + evidence_module.hashlib.sha256(b"k1").hexdigest()
+    def test_no_root_door_file_reads_sealed_before_worker_limits_with_a_rebuild(self):
+        old = _evidence(
+            door_outcome=None,
+            worker_limits=None,
+            worker_permissions=None,
+            actions_to_tools=None,
+        )
+        row = _rows(evidence=old)["order_lookup"]
+
+        assert (row["status"], row["reason_code"]) == (
+            "untested",
+            "sealed_before_worker_limits",
+        )
+        assert row["fix"]["type"] == "rebuild_environment"
+        assert set(_boundaries(row).values()) == {"not_enforced"}
+
+    def test_a_shared_worker_alk_limits_is_blocked_and_a_rebuild_after_rebinding_fixes_it(
+        self,
+    ):
+        shared = {
+            "workers": [{**one, "binding": "shared"} for one in CONTRACT["workers"]]
+        }
+        rows = _rows(_pairing(shared))
+        unlimited = _rows(
+            _pairing(shared), _evidence(worker_limits=_limits(limited=False))
+        )
+
+        assert (rows["refund"]["status"], rows["refund"]["reason_code"]) == (
+            "blocked",
+            "shared_binding",
+        )
+        assert rows["refund"]["fix"]["type"] == "rebuild_environment"
+        assert unlimited["refund"]["status"] == "unavailable"
+
+    @pytest.mark.parametrize("field", ["unreadable", "door_unreadable"])
+    def test_files_that_could_not_be_read_read_untested_never_held(self, field):
+        row = _rows(evidence=_evidence(**{field: True}))["refund"]
+
+        assert (row["status"], row["reason_code"]) == (
+            "untested",
+            "evidence_unreadable",
+        )
+        assert set(_boundaries(row).values()) == {"not_enforced"}
+
+    def test_a_bypass_blocks_that_worker_with_a_rebind_and_counts_every_call(self):
+        calls = [_bypass_call(n) for n in range(7)]
+
+        rows = _rows(calls=calls)
+
+        assert (rows["refund"]["status"], rows["refund"]["fix"]["type"]) == (
+            "blocked",
+            "rebind_worker",
+        )
+        assert (len(rows["refund"]["bypassed"]), rows["refund"]["bypassed_count"]) == (
+            5,
+            7,
+        )
+        assert rows["order_lookup"]["status"] == "partial"
+
+
+def _case(key):
+    return CaseNeeds(
+        key=key,
+        number=1,
+        name=key,
+        persona="",
+        rows=frozenset({"start", "message"}),
+        tools=frozenset(),
+        unknown=False,
+        recorded=True,
+        grading_gap=None,
     )
-    cache.set(old_key, ({name: [] for name in evidence_module._FILES}, True))
-    saved = []
 
-    class _Rows:
-        def filter(self, **_kwargs):
-            return self
 
-        def update(self, **fields):
-            saved.append(fields["certification_files"])
+def _placed(key, *, contract=CONTRACT, evidence=None, calls=()):
+    pairing = _pairing(contract)
+    evidence = evidence or _evidence()
+    bypassed = frozenset(
+        workers.bypassed_workers(
+            workers.worker_boundaries(pairing, evidence, list(calls))
+        )
+    )
+    return selection._place(
+        _case(key),
+        {},
+        proved=True,
+        voice=False,
+        many=False,
+        pair_validating=False,
+        pair_failed=False,
+        hold=workers.case_hold(workers.case_holds(pairing, evidence), key),
+        bypassed=bypassed,
+    )
 
-    class _Bundle:
-        _base_manager = _Rows()
 
-        def __init__(self):
-            self.id = "b1"
-            self.certification_files = {"object_key": "k1", "tools": []}
+class TestCaseHolds:
+    """A case is held exactly when ALK's run would hold it: FA reads ALK's sealed answer, never decides it again."""
 
-    monkeypatch.setattr(evidence_module, "HarnessAssembledBundle", _Bundle)
-    row = _Bundle()
-    files = evidence_module._certification_files(row, "k1")
+    @pytest.mark.parametrize(
+        "sealed",
+        [
+            # A budget for the refund worker, on a door that cannot hold it.
+            _scenario(held=True, workers=["refund"], cause="tool_service_not_fronted"),
+            # A sub-goal about a limited worker, on a worker wired as shared.
+            _scenario(held=True, workers=["refund"], cause="shared_worker"),
+        ],
+    )
+    def test_a_case_alk_seals_held_is_held_by_its_worker(self, sealed):
+        evidence = _evidence(worker_limits=_limits({"refund-1": sealed}))
 
-    assert reads == ["k1"]
-    assert files["door"] == DOOR
-    assert files["worker_permissions"] == PERMISSIONS
-    assert files["door_outcome"] == DOOR_OUTCOME
-    # A bundle sealed before ALK wrote these files reads them as absent, never as an error.
-    assert files["worker_limits"] is None
-    assert saved[0]["files_version"] == assembly.CERTIFICATION_FILES_VERSION
-    # Kept on the row now: the second read touches no archive.
-    row.certification_files = saved[0]
-    again = evidence_module._certification_files(row, "k1")
-    assert reads == ["k1"]
-    assert again["door"] == DOOR
+        placed = _placed("refund-1", evidence=evidence)
+
+        assert (placed.bucket, placed.by) == ("blocked", ["worker:refund"])
+
+    @pytest.mark.parametrize(
+        "sealed",
+        [
+            _scenario(held=False, workers=["refund"]),
+            # A sub-goal on a worker with no limits: nothing to hold.
+            _scenario(held=False, workers=["notes"], relies=False),
+            # The door inside the agent decides a deadline at run time: not held before it.
+            _scenario(held=False, workers=["refund"], deadline="decided_at_run"),
+        ],
+    )
+    def test_a_case_alk_seals_clear_runs(self, sealed):
+        evidence = _evidence(worker_limits=_limits({"refund-1": sealed}))
+
+        assert _placed("refund-1", evidence=evidence).bucket == "eligible"
+
+    def test_a_case_missing_from_the_sealed_limits_is_not_known(self):
+        evidence = _evidence(worker_limits=_limits({"other": _scenario(held=False)}))
+
+        placed = _placed("refund-1", evidence=evidence)
+
+        assert (placed.bucket, placed.by) == (
+            "untested",
+            [selection.WORKER_LIMITS_UNKNOWN],
+        )
+
+    @pytest.mark.parametrize(
+        "fields",
+        [{"worker_limits": None}, {"unreadable": True}, {"door_unreadable": True}],
+    )
+    def test_no_readable_sealed_limits_leave_no_case_eligible(self, fields):
+        assert _placed("refund-1", evidence=_evidence(**fields)).bucket == "untested"
+
+    def test_an_agent_declaring_no_workers_holds_nothing_on_worker_limits(self):
+        placed = _placed(
+            "refund-1", contract={"workers": []}, evidence=_evidence(worker_limits=None)
+        )
+
+        assert placed.bucket == "eligible"
+
+    def test_a_case_relying_on_a_worker_that_bypassed_its_channel_is_held(self):
+        evidence = _evidence(
+            worker_limits=_limits(
+                {
+                    "refund-1": _scenario(held=False, workers=["refund"]),
+                    "lookup-1": _scenario(held=False, workers=["order_lookup"]),
+                }
+            )
+        )
+        calls = [_bypass_call(1)]
+
+        assert _placed("refund-1", evidence=evidence, calls=calls).by == [
+            "worker:refund"
+        ]
+        assert _placed("lookup-1", evidence=evidence, calls=calls).bucket == "eligible"
+
+
+class TestBackCompat:
+    def test_a_malformed_door_file_reads_unreadable_not_absent(self):
+        files = assembly.certification_files(
+            {assembly.DOOR_OUTCOME_PATH: b"{not json"}, "k1"
+        )
+        absent = assembly.certification_files({}, "k1")
+
+        assert (files["door_outcome"], files["door_unreadable"]) == (None, True)
+        assert absent["door_unreadable"] is False
+
+    @pytest.mark.django_db
+    def test_a_row_kept_at_an_older_files_version_is_read_again_and_stamped(
+        self, monkeypatch
+    ):
+        from django.core.cache import cache
+
+        members = {
+            assembly.DOOR_OUTCOME_PATH: json.dumps(TOOL_PROXY_DOOR).encode(),
+            assembly.WORKER_LIMITS_PATH: json.dumps(_limits()).encode(),
+        }
+        reads = []
+
+        def stream_members(object_key, names, _limit):
+            reads.append(object_key)
+            return {name: members[name] for name in names if name in members}
+
+        monkeypatch.setattr(evidence_module.archives, "stream_members", stream_members)
+        cache.clear()
+        saved = []
+
+        class _Rows:
+            def filter(self, **_kwargs):
+                return self
+
+            def update(self, **fields):
+                saved.append(fields["certification_files"])
+
+        class _Bundle:
+            _base_manager = _Rows()
+
+            def __init__(self):
+                self.id = "b1"
+                # Kept by a release before the door files were read.
+                self.certification_files = {
+                    "object_key": "k1",
+                    "files_version": 2,
+                    "tools": [],
+                }
+
+        monkeypatch.setattr(evidence_module, "HarnessAssembledBundle", _Bundle)
+        row = _Bundle()
+
+        files = evidence_module._certification_files(row, "k1")
+        row.certification_files = saved[0]
+        again = evidence_module._certification_files(row, "k1")
+
+        assert reads == ["k1"]
+        assert saved[0]["files_version"] == assembly.CERTIFICATION_FILES_VERSION
+        assert files["door_outcome"] == again["door_outcome"] == TOOL_PROXY_DOOR
+        assert files["worker_permissions"] is None
+
+    def test_a_run_snapshot_kept_before_workers_serializes_with_none(self):
+        old = {"counts": {"blocked": 2}, "rows": []}
+
+        read = snapshot_as_read(old)
+
+        assert (read["workers"], read["blockers"]) == ([], 2)
+        assert HarnessCapabilityReportSerializer().fields["workers"].required
 
 
 class _Calls(list):
@@ -319,120 +418,102 @@ class _Calls(list):
         return self
 
 
-def _call(record, trial=None, receipt=None):
-    metadata = {"harness_workers": record}
+def _call(run, record, trial=None, receipt=None):
+    metadata = {children_module.WORKERS_KEY: record}
     if trial is not None:
         metadata["harness_trial_state"] = trial
     if receipt is not None:
         metadata["hosted_harness_receipt"] = receipt
     return SimpleNamespace(
-        call_metadata=metadata, created_at=datetime(2026, 11, 14, tzinfo=UTC)
+        test_execution_id=run,
+        call_metadata=metadata,
+        created_at=datetime(2026, 11, 14, tzinfo=UTC),
     )
 
 
-def _children(
-    monkeypatch,
-    calls,
-    contract=CONTRACT,
-    runs=("00000000-0000-4000-8000-000000000001",),
-):
+def _worker(run, local, observed=True):
+    # As the worker record keeps it: `worker_id` scoped to the run, `id` the contract's.
+    return {
+        "worker_id": f"{run}/{local}",
+        "id": local,
+        "name": local,
+        "observed": observed,
+        "undeclared": False,
+        "instance_ids": [],
+    }
+
+
+def _children(monkeypatch, calls, contract=CONTRACT, runs=("r1",)):
     from simulate.models import CallExecution
 
     monkeypatch.setattr(CallExecution, "objects", _Calls(calls))
-    monkeypatch.setattr(evidence_module, "_contract", lambda _pairing: contract)
-    return evidence_module._children(_pairing(contract), list(runs))
+    return children_module.children(contract["workers"], list(runs))
 
 
-_EVENTS = [
-    {"type": "delegated", "delegation_id": "d1", "worker_id": "r/order_lookup"},
-    {"type": "tool_call", "worker_id": "r/order_lookup", "attribution": "reported"},
-    {"type": "returned", "delegation_id": "d1", "worker_id": "r/order_lookup"},
-    {"type": "delegated", "delegation_id": "d2", "worker_id": "r/refund"},
-    {"type": "returned", "delegation_id": "d2", "worker_id": "r/refund"},
-]
+def _checks(reading):
+    return {one["check"]: one["result"] for one in reading.evidence}
 
 
-def _seen(*ids):
-    return [
-        {"id": one, "worker_id": f"r/{one}", "observed": True, "state": "completed"}
-        for one in ids
-    ]
-
-
-@pytest.mark.django_db
-def test_children_passed_when_every_declared_worker_is_seen(monkeypatch):
-    reading = _children(
-        monkeypatch,
-        [
-            _call(
-                {"workers": _seen("order_lookup", "refund"), "events": _EVENTS},
-                trial={
-                    "state_changes": [
-                        {"who": "worker:refund", "committed_actions": ["issue_refund"]}
-                    ]
-                },
-                receipt={"sub_goals": [{"subject": "worker:refund", "held": True}]},
-            )
-        ],
-    )
-    assert reading.finding == "passed"
-    checks = {one["check"]: one["result"] for one in reading.evidence}
-    assert len(checks) == 7
-    assert checks["delegation_and_return"] == "seen"
-    assert checks["permissions_exercised"] == "seen"
-    assert checks["worker_verdicts"] == "seen"
-    assert checks["timeout_or_cancel"] == "not_seen"
-
-
-@pytest.mark.django_db
-def test_children_limited_when_a_declared_worker_is_never_seen(monkeypatch):
-    reading = _children(
-        monkeypatch,
-        [
-            _call(
+class TestSubAgentEvidence:
+    def test_a_transfer_is_a_whole_hand_off_without_a_return(self, monkeypatch):
+        record = {
+            "workers": [_worker("r1", "order_lookup"), _worker("r1", "refund")],
+            "events": [
                 {
-                    "workers": [
-                        *_seen("order_lookup"),
-                        {"id": "refund", "observed": False},
-                    ],
-                    "events": _EVENTS[:3],
-                }
-            )
-        ],
-    )
-    assert (reading.finding, reading.reason_code) == (
-        "limited",
-        "workers_partly_observed",
-    )
-    assert reading.reason.startswith("1 of 2")
+                    "type": "transferred",
+                    "worker_id": "r1/order_lookup",
+                    "delegation_id": "t1",
+                },
+                {
+                    "type": "transferred",
+                    "worker_id": "r1/refund",
+                    "delegation_id": "t2",
+                },
+            ],
+        }
 
+        reading = _children(monkeypatch, [_call("r1", record)])
 
-@pytest.mark.django_db
-def test_children_not_applicable_for_a_single_agent_and_not_run_without_runs(
-    monkeypatch,
-):
-    single = _children(monkeypatch, [], contract={"workers": []}, runs=())
-    assert (single.finding, single.reason_code) == ("not_applicable", "single_agent")
-    waiting = _children(monkeypatch, [], runs=())
-    assert (waiting.finding, waiting.reason_code) == ("not_run", "no_run")
+        assert reading.finding == "passed"
+        assert _checks(reading)["delegation_and_return"] == "seen"
 
+    def test_a_worker_cut_short_is_still_seen_but_its_hand_off_is_not_whole(
+        self, monkeypatch
+    ):
+        record = {
+            "workers": [_worker("r1", "order_lookup"), _worker("r1", "refund")],
+            "events": [
+                {"type": "delegated", "worker_id": "r1/refund", "delegation_id": "d1"}
+            ],
+        }
 
-def test_the_workers_a_scenario_relies_on_come_from_the_sealed_limits_when_the_bundle_has_them():
-    from simulate.services import harness_scenario_needs
+        reading = _children(monkeypatch, [_call("r1", record)])
 
-    document = {
-        "name": "refund_over_limit",
-        "sub_goals": [],
-        "worker_budget_seconds": {"order_lookup": 5},
-    }
+        assert (reading.finding, reading.reason_code) == (
+            "limited",
+            "workers_partly_observed",
+        )
+        assert _checks(reading)["delegation_and_return"] == "not_seen"
 
-    def relied(sealed):
-        return harness_scenario_needs._needs(
-            "refund_over_limit", 1, document, document, {}, False, frozenset(), sealed
-        ).workers
+    def test_ids_are_compared_across_runs_by_the_contract_id(self, monkeypatch):
+        def record(run):
+            return {"workers": [_worker(run, "refund")], "events": []}
 
-    # The bundle names the workers: the scenario's own fields are not read again.
-    assert relied(frozenset({"refund"})) == {"refund"}
-    assert relied(frozenset()) == frozenset()
-    # Sealed before ALK wrote them: read from the scenario, as before.
-    assert relied(None) == {"order_lookup"}
+        across = _children(
+            monkeypatch,
+            [_call("r1", record("r1")), _call("r2", record("r2"))],
+            runs=("r1", "r2"),
+        )
+        one_run = _children(
+            monkeypatch, [_call("r1", record("r1")), _call("r1", record("r1"))]
+        )
+
+        assert _checks(across)["stable_ids"] == "seen"
+        assert _checks(one_run)["stable_ids"] == "not_applicable"
+
+    def test_a_single_agent_is_not_applicable_and_no_run_is_not_run(self, monkeypatch):
+        single = _children(monkeypatch, [], contract={"workers": []}, runs=())
+        waiting = _children(monkeypatch, [], runs=())
+
+        assert single.finding == "not_applicable"
+        assert waiting.finding == "not_run"

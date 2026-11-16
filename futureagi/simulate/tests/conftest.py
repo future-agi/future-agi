@@ -62,6 +62,17 @@ def readiness_on(settings):
 
 
 @pytest.fixture
+def storage(monkeypatch):
+    """Object storage held in memory; a module that defines its own keeps it."""
+    from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+    from tfc.utils import storage_client
+
+    fake = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+@pytest.fixture
 def moves_without_validation(monkeypatch):
     """Default-agent moves happen at once, as where a pairing cannot be validated. For a
     single test of that path only: with certifying on, a move waits for validation."""

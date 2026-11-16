@@ -135,11 +135,13 @@ def _certify(
     warnings=(),
     routed=None,
     unobserved=(),
+    sealed=None,
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
     per-action files, the tools ``routed`` to the world in qualification (by default
-    each tool whose probe passed or was refused) and these warnings."""
+    each tool whose probe passed or was refused), these warnings and any other
+    ``sealed`` files, by archive path."""
     pairing = pairing or _pairing(environment, agent)
     if routed is None:
         routed = [
@@ -174,6 +176,9 @@ def _certify(
                 if routed
                 else {}
             ),
+            **{
+                path: json.dumps(body).encode() for path, body in (sealed or {}).items()
+            },
         }
     )
     HarnessAssembledBundle._base_manager.update_or_create(
@@ -1487,8 +1492,9 @@ class TestReviewFollowUps:
                 "actions": ACTIONS,
                 "routed": [],
                 "unobserved": [],
-                "door": None,
-                "worker_permissions": None,
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(evidence._DOOR_FILES),
+                "door_unreadable": False,
             },
             True,
         )
@@ -1529,8 +1535,9 @@ class TestReviewFollowUps:
                 "actions": [],
                 "routed": [],
                 "unobserved": [],
-                "door": None,
-                "worker_permissions": None,
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(evidence._DOOR_FILES),
+                "door_unreadable": False,
             },
             True,
         )
@@ -1635,14 +1642,14 @@ class TestReviewFollowUps:
         assert bundle.certification_files == {
             "object_key": "harness-sealed/stored/never-read.tar.gz",
             # Stamped with the current files version, so readiness never reads it again.
-            "files_version": 2,
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
             "tools": TOOLS,
             "actions": ACTIONS,
             "routed": [],
             "unobserved": [],
             # No world door files in this sealed archive.
-            "door": None,
-            "worker_permissions": None,
+            **dict.fromkeys(evidence._DOOR_FILES),
+            "door_unreadable": False,
         }
         with patch.object(evidence.archives, "stream_members") as streamed:
             read = evidence.read_evidence(pairing, bundle)
@@ -1674,9 +1681,9 @@ class TestReviewFollowUps:
                 if one["status"] in ("passed", "refused")
             ],
             "unobserved": [],
-            "door": None,
-            "worker_permissions": None,
-            "files_version": 2,
+            **dict.fromkeys(evidence._DOOR_FILES),
+            "door_unreadable": False,
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
         }
         cache.clear()
         with patch.object(evidence.archives, "stream_members") as streamed:
