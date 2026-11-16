@@ -11,6 +11,8 @@ WorkerStatus = Literal["ok", "error"]
 WorkerRelationship = Literal["observed", "unknown"]
 WorkerAttribution = Literal["reported", "unattributed"]
 WorkerCollection = Literal["complete", "partial", "unavailable", "no_evidence"]
+# What the `/workers/` answer holds: a kept record, an earlier attempt kept before records were, or a failed read.
+WorkersState = Literal["recorded", "not_kept", "unreadable"]
 WorkerStepKind = Literal["handoff", "tool_call"]
 # How a hand-off ended: a return decides it; a control pass that never returns is `passed` unless a tool it ran failed.
 HandOffEnd = Literal["finished", "failed", "passed", "no_return", "cut_off"]
@@ -170,6 +172,10 @@ class WorkerStep(TypedDict, total=False):
     ended_at: str | None
     parallel: bool
     end: HandOffEnd
+    # The hand-off failed or its worker never came back: counted in `counts.did_not_finish`.
+    did_not_finish: bool
+    # The worker's first hand-off in the call, where its model and tokens (its totals) are shown.
+    first_of_worker: bool
     # The keys of the steps directly under this hand-off, in reading order.
     children: list[int]
     call: WorkerEvent
@@ -188,6 +194,10 @@ class WorkerTurn(TypedDict):
     # The keys of the top-level steps in this turn, in reading order.
     children: list[int]
     calls_outside: int
+    # The keys of every hand-off in this turn, nested ones included, each followed by the ones it made.
+    handoffs: list[int]
+    # False for work before the caller spoke or in no recorded turn: a missing request or reply there is not missed.
+    expects_messages: bool
 
 
 class HandOffCounts(TypedDict):
@@ -240,6 +250,7 @@ class CallWorkersRecord(WorkerTimeline, WorkerSteps):
     """The `/workers/` response: the kept record with its steps; `pending` while a read is still due."""
 
     pending: bool
+    state: WorkersState
 
 
 class CallActorTrigger(TypedDict, total=False):

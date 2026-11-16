@@ -246,7 +246,11 @@ def _provider(call: CallExecution) -> str | None:
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
     """Provider-recorded function calls without provider internals; a hosted call's world actors' actions follow the
     agent's calls, each with its `actor_id`."""
-    provider_data = call.provider_call_data
+    return recorded_calls(call.provider_call_data, call.call_metadata)
+
+
+def recorded_calls(provider_data: object, metadata: object) -> list[dict[str, Any]]:
+    """`function_calls` from a call's stored provider data and metadata, so an earlier attempt's snapshot reads alike."""
     calls: list[dict[str, Any]] = []
     for payload in (provider_data if isinstance(provider_data, dict) else {}).values():
         if not isinstance(payload, dict) or not isinstance(
@@ -254,8 +258,7 @@ def function_calls(call: CallExecution) -> list[dict[str, Any]]:
         ):
             continue
         calls.extend(item for item in payload["tool_calls"] if isinstance(item, dict))
-    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
-    actions = metadata.get(WORLD_ACTIONS_KEY)
+    actions = (metadata if isinstance(metadata, dict) else {}).get(WORLD_ACTIONS_KEY)
     calls.extend(one for one in actions or [] if isinstance(one, dict))
     return calls
 

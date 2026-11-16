@@ -34,6 +34,8 @@ from tracer.services.clickhouse.v2.span_reader import CHSpan
 logger = structlog.get_logger(__name__)
 
 WORKERS_KEY = "harness_workers"
+# Set once a read of this attempt ran: when it ran and whether it failed, so a call with no record is told apart.
+READ_KEY = "harness_workers_read"
 # Seconds after the result; OpenTelemetry's batch exporter delivers a span within 30 s.
 FIRST_READ = 35
 SECOND_READ = 600
@@ -42,19 +44,6 @@ READ_GRACE = 240
 # One call's span read: at most this many spans (past it the timeline is `partial`), for at most this long.
 MAX_SPANS = 5000
 SPAN_READ_CAP_MS = 30_000
-
-
-def stored_record(
-    call: CallExecution, attempt: UUID | None = None
-) -> WorkerTimeline | None:
-    """The call's worker record, or an earlier attempt's as its rerun snapshot kept it; None when none was kept."""
-    if attempt is None:
-        metadata = call.call_metadata
-    else:
-        snapshot = call.snapshots.filter(id=attempt).only("call_metadata").first()
-        metadata = snapshot.call_metadata if snapshot is not None else None
-    record = metadata.get(WORKERS_KEY) if isinstance(metadata, dict) else None
-    return cast(WorkerTimeline, record) if record else None
 
 
 def _span_dict(span: CHSpan) -> WorkerSpan:
@@ -272,6 +261,19 @@ def kept_record(
     )
 
 
+def mark_read(call_execution_id: UUID | str, *, failed: bool) -> None:
+    """Note that this attempt's read ran, or failed; a failure never replaces a record an earlier read kept."""
+    now = timezone.now().isoformat()
+
+    def note(metadata: dict[str, object]) -> bool:
+        if failed and metadata.get(WORKERS_KEY):
+            return False
+        metadata[READ_KEY] = {"at": now, "failed": failed}
+        return True
+
+    locked_call_metadata_update(call_execution_id, note)
+
+
 def attempt_reset(call_execution_id: UUID | str) -> datetime | None:
     """When the call was last reset for a rerun of the call itself; None when it never was."""
     return (
@@ -370,6 +372,7 @@ def record_call_workers(
     declared = declared_workers(job) if job is not None else []
     # A declared team with no evidence is still recorded, so the call never reads like a single-agent one.
     if traces.project_id is None and not traced_calls and not declared:
+        mark_read(call.id, failed=False)
         return None
     spans: list[CHSpan] = []
     partial, unavailable = False, False
@@ -430,6 +433,8 @@ def record_call_workers(
     if not timeline["workers"] and not any(
         one["type"] in HAND_OFF_TYPES for one in timeline["events"]
     ):
+        # A read that could not reach the spans found nothing because it saw nothing, not because there was none.
+        mark_read(call.id, failed=unavailable)
         return None
 
     kept: list[WorkerTimeline] = []

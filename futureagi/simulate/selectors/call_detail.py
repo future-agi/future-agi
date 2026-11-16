@@ -4,17 +4,20 @@ actors' model use already worked out."""
 
 import uuid
 from collections.abc import Collection, Mapping, Sequence
+from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
 from simulate.models import CallExecution, HostedHarnessArtifact
+from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_actor_labels import FallbackView, fallback_of
 from simulate.services.hosted_harness_ingestion import (
     TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
     get_object_url,
 )
+from simulate.services.run_results_v3 import recorded_calls
 from simulate.services.run_results_v3_queries import call_actor_delivery
 from simulate.utils.stored_transcript_roles import call_actor_label
 
@@ -324,18 +327,51 @@ def _unlabelled(text: str, labels: set[str]) -> str:
 def tool_call_count(
     transcript: Sequence[Mapping[str, object]], calls: Sequence[Mapping[str, object]]
 ) -> int:
-    """The agent's tool calls in the transcript and the tagged function calls; a world actor's action is not one, and a
-    hand-off to another agent is a Participants step, not a tool call."""
-    made: list[object] = [
+    """The agent's tool calls, from the call's tool trace when it has one, else from the transcript; a world actor's
+    action is not one, and a hand-off to another agent is a Participants step, not a tool call."""
+    # A hosted chat call keeps the same calls in both, so only one of them is counted.
+    traced: list[object] = [
         one for one in calls if one.get("kind") != "world_actor_action"
     ]
-    for turn in transcript:
-        listed = turn.get("tool_calls")
-        if isinstance(listed, list):
-            made.extend(listed)
+    made: list[object] = traced or [
+        one
+        for turn in transcript
+        if isinstance(listed := turn.get("tool_calls"), list)
+        for one in listed
+    ]
     return sum(
         1 for one in made if not (isinstance(one, Mapping) and one.get("delegated_to"))
     )
+
+
+# How the transcript names a row of tool calls, by what the calls recorded: work done, work handed out, control passed.
+_TOOL_ROW_LABELS = {
+    "tool_call": "Tool call",
+    "handoff": "Hand-off",
+    "transferred": "Control pass",
+}
+_MIXED_TOOL_ROW = "Tool calls and hand-offs"
+
+
+def _tool_row(listed: Sequence[object]) -> dict[str, object]:
+    """A row's tool calls as the transcript shows them: how many hand work to another agent, and the row's label."""
+    calls = [one for one in listed if isinstance(one, Mapping)]
+    kinds = {
+        (
+            "transferred"
+            if one.get("kind") == "transferred"
+            else "handoff"
+            if one.get("delegated_to")
+            else "tool_call"
+        )
+        for one in calls
+    }
+    return {
+        "handoffs": sum(1 for one in calls if one.get("delegated_to")),
+        "tool_label": _TOOL_ROW_LABELS[next(iter(kinds))]
+        if len(kinds) == 1
+        else _MIXED_TOOL_ROW,
+    }
 
 
 def transcript_turns(
@@ -350,6 +386,9 @@ def transcript_turns(
         row = dict(source)
         # A chat row names its speaker only by `role`; every turn says it as `speaker_role` too.
         row.setdefault("speaker_role", row.get("role"))
+        listed = row.get("tool_calls")
+        if isinstance(listed, list) and listed:
+            row.update(_tool_row(listed))
         if chat:
             items = [
                 item for item in row.get("content") or [] if isinstance(item, dict)
@@ -832,11 +871,16 @@ def _approval_notices(calls: Sequence[Mapping[str, Any]]) -> list[TrialNotice]:
 
 
 def trial_state(
-    call: CallExecution, *, calls: Sequence[Mapping[str, Any]] = ()
+    call: CallExecution,
+    *,
+    calls: Sequence[Mapping[str, Any]] = (),
+    metadata: Mapping[str, Any] | None = None,
 ) -> TrialState | None:
     """The trial's World state, ready to show; every list is present and `unreadable` is said once. ``calls`` are the
-    call's recorded tool calls, read for the writes the world held back for an approval."""
-    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    call's recorded tool calls, read for the writes the world held back for an approval; ``metadata`` an earlier
+    attempt's, when not the call's own."""
+    if metadata is None:
+        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     if state is None:
         return None
@@ -919,6 +963,48 @@ def trial_state(
     if url:
         shown["end_state_url"] = url
     return shown
+
+
+class EarlierAttempt(TypedDict):
+    """An earlier attempt of the call that a rerun kept; `kept` is false when it was snapshotted before attempts kept
+    their worker record and trial state."""
+
+    attempt: str
+    rerun_at: datetime
+    kept: bool
+    trial_state: TrialState | None
+
+
+def earlier_attempts(call: CallExecution) -> list[EarlierAttempt]:
+    """Each earlier attempt of the call itself, latest first, with its id for `/workers/?attempt=`."""
+    snapshots = sorted(
+        (
+            one
+            for one in call.snapshots.all()
+            if one.rerun_type == CallExecutionSnapshot.RerunType.CALL_AND_EVAL
+        ),
+        key=lambda one: one.snapshot_timestamp,
+        reverse=True,
+    )
+    return [
+        {
+            "attempt": str(one.id),
+            "rerun_at": one.snapshot_timestamp,
+            "kept": one.call_metadata is not None,
+            "trial_state": (
+                trial_state(
+                    call,
+                    calls=tagged_function_calls(
+                        recorded_calls(one.provider_call_data, one.call_metadata)
+                    ),
+                    metadata=one.call_metadata,
+                )
+                if isinstance(one.call_metadata, dict)
+                else None
+            ),
+        }
+        for one in snapshots
+    ]
 
 
 def has_customer(turns: Sequence[Mapping[str, Any]]) -> bool:

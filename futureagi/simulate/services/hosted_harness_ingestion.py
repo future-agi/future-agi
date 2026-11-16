@@ -30,7 +30,7 @@ from simulate.models import (
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
-from simulate.services.harness_workers import FIRST_READ
+from simulate.services.harness_workers import FIRST_READ, attempt_reset, mark_read
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -1196,10 +1196,19 @@ def _apply_receipt_to_call(
 
 def _dispatch_worker_read(call_id: UUID) -> None:
     """Read the call's worker timeline once its spans have had time to arrive."""
-    read = CallWorkersRead(str(call_id))
-    record_call_workers.apply_async(
-        args=(asdict(read),), start_delay=timedelta(seconds=FIRST_READ)
+    reset = attempt_reset(call_id)
+    # Tied to this attempt, so a rerun before the read runs leaves the new attempt to its own read.
+    read = CallWorkersRead(
+        str(call_id), attempt=reset.isoformat() if reset is not None else ""
     )
+    try:
+        record_call_workers.apply_async(
+            args=(asdict(read),), start_delay=timedelta(seconds=FIRST_READ)
+        )
+    except Exception:
+        # Said on the call, not dropped: with no read the call would look like one with no other agents.
+        logger.exception("call_workers_read_dispatch_failed for call %s", call_id)
+        mark_read(call_id, failed=True)
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:

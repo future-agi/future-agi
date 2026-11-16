@@ -424,3 +424,16 @@ class TrialStateSerializer(serializers.Serializer):
         many=True,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )
+
+
+class EarlierAttemptSerializer(serializers.Serializer):
+    """An earlier attempt of the call that a rerun kept, latest first."""
+
+    attempt = serializers.UUIDField(
+        help_text="Its id: `/workers/?attempt=` reads its worker record."
+    )
+    rerun_at = serializers.DateTimeField()
+    kept = serializers.BooleanField(
+        help_text="False when it was snapshotted before attempts kept their worker record and trial state."
+    )
+    trial_state = TrialStateSerializer(allow_null=True)

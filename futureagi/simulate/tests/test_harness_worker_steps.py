@@ -857,6 +857,59 @@ class TestWorkerRecordAsServed:
         assert counts["finished"] + counts["did_not_finish"] == len(shown)
         assert counts["workers"] == len({one["worker_id"] for one in shown})
 
+    def test_each_row_s_did_not_finish_agrees_with_the_headline_count(self):
+        failed = {**answer(5, "A", "boom"), "status": "error"}
+        passed = {**HOTELS, "seq": 3, "type": "transferred", "delegation_id": "C"}
+        events = [HOTELS, FLIGHTS, passed, failed]
+        for cut_off in (False, True):
+            result = worker_steps(events, cut_off=cut_off)
+            shown = handoffs(result["steps"])
+            assert (
+                sum(one["did_not_finish"] for one in shown)
+                == result["counts"]["did_not_finish"]
+            )
+            assert {one["end"] for one in shown if one["did_not_finish"]} <= {
+                "failed",
+                "no_return",
+            }
+
+    def test_only_a_worker_s_first_hand_off_is_marked_first(self):
+        other = {**FLIGHTS, "seq": 3, "worker_id": "booker", "delegation_id": "C"}
+        shown = handoffs(worker_steps([HOTELS, FLIGHTS, other])["steps"])
+        assert [(one["worker_id"], one["first_of_worker"]) for one in shown] == [
+            ("searcher", True),
+            ("searcher", False),
+            ("booker", True),
+        ]
+
+    def test_each_turn_lists_its_hand_offs_nested_ones_included(self):
+        nested = {
+            **FLIGHTS,
+            "seq": 2,
+            "worker_id": "booker",
+            "by": "searcher",
+            "parent_delegation_id": "A",
+        }
+        result = worker_steps([HOTELS, nested], [said("user", 0, "book it")])
+        [turn] = result["turns"]
+        assert turn["handoffs"] == [one["key"] for one in result["steps"]]
+        assert len(turn["handoffs"]) == 2
+
+    def test_only_work_before_the_caller_spoke_or_in_no_turn_expects_no_messages(
+        self,
+    ):
+        early = {**HOTELS, "at": at(1)}
+        later = {**FLIGHTS, "at": at(5)}
+        untimed = {**FLIGHTS, "seq": 3, "delegation_id": "C", "at": None}
+        turns = worker_steps(
+            [early, later, untimed], [said("agent", 2, "hi"), said("user", 4, "go")]
+        )["turns"]
+        assert [(one["turn"], one["expects_messages"]) for one in turns] == [
+            (0, False),
+            (1, True),
+            (None, False),
+        ]
+
     def test_each_hand_off_names_the_steps_directly_under_it(self):
         events = [HOTELS, call(2, "A"), answer(3, "A", "three hotels"), call(4)]
         result = worker_steps(events)
