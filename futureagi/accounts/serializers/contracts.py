@@ -111,6 +111,19 @@ class TimezoneResponseSerializer(serializers.Serializer):
     timezone = serializers.CharField()
 
 
+class EmailUnsubscribeRequestSerializer(serializers.Serializer):
+    """Form body of the unsubscribe page's buttons. A mail client's RFC 8058
+    one-click POST sends ``List-Unsubscribe=One-Click`` and no ``action``,
+    which means unsubscribe."""
+
+    action = serializers.ChoiceField(
+        choices=["unsubscribe", "resubscribe"], required=False
+    )
+    # Monitor alerts only: the short-lived token from the Unsubscribed page
+    # that lets the address undo its own unsubscribe.
+    undo = serializers.CharField(required=False, allow_blank=True)
+
+
 class AccountsMessageResultSerializer(serializers.Serializer):
     message = serializers.CharField()
 

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1143,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -1181,6 +1181,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/TimezoneResponse",
+          },
+          400: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          401: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/accounts/notifications/email/unsubscribe/": {
+      get: {
+        operationId: "accounts_notifications_email_unsubscribe_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          401: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "accounts_notifications_email_unsubscribe_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmailUnsubscribeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "string",
           },
           400: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -61752,6 +61816,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         config: {
           $ref: "#/definitions/PromptConfig",
+        },
+      },
+    },
+    EmailUnsubscribeRequest: {
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["unsubscribe", "resubscribe"],
+        },
+        undo: {
+          title: "Undo",
+          type: "string",
         },
       },
     },

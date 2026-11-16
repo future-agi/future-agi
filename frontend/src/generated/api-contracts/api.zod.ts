@@ -664,12 +664,27 @@ export const AccountsMeTimezoneCreateResponse = zod.object({
 });
 
 /**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const AccountsNotificationsEmailUnsubscribeListResponse = zod.string();
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const AccountsNotificationsEmailUnsubscribeCreateBody = zod.object({
+  action: zod.enum(["unsubscribe", "resubscribe"]).optional(),
+  undo: zod.string().optional(),
+});
+
+export const AccountsNotificationsEmailUnsubscribeCreateResponse = zod.string();
+
+/**
  * Snooze the realtime track for N days (default 7). Daily still fires.
  */
 export const AccountsNotificationsSnoozeListResponse = zod.string();
 
 /**
- * One-click unsubscribe from both digest tracks. Token is HMAC-signed.
+ * Digest unsubscribe link from older emails. Token is HMAC-signed.
  */
 export const AccountsNotificationsUnsubscribeListResponse = zod.string();
 

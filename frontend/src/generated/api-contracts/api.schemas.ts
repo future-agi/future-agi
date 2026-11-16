@@ -586,6 +586,19 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type EmailUnsubscribeRequestApiAction =
+  (typeof EmailUnsubscribeRequestApiAction)[keyof typeof EmailUnsubscribeRequestApiAction];
+
+export const EmailUnsubscribeRequestApiAction = {
+  unsubscribe: "unsubscribe",
+  resubscribe: "resubscribe",
+} as const;
+
+export interface EmailUnsubscribeRequestApi {
+  action?: EmailUnsubscribeRequestApiAction;
+  undo?: string;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];

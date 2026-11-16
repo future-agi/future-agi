@@ -429,6 +429,7 @@ import type {
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
   EditRunPromptColumnApi,
+  EmailUnsubscribeRequestApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
@@ -4390,6 +4391,155 @@ export const accountsMeTimezoneCreate = async (
   );
 };
 
+export type accountsNotificationsEmailUnsubscribeListResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseSuccess =
+  accountsNotificationsEmailUnsubscribeListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeListResponseError = (
+  | accountsNotificationsEmailUnsubscribeListResponse400
+  | accountsNotificationsEmailUnsubscribeListResponse401
+  | accountsNotificationsEmailUnsubscribeListResponse403
+  | accountsNotificationsEmailUnsubscribeListResponse404
+  | accountsNotificationsEmailUnsubscribeListResponse500
+  | accountsNotificationsEmailUnsubscribeListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse =
+  | accountsNotificationsEmailUnsubscribeListResponseSuccess
+  | accountsNotificationsEmailUnsubscribeListResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeListUrl = () => {
+  return `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeList = async (
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeListResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeListResponse>(
+    getAccountsNotificationsEmailUnsubscribeListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseSuccess =
+  accountsNotificationsEmailUnsubscribeCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeCreateResponseError = (
+  | accountsNotificationsEmailUnsubscribeCreateResponse400
+  | accountsNotificationsEmailUnsubscribeCreateResponse401
+  | accountsNotificationsEmailUnsubscribeCreateResponse403
+  | accountsNotificationsEmailUnsubscribeCreateResponse404
+  | accountsNotificationsEmailUnsubscribeCreateResponse500
+  | accountsNotificationsEmailUnsubscribeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse =
+  | accountsNotificationsEmailUnsubscribeCreateResponseSuccess
+  | accountsNotificationsEmailUnsubscribeCreateResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeCreateUrl = () => {
+  return `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeCreate = async (
+  emailUnsubscribeRequestApi: EmailUnsubscribeRequestApi,
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeCreateResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeCreateResponse>(
+    getAccountsNotificationsEmailUnsubscribeCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emailUnsubscribeRequestApi),
+    },
+  );
+};
+
 export type accountsNotificationsSnoozeListResponse200 = {
   data: string;
   status: 200;
@@ -4522,7 +4672,7 @@ export const getAccountsNotificationsUnsubscribeListUrl = () => {
 };
 
 /**
- * One-click unsubscribe from both digest tracks. Token is HMAC-signed.
+ * Digest unsubscribe link from older emails. Token is HMAC-signed.
  */
 export const accountsNotificationsUnsubscribeList = async (
   options?: RequestInit,

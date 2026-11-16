@@ -2377,6 +2377,124 @@
             },
             "parameters": []
         },
+        "/accounts/notifications/email/unsubscribe/": {
+            "get": {
+                "operationId": "accounts_notifications_email_unsubscribe_list",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "HTML unsubscribe page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ]
+            },
+            "post": {
+                "operationId": "accounts_notifications_email_unsubscribe_create",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmailUnsubscribeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML unsubscribe page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/accounts/notifications/snooze/": {
             "get": {
                 "operationId": "accounts_notifications_snooze_list",
@@ -2435,7 +2553,7 @@
         "/accounts/notifications/unsubscribe/": {
             "get": {
                 "operationId": "accounts_notifications_unsubscribe_list",
-                "description": "One-click unsubscribe from both digest tracks. Token is HMAC-signed.",
+                "description": "Digest unsubscribe link from older emails. Token is HMAC-signed.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -87229,6 +87347,23 @@
                     "title": "Timezone",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "EmailUnsubscribeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "unsubscribe",
+                        "resubscribe"
+                    ]
+                },
+                "undo": {
+                    "title": "Undo",
+                    "type": "string"
                 }
             }
         },

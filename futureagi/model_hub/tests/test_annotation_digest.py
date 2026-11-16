@@ -8,9 +8,10 @@ Covers:
 - Recipient filtering: annotators see assignments, managers see review queue
 - Timezone window matching for the daily track
 - HMAC unsubscribe token round-trip
+- Overlapping runs send once (claim before send)
 """
 
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -350,7 +351,7 @@ class TestDailyDigest:
         # hour is 14 — should skip.
         digest_user.last_timezone = "UTC"
         digest_user.save()
-        now = datetime(2026, 5, 15, 14, 0, tzinfo=dt_timezone.utc)
+        now = datetime(2026, 5, 15, 14, 0, tzinfo=UTC)
 
         with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
@@ -372,7 +373,7 @@ class TestDailyDigest:
         )
         digest_user.last_timezone = "UTC"
         digest_user.save()
-        now = datetime(2026, 5, 15, 9, 0, tzinfo=dt_timezone.utc)
+        now = datetime(2026, 5, 15, 9, 0, tzinfo=UTC)
 
         with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
@@ -397,7 +398,7 @@ class TestDailyDigest:
         digest_user.save()
 
         # 9am LA in summer (PDT, UTC-7) = 16:00 UTC. Should fire.
-        now_summer = datetime(2026, 7, 15, 16, 0, tzinfo=dt_timezone.utc)
+        now_summer = datetime(2026, 7, 15, 16, 0, tzinfo=UTC)
         with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now_summer)
         assert sent is True
@@ -407,23 +408,137 @@ class TestDailyDigest:
         state = AnnotationNotificationState.objects.get(user=digest_user)
         state.last_daily_digest_at = None
         state.save()
-        now_utc_morning = datetime(2026, 7, 15, 9, 0, tzinfo=dt_timezone.utc)
+        now_utc_morning = datetime(2026, 7, 15, 9, 0, tzinfo=UTC)
         with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now_utc_morning)
         assert sent is False
+        mock_send.assert_not_called()
 
     def test_skip_if_empty_daily(self, digest_user):
         from model_hub.utils.annotation_digest import _send_daily_for_user
 
         digest_user.last_timezone = "UTC"
         digest_user.save()
-        now = datetime(2026, 5, 15, 9, 0, tzinfo=dt_timezone.utc)
+        now = datetime(2026, 5, 15, 9, 0, tzinfo=UTC)
 
         with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
 
         assert sent is False
         mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Overlapping runs
+# ---------------------------------------------------------------------------
+
+
+def _stale_states(user, count=2):
+    """State rows as each of ``count`` overlapping runs read them: all
+    loaded before any run recorded its send."""
+    AnnotationNotificationState.objects.get_or_create(user=user)
+    return [AnnotationNotificationState.objects.get(user=user) for _ in range(count)]
+
+
+@pytest.mark.django_db
+class TestOverlappingRuns:
+    def test_two_daily_ticks_at_once_send_one_email(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        from model_hub.utils import annotation_digest
+        from model_hub.utils.annotation_digest import (
+            send_annotation_daily_digest_tick,
+        )
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        digest_user.last_timezone = "UTC"
+        digest_user.save()
+        tick_now = datetime(2026, 5, 15, 9, 0, tzinfo=UTC)  # default digest hour
+        stale = _stale_states(digest_user)
+        real_get_state = annotation_digest._get_state
+
+        def get_state(user):
+            # The tick also visits the queue's manager, who has nothing pending.
+            return stale.pop(0) if user.pk == digest_user.pk else real_get_state(user)
+
+        with (
+            patch(
+                "model_hub.utils.annotation_digest._get_state", side_effect=get_state
+            ),
+            patch("model_hub.utils.annotation_digest.email_helper") as mock_send,
+            patch(
+                "model_hub.utils.annotation_digest.timezone.now", return_value=tick_now
+            ),
+        ):
+            first = send_annotation_daily_digest_tick()
+            second = send_annotation_daily_digest_tick()
+
+        assert mock_send.call_count == 1
+        assert mock_send.call_args.kwargs["to_email_list"] == [digest_user.email]
+        assert (first["sent"], second["sent"]) == (1, 0)
+        state = AnnotationNotificationState.objects.get(user=digest_user)
+        assert state.last_daily_digest_at is not None
+
+    def test_two_realtime_runs_at_once_send_one_email(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        from model_hub.utils.annotation_digest import _send_realtime_for_user
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        stale = _stale_states(digest_user)
+        now = timezone.now()
+
+        with (
+            patch(
+                "model_hub.utils.annotation_digest._get_state",
+                side_effect=lambda user: stale.pop(0),
+            ),
+            patch("model_hub.utils.annotation_digest.email_helper") as mock_send,
+        ):
+            sent = [_send_realtime_for_user(digest_user, now) for _ in range(2)]
+
+        assert sent == [True, False]
+        assert mock_send.call_count == 1
+
+    def test_failed_send_releases_claim_for_next_tick(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        from model_hub.utils.annotation_digest import _send_daily_for_user
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        digest_user.last_timezone = "UTC"
+        digest_user.save()
+        now = datetime(2026, 5, 15, 9, 0, tzinfo=UTC)
+
+        with patch(
+            "model_hub.utils.annotation_digest.email_helper",
+            side_effect=RuntimeError("mailgun down"),
+        ):
+            assert _send_daily_for_user(digest_user, now) is False
+        state = AnnotationNotificationState.objects.get(user=digest_user)
+        assert state.last_daily_digest_at is None
+
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
+            assert _send_daily_for_user(digest_user, now) is True
+        mock_send.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

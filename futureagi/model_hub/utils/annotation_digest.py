@@ -10,13 +10,13 @@
 Both tracks render through ``tfc.utils.email.email_helper`` using the
 ``annotation_realtime_digest.html`` / ``annotation_daily_digest.html``
 templates. Users can disable both via ``AnnotationNotificationState.digest_enabled``
-(unsubscribe link in the email footer) or pause realtime only via
+(the unsubscribe link and ``List-Unsubscribe`` header ``email_helper`` adds for
+the ``annotation_digest`` category) or pause realtime only via
 ``realtime_snoozed_until`` (snooze link).
 """
 
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 
 import structlog
 from django.conf import settings
@@ -26,7 +26,6 @@ from django.utils import timezone
 
 from model_hub.models.annotation_queues import (
     AnnotationNotificationState,
-    AnnotationQueue,
     AnnotationQueueAnnotator,
     QueueItem,
     annotation_queue_role_q,
@@ -36,6 +35,7 @@ from model_hub.models.choices import (
     QueueItemStatus,
 )
 from tfc.utils.email import email_helper
+from tfc.utils.email_unsubscribe import ANNOTATION_DIGEST
 
 logger = structlog.get_logger(__name__)
 
@@ -56,9 +56,7 @@ DAILY_MIN_GAP = timedelta(hours=12)
 # ---------------------------------------------------------------------------
 
 
-def _annotator_pending_by_queue(
-    user, since: Optional[datetime] = None
-) -> Dict[str, Dict]:
+def _annotator_pending_by_queue(user, since: datetime | None = None) -> dict[str, dict]:
     """Return ``{queue_id: {queue, count, oldest}}`` for items assigned to ``user``.
 
     Items are "pending" if status != COMPLETED. When ``since`` is given,
@@ -98,9 +96,7 @@ def _annotator_pending_by_queue(
     }
 
 
-def _reviewer_pending_by_queue(
-    user, since: Optional[datetime] = None
-) -> Dict[str, Dict]:
+def _reviewer_pending_by_queue(user, since: datetime | None = None) -> dict[str, dict]:
     """Return ``{queue_id: {queue, count, oldest}}`` for review work."""
     # Queues where the user can review: explicit reviewers and managers.
     review_queue_ids = list(
@@ -158,6 +154,31 @@ def _get_state(user) -> AnnotationNotificationState:
     return state
 
 
+def _claim_send(state, field: str, now: datetime) -> bool:
+    """Record the send in ``field`` before the email goes out, atomically.
+
+    Two overlapping runs of a tick both read the same "not sent yet" state;
+    the compare-and-set on the value read lets only one of them through.
+    At most once by design: a worker killed between claim and send skips
+    that digest until the throttle / min gap clears, rather than doubling it.
+    """
+    previous = getattr(state, field)
+    claimed = AnnotationNotificationState.objects.filter(
+        pk=state.pk, **{field: previous}
+    ).update(**{field: now, "updated_at": timezone.now()})
+    if claimed:
+        setattr(state, field, now)
+    return bool(claimed)
+
+
+def _release_send(state, field: str, previous: datetime | None, now: datetime):
+    """Undo ``_claim_send`` after a failed send so the next tick retries."""
+    AnnotationNotificationState.objects.filter(pk=state.pk, **{field: now}).update(
+        **{field: previous, "updated_at": timezone.now()}
+    )
+    setattr(state, field, previous)
+
+
 def _unsubscribe_token(user_id) -> str:
     """HMAC-signed token so unsubscribe links can't be guessed."""
     from django.core.signing import TimestampSigner
@@ -165,7 +186,7 @@ def _unsubscribe_token(user_id) -> str:
     return TimestampSigner(salt="annotation-digest-unsub").sign(str(user_id))
 
 
-def _verify_unsubscribe_token(token: str) -> Optional[str]:
+def _verify_unsubscribe_token(token: str) -> str | None:
     """Returns user_id if valid (and not older than 30 days), else None."""
     from django.core.signing import BadSignature, TimestampSigner
 
@@ -247,13 +268,14 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
         "annotator_buckets": list(annotator_buckets.values()),
         "reviewer_buckets": list(reviewer_buckets.values()),
         "queues_url": f"{frontend_url}/dashboard/annotations/queues",
-        "unsubscribe_url": (
-            f"{backend_url}/accounts/notifications/unsubscribe/?token={unsub_token}"
-        ),
         "snooze_url": (
             f"{backend_url}/accounts/notifications/snooze/?token={unsub_token}&days=7"
         ),
     }
+
+    previous = state.last_realtime_digest_at
+    if not _claim_send(state, "last_realtime_digest_at", now):
+        return False  # an overlapping run already sent this one
 
     try:
         email_helper(
@@ -261,21 +283,20 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
             template_name="annotation_realtime_digest.html",
             template_data=template_data,
             to_email_list=[user.email],
+            notification_category=ANNOTATION_DIGEST,
         )
     except Exception as exc:
+        _release_send(state, "last_realtime_digest_at", previous, now)
         logger.warning(
             "annotation_realtime_digest_send_failed",
             user_id=str(user.id),
             error=str(exc),
         )
         return False
-
-    state.last_realtime_digest_at = now
-    state.save(update_fields=["last_realtime_digest_at", "updated_at"])
     return True
 
 
-def send_annotation_realtime_digest_tick() -> Dict[str, int]:
+def send_annotation_realtime_digest_tick() -> dict[str, int]:
     """One run of the 15-min realtime digest cron. Returns summary counters."""
     now = timezone.now()
     sent = 0
@@ -317,7 +338,7 @@ def send_annotation_realtime_digest_tick() -> Dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def _user_local_hour(tz_name: str, now_utc: datetime) -> Optional[int]:
+def _user_local_hour(tz_name: str, now_utc: datetime) -> int | None:
     """Return the user's local hour (0-23) given a tz name, or None on bad tz."""
     try:
         import zoneinfo
@@ -370,8 +391,6 @@ def _send_daily_for_user(user, now: datetime) -> bool:
     subject = "Your annotation queue — " + " · ".join(subject_parts)
 
     frontend_url = _frontend_url()
-    backend_url = _backend_url()
-    unsub_token = _unsubscribe_token(user.id)
     template_data = {
         "user_name": (getattr(user, "name", None) or user.email),
         "annotator_total": annotator_total,
@@ -379,10 +398,11 @@ def _send_daily_for_user(user, now: datetime) -> bool:
         "annotator_buckets": list(annotator_buckets.values()),
         "reviewer_buckets": list(reviewer_buckets.values()),
         "queues_url": f"{frontend_url}/dashboard/annotations/queues",
-        "unsubscribe_url": (
-            f"{backend_url}/accounts/notifications/unsubscribe/?token={unsub_token}"
-        ),
     }
+
+    previous = state.last_daily_digest_at
+    if not _claim_send(state, "last_daily_digest_at", now):
+        return False  # an overlapping run already sent this one
 
     try:
         email_helper(
@@ -390,21 +410,20 @@ def _send_daily_for_user(user, now: datetime) -> bool:
             template_name="annotation_daily_digest.html",
             template_data=template_data,
             to_email_list=[user.email],
+            notification_category=ANNOTATION_DIGEST,
         )
     except Exception as exc:
+        _release_send(state, "last_daily_digest_at", previous, now)
         logger.warning(
             "annotation_daily_digest_send_failed",
             user_id=str(user.id),
             error=str(exc),
         )
         return False
-
-    state.last_daily_digest_at = now
-    state.save(update_fields=["last_daily_digest_at", "updated_at"])
     return True
 
 
-def send_annotation_daily_digest_tick() -> Dict[str, int]:
+def send_annotation_daily_digest_tick() -> dict[str, int]:
     """Hourly cron that fires for users whose local hour matches their digest hour."""
     now = timezone.now()
     sent = 0

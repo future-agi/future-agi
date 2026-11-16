@@ -1,6 +1,7 @@
 import html as _html
 import re
 
+import structlog
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
@@ -22,6 +23,7 @@ _UNDELIVERED_BACKENDS = frozenset(
         "django.core.mail.backends.dummy.EmailBackend",
     }
 )
+logger = structlog.get_logger(__name__)
 _WHITESPACE_RE = re.compile(r"\n[ \t]*\n[ \t]*\n+")
 
 
@@ -88,6 +90,8 @@ def email_helper(
     *,
     reply_to=None,
     from_email=None,
+    notification_category=None,
+    unsubscribe_scope=None,
 ):
     """Render a Django template and send as a multipart HTML + text email.
 
@@ -102,13 +106,16 @@ def email_helper(
             override, or reply_to=False/[] to disable.
         from_email: Optional sender override. Defaults to DEFAULT_FROM_EMAIL
             (see _default_from_email).
+        notification_category: Set for notification (non-transactional) mail,
+            one of the categories in ``tfc.utils.email_unsubscribe``. Opted-out
+            recipients are dropped, and each remaining recipient gets their own
+            message with a signed unsubscribe link (``unsubscribe_url`` in the
+            template context) and RFC 8058 one-click ``List-Unsubscribe``
+            headers. Leave unset for transactional mail (invites, password
+            reset, sign-in), which must always arrive.
+        unsubscribe_scope: The object a scoped category is about, e.g. the
+            monitor id for monitor alerts.
     """
-    # Templates build their CTAs as base_url|add:"/dashboard/...", and nothing
-    # supplies base_url on this path, so the links render host-less.
-    context = {"base_url": settings.APP_BASE_URL, **(template_data or {})}
-    html_body = render_to_string(template_name, context)
-    text_body = _html_to_text(html_body)
-
     if reply_to is None:
         reply_to_list = _default_reply_to()
     elif reply_to is False or (isinstance(reply_to, (list, tuple)) and not reply_to):
@@ -116,12 +123,66 @@ def email_helper(
     else:
         reply_to_list = [reply_to] if isinstance(reply_to, str) else list(reply_to)
 
+    # Templates build their CTAs as base_url|add:"/dashboard/...", and nothing
+    # supplies base_url on this path, so the links render host-less.
+    context = {"base_url": settings.APP_BASE_URL, **(template_data or {})}
+    sender = from_email or _default_from_email()
+
+    if not notification_category:
+        _send(
+            mail_subject, template_name, context, to_email_list, sender, reply_to_list
+        )
+        return
+
+    from tfc.utils import email_unsubscribe
+
+    # One message per recipient: each needs its own unsubscribe token, and
+    # recipients of a shared alert should not see each other's addresses.
+    # A failure for one recipient must not stop the rest, nor make a caller
+    # that retries on error (integration alerts) re-send to those already
+    # reached; so raise only when nobody received it.
+    delivered, last_error = 0, None
+    for recipient in to_email_list:
+        if email_unsubscribe.is_opted_out(recipient, notification_category):
+            continue
+        url = email_unsubscribe.unsubscribe_url(
+            recipient, notification_category, unsubscribe_scope
+        )
+        try:
+            _send(
+                mail_subject,
+                template_name,
+                {**context, "unsubscribe_url": url},
+                [recipient],
+                sender,
+                reply_to_list,
+                headers={
+                    "List-Unsubscribe": f"<{url}>",
+                    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                },
+            )
+            delivered += 1
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "notification_email_send_failed",
+                category=notification_category,
+                template=template_name,
+                error=str(exc),
+            )
+    if last_error is not None and delivered == 0:
+        raise last_error
+
+
+def _send(subject, template_name, context, to, sender, reply_to, headers=None):
+    html_body = render_to_string(template_name, context)
     msg = EmailMultiAlternatives(
-        subject=mail_subject,
-        body=text_body,
-        from_email=from_email or _default_from_email(),
-        to=to_email_list,
-        reply_to=reply_to_list,
+        subject=subject,
+        body=_html_to_text(html_body),
+        from_email=sender,
+        to=to,
+        reply_to=reply_to,
+        headers=headers,
     )
     msg.attach_alternative(html_body, "text/html")
     msg.send()

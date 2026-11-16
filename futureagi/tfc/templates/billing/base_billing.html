@@ -282,6 +282,13 @@
             © Future AGI &nbsp;·&nbsp; You received this because you have an account on Future AGI.
           </td>
         </tr>
+        {% block unsubscribe_footer %}{% if unsubscribe_url %}
+        <tr>
+          <td align="center" style="padding-top: 8px; font-family:'Inter',sans-serif; font-size:11px; color:#71717a; line-height:1.6;">
+            Don't want these emails? <a href="{{ unsubscribe_url }}" target="_blank" style="color:#a1a1aa; text-decoration:underline;">Unsubscribe</a>
+          </td>
+        </tr>
+        {% endif %}{% endblock %}
       </table>
     </td>
   </tr>

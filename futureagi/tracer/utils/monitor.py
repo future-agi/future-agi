@@ -17,6 +17,7 @@ from slack_sdk.webhook import WebhookClient
 
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.email_unsubscribe import MONITOR_ALERTS
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -142,6 +143,8 @@ def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) 
                 "alert_type": alert_type,
             },
             to_email_list=list(monitor.notification_emails),
+            notification_category=MONITOR_ALERTS,
+            unsubscribe_scope=str(monitor.id),
         )
         logger.info(f"Sent {alert_type} alert email for monitor {monitor.id}")
     except Exception as e:

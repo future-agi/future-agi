@@ -7,32 +7,44 @@ Three endpoints, all simple:
   ``Intl.DateTimeFormat().resolvedOptions().timeZone`` so the daily digest
   can fire at the user's local morning. No-ops if value is unchanged.
 
-- ``GET /accounts/notifications/unsubscribe/?token=...`` — one-click
-  unsubscribe from both digest tracks. Token is HMAC-signed so links
-  embedded in old emails can't be forged. Returns a plain HTML success
-  page (no auth required — the token is the auth).
+- ``GET /accounts/notifications/unsubscribe/?token=...`` — the digest
+  unsubscribe link sent before per-category unsubscribe existed. It now opens
+  the same confirmation page as the link below instead of acting on a GET.
+
+- ``GET|POST /accounts/notifications/email/unsubscribe/?token=...`` — the
+  link and ``List-Unsubscribe`` header every notification email carries (see
+  ``tfc.utils.email_unsubscribe``). GET shows a confirmation page and changes
+  nothing, because link scanners prefetch URLs; POST unsubscribes (a mail
+  client's RFC 8058 one-click request, or the page's button), or resubscribes
+  with ``action=resubscribe``. No auth: the signed token is the auth.
 
 - ``GET /accounts/notifications/snooze/?token=...&days=7`` — snooze the
   realtime track for N days. Daily track keeps firing.
 """
 
 from datetime import timedelta
+from urllib.parse import quote
 
 import structlog
 from django.http import HttpResponse
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import escape
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    EmailUnsubscribeRequestSerializer,
     TimezoneRequestSerializer,
     TimezoneResponseSerializer,
 )
+from tfc.utils import email_unsubscribe
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -78,7 +90,9 @@ class UserTimezoneView(APIView):
         return Response({"timezone": tz_name}, status=status.HTTP_200_OK)
 
 
-def _unsub_template(title: str, message: str) -> HttpResponse:
+def _unsub_template(
+    title: str, message: str, form: str = "", status_code: int = 200
+) -> HttpResponse:
     html = (
         "<!doctype html><html><head><meta charset='utf-8'>"
         f"<title>{title}</title>"
@@ -88,15 +102,145 @@ def _unsub_template(title: str, message: str) -> HttpResponse:
         ".card{max-width:480px;background:#171717;border:1px solid #27272a;"
         "border-radius:12px;padding:32px;text-align:center}"
         "h1{font-size:22px;margin:0 0 12px;font-weight:600}"
-        "p{font-size:14px;color:#a1a1aa;line-height:1.6;margin:0}</style>"
+        "p{font-size:14px;color:#a1a1aa;line-height:1.6;margin:0}"
+        "form{margin:24px 0 0}button{font:inherit;font-size:14px;font-weight:600;"
+        "padding:12px 24px;border-radius:999px;border:0;cursor:pointer;"
+        "background:#fafafa;color:#0a0a0a}</style>"
         f"</head><body><div class='card'><h1>{title}</h1><p>{message}</p>"
-        "</div></body></html>"
+        f"{form}</div></body></html>"
     )
-    return HttpResponse(html, content_type="text/html")
+    return HttpResponse(html, content_type="text/html", status=status_code)
+
+
+def _action_form(token: str, action: str, label: str, undo: str = "") -> str:
+    target = reverse("email-notification-unsubscribe")
+    undo_field = (
+        f"<input type='hidden' name='undo' value='{escape(undo)}'>" if undo else ""
+    )
+    return (
+        f"<form method='post' action='{target}?token={quote(token)}'>"
+        f"<input type='hidden' name='action' value='{action}'>{undo_field}"
+        f"<button type='submit'>{label}</button></form>"
+    )
+
+
+def _invalid_link(status_code: int = 200) -> HttpResponse:
+    return _unsub_template(
+        "Link invalid",
+        "This unsubscribe link is invalid or incomplete. "
+        "Use the Unsubscribe link in a recent email instead.",
+        status_code=status_code,
+    )
+
+
+def _confirm_page(token: str, email: str, category: str, scope) -> HttpResponse:
+    """GET view of an unsubscribe link: shows the current state with the
+    button that changes it, and changes nothing itself."""
+    label = email_unsubscribe.CATEGORY_LABELS[category]
+    who = escape(email)
+    if email_unsubscribe.is_subscribed(email, category, scope):
+        return _unsub_template(
+            "Unsubscribe?",
+            f"Stop sending {label} to {who}?",
+            _action_form(token, "unsubscribe", "Unsubscribe"),
+        )
+    if category == email_unsubscribe.MONITOR_ALERTS:
+        return _unsub_template(
+            "You're unsubscribed",
+            f"{who} doesn't receive {label}. Ask the monitor's owner to add you back.",
+        )
+    return _unsub_template(
+        "You're unsubscribed",
+        f"{who} doesn't receive {label}.",
+        _action_form(token, "resubscribe", "Resubscribe"),
+    )
+
+
+_UNSUBSCRIBE_RESPONSES = {
+    200: openapi.Response(
+        "HTML unsubscribe page", schema=openapi.Schema(type=openapi.TYPE_STRING)
+    ),
+    **ACCOUNTS_ERROR_RESPONSES,
+}
+
+
+class EmailUnsubscribeView(APIView):
+    """Per-category unsubscribe for notification emails. Token is signed."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    # Mail clients send the RFC 8058 one-click POST form-encoded or multipart.
+    parser_classes = [FormParser, MultiPartParser, JSONParser]
+
+    @swagger_auto_schema(responses=_UNSUBSCRIBE_RESPONSES)
+    def get(self, request):
+        token = request.query_params.get("token", "")
+        parsed = email_unsubscribe.read_token(token)
+        if not parsed:
+            return _invalid_link()
+        return _confirm_page(token, *parsed)
+
+    @validated_request(
+        request_serializer=EmailUnsubscribeRequestSerializer,
+        responses=_UNSUBSCRIBE_RESPONSES,
+        # The RFC 8058 body is ``List-Unsubscribe=One-Click``: not an error.
+        reject_unknown_fields=False,
+        validation_error_response=lambda errors: _invalid_link(
+            status.HTTP_400_BAD_REQUEST
+        ),
+    )
+    def post(self, request):
+        token = request.query_params.get("token", "")
+        parsed = email_unsubscribe.read_token(token)
+        if not parsed:
+            return _invalid_link(status.HTTP_400_BAD_REQUEST)
+        email, category, scope = parsed
+        subscribed = request.validated_data.get("action") == "resubscribe"
+        is_monitor = category == email_unsubscribe.MONITOR_ALERTS
+
+        if subscribed and is_monitor:
+            refusal = None
+            if not email_unsubscribe.undo_token_matches(
+                request.validated_data.get("undo", ""), email, scope
+            ):
+                refusal = "Ask the monitor's owner to add you back."
+            elif not email_unsubscribe.monitor_has_room(scope):
+                refusal = (
+                    "This monitor already has the most recipients it allows. "
+                    "Ask its owner to add you back."
+                )
+            if refusal:
+                return _unsub_template("Can't resubscribe", refusal)
+
+        if not email_unsubscribe.set_subscribed(email, category, scope, subscribed):
+            return _unsub_template(
+                "Nothing to change",
+                "The account or alert this link was for no longer exists, "
+                "so there are no more of these emails to stop.",
+            )
+        logger.info(
+            "email_notification_subscription_changed",
+            category=category,
+            subscribed=subscribed,
+        )
+        label = email_unsubscribe.CATEGORY_LABELS[category]
+        who = escape(email)
+        if subscribed:
+            return _unsub_template(
+                "Resubscribed",
+                f"{who} will receive {label} again.",
+                _action_form(token, "unsubscribe", "Unsubscribe"),
+            )
+        undo = email_unsubscribe.make_undo_token(email, scope) if is_monitor else ""
+        return _unsub_template(
+            "Unsubscribed",
+            f"{who} will no longer receive {label}.",
+            _action_form(token, "resubscribe", "Resubscribe", undo),
+        )
 
 
 class UnsubscribeAnnotationDigestView(APIView):
-    """One-click unsubscribe from both digest tracks. Token is HMAC-signed."""
+    """Digest unsubscribe link from older emails. Token is HMAC-signed."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -113,32 +257,22 @@ class UnsubscribeAnnotationDigestView(APIView):
     def get(self, request):
         from django.contrib.auth import get_user_model
 
-        from model_hub.models.annotation_queues import AnnotationNotificationState
         from model_hub.utils.annotation_digest import _verify_unsubscribe_token
 
-        token = request.query_params.get("token", "")
-        user_id = _verify_unsubscribe_token(token)
+        user_id = _verify_unsubscribe_token(request.query_params.get("token", ""))
         if not user_id:
             return _unsub_template(
                 "Link expired",
                 "This unsubscribe link is invalid or older than 30 days. "
-                "Open your notification settings in the app to manage emails.",
+                "Use the Unsubscribe link in a recent email instead.",
             )
-        try:
-            user = get_user_model().objects.get(pk=user_id)
-        except Exception:
-            return _unsub_template(
-                "Link invalid",
-                "We couldn't find your account. The link may be malformed.",
-            )
-        state, _ = AnnotationNotificationState.objects.get_or_create(user=user)
-        state.digest_enabled = False
-        state.save(update_fields=["digest_enabled", "updated_at"])
-        return _unsub_template(
-            "Unsubscribed",
-            f"{user.email} will no longer receive annotation digest emails. "
-            "You can re-enable them anytime in your notification settings.",
-        )
+        user = get_user_model().objects.filter(pk=user_id).first()
+        if user is None:
+            return _invalid_link()
+        email = user.email.lower()
+        category = email_unsubscribe.ANNOTATION_DIGEST
+        token = email_unsubscribe.make_token(email, category)
+        return _confirm_page(token, email, category, None)
 
 
 class SnoozeAnnotationDigestView(APIView):

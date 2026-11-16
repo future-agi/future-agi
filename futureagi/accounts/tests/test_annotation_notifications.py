@@ -51,7 +51,8 @@ def test_user_timezone_invalid_value_uses_error_envelope(auth_client):
 
 @pytest.mark.django_db
 def test_unsubscribe_annotation_digest_happy_path(api_client, user):
-    """Valid token disables both digest tracks."""
+    """A valid legacy link asks for confirmation; it no longer acts on GET,
+    since link scanners prefetch URLs (one-click flow: test_email_unsubscribe)."""
     from model_hub.models.annotation_queues import AnnotationNotificationState
     from model_hub.utils.annotation_digest import _unsubscribe_token
 
@@ -61,11 +62,11 @@ def test_unsubscribe_annotation_digest_happy_path(api_client, user):
     token = _unsubscribe_token(user.id)
     response = api_client.get(f"/accounts/notifications/unsubscribe/?token={token}")
     assert response.status_code == 200
-    assert b"Unsubscribed" in response.content
-    assert user.email.encode() in response.content
+    assert b"Unsubscribe?" in response.content
+    assert user.email.lower().encode() in response.content
 
     state.refresh_from_db()
-    assert state.digest_enabled is False
+    assert state.digest_enabled is True
 
 
 @pytest.mark.django_db
