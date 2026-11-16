@@ -53157,6 +53157,55 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_rework_starting_record",
+                "description": "Ask the environment's builder to rework this scenario so it starts from another seeded row.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessStartingRecordReworkWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessStartingRecordRework"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "scenario_key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/verify/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_verify",
@@ -148060,6 +148109,28 @@
                 }
             }
         },
+        "HarnessSeededRowChoice": {
+            "description": "Other seeded rows of the table the scenario could start from instead, the first 50.",
+            "required": [
+                "key",
+                "summary"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "description": "The row's key as text, as a rework request sends it back.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "description": "The row in one line: its key, then up to 2 of its other values.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessStartingRecord": {
             "required": [
                 "path",
@@ -148070,7 +148141,8 @@
                 "status",
                 "summary",
                 "fields",
-                "note"
+                "note",
+                "choices"
             ],
             "type": "object",
             "properties": {
@@ -148135,6 +148207,13 @@
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
+                },
+                "choices": {
+                    "description": "Other seeded rows of the table the scenario could start from instead, the first 50.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSeededRowChoice"
+                    }
                 }
             }
         },
@@ -148162,13 +148241,73 @@
             },
             "x-nullable": true
         },
+        "HarnessStartingRecordRework": {
+            "description": "The latest request to start this scenario from another record, or null if none was made.",
+            "required": [
+                "id",
+                "state",
+                "table",
+                "key_field",
+                "key",
+                "reason",
+                "requested_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The builder request's id.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "description": "pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "proven",
+                        "refused"
+                    ]
+                },
+                "table": {
+                    "title": "Table",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "key_field": {
+                    "title": "Key field",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reason": {
+                    "title": "Reason",
+                    "description": "Why it was refused, in words to show.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "requested_at": {
+                    "title": "Requested at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessStartingRecords": {
             "required": [
                 "scenario_key",
                 "origin",
                 "records",
                 "setup_note",
-                "rows_unavailable"
+                "rows_unavailable",
+                "rework"
             ],
             "type": "object",
             "properties": {
@@ -148199,6 +148338,43 @@
                 },
                 "rows_unavailable": {
                     "$ref": "#/definitions/HarnessRowsUnavailable"
+                },
+                "rework": {
+                    "$ref": "#/definitions/HarnessStartingRecordRework"
+                }
+            }
+        },
+        "HarnessStartingRecordReworkWrite": {
+            "required": [
+                "path",
+                "table",
+                "key"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "description": "The `path` of the starting record to change.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 32,
+                    "minItems": 1
+                },
+                "table": {
+                    "title": "Table",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "key": {
+                    "title": "Key",
+                    "description": "The key of the seeded row to start from instead.",
+                    "type": "string",
+                    "maxLength": 1024,
+                    "minLength": 1
                 }
             }
         },

@@ -21955,6 +21955,22 @@ export const HarnessStartingRecordApiStatus = {
 } as const;
 
 /**
+ * Other seeded rows of the table the scenario could start from instead, the first 50.
+ */
+export interface HarnessSeededRowChoiceApi {
+  /**
+   * The row's key as text, as a rework request sends it back.
+   * @minLength 1
+   */
+  key: string;
+  /**
+   * The row in one line: its key, then up to 2 of its other values.
+   * @minLength 1
+   */
+  summary: string;
+}
+
+/**
  * The row as the world is seeded with it.
  */
 export type HarnessStartingRecordApiFields = {
@@ -21992,6 +22008,8 @@ export interface HarnessStartingRecordApi {
    * @minLength 1
    */
   note: string;
+  /** Other seeded rows of the table the scenario could start from instead, the first 50. */
+  choices: HarnessSeededRowChoiceApi[];
 }
 
 export type HarnessRowsUnavailableApiCode =
@@ -22011,6 +22029,40 @@ export interface HarnessRowsUnavailableApi {
   reason: string;
 }
 
+/**
+ * pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.
+ */
+export type HarnessStartingRecordReworkApiState =
+  (typeof HarnessStartingRecordReworkApiState)[keyof typeof HarnessStartingRecordReworkApiState];
+
+export const HarnessStartingRecordReworkApiState = {
+  pending: "pending",
+  proven: "proven",
+  refused: "refused",
+} as const;
+
+/**
+ * The latest request to start this scenario from another record, or null if none was made.
+ */
+export interface HarnessStartingRecordReworkApi {
+  /** The builder request's id. */
+  id: string;
+  /** pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why. */
+  state: HarnessStartingRecordReworkApiState;
+  /** @minLength 1 */
+  table: string;
+  /** @minLength 1 */
+  key_field: string;
+  /** @minLength 1 */
+  key: string;
+  /**
+   * Why it was refused, in words to show.
+   * @minLength 1
+   */
+  reason: string;
+  requested_at: string;
+}
+
 export interface HarnessStartingRecordsApi {
   /** @minLength 1 */
   scenario_key: string;
@@ -22026,6 +22078,27 @@ export interface HarnessStartingRecordsApi {
    */
   setup_note: string;
   rows_unavailable: HarnessRowsUnavailableApi;
+  rework: HarnessStartingRecordReworkApi;
+}
+
+export interface HarnessStartingRecordReworkWriteApi {
+  /**
+   * The `path` of the starting record to change.
+   * @minItems 1
+   * @maxItems 32
+   */
+  path: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  table: string;
+  /**
+   * The key of the seeded row to start from instead.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  key: string;
 }
 
 export interface HarnessVerifyCreateApi {

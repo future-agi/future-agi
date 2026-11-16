@@ -72,9 +72,9 @@ def versioning_on(settings):
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
 
 
-def _rides(user, workspace, storage, key, *, fixture=FIXTURE, scenario=None, **world):
+def _author(environment, user, *, fixture=FIXTURE, scenario=None, extra=None, **world):
+    """Land the environment's next authoring, as the builder's save does: the scenario, the world and any suite file."""
     document = _scenario(SCENARIO, fixture=fixture, **(scenario or {}))
-    environment = _versioned(user, workspace, key, storage)
     record_authoring(
         environment,
         _authoring(
@@ -84,6 +84,7 @@ def _rides(user, workspace, storage, key, *, fixture=FIXTURE, scenario=None, **w
                 "scenarios.json": json.dumps([document]),
                 f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
                 **(world or {"store.json": json.dumps(STORE)}),
+                **(extra or {}),
             },
         ),
         origin="manual",
@@ -91,6 +92,11 @@ def _rides(user, workspace, storage, key, *, fixture=FIXTURE, scenario=None, **w
     )
     environment.refresh_from_db()
     return environment
+
+
+def _rides(user, workspace, storage, key, *, fixture=FIXTURE, scenario=None, **world):
+    environment = _versioned(user, workspace, key, storage)
+    return _author(environment, user, fixture=fixture, scenario=scenario, **world)
 
 
 def _url(environment, key=KEY):

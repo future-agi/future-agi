@@ -541,10 +541,9 @@ def participants(
     turns: Sequence[Mapping[str, Any]],
     actions: Sequence[Mapping[str, Any]],
 ) -> list[Participant]:
-    """Everyone other than the person and the agent who took part: each actor who spoke on the call, in the order
-    they first spoke, then each world actor who took an action in the trial (no channel). An actor planned for the
-    call who never spoke or acted (not triggered, not drawn) is never listed: only a turn or an action names one. A call stored before its actors were recorded reads them from its
-    turns alone."""
+    """Everyone but the person and the agent who took part: each actor who spoke, in the order they first spoke, then
+    each world actor who acted in the trial. An actor who never spoke or acted is not listed; a call stored before
+    its actors were recorded reads them from its turns."""
     planned = {one["id"]: one for one in call_actors(metadata) if one.get("id")}
     by_name = {one["name"]: one for one in planned.values() if one.get("name")}
     found: dict[str, Participant] = {}

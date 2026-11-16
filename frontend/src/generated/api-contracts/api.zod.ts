@@ -48045,6 +48045,30 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
           .string()
           .min(1)
           .describe("Why the record is missing, in words to show."),
+        choices: zod
+          .array(
+            zod
+              .object({
+                key: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row's key as text, as a rework request sends it back.",
+                  ),
+                summary: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row in one line: its key, then up to 2 of its other values.",
+                  ),
+              })
+              .describe(
+                "Other seeded rows of the table the scenario could start from instead, the first 50.",
+              ),
+          )
+          .describe(
+            "Other seeded rows of the table the scenario could start from instead, the first 50.",
+          ),
       }),
     ),
     setup_note: zod
@@ -48059,8 +48083,70 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
         reason: zod.string().min(1),
       })
       .describe("Why the world's rows can't be read, or null when they can."),
+    rework: zod
+      .object({
+        id: zod.string().uuid().describe("The builder request's id."),
+        state: zod
+          .enum(["pending", "proven", "refused"])
+          .describe(
+            "pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
+          ),
+        table: zod.string().min(1),
+        key_field: zod.string().min(1),
+        key: zod.string().min(1),
+        reason: zod
+          .string()
+          .min(1)
+          .describe("Why it was refused, in words to show."),
+        requested_at: zod.string().datetime({ offset: true }),
+      })
+      .describe(
+        "The latest request to start this scenario from another record, or null if none was made.",
+      ),
   },
 );
+
+/**
+ * Ask the environment's builder to rework this scenario so it starts from another seeded row.
+ */
+export const SimulateApiHarnessEnvironmentsReworkStartingRecordParams =
+  zod.object({
+    id: zod.string(),
+    scenario_key: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsReworkStartingRecordBodyPathItemMax = 255;
+
+export const simulateApiHarnessEnvironmentsReworkStartingRecordBodyPathMax = 32;
+
+export const simulateApiHarnessEnvironmentsReworkStartingRecordBodyTableMax = 255;
+
+export const simulateApiHarnessEnvironmentsReworkStartingRecordBodyKeyMax = 1024;
+
+export const SimulateApiHarnessEnvironmentsReworkStartingRecordBody =
+  zod.object({
+    path: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsReworkStartingRecordBodyPathItemMax,
+          ),
+      )
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReworkStartingRecordBodyPathMax)
+      .describe("The `path` of the starting record to change."),
+    table: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReworkStartingRecordBodyTableMax),
+    key: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReworkStartingRecordBodyKeyMax)
+      .describe("The key of the seeded row to start from instead."),
+  });
 
 /**
  * Verify an agent version on the held-back cases, in a run no user read shows.

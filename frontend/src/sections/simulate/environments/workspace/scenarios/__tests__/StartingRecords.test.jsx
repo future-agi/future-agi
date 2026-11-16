@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { render } from "src/utils/test-utils";
 
 const read = vi.fn();
+const rework = vi.fn();
 vi.mock("src/api/simulate-environments/startingRecords", () => ({
   useStartingRecords: (...args) => read(...args),
+  useReworkStartingRecord: (...args) => rework(...args),
 }));
 
 const { default: StartingRecords } = await import("../StartingRecords");
@@ -19,6 +21,9 @@ const RIDER = {
   summary: "Arjun's row, as the server words it",
   fields: { rider_id: "rdr_arjun", first_name: "Arjun", tags: ["vip"] },
   note: null,
+  choices: [
+    { key: "rdr_priya", summary: "Priya's row, as the server words it" },
+  ],
 };
 const MISSING = {
   path: ["order_id"],
@@ -30,6 +35,7 @@ const MISSING = {
   summary: null,
   fields: null,
   note: "orders has no seeded row with order_id ord_9.",
+  choices: [],
 };
 const RECORDS = {
   scenario_key: "book-ride",
@@ -37,6 +43,7 @@ const RECORDS = {
   records: [RIDER, MISSING],
   setup_note: null,
   rows_unavailable: null,
+  rework: null,
 };
 
 const reads = (data) =>
@@ -47,11 +54,27 @@ const reads = (data) =>
     refetch: vi.fn(),
   });
 
+const sends = (state = {}) => {
+  const mutate = vi.fn();
+  rework.mockReturnValue({
+    mutate,
+    reset: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    ...state,
+  });
+  return mutate;
+};
+
 const open = () =>
   render(<StartingRecords envId="env-1" scenarioKey="book-ride" />);
 
 describe("StartingRecords", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sends();
+  });
 
   it("shows each record the scenario starts from in the server's words, with its fields", () => {
     reads(RECORDS);
@@ -98,5 +121,98 @@ describe("StartingRecords", () => {
     open();
 
     expect(screen.getByText("The server's reason.")).toBeInTheDocument();
+  });
+
+  it("asks the builder to start the scenario from the row picked instead", () => {
+    reads(RECORDS);
+    const mutate = sends();
+    open();
+
+    const rider = within(
+      screen.getByTestId("starting-record-identity.rider_id"),
+    );
+    fireEvent.click(
+      rider.getByRole("button", { name: "Start from another record" }),
+    );
+    fireEvent.mouseDown(rider.getByLabelText("Record to start from"));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByText(
+        "Priya's row, as the server words it",
+      ),
+    );
+    fireEvent.click(rider.getByRole("button", { name: "Ask the builder" }));
+
+    expect(mutate.mock.calls[0][0]).toEqual({
+      path: ["identity", "rider_id"],
+      table: "users",
+      key: "rdr_priya",
+    });
+  });
+
+  it("shows the builder's request as the server reads it, and asks no other while it runs", () => {
+    reads({
+      ...RECORDS,
+      rework: {
+        id: "m1",
+        state: "pending",
+        table: "users",
+        key_field: "rider_id",
+        key: "rdr_priya",
+        reason: null,
+        requested_at: "2026-11-16T10:00:00Z",
+      },
+    });
+    open();
+
+    expect(screen.getByTestId("starting-records-rework")).toHaveTextContent(
+      "users rider_id rdr_priya",
+    );
+    expect(
+      screen.getByRole("button", { name: "Start from another record" }),
+    ).toBeDisabled();
+  });
+
+  it("shows a refused request's reason in the server's words", () => {
+    reads({
+      ...RECORDS,
+      rework: {
+        id: "m1",
+        state: "refused",
+        table: "users",
+        key_field: "rider_id",
+        key: "rdr_priya",
+        reason: "The server's reason.",
+        requested_at: "2026-11-16T10:00:00Z",
+      },
+    });
+    open();
+
+    expect(screen.getByTestId("starting-records-rework")).toHaveTextContent(
+      "The server's reason.",
+    );
+  });
+
+  it("shows the server's problem with a choice under the picker", () => {
+    reads(RECORDS);
+    sends({
+      isError: true,
+      error: {
+        problems: [
+          {
+            field: "key",
+            message: "users has no seeded row with rider_id rdr_x.",
+          },
+        ],
+      },
+    });
+    open();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start from another record" }),
+    );
+
+    expect(
+      screen.getByText("users has no seeded row with rider_id rdr_x."),
+    ).toBeInTheDocument();
   });
 });

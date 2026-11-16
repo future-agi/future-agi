@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1153,
+  endpointCount: 1154,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29364,6 +29364,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             200: {
               $ref: "#/definitions/HarnessStartingRecords",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_rework_starting_record",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessStartingRecordReworkWrite",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessStartingRecordRework",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -70158,6 +70179,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessStartingRecordRework: {
+      description:
+        "The latest request to start this scenario from another record, or null if none was made.",
+      required: [
+        "id",
+        "state",
+        "table",
+        "key_field",
+        "key",
+        "reason",
+        "requested_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "The builder request's id.",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          description:
+            "pending: the builder is working on it. proven: the scenario now starts from the record and its proof holds, in the unsaved changes. refused: it did not, and reason says why.",
+          type: "string",
+          enum: ["pending", "proven", "refused"],
+        },
+        table: {
+          title: "Table",
+          type: "string",
+          minLength: 1,
+        },
+        key_field: {
+          title: "Key field",
+          type: "string",
+          minLength: 1,
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          description: "Why it was refused, in words to show.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_at: {
+          title: "Requested at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessStartingRecordReworkWrite: {
+      required: ["path", "table", "key"],
+      type: "object",
+      properties: {
+        path: {
+          description: "The `path` of the starting record to change.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 32,
+          minItems: 1,
+        },
+        table: {
+          title: "Table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        key: {
+          title: "Key",
+          description: "The key of the seeded row to start from instead.",
+          type: "string",
+          maxLength: 1024,
+          minLength: 1,
+        },
+      },
+    },
     HarnessStartingRecords: {
       required: [
         "scenario_key",
@@ -70165,6 +70273,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "records",
         "setup_note",
         "rows_unavailable",
+        "rework",
       ],
       type: "object",
       properties: {
@@ -70197,6 +70306,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         rows_unavailable: {
           $ref: "#/definitions/HarnessRowsUnavailable",
+        },
+        rework: {
+          $ref: "#/definitions/HarnessStartingRecordRework",
         },
       },
     },
@@ -109161,6 +109273,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "summary",
         "fields",
         "note",
+        "choices",
       ],
       type: "object",
       properties: {
@@ -109225,6 +109338,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+        choices: {
+          description:
+            "Other seeded rows of the table the scenario could start from instead, the first 50.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSeededRowChoice",
+          },
         },
       },
     },
@@ -129883,6 +130004,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Call execution id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    HarnessSeededRowChoice: {
+      description:
+        "Other seeded rows of the table the scenario could start from instead, the first 50.",
+      required: ["key", "summary"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          description:
+            "The row's key as text, as a rework request sends it back.",
+          type: "string",
+          minLength: 1,
+        },
+        summary: {
+          title: "Summary",
+          description:
+            "The row in one line: its key, then up to 2 of its other values.",
+          type: "string",
+          minLength: 1,
         },
       },
     },

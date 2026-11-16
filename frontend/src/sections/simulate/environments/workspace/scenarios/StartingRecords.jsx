@@ -6,10 +6,13 @@ import ErrorState from "src/components/error-state";
 import { useStartingRecords } from "src/api/simulate-environments/startingRecords";
 import {
   STARTING_RECORDS_COPY as COPY,
+  reworkLine,
   seededValueText,
 } from "./startingRecordsUtils";
+import StartingRecordRework from "./StartingRecordRework";
 
-/** The scenario editor's starting records, read-only: the seeded rows its facts name, as the server reads them. */
+/** The scenario editor's starting records: the seeded rows its facts name, as the server reads them, and the request
+ * to the builder to start the scenario from another one. */
 export default function StartingRecords({ envId, scenarioKey }) {
   const { data, isLoading, isError, refetch } = useStartingRecords(
     envId,
@@ -84,6 +87,12 @@ export default function StartingRecords({ envId, scenarioKey }) {
             </Box>
           </>
         )}
+        <StartingRecordRework
+          envId={envId}
+          scenarioKey={scenarioKey}
+          record={record}
+          disabled={data.rework?.state === "pending"}
+        />
       </Stack>
     ));
   };
@@ -104,6 +113,18 @@ export default function StartingRecords({ envId, scenarioKey }) {
           {COPY.hint}
         </Typography>
       </Box>
+      {data?.rework && (
+        <Typography
+          data-testid="starting-records-rework"
+          sx={{
+            typography: "s1",
+            color:
+              data.rework.state === "refused" ? "error.main" : "text.secondary",
+          }}
+        >
+          {reworkLine(data.rework)}
+        </Typography>
+      )}
       {body()}
       {data?.setup_note && (
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>

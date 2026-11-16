@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Literal, Protocol, TypeAlias, TypedDict
+from typing import Literal, Protocol, TypeAlias, TypedDict, TypeVar
 
 import structlog
 from minio.error import S3Error
@@ -27,9 +27,12 @@ JsonValue: TypeAlias = (
 )
 Key: TypeAlias = str | int
 Row: TypeAlias = dict[str, JsonValue]
+_T = TypeVar("_T")
 
 # Other values a row's one-line summary carries after its key.
 SUMMARY_VALUES = 2
+# Rows a record offers to start from instead.
+CHOICES_MAX = 50
 # Facts that describe the fixture itself, never a record.
 _NOT_A_FACT = frozenset({"origin"})
 
@@ -47,6 +50,27 @@ class StartingRecord(TypedDict):
     summary: str | None
     fields: Row | None
     note: str | None
+    # Other seeded rows of the table the scenario could start from instead, the first few.
+    choices: list[SeededRow]
+
+
+class SeededRow(TypedDict):
+    # The row's key as text, as a rework request sends it back.
+    key: str
+    summary: str
+
+
+class ReworkRequest(TypedDict):
+    """The latest request to the builder to start a scenario from another record, as its turn left it."""
+
+    id: str
+    state: Literal["pending", "proven", "refused"]
+    table: str
+    key_field: str
+    key: str
+    # Why it was refused, in words to show; null otherwise.
+    reason: str | None
+    requested_at: str
 
 
 class RowsUnavailable(TypedDict):
@@ -61,6 +85,16 @@ class StartingRecords(TypedDict):
     # Set when the scenario's own setup changes the world before the run, so the rows above are as seeded.
     setup_note: str | None
     rows_unavailable: RowsUnavailable | None
+    rework: ReworkRequest | None
+
+
+@dataclass(frozen=True)
+class ScenarioFiles:
+    """One scenario's document with the files the next run reads: the draft's, else the saved ones."""
+
+    document: dict[str, JsonValue]
+    suite: Mapping[str, bytes]
+    environment: Mapping[str, bytes]
 
 
 class _Table(Protocol):
@@ -77,6 +111,8 @@ class _Table(Protocol):
     def referencing(self) -> frozenset[str]: ...
 
     def lookup(self, key_field: str, key: Key) -> Row | None: ...
+
+    def others(self, key_field: str, key: Key, limit: int) -> list[Row]: ...
 
 
 @dataclass(frozen=True)
@@ -109,6 +145,14 @@ class _StoreTable:
     def lookup(self, key_field: str, key: Key) -> Row | None:
         return next((row for row in self.rows if _same(row.get(key_field), key)), None)
 
+    def others(self, key_field: str, key: Key, limit: int) -> list[Row]:
+        rows = (
+            row
+            for row in self.rows
+            if row.get(key_field) is not None and not _same(row.get(key_field), key)
+        )
+        return [row for _, row in zip(range(limit), rows, strict=False)]
+
 
 @dataclass(frozen=True)
 class _SqliteTable:
@@ -129,11 +173,23 @@ class _SqliteTable:
             f"select * from {_quoted(self.name)} where {_quoted(key_field)} = ? limit 1",
             (key,),
         ).fetchone()
-        return (
-            {str(name): _scalar(found[name]) for name in found.keys()}
-            if found
-            else None
-        )
+        return _row(found) if found else None
+
+    def others(self, key_field: str, key: Key, limit: int) -> list[Row]:
+        if key_field not in self.fields:
+            return []
+        return [
+            _row(found)
+            for found in self.connection.execute(
+                f"select * from {_quoted(self.name)} where {_quoted(key_field)} is not null "
+                f"and {_quoted(key_field)} != ? limit ?",
+                (key, limit),
+            )
+        ]
+
+
+def _row(found: sqlite3.Row) -> Row:
+    return {str(name): _scalar(found[name]) for name in found.keys()}
 
 
 _NO_ROWS = RowsUnavailable(
@@ -341,6 +397,10 @@ def _record_of(
         note=None
         if row is not None
         else f"{table.name} has no seeded row with {key_field} {fact.value}.",
+        choices=[
+            SeededRow(key=str(one[key_field]), summary=_summary(key_field, one))
+            for one in table.others(key_field, fact.value, CHOICES_MAX)
+        ],
     )
 
 
@@ -354,7 +414,7 @@ def _records(fixture: object, tables: list[_Table]) -> list[StartingRecord]:
     ]
 
 
-def _token(value: JsonValue) -> str:
+def scenario_token(value: JsonValue) -> str:
     """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
     return PurePosixPath(str(value or "").strip()).name.lower().replace("-", "_")
 
@@ -362,11 +422,12 @@ def _token(value: JsonValue) -> str:
 def _scenario(
     suite: list[dict[str, JsonValue]], scenario_key: str
 ) -> dict[str, JsonValue]:
-    wanted = _token(scenario_key)
+    wanted = scenario_token(scenario_key)
     for document in suite:
         if (
             wanted
-            and _token(document.get("scenario_key") or document.get("name")) == wanted
+            and scenario_token(document.get("scenario_key") or document.get("name"))
+            == wanted
         ):
             return document
     raise HostedHarnessError(
@@ -385,10 +446,11 @@ def _has_setup(
     return b"def setup(" in code
 
 
-def _read(
-    document: dict[str, JsonValue],
+def _with_tables(
     environment_files: Mapping[str, bytes],
-) -> tuple[list[StartingRecord], RowsUnavailable | None]:
+    use: Callable[[list[_Table]], _T],
+) -> tuple[_T | None, RowsUnavailable | None]:
+    """``use`` applied to the world's seeded tables, held open for it; else why they can't be read."""
     contract = _json(environment_files, "contract.json")
     data_schema = contract.get("data_schema") if isinstance(contract, dict) else None
     schemas = {
@@ -398,49 +460,93 @@ def _read(
         )
         if isinstance(columns, dict)
     }
-    fixture = document.get("fixture")
     store = _json(environment_files, "store.json")
     seeded = store.get("rows") if isinstance(store, dict) else None
     if isinstance(seeded, dict):
-        return _records(fixture, _store_tables(seeded, schemas)), None
+        return use(_store_tables(seeded, schemas)), None
     database = environment_files.get("world.sqlite")
     if not database:
-        return [], _NO_ROWS
+        return None, _NO_ROWS
     connection = sqlite3.connect(":memory:")
     try:
         connection.deserialize(database)
         connection.row_factory = sqlite3.Row
-        return _records(fixture, _sqlite_tables(connection, schemas)), None
+        return use(_sqlite_tables(connection, schemas)), None
     except sqlite3.DatabaseError:
         logger.warning("starting_records_sqlite_unreadable", size=len(database))
-        return [], _UNREADABLE
+        return None, _UNREADABLE
     finally:
         connection.close()
 
 
-def starting_records(job: HostedHarnessJob, scenario_key: str) -> StartingRecords:
-    """The records ``scenario_key`` starts from as the next run would read them: the draft's, else the saved ones."""
+def scenario_records(
+    files: ScenarioFiles,
+) -> tuple[list[StartingRecord], RowsUnavailable | None]:
+    """The records a scenario's facts name, and why the world's rows can't be read when they can't."""
+    fixture = files.document.get("fixture")
+    records, unavailable = _with_tables(
+        files.environment, lambda tables: _records(fixture, tables)
+    )
+    return records or [], unavailable
+
+
+def seeded_row(
+    files: ScenarioFiles, *, table: str, key_field: str, key: str
+) -> tuple[Row | None, RowsUnavailable | None]:
+    """One seeded row of ``table`` by its key, looked up in the world's own files."""
+
+    def find(tables: list[_Table]) -> Row | None:
+        held = next((one for one in tables if one.name == table), None)
+        return held.lookup(key_field, key) if held is not None else None
+
+    return _with_tables(files.environment, find)
+
+
+def scenario_files(job: HostedHarnessJob, scenario_key: str) -> ScenarioFiles:
+    """The scenario as the next run would read it; storage that can't serve the files raises ``HostedHarnessError``."""
     try:
         sides = drafts.edit_sides(job)
-    except (S3Error, HTTPError, HostedHarnessError):
+    except (S3Error, HTTPError) as exc:
         logger.warning(
             "starting_records_files_unreadable", job_id=str(job.id), exc_info=True
         )
+        raise HostedHarnessError(
+            _UNREADABLE["code"], _UNREADABLE["reason"], status_code=503
+        ) from exc
+    return ScenarioFiles(
+        document=_scenario(suite_documents(sides["suite"]), scenario_key),
+        suite=sides["suite"],
+        environment=sides["environment"],
+    )
+
+
+def starting_records(job: HostedHarnessJob, scenario_key: str) -> StartingRecords:
+    """The records ``scenario_key`` starts from as the next run would read them, and its latest rework request."""
+    from simulate.services.harness_starting_record_rework import latest_rework
+
+    try:
+        files = scenario_files(job, scenario_key)
+    except HostedHarnessError as exc:
+        if exc.code == "scenario_not_found":
+            raise
         return StartingRecords(
             scenario_key=scenario_key,
             origin=None,
             records=[],
             setup_note=None,
             rows_unavailable=_UNREADABLE,
+            rework=None,
         )
-    document = _scenario(suite_documents(sides["suite"]), scenario_key)
-    records, unavailable = _read(document, sides["environment"])
-    fixture = document.get("fixture")
+    records, unavailable = scenario_records(files)
+    fixture = files.document.get("fixture")
     origin = fixture.get("origin") if isinstance(fixture, dict) else None
     return StartingRecords(
-        scenario_key=str(document.get("scenario_key") or document.get("name") or ""),
+        scenario_key=str(
+            files.document.get("scenario_key") or files.document.get("name") or ""
+        ),
         origin=str(origin) if origin else None,
         records=records,
-        setup_note=_SETUP_NOTE if _has_setup(document, sides["suite"]) else None,
+        setup_note=_SETUP_NOTE if _has_setup(files.document, files.suite) else None,
         rows_unavailable=unavailable,
+        rework=latest_rework(job, files, records),
     )

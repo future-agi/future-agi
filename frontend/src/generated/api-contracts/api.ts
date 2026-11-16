@@ -675,6 +675,8 @@ import type {
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessStartingRecordReworkApi,
+  HarnessStartingRecordReworkWriteApi,
   HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
@@ -61841,6 +61843,57 @@ export const simulateApiHarnessEnvironmentsStartingRecords = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponse202 = {
+  data: HarnessStartingRecordReworkApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseSuccess =
+  simulateApiHarnessEnvironmentsReworkStartingRecordResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseError =
+  simulateApiHarnessEnvironmentsReworkStartingRecordResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponse =
+  | simulateApiHarnessEnvironmentsReworkStartingRecordResponseSuccess
+  | simulateApiHarnessEnvironmentsReworkStartingRecordResponseError;
+
+export const getSimulateApiHarnessEnvironmentsReworkStartingRecordUrl = (
+  id: string,
+  scenarioKey: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioKey}/starting-records/rework/`;
+};
+
+/**
+ * Ask the environment's builder to rework this scenario so it starts from another seeded row.
+ */
+export const simulateApiHarnessEnvironmentsReworkStartingRecord = async (
+  id: string,
+  scenarioKey: string,
+  harnessStartingRecordReworkWriteApi: HarnessStartingRecordReworkWriteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsReworkStartingRecordResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsReworkStartingRecordResponse>(
+    getSimulateApiHarnessEnvironmentsReworkStartingRecordUrl(id, scenarioKey),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessStartingRecordReworkWriteApi),
     },
   );
 };
