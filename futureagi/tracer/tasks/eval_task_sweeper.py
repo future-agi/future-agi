@@ -50,12 +50,16 @@ from __future__ import annotations
 import structlog
 from django.conf import settings
 
+from tfc.logging import capture_exception_with_context
 from tfc.temporal.drop_in import temporal_activity
 from tracer.selectors.eval_tasks.stranded import (
     find_stranded_tasks,
     sweepable_statuses,
 )
-from tracer.services.eval_tasks.recalculate import recover_stale_recalculations
+from tracer.services.eval_tasks.recalculate import (
+    recheck_put_backs,
+    recover_stale_recalculations,
+)
 from tracer.services.eval_tasks.recovery import (
     RecoveryInterrupted,
     recover_stranded_tasks,
@@ -124,12 +128,53 @@ def sweep_stale_recalculations():
     is already there is kept after two minutes
     (``tracer.services.eval_tasks.recalculate``).
 
+    Then it re-reads the parents of results put back in the last hour, and
+    retires one whose span, trace, session or eval config a delete removed
+    after the put-back's own checks (``recheck_put_backs``). Its counts are
+    under ``put_back_recheck``.
+
     It spends nothing (no eval runs), so it is not gated on
     ``EVAL_TASK_SWEEP_MAX_TASKS``; pausing its schedule stops it.
     ``max_retries=0``: the next tick retries what this one could not finish.
+
+    Reporting is best-effort through the existing Sentry helper, after both
+    phases finish. A phase exception or nonzero per-entry ``errors`` count
+    must reach monitoring, not just logs, while preserving the partial result
+    and letting every other entry and phase do its work.
     """
-    result = recover_stale_recalculations()
+    # One part failing must not cost the other its tick, either way round.
+    failures = {}
+    try:
+        result = recover_stale_recalculations()
+    except Exception as exc:
+        logger.exception("recalculate_recovery_failed")
+        result = {"recovery_failed": True}
+        failures["recover_stale_recalculations"] = exc
+    try:
+        result["put_back_recheck"] = recheck_put_backs()
+    except Exception as exc:
+        logger.exception("recalculate_put_back_recheck_failed")
+        result["put_back_recheck"] = None
+        failures["recheck_put_backs"] = exc
     logger.info("recalculate_sweep_completed", **result)
+
+    # The services absorb individual entry failures to finish their batches.
+    # Report one summary per affected phase; the per-entry logs retain causes
+    # and journal/watch IDs without flooding monitoring with a whole batch.
+    for phase, counts in (
+        ("recover_stale_recalculations", result),
+        ("recheck_put_backs", result["put_back_recheck"]),
+    ):
+        if counts and counts.get("errors", 0):
+            failures[phase] = RuntimeError(
+                f"{phase}: {counts['errors']} entries failed"
+            )
+    for phase, failure in failures.items():
+        capture_exception_with_context(
+            failure,
+            context={"recalculate_sweep": result},
+            tags={"recalculate_sweep.phase": phase},
+        )
     return result
 
 

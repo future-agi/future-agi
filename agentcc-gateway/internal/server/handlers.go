@@ -946,6 +946,15 @@ func orgInstanceServed(rc *models.RequestContext) bool {
 		shouldApplyOrgProviderOverride(rc)
 }
 
+// recordServedBy records p as the provider instance that answered rc, for
+// post-plugins that judge the response by its instance (reported cost). p is
+// usually a narrower interface over the same instance.
+func recordServedBy(rc *models.RequestContext, p any) {
+	if served, ok := p.(providers.Provider); ok && served != nil {
+		rc.ServedBy = served
+	}
+}
+
 // servingProvider resolves the instance for handlers without chat retries.
 // Chat response writers retain the successful instance instead, since retries
 // can switch between base and org providers with the same ID.
@@ -1439,6 +1448,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
+			rc.ServedBy = provider
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1460,6 +1470,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
+				rc.ServedBy = fbProvider
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1512,6 +1523,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				return err
 			}
 			servingProvider = p
+			rc.ServedBy = p
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1544,6 +1556,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
+					rc.ServedBy = fbProvider
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1633,6 +1646,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
+		rc.ServedBy = callProvider
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
@@ -2297,11 +2311,14 @@ func isBlockedMetadataKey(key string) bool {
 	// Block specific keys that don't follow a prefix pattern.
 	//
 	// The cost family is listed exactly rather than by prefix. The plugins own
-	// "cost" and "cost_source" and nothing else, while any prefix wide enough
-	// to cover them also swallows cost_center and cost_code — ordinary business
-	// dimensions. A new internal cost_* key must be added here by hand.
+	// "cost", "cost_source" and the four cost_* keys below and nothing else,
+	// while any prefix wide enough to cover them also swallows cost_center and
+	// cost_code — ordinary business dimensions. A new internal cost_* key must
+	// be added here by hand (the cost plugin's Metadata* constants).
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey, metadataErrorKey:
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source",
+		"cost_reported_unit", "cost_is_byok", "cost_catalogue", "cost_reported_zero",
+		usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false

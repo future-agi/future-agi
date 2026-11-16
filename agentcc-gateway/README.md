@@ -17,7 +17,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.25-00ADD8?style=flat-square&logo=go" alt="Go 1.25"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
@@ -276,14 +276,26 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-<details><summary><b>Run from source (Go 1.23+)</b></summary>
+<details><summary><b>Run from source (Go 1.25+)</b></summary>
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
-go run ./cmd/server
+# Set OPENAI_API_KEY in your environment, or configure another provider in config.yaml.
+go run ./cmd/agentcc --config config.yaml
 ```
+
+The `--config` flag explicitly loads the file you just copied. Alternatively,
+set `AGENTCC_CONFIG_FILE` to its path. The example binds to `0.0.0.0:8080`
+(all network interfaces); for a local-only server, set `server.host` to
+`127.0.0.1` in `config.yaml` before starting it. Once it starts, check it with:
+
+```bash
+curl --fail http://localhost:8080/healthz
+```
+
+This health check does not call a model provider.
 
 </details>
 
@@ -1064,6 +1076,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Accurate tokenizer** | Token counting package at [`internal/tokenizer/`](./internal/tokenizer/) |
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
+| **Provider-reported cost** | For OpenRouter, Perplexity and xAI at their official hosts, records the cost the vendor states in its response (`usage.cost`, `usage.cost.total_cost`, `usage.cost_in_usd_ticks`) instead of the catalogue estimate, on chat, Responses, Messages and completions, streamed or not. Org custom pricing still wins; `ignore_provider_cost: true` on a provider turns it off. Each priced row's metadata says `cost_source`: `org_custom`, `provider_reported`, `catalogue` or `unpriced`. A `provider_reported` row also carries `cost_reported_unit` (`openrouter_credits`, `usd` or `usd_ticks`), `cost_catalogue` (what the catalogue would have charged), `cost_is_byok` (`true` on an OpenRouter BYOK call) and `cost_reported_zero` (`true` when the vendor stated 0 for tokens the catalogue prices above 0; the 0 is recorded). Callers cannot set these keys. Trust rule and switch: `config.example.yaml` |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
 | **Clustering** | [`internal/cluster/`](./internal/cluster/) |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
@@ -1305,7 +1318,7 @@ bin/loadtest -c 10 -n 50 -models gpt-4o-mini
 
 ## 🤝 Contributing
 
-Agent Command Center is part of the [Future AGI monorepo](../../README.md). See the top-level [CONTRIBUTING.md](../../CONTRIBUTING.md) for setup, CLA, and PR conventions. Gateway-specific tips in [`cmd/server/README.md`](./cmd/server).
+Agent Command Center is part of the [Future AGI monorepo](../README.md). See the top-level [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, CLA, and PR conventions. The gateway entrypoint is [`cmd/agentcc/main.go`](./cmd/agentcc/main.go).
 
 ---
 
