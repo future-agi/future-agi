@@ -150,13 +150,15 @@ func (p *Processor) Cancel(batchID string) (*Batch, bool) {
 		return nil, false
 	}
 	b := raw.(*Batch)
-	b.cancel()
 
+	// Publish cancellation before waking workers that may finalize the batch.
 	b.mu.Lock()
 	if b.Status == "processing" {
 		b.Status = "cancelled"
 	}
 	b.mu.Unlock()
+
+	b.cancel()
 
 	return b, true
 }
