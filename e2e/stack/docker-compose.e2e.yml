@@ -89,7 +89,6 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
-      HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
   # Keep explicit queue workers connected too when a profile selects them.
   # Their base YAML anchor is expanded before this overlay is merged.
