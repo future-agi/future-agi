@@ -13,6 +13,18 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("accepts a run seed as the decimal text a run shows, past what a JSON number keeps", () => {
+    const run = (seed) =>
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/run/",
+        method: "post",
+        data: { scenario_ids: ["refund"], trials: 1, seed },
+      });
+    expect(run("42")).toMatchObject({ ok: true });
+    expect(run("7902065059689103066")).toMatchObject({ ok: true });
+    expect(run("79020650596891030661")).toMatchObject({ ok: false });
+  });
+
   it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
     const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
     expect(

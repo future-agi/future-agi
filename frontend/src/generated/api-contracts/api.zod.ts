@@ -41447,8 +41447,11 @@ export const simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsDefault = 1;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsMax = 20;
 
-export const simulateApiHarnessEnvironmentsRunBodySeedMin = 0;
-export const simulateApiHarnessEnvironmentsRunBodySeedMax = 9223372036854776000;
+export const simulateApiHarnessEnvironmentsRunBodySeedMax = 19;
+
+export const simulateApiHarnessEnvironmentsRunBodySeedRegExp = new RegExp(
+  "^[0-9]+$",
+);
 
 export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   scenario_ids: zod
@@ -41465,12 +41468,13 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
     .max(simulateApiHarnessEnvironmentsRunBodyTrialsMax)
     .default(simulateApiHarnessEnvironmentsRunBodyTrialsDefault),
   seed: zod
-    .number()
-    .min(simulateApiHarnessEnvironmentsRunBodySeedMin)
+    .string()
+    .min(1)
     .max(simulateApiHarnessEnvironmentsRunBodySeedMax)
+    .regex(simulateApiHarnessEnvironmentsRunBodySeedRegExp)
     .optional()
     .describe(
-      "The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.",
+      "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
     ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),
@@ -44009,8 +44013,9 @@ export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
 export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
 
-export const simulateApiHarnessJobsRunsBodySeedMin = 0;
-export const simulateApiHarnessJobsRunsBodySeedMax = 9223372036854776000;
+export const simulateApiHarnessJobsRunsBodySeedMax = 19;
+
+export const simulateApiHarnessJobsRunsBodySeedRegExp = new RegExp("^[0-9]+$");
 
 export const SimulateApiHarnessJobsRunsBody = zod.object({
   scenario_ids: zod
@@ -44024,12 +44029,13 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .max(simulateApiHarnessJobsRunsBodyTrialsMax)
     .default(simulateApiHarnessJobsRunsBodyTrialsDefault),
   seed: zod
-    .number()
-    .min(simulateApiHarnessJobsRunsBodySeedMin)
+    .string()
+    .min(1)
     .max(simulateApiHarnessJobsRunsBodySeedMax)
+    .regex(simulateApiHarnessJobsRunsBodySeedRegExp)
     .optional()
     .describe(
-      "The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.",
+      "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
     ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),

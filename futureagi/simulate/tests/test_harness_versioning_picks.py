@@ -1385,6 +1385,38 @@ class TestSeed:
         )
         assert too_big.status_code == 400
 
+    def test_a_seed_is_taken_as_whole_decimal_text_and_anything_else_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _environment(user, workspace, "pk-seed-text", storage)
+
+        as_text = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": "42"},
+            key="seed-t",
+        )
+        refused = [
+            _post_run(
+                auth_client,
+                environment,
+                {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": seed},
+                key=f"seed-t{index}",
+            ).status_code
+            for index, seed in enumerate(
+                ["4.2", "1e3", "-1", "", "\u00b2", True, "9" * 5000]
+            )
+        ]
+
+        assert as_text.status_code == 202, as_text.content
+        assert (
+            HostedHarnessJob.no_workspace_objects.get(id=as_text.json()["job_id"]).seed
+            == 42
+        )
+        assert refused == [400] * 7
+
     def test_a_request_key_reused_with_another_seed_is_refused(
         self, auth_client, user, workspace, storage
     ):

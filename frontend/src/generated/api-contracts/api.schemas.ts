@@ -20395,11 +20395,12 @@ export interface HarnessRunCreateApi {
    */
   trials?: number;
   /**
-   * The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.
-   * @minimum 0
-   * @maximum 9223372036854776000
+   * The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.
+   * @minLength 1
+   * @maxLength 19
+   * @pattern ^[0-9]+$
    */
-  seed?: number;
+  seed?: string;
   agent_version_id?: string | null;
   environment_version_id?: string | null;
   suite_version_id?: string | null;

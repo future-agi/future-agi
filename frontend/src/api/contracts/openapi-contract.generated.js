@@ -68894,11 +68894,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         seed: {
           title: "Seed",
           description:
-            "The same seed draws the same personas and variations again; absent keeps the environment's. Up to 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision.",
-          type: "integer",
-          maximum: 9223372036854776000,
-          minimum: 0,
+            "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
+          type: "string",
+          minLength: 1,
           "x-nullable": true,
+          pattern: "^[0-9]+$",
+          maxLength: 19,
         },
         agent_version_id: {
           title: "Agent version id",

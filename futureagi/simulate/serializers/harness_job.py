@@ -782,6 +782,27 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
+_SEED_DIGITS = len(str(MAX_SEED))
+
+
+class RunSeedField(serializers.CharField):
+    """A run seed, published as decimal text: seeds go up to 2^63 - 1, past what a JSON number keeps exactly."""
+
+    default_error_messages = {
+        "invalid_seed": "A seed is a whole number from 0 to 2^63 - 1."
+    }
+
+    def to_internal_value(self, data: Any) -> int:
+        text = super().to_internal_value(data)
+        digits = text.isascii() and text.isdigit() and len(text) <= _SEED_DIGITS
+        if not digits or int(text) > MAX_SEED:
+            self.fail("invalid_seed")
+        return int(text)
+
+    class Meta:
+        swagger_schema_fields = {"pattern": "^[0-9]+$", "maxLength": _SEED_DIGITS}
+
+
 class HarnessRunCreateSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
@@ -790,15 +811,13 @@ class HarnessRunCreateSerializer(serializers.Serializer):
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
-    # environment's own. Any seed the platform draws (up to 2^63 - 1) is accepted, as a number or decimal text.
-    seed = serializers.IntegerField(
+    # environment's own.
+    seed = RunSeedField(
         required=False,
         allow_null=True,
-        min_value=0,
-        max_value=MAX_SEED,
         help_text=(
-            "The same seed draws the same personas and variations again; absent keeps the environment's. Up to"
-            " 2^63 - 1; send it as decimal text past 2^53, where JSON numbers lose precision."
+            "The same seed draws the same personas and variations again; absent keeps the environment's. A whole"
+            " number from 0 to 2^63 - 1, as decimal text."
         ),
     )
     # Absent or null runs the environment's default for that piece.
