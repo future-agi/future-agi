@@ -2603,3 +2603,38 @@ def test_environment_detail_lists_declared_workers():
         "list_refunds",
     ]
     assert worker["id"] == "order_lookup"
+
+
+@pytest.mark.django_db
+def test_an_agent_version_serves_the_workers_its_newest_built_environment_declares(
+    auth_client, user, workspace, storage
+):
+    from simulate.models import AgentVersion, HarnessEnvironmentVersion
+    from simulate.models.harness_versioning import VersionStatus
+
+    environment = _versioned(user, workspace, "participants-card", storage)
+    definition = environment.run_test.agent_definition
+    version = AgentVersion.objects.filter(agent_definition=definition).first()
+    url = f"/simulate/agent-definitions/{definition.id}/versions/{version.id}/"
+    # No environment built for this version yet: no participants, not an error.
+    assert auth_client.get(url).json()["participants"] == []
+
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(job=environment)
+        .order_by("-created_at")
+        .first()
+    )
+    worker = {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["get_order", "update_order_status"],
+        "allowed_tools": ["get_order"],
+        "binding": "separate",
+    }
+    built.agent_version = version
+    built.status = VersionStatus.ACTIVE
+    built.documents = {**(built.documents or {}), "contract": {"workers": [worker]}}
+    built.save(update_fields=["agent_version", "status", "documents"])
+
+    (served,) = auth_client.get(url).json()["participants"]
+    assert (served["id"], served["allowed_tools"]) == ("order_lookup", ["get_order"])

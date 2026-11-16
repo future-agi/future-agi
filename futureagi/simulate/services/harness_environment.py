@@ -24,8 +24,6 @@ from django.db.models import (
     Q,
     QuerySet,
     Subquery,
-    Value,
-    When,
 )
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
@@ -43,12 +41,13 @@ from simulate.constants.harness_environment import (
 )
 from simulate.models import (
     AgentVersion,
-    CallExecution,
+    HarnessEnvironmentVersion,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
     contract_data,
     registration_key,
@@ -61,7 +60,7 @@ from simulate.services.harness_scenarios import (
     call_actor_entries,
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
-from simulate.types import ContractCallActor
+from simulate.types import ContractCallActor, ContractWorker
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
@@ -1029,11 +1028,33 @@ def _max_turns(docs: Any) -> int | None:
 
 def _contract_worker(worker: dict[str, Any]) -> dict[str, Any]:
     """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
-    tools = worker.get("tools") if isinstance(worker.get("tools"), list) else []
+    tools: list[Any] = worker["tools"] if isinstance(worker.get("tools"), list) else []
     allowed = worker.get("allowed_tools")
     allowed = allowed if isinstance(allowed, list) else []
     narrower = bool(allowed) and any(tool not in allowed for tool in tools)
     return {**worker, "allowed_tools": allowed if narrower else []}
+
+
+def version_participants(version: AgentVersion) -> list[ContractWorker]:
+    """The workers the newest environment built for this agent version declares, as its Workers card shows them;
+    empty when no environment was built for it or its app declares none."""
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            agent_version=version,
+            organization_id=version.organization_id,
+            status=VersionStatus.ACTIVE,
+        )
+        .order_by("-created_at")
+        .only("documents")
+        .first()
+    )
+    contract = (built.documents or {}).get("contract") if built is not None else None
+    declared = contract.get("workers") if isinstance(contract, dict) else None
+    return [
+        cast(ContractWorker, _contract_worker(one))
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
 
 
 def _amendments(value: Any) -> list[dict[str, str]]:

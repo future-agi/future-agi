@@ -105,6 +105,20 @@ class SealedToolCall(TypedDict, total=False):
     output_omitted: bool
 
 
+class ContractWorker(TypedDict):
+    """A worker the app's contract declares, as the Workers and Participants cards show it."""
+
+    id: str
+    name: NotRequired[str]
+    tools: NotRequired[list[str]]
+    # The tools it may use when narrower than what its code holds; empty means all of `tools`.
+    allowed_tools: list[str]
+    binding: NotRequired[Literal["separate", "shared"]]
+    address_env: NotRequired[str]
+    # The process that runs it alone, when the app serves it as its own service.
+    process: NotRequired[str]
+
+
 class DeclaredWorker(TypedDict):
     id: str
     name: NotRequired[str]
