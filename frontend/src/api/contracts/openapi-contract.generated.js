@@ -27422,7 +27422,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AgentVersionResponse",
+            $ref: "#/definitions/AgentVersionDetailResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -52759,103 +52759,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    AgentVersionListResponse: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        version_number: {
-          title: "Version number",
-          description: "Version number of the agent",
-          type: "integer",
-          readOnly: true,
-        },
-        version_name: {
-          title: "Version name",
-          description: "Human-readable version name (e.g., 'v1.2.3')",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        version_name_display: {
-          title: "Version name display",
-          type: "string",
-          readOnly: true,
-        },
-        status: {
-          title: "Status",
-          description: "Current status of this version",
-          type: "string",
-          enum: ["draft", "active", "archived", "deprecated"],
-          readOnly: true,
-        },
-        status_display: {
-          title: "Status display",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        score: {
-          title: "Score",
-          description: "Performance score (0.0 to 10.0)",
-          type: "string",
-          format: "decimal",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        test_count: {
-          title: "Test count",
-          description: "Number of tests run for this version",
-          type: "integer",
-          readOnly: true,
-        },
-        pass_rate: {
-          title: "Pass rate",
-          description: "Test pass rate percentage",
-          type: "string",
-          format: "decimal",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        description: {
-          title: "Description",
-          description: "Description of changes in this version",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        commit_message: {
-          title: "Commit message",
-          description: "Commit message for the agent version",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        is_active: {
-          title: "Is active",
-          type: "string",
-          readOnly: true,
-        },
-        is_latest: {
-          title: "Is latest",
-          type: "string",
-          readOnly: true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    AgentVersionResponse: {
+    AgentVersionDetailResponse: {
       type: "object",
       properties: {
         id: {
@@ -52993,6 +52897,109 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         updated_at: {
           title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        participants: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentWorker",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentVersionListResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          description: "Version number of the agent",
+          type: "integer",
+          readOnly: true,
+        },
+        version_name: {
+          title: "Version name",
+          description: "Human-readable version name (e.g., 'v1.2.3')",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_name_display: {
+          title: "Version name display",
+          type: "string",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Current status of this version",
+          type: "string",
+          enum: ["draft", "active", "archived", "deprecated"],
+          readOnly: true,
+        },
+        status_display: {
+          title: "Status display",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        score: {
+          title: "Score",
+          description: "Performance score (0.0 to 10.0)",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        test_count: {
+          title: "Test count",
+          description: "Number of tests run for this version",
+          type: "integer",
+          readOnly: true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          description: "Test pass rate percentage",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          description: "Description of changes in this version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        commit_message: {
+          title: "Commit message",
+          description: "Commit message for the agent version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        is_active: {
+          title: "Is active",
+          type: "string",
+          readOnly: true,
+        },
+        is_latest: {
+          title: "Is latest",
+          type: "string",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
           type: "string",
           format: "date-time",
           readOnly: true,
@@ -57550,6 +57557,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "inconclusive",
             "no_score",
             "error",
+            "cancelled",
           ],
         },
         cost_breakdown_cents: {
@@ -57807,12 +57815,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "turns",
         "depth",
         "parallel",
+        "asynchronous",
         "overlap_unknown",
         "worker_depths",
         "counts",
         "cut_off",
         "beyond_boundary",
         "placements",
+        "stopped_by_user",
         "pending",
       ],
       type: "object",
@@ -57876,6 +57886,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Parallel",
           type: "integer",
         },
+        asynchronous: {
+          title: "Asynchronous",
+          type: "integer",
+        },
         overlap_unknown: {
           title: "Overlap unknown",
           type: "boolean",
@@ -57903,6 +57917,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/FailurePlacement",
           },
+        },
+        stopped_by_user: {
+          title: "Stopped by user",
+          type: "boolean",
         },
         pending: {
           title: "Pending",
@@ -96884,6 +96902,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_failed",
         "outcome_errored",
         "outcome_skipped",
+        "outcome_cancelled",
         "outcome_no_score",
         "outcome_status",
         "pass_rate",
@@ -96951,6 +96970,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           "x-nullable": true,
         },
+        outcome_cancelled: {
+          title: "Outcome cancelled",
+          description: "Calls the user stopped; neither errored nor failed.",
+          type: "integer",
+          "x-nullable": true,
+        },
         outcome_no_score: {
           title: "Outcome no score",
           description: "Calls that ran with no pass or fail.",
@@ -96991,6 +97016,192 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentVersionResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          description: "Version number of the agent",
+          type: "integer",
+          readOnly: true,
+        },
+        version_name: {
+          title: "Version name",
+          description: "Human-readable version name (e.g., 'v1.2.3')",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_name_display: {
+          title: "Version name display",
+          type: "string",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Current status of this version",
+          type: "string",
+          enum: ["draft", "active", "archived", "deprecated"],
+          readOnly: true,
+        },
+        status_display: {
+          title: "Status display",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        score: {
+          title: "Score",
+          description: "Performance score (0.0 to 10.0)",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        test_count: {
+          title: "Test count",
+          description: "Number of tests run for this version",
+          type: "integer",
+          readOnly: true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          description: "Test pass rate percentage",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          description: "Description of changes in this version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        commit_message: {
+          title: "Commit message",
+          description: "Commit message for the agent version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        release_notes: {
+          title: "Release notes",
+          description: "Detailed release notes for this version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_definition: {
+          title: "Agent definition",
+          description: "Parent agent definition",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        organization: {
+          title: "Organization",
+          description: "Organization this version belongs to",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        configuration_snapshot: {
+          title: "Configuration snapshot",
+          description: "Snapshot of agent configuration at this version",
+          type: "object",
+          readOnly: true,
+        },
+        is_active: {
+          title: "Is active",
+          type: "string",
+          readOnly: true,
+        },
+        is_latest: {
+          title: "Is latest",
+          type: "string",
+          readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    HarnessEnvironmentWorker: {
+      required: ["id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        allowed_tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["separate", "shared"],
+        },
+        address_env: {
+          title: "Address env",
+          type: "string",
+        },
+        process: {
+          title: "Process",
+          type: "string",
         },
       },
     },
@@ -98681,6 +98892,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TrialNotice",
           },
         },
+        shared_records: {
+          description:
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/SharedRecord",
+          },
+        },
+        stopped_workers: {
+          description:
+            "Workers whose own process the harness ended when their deadline passed.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoppedWorker",
+          },
+        },
       },
       "x-nullable": true,
     },
@@ -98833,6 +99060,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Cut short",
           type: "boolean",
         },
+        seen: {
+          title: "Seen",
+          type: "string",
+          enum: ["tool_calls_only"],
+        },
+        stopped_at: {
+          title: "Stopped at",
+          type: "number",
+        },
+        cleanup: {
+          $ref: "#/definitions/Cleanup",
+        },
         checks: {
           type: "array",
           items: {
@@ -98947,6 +99186,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Refusal code",
           type: "string",
           enum: ["not_permitted", "deadline_passed", "approval_missing"],
+        },
+        launch: {
+          title: "Launch",
+          type: "string",
+          enum: ["async"],
         },
         relationship: {
           title: "Relationship",
@@ -107592,6 +107836,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "x-nullable": true,
         },
+        workers: {
+          description:
+            "The workers the app's source declares; a run shows which of them took part.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentWorker",
+          },
+          "x-nullable": true,
+        },
         data_store: {
           title: "Data store",
           type: "object",
@@ -115917,6 +116170,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
         "scenario",
@@ -115947,6 +116201,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -116832,6 +117090,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
         "turn_count",
@@ -116856,6 +117115,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -116900,6 +117163,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
       ],
@@ -116923,6 +117187,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -117059,6 +117327,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "inconclusive",
             "no_score",
             "error",
+            "cancelled",
           ],
         },
         outcome_reason: {
@@ -117739,6 +118008,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_cancelled: {
+          title: "Outcome cancelled",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -124119,6 +124394,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SharedRecord: {
+      description:
+        "Records two or more participants named in this trial, and what the world made of each call.",
+      required: [
+        "key",
+        "argument",
+        "value",
+        "actions",
+        "committed_writes",
+        "truncated",
+      ],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          description:
+            "What the calls named, as argument=value; never a database identity.",
+          type: "string",
+          minLength: 1,
+        },
+        argument: {
+          title: "Argument",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SharedRecordAction",
+          },
+        },
+        committed_writes: {
+          title: "Committed writes",
+          type: "integer",
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
+    StoppedWorker: {
+      description:
+        "Workers whose own process the harness ended when their deadline passed.",
+      required: ["worker", "process", "at", "reason"],
+      type: "object",
+      properties: {
+        worker: {
+          title: "Worker",
+          type: "string",
+          minLength: 1,
+        },
+        process: {
+          title: "Process",
+          type: "string",
+          minLength: 1,
+        },
+        at: {
+          title: "At",
+          description: "When the harness ended it, seconds since the epoch.",
+          type: "number",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     TrialNotice: {
       description:
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -124128,7 +124477,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         code: {
           title: "Code",
           description:
-            "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
+            "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced",
           type: "string",
           minLength: 1,
         },
@@ -124157,6 +124506,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Count",
           description: "For evidence_incomplete.",
           type: "integer",
+        },
+        workers: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -124309,6 +124665,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The worker this participant is; absent for the agent and the actors.",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    Cleanup: {
+      required: ["status", "at"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["stopped", "stopped_with_sandbox", "still_running", "unknown"],
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -124466,6 +124839,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Refusal code",
           type: "string",
           enum: ["not_permitted", "deadline_passed", "approval_missing"],
+        },
+        launch: {
+          title: "Launch",
+          type: "string",
+          enum: ["async"],
         },
         relationship: {
           title: "Relationship",
@@ -134531,6 +134909,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
       ],
@@ -134559,6 +134938,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -138556,6 +138939,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Outcome",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    SharedRecordAction: {
+      required: ["who", "name", "tool", "outcome", "write"],
+      type: "object",
+      properties: {
+        who: {
+          title: "Who",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description: "The participant's name, as the state changes give it.",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+        },
+        write: {
+          title: "Write",
+          type: "boolean",
           "x-nullable": true,
         },
       },

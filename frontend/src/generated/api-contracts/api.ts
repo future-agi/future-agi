@@ -121,8 +121,8 @@ import type {
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
   AgentVersionDeleteResponseApi,
+  AgentVersionDetailResponseApi,
   AgentVersionListResponseApi,
-  AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
   AgentccAnalyticsCostBreakdown200,
@@ -57061,7 +57061,7 @@ export const simulateAgentDefinitionsVersionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsVersionsReadResponse200 = {
-  data: AgentVersionResponseApi;
+  data: AgentVersionDetailResponseApi;
   status: 200;
 };
 

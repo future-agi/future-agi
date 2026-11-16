@@ -33886,6 +33886,9 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
           .number()
           .describe("Errored receipts, also counted in outcome_failed."),
         outcome_skipped: zod.number(),
+        outcome_cancelled: zod
+          .number()
+          .describe("Calls the user stopped; neither errored nor failed."),
         outcome_no_score: zod
           .number()
           .describe("Calls that ran with no pass or fail."),
@@ -34099,6 +34102,19 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   api_key: zod.string().min(1).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  participants: zod
+    .array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().optional(),
+        tools: zod.array(zod.string().min(1)).optional(),
+        allowed_tools: zod.array(zod.string().min(1)).optional(),
+        binding: zod.enum(["separate", "shared"]).optional(),
+        address_env: zod.string().optional(),
+        process: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -38892,6 +38908,9 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
           .number()
           .describe("Errored receipts, also counted in outcome_failed."),
         outcome_skipped: zod.number(),
+        outcome_cancelled: zod
+          .number()
+          .describe("Calls the user stopped; neither errored nor failed."),
         outcome_no_score: zod
           .number()
           .describe("Calls that ran with no pass or fail."),
@@ -38979,6 +38998,22 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().optional(),
+          tools: zod.array(zod.string().min(1)).optional(),
+          allowed_tools: zod.array(zod.string().min(1)).optional(),
+          binding: zod.enum(["separate", "shared"]).optional(),
+          address_env: zod.string().optional(),
+          process: zod.string().optional(),
+        }),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -39532,6 +39567,22 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().optional(),
+          tools: zod.array(zod.string().min(1)).optional(),
+          allowed_tools: zod.array(zod.string().min(1)).optional(),
+          binding: zod.enum(["separate", "shared"]).optional(),
+          address_env: zod.string().optional(),
+          process: zod.string().optional(),
+        }),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -45193,6 +45244,22 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
       implementation: zod.string().optional(),
       tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+      workers: zod
+        .array(
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string().optional(),
+            tools: zod.array(zod.string().min(1)).optional(),
+            allowed_tools: zod.array(zod.string().min(1)).optional(),
+            binding: zod.enum(["separate", "shared"]).optional(),
+            address_env: zod.string().optional(),
+            process: zod.string().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "The workers the app's source declares; a run shows which of them took part.",
+        ),
       data_store: zod.object({}).passthrough().optional(),
       open_questions: zod.array(zod.string().min(1)).optional(),
       amendments: zod.array(
@@ -58345,6 +58412,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           .describe("Failed plus errored receipts."),
         outcome_errored: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        outcome_cancelled: zod.number().optional(),
         outcome_no_score: zod.number().optional(),
         outcome_status: zod
           .enum(["running", "cancelled", "passed", "failed", "no_score"])
@@ -60742,6 +60810,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "inconclusive",
     "no_score",
     "error",
+    "cancelled",
   ]),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
@@ -61326,7 +61395,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .string()
               .min(1)
               .describe(
-                "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
+                "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced",
               ),
             message: zod
               .string()
@@ -61336,6 +61405,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             on_call: zod.number().optional(),
             mode: zod.string().optional(),
             count: zod.number().optional().describe("For evidence_incomplete."),
+            workers: zod.array(zod.string().min(1)).optional(),
           })
           .describe(
             "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -61343,6 +61413,62 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       )
       .describe(
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+      ),
+    shared_records: zod
+      .array(
+        zod
+          .object({
+            key: zod
+              .string()
+              .min(1)
+              .describe(
+                "What the calls named, as argument=value; never a database identity.",
+              ),
+            argument: zod.string().min(1),
+            value: zod.string().min(1),
+            actions: zod.array(
+              zod.object({
+                who: zod.string().min(1),
+                name: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The participant's name, as the state changes give it.",
+                  ),
+                tool: zod.string(),
+                outcome: zod.string().min(1),
+                write: zod.boolean(),
+              }),
+            ),
+            committed_writes: zod.number(),
+            truncated: zod.boolean(),
+          })
+          .describe(
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Records two or more participants named in this trial, and what the world made of each call.",
+      ),
+    stopped_workers: zod
+      .array(
+        zod
+          .object({
+            worker: zod.string().min(1),
+            process: zod.string().min(1),
+            at: zod
+              .number()
+              .describe("When the harness ended it, seconds since the epoch."),
+            reason: zod.string().min(1),
+          })
+          .describe(
+            "Workers whose own process the harness ended when their deadline passed.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Workers whose own process the harness ended when their deadline passed.",
       ),
   }),
   comparable: zod
@@ -61410,6 +61536,19 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         ])
         .optional(),
       cut_short: zod.boolean(),
+      seen: zod.enum(["tool_calls_only"]).optional(),
+      stopped_at: zod.number().optional(),
+      cleanup: zod
+        .object({
+          status: zod.enum([
+            "stopped",
+            "stopped_with_sandbox",
+            "still_running",
+            "unknown",
+          ]),
+          at: zod.string().min(1),
+        })
+        .optional(),
       checks: zod.array(
         zod.object({
           name: zod.string().min(1),
@@ -61461,6 +61600,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       refusal_code: zod
         .enum(["not_permitted", "deadline_passed", "approval_missing"])
         .optional(),
+      launch: zod.enum(["async"]).optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "unattributed"]),
@@ -61526,6 +61666,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .enum(["not_permitted", "deadline_passed", "approval_missing"])
             .optional(),
+          launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61571,6 +61712,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .enum(["not_permitted", "deadline_passed", "approval_missing"])
             .optional(),
+          launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61635,6 +61777,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .enum(["not_permitted", "deadline_passed", "approval_missing"])
             .optional(),
+          launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61674,6 +61817,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
   ),
   depth: zod.number(),
   parallel: zod.number(),
+  asynchronous: zod.number(),
   overlap_unknown: zod.boolean(),
   worker_depths: zod.record(zod.string(), zod.number()),
   counts: zod.object({
@@ -61696,6 +61840,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       tool: zod.string().min(1).optional(),
     }),
   ),
+  stopped_by_user: zod.boolean(),
   pending: zod.boolean(),
   next_read_at: zod.string().min(1).optional(),
 });
@@ -61918,6 +62063,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -61954,6 +62100,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
     }),
@@ -62017,6 +62164,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62104,6 +62252,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
         scenario: zod.string().min(1),
@@ -62123,6 +62272,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
       turn_count: zod.number(),
@@ -62228,6 +62378,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62287,6 +62438,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62346,6 +62498,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62538,6 +62691,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62601,6 +62755,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
     }),
@@ -62726,6 +62881,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "inconclusive",
         "no_score",
         "error",
+        "cancelled",
       ]),
       outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
@@ -62810,6 +62966,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -62931,6 +63088,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     passed: zod.number(),
     failed: zod.number(),
     error: zod.number(),
+    cancelled: zod.number(),
     inconclusive: zod.number(),
     no_score: zod.number(),
   }),
@@ -63024,6 +63182,7 @@ export const SimulateV3TestExecutionReliabilityResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
       scenario: zod.string().min(1),
