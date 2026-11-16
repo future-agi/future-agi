@@ -653,7 +653,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
     tool_call_count = serializers.IntegerField(
-        help_text="The transcript's tool calls; a hand-off to another agent is a Participants step, not one of them."
+        help_text="The agent's tool calls in the transcript and function calls; a world actor's action is not one, "
+        "and a hand-off to another agent is a Participants step, not one of them."
     )
     call_actors = CallCallActorSerializer(many=True)
     participants = CallParticipantSerializer(
@@ -978,7 +979,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": calls,
-            "tool_call_count": tool_call_count(data["transcript"]),
+            "tool_call_count": tool_call_count(data["transcript"], calls),
             "call_actors": actors,
             "participants": participants(call.call_metadata, data["transcript"], calls),
             "has_customer": has_customer(data["transcript"]),

@@ -28081,7 +28081,7 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
-  /** The transcript's tool calls; a hand-off to another agent is a Participants step, not one of them. */
+  /** The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
   tool_call_count: number;
   call_actors: CallCallActorApi[];
   /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */

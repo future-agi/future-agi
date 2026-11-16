@@ -57570,7 +57570,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tool_call_count: {
           title: "Tool call count",
           description:
-            "The transcript's tool calls; a hand-off to another agent is a Participants step, not one of them.",
+            "The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
           type: "integer",
         },
         call_actors: {
