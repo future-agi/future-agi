@@ -24,6 +24,8 @@ from tracer.models.derived_metric import (
     MetricAttemptBatch,
     MetricCompactionRange,
     MetricProjectRefresh,
+    MetricRefreshAttempt,
+    MetricStateConflict,
 )
 
 TOO_LARGE = "too_large"
@@ -51,20 +53,42 @@ def max_checkpoint_rows():
 def head_rows(head):
     """Rows the head's allowlist stores, across every metric table.
 
-    From PG receipts only (legacy batches and server-side ranges); no
-    ClickHouse read. A key rewritten by a delta counts once per copy the head
-    reads, which is what a rewrite of the head costs.
+    From PG receipts only; no ClickHouse read. A key rewritten by a delta
+    counts once per copy the head reads, which is what a rewrite costs. Range
+    output totals survive private-bound cleanup in the manifest envelope.
+    Older envelopes can use still-present ranges, but missing proof is never
+    a zero count: rebuild such a checkpoint before admitting fresh work.
     """
     if head is None:
         return 0
-    attempts = [attempt for _, attempt in head.allowed_attempts()]
+    attempts = {str(attempt) for _, attempt in head.allowed_attempts()}
     batches = MetricAttemptBatch.objects.filter(attempt_id__in=attempts).aggregate(
         rows=Sum("row_count")
     )["rows"]
-    ranges = MetricCompactionRange.objects.filter(attempt_id__in=attempts).aggregate(
-        rows=Sum("row_count")
-    )["rows"]
-    return (batches or 0) + (ranges or 0)
+    counted = {}
+    for receipt in (getattr(head, "visibility_receipts", None) or {}).get("ranges", []):
+        attempt, rows = receipt.get("attempt"), receipt.get("row_count")
+        if attempt not in attempts or rows is None:
+            continue
+        if type(rows) is not int or rows < 0 or attempt in counted:
+            raise MetricStateConflict("invalid checkpoint row-count receipt")
+        counted[attempt] = rows
+    remaining = attempts - counted.keys()
+    # Compatibility with checkpoints published before totals were retained.
+    # Do not count both the durable total and its still-present private ranges.
+    for row in (
+        MetricCompactionRange.objects.filter(attempt_id__in=remaining)
+        .values("attempt_id")
+        .annotate(rows=Sum("row_count"))
+    ):
+        counted[str(row["attempt_id"])] = row["rows"]
+    if MetricRefreshAttempt.objects.filter(
+        id__in=attempts - counted.keys(), source_ceilings__range_compaction=True
+    ).exists():
+        raise MetricStateConflict(
+            "checkpoint row-count receipt unavailable; rebuild checkpoint before fresh work"
+        )
+    return (batches or 0) + sum(counted.values())
 
 
 def pause_if_too_large(project_id, rows, *, now):

@@ -892,6 +892,36 @@ def test_capture_never_returns_partial_handle(monkeypatch, failure):
     assert client.disconnected
 
 
+@pytest.mark.parametrize("failure", ["transport", "count", "bytes", "conflict"])
+def test_member_capture_never_returns_partial_dependency_proof(monkeypatch, failure):
+    from tracer.services.derived_metrics import bounded_reads as bounded
+    from tracer.services.derived_metrics import changes
+
+    member = ("trace", "span", "a", "a", "", "", datetime(2026, 1, 1, tzinfo=UTC), 0)
+    members = [member]
+    if failure == "count":
+        monkeypatch.setattr(changes, "MAX_KEYS", 1)
+        members.append(("trace", "other", *member[2:]))
+    elif failure == "bytes":
+        monkeypatch.setattr(bounded, "SOURCE_CAPTURE_BYTES", 1)
+    elif failure == "conflict":
+        members.append(("trace", "span", "b", "b", *member[4:]))
+    client = SourceStream(
+        [("conversation", "a", "00", members)], fail=failure == "transport"
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        bounded.capture_source_output(
+            SimpleNamespace(client=client),
+            "SELECT source",
+            {},
+            field_id=uuid4(),
+            field_version=1,
+            candidate_count=1,
+            include_dependencies=True,
+        )
+    assert client.disconnected
+
+
 def test_source_output_pages_obey_both_rendered_key_and_payload_caps(monkeypatch):
     from tracer.services.derived_metrics import bounded_reads as bounded
 

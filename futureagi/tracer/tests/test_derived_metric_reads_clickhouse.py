@@ -269,9 +269,21 @@ def test_mixed_scopes_across_buckets_are_rejected_not_averaged(publication_store
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("level", ["conversation", "span"])
 def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
-    live_writer, workspace, observe_project, level, auth_client
+    live_writer, workspace, observe_project, level, auth_client, monkeypatch
 ):
+    from tracer.services.derived_metrics import source_retention
+    from tracer.services.derived_metrics.retention import retention_cutoff
+
     writer = live_writer
+    # Match the fixture writer's policy at the authoritative reader boundary;
+    # the fixed January window is retained here, not exempted from retention.
+    monkeypatch.setattr(
+        source_retention,
+        "current_cutoff",
+        lambda organization_id, now=None: retention_cutoff(
+            writer.retention_days(), now=now or writer.lease.clock()
+        ),
+    )
     scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
     initial = definition_for(writer, workspace, observe_project)
     definition = initial
@@ -285,6 +297,10 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
     traces = [uuid4() for _ in range(5)]
     for index, value in enumerate([2.0, 4.0, 12.0, 99.0, 10.0]):
         at = AT + timedelta(minutes=5) if index != 4 else AT - timedelta(minutes=55)
+        # Keep the deliberately open unit in a separate quarter. Its entire
+        # bucket is nonfinal; the first bucket's independent truth is (2+4+12)/3.
+        if index == 3:
+            at = AT + timedelta(minutes=20)
         seed_span_revision(
             writer,
             scope,
@@ -305,7 +321,7 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
         (),
         (),
         (),
-        {"watermark_ns": 1},
+        {"watermark_ns": int((AT + timedelta(hours=2)).timestamp()) * 10**9},
     )
     head = writer.refresh(
         change,
@@ -327,6 +343,7 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
     kpi = reads.read_kpi(metric, WINDOW, store=writer.store)
     assert kpi["current"]["value"] == pytest.approx(6.0)
     assert kpi["current"]["eligible_count"] == 3
+    assert kpi["partial"] is True
     assert kpi["current"]["unit_noun"] == (
         "spans" if level == "span" else "conversations"
     )

@@ -697,8 +697,10 @@ def test_retention_overrides_old_version_pin_using_its_own_recipe(
         as_of=now,
     )
     assert fields(writer, head, old) == fields(writer, head, current) == []
-    assert bucket_value(writer, head, old) == 5
-    assert bucket_value(writer, head, current) == 9
+    # Both source anchors are three days old; the current two-day policy
+    # retains neither version. A version pin cannot preserve expired totals.
+    assert bucket_value(writer, head, old) is None
+    assert bucket_value(writer, head, current) is None
     assert not MetricGenerationPin.objects.get(id=pin.id).is_usable()
     with pytest.raises(MetricStateConflict, match="expired"):
         with pinned_read(writer.store, observe_project.id, pin=pin):

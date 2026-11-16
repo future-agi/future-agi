@@ -836,8 +836,24 @@ def test_direct_span_settling_and_partial_bucket_retirement(
         scope,
         **kwargs,
     )
-    rows = metric_bucket_rows(writer, head, definition)
-    assert len(rows) == 1 and rows[0][2:] == (2, 10.0, 2.0)
+    # The whole quarter starts before the exact cutoff, so its aggregate is
+    # unavailable. The expired 4 must not survive beside retained 6/open inputs.
+    assert metric_bucket_rows(writer, head, definition) == []
+
+    def retained_fields(manifest):
+        sql, params = committed_rows_select(
+            FIELD_VALUES, manifest, org_id=writer.org_id, project_id=scope.project
+        )
+        return writer.store.execute(
+            f"SELECT unit_start, value_number, status FROM ({sql}) "
+            "WHERE level = 'span' AND is_deleted = 0 ORDER BY unit_start",
+            params,
+        )
+
+    assert retained_fields(head) == [
+        (times["live"], 6.0, "ok"),
+        (times["open"], None, "open"),
+    ]
     seed_span_revision(
         writer, scope, trace, "open", session, times["open"], 6, revision=2
     )
@@ -847,8 +863,11 @@ def test_direct_span_settling_and_partial_bucket_retirement(
         scope,
         **kwargs,
     )
-    rows = metric_bucket_rows(writer, head, definition)
-    assert len(rows) == 1 and rows[0][2:] == (3, 16.0, 3.0)
+    assert metric_bucket_rows(writer, head, definition) == []
+    assert retained_fields(head) == [
+        (times["live"], 6.0, "ok"),
+        (times["open"], 6.0, "ok"),
+    ]
     assert writer.store.execute(
         "SELECT count() FROM metric_source_dependencies WHERE canonical_session_id != ''"
     ) == [(0,)]
@@ -1024,6 +1043,10 @@ def test_batched_whole_writer_histories_with_independent_source_oracle(
             bucket = record["at"].replace(
                 minute=record["at"].minute // 15 * 15, second=0, microsecond=0
             )
+            # Source policy discards expired units; a quarter crossing its
+            # boundary is unavailable, never an old live-plus-retired total.
+            if retained and bucket < now - timedelta(days=1):
+                continue
             group = json.dumps(["value", record["group"]], separators=(",", ":"))
             for definition in definitions:
                 weighted = definition.weighting == "inverse_probability"
@@ -1213,8 +1236,8 @@ def test_batched_whole_writer_histories_with_independent_source_oracle(
             )
         assert_manifest(head, expected, buckets)
         previous_expected, previous_buckets, prior = expected, buckets, tuple(deps)
-    # Retire a cutoff that splits buckets. Anonymous pre-fold groups must refold
-    # to exactly the same complete total, even with mixed sampling scopes.
+    # Retire a cutoff that splits buckets. Recompute the oracle using only
+    # retained complete quarters, including their own top-50/group populations.
     writer.retention_days = lambda: 1
     expected, buckets = oracle(False, retained=True)
     head = writer.refresh(
@@ -1228,7 +1251,7 @@ def test_batched_whole_writer_histories_with_independent_source_oracle(
         writer.store.execute(
             f"SELECT sum(unit_count) FROM ({retired}) WHERE is_deleted = 0", rp
         )[0][0]
-        > 0
+        == 0
     )
     assert len(records) == 205
 

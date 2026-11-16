@@ -25,14 +25,18 @@ def erasures(organization_id, project_id):
         )
         .filter(Q(project_key=project_id) | Q(scope_kind="organization"))
         .filter(
-            Q(store_payload__protocol__isnull=True)
-            | Q(
-                store_payload__protocol__in=(
-                    "metric_expiry",
-                    "metric_policy_replan",
-                    "metric_snapshot_redaction",
-                )
+            Q(
+                scope_kind__in=(
+                    "organization",
+                    "project",
+                    "users",
+                    "sessions",
+                    "metric",
+                    "version",
+                ),
+                store_payload__protocol__isnull=True,
             )
+            | Q(store_payload__protocol__in=("metric_expiry", "metric_policy_replan"))
         )
     )
 
@@ -78,14 +82,17 @@ def invalidate(queryset):
 
 
 def invalidate_scope(organization_id, project_id=None):
-    # Arbitrary SQL transformations do not retain per-subject lineage. Erasure
-    # conservatively discards all saved results in scope, including cache hits.
+    # Metric SQL has no per-subject lineage, but ordinary SQL is not an output
+    # of this store. Parse references rather than treating comments/literals as
+    # metric dependencies; preserve the running-state publication CAS.
     jobs = SQLExecution.objects.filter(organization_id=organization_id).filter(
         Q(state__in=("queued", "running")) | Q(output_bytes__gt=0) | ~Q(result={})
     )
     if project_id is not None:
         jobs = jobs.filter(project_id=project_id)
-    invalidate(jobs)
+    for job in jobs.only("id", "sql").iterator(chunk_size=100):
+        if uses_metrics(job.sql):
+            invalidate(SQLExecution.objects.filter(pk=job.pk))
 
 
 def result_allowed(job):

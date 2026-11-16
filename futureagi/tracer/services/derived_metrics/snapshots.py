@@ -340,6 +340,10 @@ def _write(store, run, sql, params, *, capturing=False, private=False):
             # Validate before opening the native connection, then revalidate at
             # the dispatch CAS: deletion/revocation may finish during the probe.
             _current(run)
+            if run.kind == "run":
+                from tracer.services.derived_metrics.source_retention import require_run
+
+                require_run(run)
             clock = _server_clock(store)
             with serialized_project(scope.project):
                 submission.refresh_from_db()

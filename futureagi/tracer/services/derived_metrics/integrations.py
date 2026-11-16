@@ -157,18 +157,49 @@ class DerivedMonitorQueryBuilder:
         }
 
     def _runs(self, start_time, end_time, *, limit):
-        rows = list(
-            DerivedMetricRun.objects.filter(
-                definition__metric=self.metric,
-                definition__version=self.metric.current_version,
-                result_id__isnull=False,
-                window_end__gt=start_time,
-                window_end__lte=end_time,
-            )
-            .order_by("-as_of", "-id")
-            .values_list("id", "result_id")[:limit]
+        from tracer.services.derived_metrics.source_retention import current_cutoff
+
+        runs = DerivedMetricRun.objects.filter(
+            definition__metric=self.metric,
+            definition__version=self.metric.current_version,
+            status="complete",
+            deleted_at__isnull=True,
+            result_id__isnull=False,
+            window_end__gt=start_time,
+            window_end__lte=end_time,
         )
-        return tuple((str(run_id), str(result_id)) for run_id, result_id in rows)
+        cutoff = current_cutoff(self.metric.organization_id)
+        if cutoff is not None:
+            runs = runs.filter(window_start__gte=cutoff)
+        self._selected_runs = list(
+            runs.order_by("-as_of", "-id").values_list(
+                "id", "result_id", "attempt_id", "changed_at"
+            )[:limit]
+        )
+        return tuple((str(row[0]), str(row[1])) for row in self._selected_runs)
+
+    def validate_result(self):
+        """Recheck policy and exact namespaces after native IO, before disclosure."""
+        from tracer.services.derived_metrics.errors import MetricInputError
+        from tracer.services.derived_metrics.source_retention import require_run
+
+        current = {
+            run.pk: run
+            for run in DerivedMetricRun.objects.filter(
+                pk__in=[row[0] for row in self._selected_runs],
+                status="complete",
+                deleted_at__isnull=True,
+            ).select_related("definition__metric")
+        }
+        for run_id, result_id, attempt_id, changed_at in self._selected_runs:
+            run = current.get(run_id)
+            if run is None or (run.result_id, run.attempt_id, run.changed_at) != (
+                result_id,
+                attempt_id,
+                changed_at,
+            ):
+                raise MetricInputError("This result changed while it was being read.")
+            require_run(run)
 
     def _source(self) -> str:
         # PostgreSQL supplies a bounded set of committed attempt identities, so

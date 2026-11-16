@@ -1794,6 +1794,7 @@ class RefreshWriter:
         )
         dependencies = {d.key: d for d in recovered_dependencies}
         dependencies.update({d.key: d for d in change.dependencies})
+        captured_dependencies = {}
         ids.update(
             d.canonical_session_id
             for d in recovered_dependencies
@@ -1920,6 +1921,7 @@ class RefreshWriter:
                         source_identities=source_relation,
                         start_floor=floors[candidates],
                         unit_identities=candidate_relations[candidates],
+                        include_dependencies=True,
                     )
                     self.yield_if_late(attempt)
                     captured = capture_source_output(
@@ -1929,7 +1931,22 @@ class RefreshWriter:
                         field_id=definition.metric_id,
                         field_version=definition.version,
                         candidate_count=len(candidates),
+                        include_dependencies=True,
                     )
+                    from tracer.services.derived_metrics.changes import MAX_KEYS
+
+                    for dependency in captured.dependencies:
+                        previous = captured_dependencies.setdefault(
+                            dependency.key, dependency
+                        )
+                        if previous != dependency:
+                            raise MetricStateConflict(
+                                "source membership changed between field captures"
+                            )
+                        if len(captured_dependencies) > MAX_KEYS:
+                            raise MetricStateConflict(
+                                "metric publication dependency cap exceeded"
+                            )
                     self.pass_captures = getattr(self, "pass_captures", 0) + 1
                     for source_page in captured.pages():
                         query, params = source_page.select()
@@ -2112,6 +2129,10 @@ class RefreshWriter:
                         )
         # Dependencies/lifecycle are part of the SAME generation. B04 carries
         # tombstones as well as old memberships; neither is an independent write.
+        # Discovery is only nomination. Every member read by a value capture
+        # must have a dependency in that same publication, including members
+        # beyond this discovery page. The capture wins over stale nominations.
+        dependencies.update(captured_dependencies)
         self.freeze_dependencies(attempt, dependencies.values(), cutoff=cutoff)
         # BL01-Q must qualify and byte-bound current-fact maintenance before
         # it joins production refreshes. Copying full message inputs here can

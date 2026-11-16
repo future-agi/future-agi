@@ -852,7 +852,9 @@ def test_serializers_and_read_window_expose_forward_coverage(
         == coverage
     )
     manifest = SimpleNamespace(
-        id=uuid4(), generation=3, published_by=SimpleNamespace(committed_at=NOW)
+        id=uuid4(),
+        generation=3,
+        published_by=SimpleNamespace(committed_at=NOW, source_ceilings={}),
     )
     provenance = reads.provenance(manifest, version)
     assert provenance["history_mode"] == "forward"
@@ -1158,9 +1160,11 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
     # Spans settle once ended: no settle interval, the same bucket here.
     span = SimpleNamespace(history_mode="forward", level="span")
     assert reads.calculated_through(head, span) == through
-    # A history version has no such bound.
+    # History and forward modes consume the same published source cut; neither
+    # may declare the unprocessed tail complete merely because history is on.
     assert (
-        reads.calculated_through(head, SimpleNamespace(history_mode="history")) is None
+        reads.calculated_through(head, SimpleNamespace(history_mode="history"))
+        == through
     )
     assert (
         reads.require_calculated_window(definition, window(60), head).complete_through(

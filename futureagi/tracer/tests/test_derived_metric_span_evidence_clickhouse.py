@@ -2,7 +2,7 @@
 """Writer-owned committed span evidence, never read-time raw-span evaluation."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from clickhouse_driver.errors import ServerException
@@ -26,6 +26,25 @@ pytestmark = [
 ]
 
 
+READ_CUT = int((WINDOW["window_end"] + timedelta(hours=1)).timestamp()) * 10**9
+
+
+@pytest.fixture(autouse=True)
+def source_policy_matches_writer(live_writer, monkeypatch):
+    from tracer.services.derived_metrics import source_retention
+    from tracer.services.derived_metrics.retention import retention_cutoff
+
+    # These fixed-date evidence fixtures explicitly use the writer's unlimited
+    # policy, until a test shortens it. Readers must observe that SAME policy.
+    monkeypatch.setattr(
+        source_retention,
+        "current_cutoff",
+        lambda organization_id, now=None: retention_cutoff(
+            live_writer.retention_days(), now=now or live_writer.lease.clock()
+        ),
+    )
+
+
 def publish(writer, workspace, project, values=((2, 1), (6, 1), (None, 1))):
     return published_fixture(
         writer,
@@ -35,6 +54,7 @@ def publish(writer, workspace, project, values=((2, 1), (6, 1), (None, 1))):
         formula="mean(y)",
         values=values,
         level="span",
+        watermark_ns=READ_CUT,
     )
 
 
@@ -153,22 +173,27 @@ def test_span_retirement_uses_committed_values_after_raw_source_is_gone(
 ):
     writer = live_writer
     metric, definition, _, ids = publish(writer, workspace, observe_project)
-    before = reads.read_kpi(metric, WINDOW, store=writer.store)["current"]
+    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"]["value"] == 4
     writer.store.execute("TRUNCATE TABLE spans")
     writer.retention_days = lambda: 1
     result = expire_project(
         writer, [definition], retention_days=lambda: 1, now=datetime.now(UTC)
     )
     assert result["purged"] is True
-    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"] == before
+    # Every fixed-date source anchor is outside the new one-day policy. Frozen
+    # fields and statistics expire together; raw-source absence is no exemption.
+    with pytest.raises(reads.MetricUnavailableError) as expired:
+        reads.read_kpi(metric, WINDOW, store=writer.store)
+    assert expired.value.code == "retention_expired"
     for name in ("metric_field_values", "metric_field_values_checkpoint"):
         assert writer.store.execute(
             f"SELECT count() FROM {name} WHERE level = 'span'"
         ) == [(0,)]
-    with pytest.raises(reads.MetricUnavailableError, match="expired"):
+    with pytest.raises(reads.MetricUnavailableError) as expired:
         reads.read_units(
             metric, WINDOW, drivers=True, store=writer.store, retention_days=lambda: 1
         )
+    assert expired.value.code == "retention_expired"
 
 
 def test_span_frozen_batches_are_bounded_and_ids_include_trace(
@@ -230,7 +255,7 @@ def test_span_partial_stage_keeps_old_evidence_then_replays_exact_bytes(
                 (),
                 (),
                 (),
-                {"watermark_ns": 2},
+                {"watermark_ns": READ_CUT + 1},
             ),
             [definition],
             Scope(writer.org_id, writer.workspace_id, observe_project.id),
@@ -341,7 +366,7 @@ def test_span_text_sketch_evidence_and_repeated_span_id_are_typed_and_trace_scop
             (),
             (),
             (),
-            {"watermark_ns": 1},
+            {"watermark_ns": READ_CUT},
         ),
         [definition],
         scope,
@@ -428,9 +453,10 @@ def test_repeated_partial_bucket_retirement_never_recaptures_already_retired_raw
         writer, [definition], retention_days=writer.retention_days, now=now
     )["purged"]
     head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
-    assert [r[2:] for r in metric_bucket_rows(writer, head, definition)] == [
-        (2, 10.0, 2.0)
-    ]
+    # The second cutoff is two minutes later: both source starts (original
+    # cutoff minus/plus one minute) have expired. No values or groups survive,
+    # even though the old raw identity was rewritten to 100 between expiries.
+    assert metric_bucket_rows(writer, head, definition) == []
     for name in ("metric_field_values", "metric_field_values_checkpoint"):
         assert writer.store.execute(
             f"SELECT count() FROM {name} WHERE level = 'span'"
@@ -459,7 +485,7 @@ def test_span_retractions_share_the_capture_budget(
             (),
             (),
             (),
-            {"watermark_ns": 2},
+            {"watermark_ns": READ_CUT + 1},
         ),
         [definition],
         Scope(writer.org_id, writer.workspace_id, observe_project.id),
@@ -467,7 +493,10 @@ def test_span_retractions_share_the_capture_budget(
         end=WINDOW["window_end"],
         as_of=datetime.now(UTC),
     )
-    assert MetricProjectRefresh.objects.get(project=observe_project).watermark_ns == 2
+    assert (
+        MetricProjectRefresh.objects.get(project=observe_project).watermark_ns
+        == READ_CUT + 1
+    )
     frozen = writer.store.execute(
         "SELECT unit_id, is_deleted FROM metric_field_values "
         "WHERE attempt_id = %(attempt)s AND level = 'span' ORDER BY unit_id",

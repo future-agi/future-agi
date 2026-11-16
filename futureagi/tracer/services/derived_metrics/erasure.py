@@ -57,13 +57,44 @@ WRITER_PROTOCOLS = (
 )
 
 
+class ErasureRecoveryRequired(MetricStateConflict):
+    """A sanitized operator action, not permission to claim physical deletion."""
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+class ErasureProgressPending(MetricStateConflict):
+    """A bounded pass completed children; more work is due, not a failed retry."""
+
+
+# Failed requests remain outstanding privacy fences. Stop automatic retries,
+# not the obligation: an operator can retry process_erasure after remediation.
+MAX_AUTOMATIC_ATTEMPTS = 5
+TERMINAL_ERRORS = (
+    "source_rebuild_required",
+    "legacy_writer_drain_required",  # Preserve refusal of existing diagnostic rows.
+    "legacy_writer_precondition_failed",
+)
+
+
 def pending_requests():
-    return MetricErasureRequest.objects.filter(
-        Q(status__in=["queued", "failed"])
-        | Q(status="running", claim_expires_at__lte=timezone.now()),
-    ).filter(
-        Q(store_payload__protocol__isnull=True)
-        | ~Q(store_payload__protocol__in=WRITER_PROTOCOLS)
+    return (
+        MetricErasureRequest.objects.filter(
+            Q(status__in=["queued", "failed"])
+            | Q(status="running", claim_expires_at__lte=timezone.now()),
+        )
+        .filter(
+            Q(store_payload__protocol__isnull=True)
+            | ~Q(store_payload__protocol__in=WRITER_PROTOCOLS)
+        )
+        .exclude(status="failed", error_code__in=TERMINAL_ERRORS)
+        .filter(
+            ~Q(status="failed")
+            | Q(store_payload__cleanup_failures__isnull=True)
+            | Q(store_payload__cleanup_failures__lt=MAX_AUTOMATIC_ATTEMPTS)
+        )
     )
 
 
@@ -440,8 +471,9 @@ def _redact_subjects(store, request):
         store_payload__parent=str(request.id)
     )
     # At most ten snapshots per worker pass. Large erasures resume from children.
+    progressed = False
     for child in children.exclude(status="done").order_by("requested_at")[:10]:
-        process_erasure(child.id, store=store)
+        progressed = process_erasure(child.id, store=store) or progressed
     if reopened:
         # Other requests' children that hold our runs open (a run with one of
         # OUR children never lands here): at most ten per pass in total, like
@@ -454,8 +486,10 @@ def _redact_subjects(store, request):
             .order_by("requested_at")[:10]
         )
         for other in foreign:
-            process_erasure(other.id, store=store)
+            progressed = process_erasure(other.id, store=store) or progressed
     if reopened or children.exclude(status="done").exists():
+        if progressed:
+            raise ErasureProgressPending("snapshot redaction is progressing")
         raise MetricStateConflict("snapshot redaction is pending")
     # Parent-independent obligations survive soft/hard deletion and EVERY capture
     # failure, not just expiration. A parent receipt must wait for their physical
@@ -483,9 +517,11 @@ def _redact_subjects(store, request):
 def _purge_snapshots(store, request):
     if request.scope_kind == "history":
         return
-    # The retired raw-run writer has no native submission receipts. Never call
-    # its uncertain in-flight output erased merely because its PG row vanished.
-    # Completed historical runs ARE safe to collect through their retained IDs.
+    # Enrolled legacy writers use the snapshot submission barrier. Deletion
+    # fences every future dispatch; purge_run drains each registered native IO.
+    # Production admission enrolls every raw run before enqueue. An unenrolled
+    # fixture or inconsistent deployment violates that precondition; refuse it,
+    # never invent an upgrade/drain receipt for a writer this feature never had.
     legacy = MetricErasureRequest.objects.filter(
         organization_key=request.organization_key,
         scope_kind="run",
@@ -497,11 +533,21 @@ def _purge_snapshots(store, request):
         value = getattr(request, field)
         if value:
             legacy = legacy.filter(**{field: value})
-    if (
-        legacy.exists()
-        or _runs(request).filter(kind="run").exclude(status="complete").exists()
-    ):
-        raise MetricStateConflict("legacy raw-run drainage is not proven")
+    legacy = legacy.filter(
+        Q(store_payload__write_protocol__isnull=True)
+        | ~Q(store_payload__write_protocol=SUBMISSION_PROTOCOL)
+    )
+    runs = (
+        _runs(request)
+        .filter(kind="run")
+        .exclude(status="complete")
+        .filter(
+            Q(source_manifest__write_protocol__isnull=True)
+            | ~Q(source_manifest__write_protocol=SUBMISSION_PROTOCOL)
+        )
+    )
+    if legacy.exists() or runs.exists():
+        raise ErasureRecoveryRequired("legacy_writer_precondition_failed")
     if request.scope_kind in {"users", "sessions"} or (
         request.scope_kind in {"organization", "project"}
         and request.deletion_key is None
@@ -623,11 +669,21 @@ def _process_erasure(request_id, *, store=None, writer=None):
     if token is None:
         return request.status == "done"
     with nullcontext(store) if store else snapshot_store() as connection:
+        phase = "saved_sql_cleanup"
         try:
             request.refresh_from_db()
             from tracer.sql_workbench.metric_retention import invalidate_scope
 
-            invalidate_scope(request.organization_key, request.project_key)
+            if request.scope_kind in {
+                "organization",
+                "project",
+                "users",
+                "sessions",
+                "metric",
+                "version",
+            } and not request.store_payload.get("protocol"):
+                invalidate_scope(request.organization_key, request.project_key)
+            phase = "snapshot_cleanup"
             if request.store_payload.get("protocol") == "metric_snapshot_redaction":
                 _redact(connection, request, token)
                 request.refresh_from_db()
@@ -640,6 +696,7 @@ def _process_erasure(request_id, *, store=None, writer=None):
                 from tracer.services.derived_metrics.retention import purge_by_scope
 
                 if "live_metric_rows" not in request.receipts:
+                    phase = "live_checkpoint"
                     if request.scope_kind in {"users", "sessions"} and writer is None:
                         from tracer.services.derived_metrics.lease import project_lease
                         from tracer.services.derived_metrics.refresh import (
@@ -658,6 +715,7 @@ def _process_erasure(request_id, *, store=None, writer=None):
                             )
                     else:
                         purge_by_scope(connection, request, writer=writer)
+                    phase = "live_write_drain"
                     # Unknown live submissions are not completion receipts.
                     pending = MetricErasureRequest.objects.filter(
                         organization_key=request.organization_key,
@@ -667,6 +725,7 @@ def _process_erasure(request_id, *, store=None, writer=None):
                         pending = pending.filter(project_key=request.project_key)
                     if pending.exists():
                         raise MetricStateConflict("live write drainage is pending")
+            phase = "scope_fence"
             if request.scope_kind in {"project", "organization"}:
                 from tracer.models.derived_metric import MetricProjectRefresh
 
@@ -685,15 +744,66 @@ def _process_erasure(request_id, *, store=None, writer=None):
                         ).update(
                             lease_token=None, lease_expires_at=None, lease_holder=""
                         )
+            phase = "receipt_commit"
             for name in MetricErasureRequest.Store.values:
                 MetricErasureRequest.record_receipt(
                     request.id, token=token, store=name, counts={"remaining": 0}
                 )
             MetricErasureRequest.finish(request.id, token=token)
             return True
-        except Exception:
-            MetricErasureRequest.fail(
-                request.id, token=token, error_code="cleanup_pending"
+        except Exception as exc:
+            # Never log exception text/SQL: it may contain erased subjects.
+            # Stable action codes plus the class expose the failure, not data.
+            from tracer.services.derived_metrics.refresh import (
+                MetricAdmissionUnproven,
+                MetricRetentionChanged,
+            )
+
+            code = (
+                exc.code
+                if isinstance(exc, ErasureRecoveryRequired)
+                else "redaction_in_progress"
+                if isinstance(exc, ErasureProgressPending)
+                else "source_rebuild_required"
+                if isinstance(exc, MetricAdmissionUnproven)
+                else "retention_replan_required"
+                if isinstance(exc, MetricRetentionChanged)
+                else "native_or_state_cleanup_pending"
+            )
+            request.refresh_from_db()
+            failures = (
+                0
+                if isinstance(exc, ErasureProgressPending)
+                else int(request.store_payload.get("cleanup_failures", 0)) + 1
+            )
+            MetricErasureRequest.objects.filter(
+                pk=request.id, claim_token=token
+            ).update(
+                store_payload={
+                    **request.store_payload,
+                    "cleanup_failures": failures,
+                    "failure_phase": phase,
+                    "failure_type": type(exc).__name__,
+                    "failure_cause": code,
+                }
+            )
+            reported_code = (
+                "cleanup_retry_exhausted"
+                if failures >= MAX_AUTOMATIC_ATTEMPTS and code not in TERMINAL_ERRORS
+                else code
+            )
+            MetricErasureRequest.fail(request.id, token=token, error_code=reported_code)
+            structlog.get_logger(__name__).warning(
+                "metric_erasure_recovery_required",
+                erasure_request_id=str(request.id),
+                error_code=code,
+                error_type=type(exc).__name__,
+                failure_phase=phase,
+                native_error_code=getattr(exc, "code", None)
+                if type(getattr(exc, "code", None)) is int
+                else None,
+                automatic_retry=failures < MAX_AUTOMATIC_ATTEMPTS
+                and code not in TERMINAL_ERRORS,
             )
             return False
 

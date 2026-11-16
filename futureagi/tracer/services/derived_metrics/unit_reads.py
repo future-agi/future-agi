@@ -534,8 +534,21 @@ def unit_source_guard_select(
     return sql, {**scope.parameters(), **params}
 
 
-def _authority_ctes(predicate):
+def _authority_ctes(predicate, *, include_dependencies=False):
     """Snapshot facts, separate from the ceiling-free nomination superset."""
+    members = ""
+    if include_dependencies:
+        from tracer.services.derived_metrics.changes import MAX_KEYS
+
+        # A sentinel proves overflow; never truncate dependency coverage. These
+        # facts travel with the value capture, not a later mutable source read.
+        members = f""", groupArray({MAX_KEYS + 1})(tuple(
+            s.trace_id, s.id,
+            toString(ifNull(s.trace_session_id, toUUID('{NIL_ID}'))),
+            toString(ifNull({resolved_id_expr("s.trace_session_id", "am")}, toUUID('{NIL_ID}'))),
+            toString(ifNull(s.end_user_id, toUUID('{NIL_ID}'))),
+            toString(ifNull({resolved_id_expr("s.end_user_id", "au")}, toUUID('{NIL_ID}'))),
+            s.start_time, s.is_deleted)) AS member_dependencies"""
     ctes = []
     ctes.append(f"""unit_live_versions AS (
         SELECT project_id, trace_id, id, trace_session_id, end_user_id, start_time, updated_at, is_deleted
@@ -549,7 +562,7 @@ def _authority_ctes(predicate):
         SELECT toString({resolved_id_expr("s.trace_session_id", "am")}) AS authority_id,
             min(s.start_time) AS anchor, max(toUInt64(toUnixTimestamp64Nano(s.updated_at))) AS arrival,
             count() AS live_members,
-            if(uniqExactIf({canonical_user}, {has_user}) = 1, anyIf({canonical_user}, {has_user}), '') AS canonical_user
+            if(uniqExactIf({canonical_user}, {has_user}) = 1, anyIf({canonical_user}, {has_user}), '') AS canonical_user{members}
         FROM unit_live_versions s
         {remap_left_join("s.trace_session_id", "trace_session_id_remap", "am")}
         {remap_left_join("s.end_user_id", "end_user_id_remap", "au")}
@@ -573,6 +586,7 @@ def unit_values_select(
     source_identities=(),
     start_floor=None,
     unit_identities=None,
+    include_dependencies=False,
 ) -> tuple[str, dict]:
     """One typed, fully evidenced row per canonical requested conversation.
 
@@ -608,7 +622,10 @@ def unit_values_select(
     ctes, predicate, source_params = _source_plan(
         scope, ids, manifest, source_identities, start_floor, unit_identities
     )
-    ctes = (*ctes, *_authority_ctes(predicate))
+    ctes = (
+        *ctes,
+        *_authority_ctes(predicate, include_dependencies=include_dependencies),
+    )
     source, params = snapshot_select(
         recipe.source,
         scope,
@@ -665,6 +682,7 @@ def unit_values_select(
         anchor_expression=f"if(ifNull(a.live_members, 0) > 0, a.anchor, {old_start})",
         arrival_expression="ifNull(a.arrival, 0)",
         user_expression="ifNull(a.canonical_user, '')",
+        member_expression="a.member_dependencies" if include_dependencies else None,
     )
 
 
@@ -771,6 +789,7 @@ def _field_projection(
     anchor_expression=None,
     arrival_expression="ifNull(s.last_arrival_ns, 0)",
     user_expression="ifNull(s.user_id, '')",
+    member_expression=None,
 ):
     formula, value_type, alias = recipe.formula, recipe.value_type, recipe.value_alias
     with_clause = f"WITH {', '.join(ctes)}" if ctes else ""
@@ -843,6 +862,10 @@ def _field_projection(
         anchor_expression
         or f"if(ifNull(s.source_rows, 0) = 0, {old_start}, s.unit_start)"
     )
+    member_output = ", member_dependencies" if member_expression else ""
+    member_input = (
+        f", {member_expression} AS member_dependencies" if member_expression else ""
+    )
     query = f"""{with_clause}
         SELECT unit_id, session_id, user_id, '{level}' AS level, unit_start,
             toStartOfFifteenMinutes(unit_start) AS bucket_start, last_arrival_ns,
@@ -851,7 +874,7 @@ def _field_projection(
             if(is_deleted, NULL, part_n) AS part_n, if(is_deleted, NULL, part_d) AS part_d,
             inputs, inputs_bool, inputs_text, sample_probability, sampling_scope,
             sampling_stratum, sampling_design, population_size, invalid_probability,
-            cohort AS group_key, is_deleted, source_rows
+            cohort AS group_key, is_deleted, source_rows{member_output}
         FROM (
             SELECT *, {raw_value} AS computed_value,
                 multiIf(is_deleted, 'no_value', due_at > toDateTime64(%(as_of)s, 6, 'UTC'), 'open',
@@ -870,7 +893,7 @@ def _field_projection(
                     ifNull(s.sampling_stratum, '') AS sampling_stratum, ifNull(s.sampling_design, '') AS sampling_design,
                     s.population_size AS population_size, ifNull(s.invalid_probability, 0) AS invalid_probability,
                     ifNull(s.cohort, '') AS cohort, {n} AS part_n, {d} AS part_d,
-                    {unpack}
+                    {unpack}{member_input}
                 FROM {source_join}
             ) s
         )

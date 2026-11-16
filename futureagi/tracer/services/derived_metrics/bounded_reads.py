@@ -704,6 +704,7 @@ class CapturedSourceOutput(SourceOutputPage):
     """
 
     digest: str
+    dependencies: tuple = ()
 
     def pages(self, *, max_items=500, max_bytes=MAX_KEY_IN_BYTES):
         # Full field tuples reserve more bytes than any of the downstream scalar
@@ -746,7 +747,14 @@ class CapturedSourceOutput(SourceOutputPage):
 
 
 def capture_source_output(
-    store, sql, params, *, field_id, field_version, candidate_count
+    store,
+    sql,
+    params,
+    *,
+    field_id,
+    field_version,
+    candidate_count,
+    include_dependencies=False,
 ):
     """Capture canonical EMITTED output once, under count and transport-byte caps.
 
@@ -776,8 +784,9 @@ def capture_source_output(
     # makes a broad revision-complete scan execute millions of tiny blocks.
     # Keep the normal writer block size, result overflow=throw, and consume one
     # output row at a time. No partial capture is exposed on a final server error.
+    members = ", member_dependencies" if include_dependencies else ""
     query = (
-        f"SELECT level, unit_id, hex(encoded) FROM (SELECT level, unit_id, "
+        f"SELECT level, unit_id, hex(encoded){members} FROM (SELECT level, unit_id{members}, "
         f"formatRow('RowBinary', {columns}) AS encoded FROM ({sql})) "
         f"WHERE throwIf(length(encoded) > {SOURCE_CAPTURE_BYTES}, 'metric source row byte cap exceeded') = 0"
     )
@@ -790,6 +799,7 @@ def capture_source_output(
         "result_overflow_mode": "throw",
     }
     rows, seen, size = [], {}, 0
+    dependencies = {}
     # The capture can name session tables (source_identity_relation): replay
     # them first if the native session was replaced, as store.execute does.
     restore = getattr(store, "_restore_transients", None)
@@ -803,7 +813,30 @@ def capture_source_output(
         query_id="metric-source-capture-" + uuid4().hex,
     )
     try:
-        for level, unit, encoded in iterator:
+        for observation in iterator:
+            level, unit, encoded = observation[:3]
+            if include_dependencies:
+                from tracer.services.derived_metrics.changes import MAX_KEYS, Dependency
+
+                members = observation[3]
+                if len(members) > MAX_KEYS:
+                    raise ValueError("metric source dependency cap exceeded")
+                size += len(repr(members).encode("utf-8"))
+                if size > SOURCE_CAPTURE_BYTES:
+                    raise ValueError("metric source capture byte cap exceeded")
+                for member in members:
+                    normalized = [
+                        "" if value == "00000000-0000-0000-0000-000000000000" else value
+                        for value in member
+                    ]
+                    dependency = Dependency(
+                        *normalized[:-1], is_deleted=bool(normalized[-1])
+                    )
+                    prior = dependencies.setdefault(dependency.key, dependency)
+                    if prior != dependency:
+                        raise ValueError("conflicting captured source membership")
+                    if len(dependencies) > MAX_KEYS:
+                        raise ValueError("metric source dependency cap exceeded")
             if len(rows) >= 2 * candidate_count:
                 raise ValueError("metric source output count cap exceeded")
             if level != "conversation" or not isinstance(unit, str):
@@ -840,8 +873,11 @@ def capture_source_output(
     digest = sha256()
     for _level, _unit, encoded in rows:
         digest.update(bytes.fromhex(encoded))
+    members = tuple(dependencies[key] for key in sorted(dependencies))
+    if members:
+        digest.update(repr(members).encode("utf-8"))
     return CapturedSourceOutput(
-        field_id, field_version, tuple(rows), digest.hexdigest()
+        field_id, field_version, tuple(rows), digest.hexdigest(), members
     )
 
 

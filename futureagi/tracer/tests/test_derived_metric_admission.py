@@ -1211,6 +1211,16 @@ def test_routine_reservation_reaches_native_repair_runner(
     (reservation,) = admission.reserve_projects(clock=lambda: NOW)
     assert reservation.purpose == "repair"
     client = Mock(spec=Client)
+
+    def count_sources(sql, params, **kwargs):
+        # This dispatch-only fixture has no native source rows. Admission must
+        # still perform the no-head size check, using its typed native result.
+        assert "SELECT count() AS spans" in sql
+        assert kwargs["with_column_types"] is True
+        return [(0,)], [("spans", "UInt64")]
+
+    client.execute.side_effect = count_sources
+    client.last_query = SimpleNamespace(progress=SimpleNamespace(rows=0, bytes=0))
     monkeypatch.setattr("clickhouse_driver.Client", Mock(return_value=client))
     monkeypatch.setattr(
         v2,

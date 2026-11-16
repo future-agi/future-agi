@@ -949,7 +949,10 @@ def test_all_passing_typed_condition_keeps_numeric_indicator(
     )
     sql = sql.replace("map('y',", "map('field_condition',")
     live_writer.freeze(attempt, FIELD_VALUES, sql, params)
-    live_writer.seal(attempt)
+    # The fixture's only input is settled inside the requested window. Publish
+    # its consumed cut beyond end + 30m, as the real writer must before capture.
+    cut = int((end + timedelta(hours=1)).timestamp()) * 10**9
+    live_writer.seal(attempt, cursors={"watermark_ns": cut})
     live_writer.stage_and_publish(attempt)
     with patch.object(snapshots, "enqueue_capture"):
         saved = snapshots.request_snapshot(

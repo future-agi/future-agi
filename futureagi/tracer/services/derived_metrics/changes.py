@@ -416,6 +416,48 @@ def _latest_membership(analytics, keys, params, budget):
     return result
 
 
+def _physical_units(analytics, keys, params, budget):
+    """Bounded preimages for nominated identities, not another history sweep.
+
+    A partial repair can publish a whole conversation before every member has
+    a committed dependency. An arrival-filtered sweep must therefore retain
+    physical owners older than its window, just as fast-path discovery does.
+    These are opportunistic preimages; committed dependencies and full repair
+    remain necessary when source merges have already removed old revisions.
+    """
+    sessions = set()
+    for batch in _chunks(keys):
+        rows = read(
+            analytics,
+            """SELECT DISTINCT trace_session_id AS raw_session_id
+            FROM spans
+            PREWHERE project_id = toUUID(%(project_id)s)
+                AND trace_id IN %(owner_traces)s AND id IN %(owner_spans)s
+            WHERE (trace_id, id) IN %(source_keys)s
+                AND (org_id = toUUID(%(org_id)s) OR isNull(org_id))
+            LIMIT %(owner_limit)s""",
+            {
+                **params,
+                "source_keys": tuple((key.trace_id, key.span_id) for key in batch),
+                "owner_traces": tuple(dict.fromkeys(key.trace_id for key in batch)),
+                "owner_spans": tuple(dict.fromkeys(key.span_id for key in batch)),
+                "owner_limit": MAX_KEYS + 1,
+            },
+            budget,
+        )
+        # Check the sentinel BEFORE normalizing away NULL/nil ids. Otherwise
+        # a truncated page containing those rows could look within the cap.
+        if len(rows) > MAX_KEYS:
+            raise arrivals.ContinuousCandidateOverflow(
+                "metric physical owner cap exceeded"
+            )
+        sessions.update(_nonempty(row["raw_session_id"]) for row in rows)
+        sessions.discard("")
+        _limit(sessions)
+    canonical = _resolve_ids(analytics, "trace_session_id_remap", sessions, budget)
+    return _limit(UnitKey("conversation", canonical.get(s, s)) for s in sessions)
+
+
 def _resolve_ids(analytics, table, values, budget):
     """Map raw ids to the survivor-old canonical id, in bounded statements."""
     ids = tuple(sorted({_nonempty(v) for v in values} - {""}))
@@ -1128,6 +1170,11 @@ def reconcile_page(
         source_keys, scanned, day, after, finished = _source_page(
             analytics, params, budget, progress, page_size, floor
         )
+        if cp.arrival_floor_ns is not None:
+            # Do not advance the proposed keyset unless both old and latest
+            # owners can be corrected in its atomic publication. This lookup
+            # is limited to this page's identities and shares its read budget.
+            extra_units = _physical_units(analytics, source_keys, params, budget)
         if finished:
             phase, day, last_day = "dependencies", None, None
     elif (

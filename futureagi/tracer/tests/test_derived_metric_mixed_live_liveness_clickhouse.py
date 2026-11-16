@@ -65,6 +65,11 @@ OTHER_SQL_BYTES = 1024 * 1024
 INLINE_MARKERS = ("format(RowBinary", "format(JSONEachRow")
 
 
+def live_current_retention_policy(organization_id):
+    """The same authoritative fixture policy for the native writer and readers."""
+    return RETENTION_DAYS
+
+
 def _definitions(project, workspace, user):
     specs = [
         (
@@ -273,11 +278,9 @@ def test_live_mixed_span_and_conversation_backfill_publishes_within_budget(
 ):
     settings.METRICS_ENABLED = 1
     settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
-    settings.METRICS_RETENTION_DAYS_PROVIDER = "test.live_current_retention_policy"
-    # Only the deployment's external entitlement adapter is replaced. The real
-    # planner still consults the unchanged policy on every invocation.
-    monkeypatch.setattr(
-        admission, "import_string", lambda path: lambda org: RETENTION_DAYS
+    # Native writer and reader both resolve the real importable fixture policy.
+    settings.METRICS_RETENTION_DAYS_PROVIDER = (
+        f"{__name__}.live_current_retention_policy"
     )
     store = publication_store
     native = store.client.connection

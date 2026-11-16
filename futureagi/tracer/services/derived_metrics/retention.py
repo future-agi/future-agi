@@ -1538,6 +1538,87 @@ def finish_unpublished_replan(writer):
     return True
 
 
+def _finish_unlimited_replan(writer, head, retention_days):
+    """Revalidate obsolete policy debt without claiming an erase or consuming work.
+
+    No permanent floor may be removed here. The failed attempts and submission
+    receipts stay durable for ordinary repair/drainage; this receipt establishes
+    only that the current unlimited policy no longer requires their expiry.
+    """
+    from django.apps import apps
+
+    project_id = writer.lease.project_id
+    if (
+        head is None
+        or not MetricErasureRequest.objects.filter(
+            project_key=project_id, store_payload__protocol="metric_policy_replan"
+        )
+        .exclude(status="done")
+        .exists()
+    ):
+        return False
+    writer.store.assert_visible(head)
+    with serialized_project(project_id):
+        writer.lease.check()
+        state = MetricProjectRefresh.for_project(project_id)
+        current = state.head_manifest
+        if (
+            current is None
+            or current.id != head.id
+            or current.revoked_at is not None
+            or current.published_by.source_ceilings.get("retention_floor")
+        ):
+            raise MetricStateConflict("policy replan base changed or expired")
+        apps.get_model(
+            "accounts", "Organization"
+        )._base_manager.select_for_update().get(id=writer.org_id)
+        if retention_cutoff(retention_days(), now=writer.lease.clock()) is not None:
+            raise MetricStateConflict("policy changed during unlimited revalidation")
+        debts = MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            organization_key=writer.org_id,
+            store_payload__protocol="metric_policy_replan",
+        ).exclude(status="done")
+        selected = list(
+            debts.order_by("requested_at", "id").values_list("id", "deletion_key")[:100]
+        )
+        if not selected:
+            return False
+        attempts = []
+        for _, key in selected:
+            if not key.startswith("retention-replan:"):
+                raise MetricStateConflict("policy replan attempt is not proven")
+            try:
+                attempts.append(UUID(key.split(":", 1)[1]))
+            except ValueError:
+                raise MetricStateConflict(
+                    "policy replan attempt is not proven"
+                ) from None
+        # Only the actual aborted proposals qualify. Never turn missing history
+        # or an unknown still-running sender into a completion receipt.
+        if MetricRefreshAttempt.objects.filter(
+            project_id=project_id, id__in=attempts, state="aborted"
+        ).count() != len(set(attempts)):
+            raise MetricStateConflict("policy replan attempts are not fenced")
+        debts.filter(id__in=[key for key, _ in selected]).update(
+            status="done",
+            completed_at=writer.lease.clock(),
+            receipts={
+                "policy_revalidated": {"unlimited": True, "erasure_performed": False}
+            },
+        )
+        MetricProjectRefresh.objects.filter(project_id=project_id).update(
+            pending_repair=True,
+            pending_expiry=MetricErasureRequest.objects.filter(
+                project_key=project_id,
+                store_payload__protocol__in=["metric_expiry", "metric_policy_replan"],
+            )
+            .exclude(status="done")
+            .exists(),
+        )
+    return True
+
+
 @_close_failed_attempts
 def expire_project(writer, definitions, *, retention_days, now=None, as_of=None):
     """Freeze retirement, publish a complete replacement, revoke, then purge.
@@ -1563,7 +1644,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         inherited = datetime.fromisoformat(str(inherited))
         cutoff = max(cutoff, inherited) if cutoff else inherited
     if cutoff is None:
-        return {"unlimited": unlimited, "purged": False}
+        revalidated = _finish_unlimited_replan(writer, head, retention_days)
+        return {"unlimited": unlimited, "purged": False, "revalidated": revalidated}
     with serialized_project(project_id):
         writer.lease.check()
         from tracer.services.derived_metrics.backfill import scrub_expired_progress
@@ -1617,7 +1699,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
     )
     if (
-        not any(recovery.values())
+        not MetricErasureRequest.objects.filter(
+            project_key=project_id, store_payload__protocol="metric_policy_replan"
+        )
+        .exclude(status="done")
+        .exists()
+        and not any(recovery.values())
         and not _expired_aggregates(writer, head, cutoff)
         and not span_dirty
         and not (
@@ -1804,6 +1891,17 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
 
 
 def purge_by_scope(store, request, *, writer=None):
+    if writer is not None:
+        return _purge_with_writer(writer, store, request)
+    return _purge_by_scope(store, request)
+
+
+@_close_failed_attempts
+def _purge_with_writer(writer, store, request):
+    return _purge_by_scope(store, request, writer=writer)
+
+
+def _purge_by_scope(store, request, *, writer=None):
     """B18 live-row entry point; the caller owns snapshot cleanup and receipts.
 
     Durable request keys work after PG parent deletion. User/session erasure

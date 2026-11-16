@@ -66,9 +66,7 @@ def expire_run(run, *, now=None):
         )
         MetricGenerationPin.objects.filter(
             pk=run.pin_id, invalidated_at__isnull=True
-        ).update(
-            invalidated_at=now, invalidation_reason="retention_expired"
-        )
+        ).update(invalidated_at=now, invalidation_reason="retention_expired")
         _intent(
             organization_id=metric.organization_id,
             project_id=metric.project_id,
@@ -78,6 +76,11 @@ def expire_run(run, *, now=None):
             run_key=run.pk,
             snapshot_key=run.snapshot_id,
             result_key=run.result_id,
+            store_payload={
+                "kind": run.kind,
+                "status": run.status,
+                "write_protocol": (run.source_manifest or {}).get("write_protocol"),
+            },
             deletion_key=f"run:{run.pk}",
         )
 

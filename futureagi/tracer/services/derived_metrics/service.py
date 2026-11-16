@@ -221,6 +221,7 @@ def create_run(
     metric: DerivedMetric, data: dict, user
 ) -> tuple[DerivedMetricRun, bool]:
     from tracer.services.derived_metrics.deletion_protocol import project_lock
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
 
     project_lock(metric.project_id)
     version = data.get(
@@ -286,9 +287,11 @@ def create_run(
             "source_run_id": source_run_id,
             "filters": _json_value(data["filters"]),
             "as_of": timezone.now(),
+            "source_manifest": {"write_protocol": SUBMISSION_PROTOCOL},
             "lease_expires_at": timezone.now() + timedelta(minutes=20),
         },
     )
+    _require_enrolled_run(run)
     existing = {
         "definition": str(run.definition_id),
         "window_start": run.window_start,
@@ -357,8 +360,30 @@ def _requester_can_run(run: DerivedMetricRun) -> bool:
     )
 
 
+def _require_enrolled_run(run):
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
+
+    # This feature has no deployed pre-protocol writer. create_run is the only
+    # production raw-run constructor and enrolls before enqueue; fixture rows
+    # may model impossible historical states, but no native path may adopt one.
+    manifest = run.source_manifest
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("write_protocol") != SUBMISSION_PROTOCOL
+    ):
+        raise MetricInputError(
+            "Legacy run writer precondition failed: missing submission protocol. "
+            "This run cannot execute or be retroactively enrolled."
+        )
+
+
 def execute_run(run_id: UUID | str) -> None:
-    with transaction.atomic():
+    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+
+    project_id = DerivedMetricRun.objects.values_list(
+        "definition__metric__project_id", flat=True
+    ).get(pk=run_id)
+    with serialized_project(project_id):
         run = (
             DerivedMetricRun.objects.select_for_update()
             .select_related(
@@ -375,10 +400,19 @@ def execute_run(run_id: UUID | str) -> None:
             )
             run.save(update_fields=["status", "error"])
             return
+        _require_enrolled_run(run)
         run.status, run.error = DerivedMetricRun.Status.RUNNING, ""
         run.attempt_id = uuid4()
         run.lease_expires_at = timezone.now() + timedelta(minutes=11)
-        run.save(update_fields=["status", "error", "attempt_id", "lease_expires_at"])
+        run.save(
+            update_fields=[
+                "status",
+                "error",
+                "attempt_id",
+                "lease_expires_at",
+                "source_manifest",
+            ]
+        )
     try:
         _compute(run)
     except Exception as exc:
@@ -404,6 +438,49 @@ def execute_run(run_id: UUID | str) -> None:
 
 
 def _compute(run: DerivedMetricRun) -> None:
+    from tracer.services.derived_metrics.snapshots import snapshot_store
+
+    _require_enrolled_run(run)
+    with snapshot_store() as store:
+        _compute_tracked(run, store)
+
+
+def _input_capture_not_submitted(run):
+    """Only a positive pre-dispatch receipt permits replacing allocated inputs.
+
+    A namespace without a complete manifest is not automatically empty. A
+    dispatched write with lost acknowledgement must remain fenced for drainage.
+    """
+    from tracer.models.derived_metric import MetricErasureRequest
+    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL, _current
+
+    if run.source_manifest != {"write_protocol": SUBMISSION_PROTOCOL}:
+        return False
+    with serialized_project(run.definition.metric.project_id):
+        _current(run)
+        submissions = MetricErasureRequest.objects.filter(
+            organization_key=run.definition.metric.organization_id,
+            project_key=run.definition.metric.project_id,
+            run_key=run.pk,
+            snapshot_key=run.snapshot_id,
+            store_payload__protocol=SUBMISSION_PROTOCOL,
+        )
+        count = submissions.count()
+        return (
+            bool(count)
+            and count
+            == submissions.filter(
+                status="done", receipts__not_submitted__drained=1
+            ).count()
+        )
+
+
+def _compute_tracked(run, store):
+    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL, _write
+
+    _require_enrolled_run(run)
     definition = run.definition
     require_computable(definition)
     if definition.kind != "custom" or definition.field_spec:
@@ -412,10 +489,8 @@ def _compute(run: DerivedMetricRun) -> None:
         )
     metric = definition.metric
     scope = Scope(metric.organization_id, metric.workspace_id, metric.project_id)
-    client = get_clickhouse_client()
-    if client.server_enforced_readonly:
-        raise RuntimeError("Derived metrics require a dedicated writer connection.")
-    if run.snapshot_id is None:
+    client = store.client
+    if run.snapshot_id is None or _input_capture_not_submitted(run):
         snapshot_id = uuid4()
         # This is an observation watermark, not a claim to reconstruct overwritten
         # historical source rows. Subsequent replay uses this immutable snapshot.
@@ -429,15 +504,25 @@ def _compute(run: DerivedMetricRun) -> None:
             definition.filters + run.filters,
             run.source_run_id,
         )
+        # Persist the immutable input namespace BEFORE dispatch. Expiry can then
+        # address even a capture whose native acknowledgement is lost.
+        with serialized_project(metric.project_id):
+            from tracer.services.derived_metrics.snapshots import _current
+
+            _current(run)
+            DerivedMetricRun.objects.filter(pk=run.pk).update(snapshot_id=snapshot_id)
+            run.snapshot_id = snapshot_id
         params["snapshot_id"] = str(snapshot_id)
-        client.execute(
+        _write(
+            store,
+            run,
             "INSERT INTO derived_metric_inputs "
             "(org_id, workspace_id, project_id, snapshot_id, unit_id, session_id, user_id, "
             "cohort, day, input_values, probability, invalid_probability, source_rows, "
             "sampling_scope, sampling_stratum, sampling_design, population_size) "
             f"SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(snapshot_id)s, frozen.* FROM ({query}) frozen",
             params,
-            settings=QUERY_SETTINGS,
+            private=True,
         )
         captured_scope = client.execute(
             f"SELECT if(uniqExactIf(sampling_scope, notEmpty(sampling_scope)) = 1, anyIf(sampling_scope, notEmpty(sampling_scope)), '') FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s",
@@ -446,6 +531,7 @@ def _compute(run: DerivedMetricRun) -> None:
         )[0][0]
         run.snapshot_id = snapshot_id
         run.source_manifest = {
+            "write_protocol": SUBMISSION_PROTOCOL,
             "schema_version": 1,
             "compiler_version": 1,
             "sampling_scope": captured_scope,
@@ -455,7 +541,7 @@ def _compute(run: DerivedMetricRun) -> None:
             "semantics": "Frozen persisted inputs observed at capture; not historical time travel. Evaluator hashes are pinned in the definition.",
         }
         if not DerivedMetricRun.objects.filter(
-            pk=run.id, attempt_id=run.attempt_id
+            pk=run.id, attempt_id=run.attempt_id, deleted_at__isnull=True
         ).update(
             snapshot_id=snapshot_id,
             as_of=run.as_of,
@@ -471,10 +557,10 @@ def _compute(run: DerivedMetricRun) -> None:
         raise MetricInputError(
             "Frozen snapshot format or definition differs from this compiler. Create a new run; existing committed results are retained."
         )
-    result_id = uuid4()
+    result_id = run.attempt_id
     for rollup in ("overall", "session", "user", "cohort", "day"):
         query, params = rollup_insert(definition, run, result_id, rollup)
-        client.execute(query, params, settings={**QUERY_SETTINGS, "max_threads": 1})
+        _write(store, run, query, params)
     # Recheck project ownership before publication, not only before computation.
     metric.refresh_from_db()
     metric.project.refresh_from_db()
@@ -501,7 +587,20 @@ def _compute(run: DerivedMetricRun) -> None:
     from tracer.services.derived_metrics.source_retention import require_run
 
     require_run(run)
-    with transaction.atomic():
+    previous = client.execute(
+        f"SELECT max(version) FROM derived_metric_commits WHERE {SCOPE_SQL} AND metric_id = %(metric_id)s AND run_id = %(run_id)s",
+        params,
+        settings=QUERY_SETTINGS,
+    )
+    params["version"] = int(previous[0][0] or 0) + 1
+    _write(
+        store,
+        run,
+        "INSERT INTO derived_metric_commits VALUES (%(org_id)s, %(workspace_id)s, %(project_id)s, %(metric_id)s, %(run_id)s, %(result_id)s, %(committed_at)s, %(version)s)",
+        params,
+    )
+    require_run(run)
+    with serialized_project(metric.project_id):
         current = DerivedMetricRun.objects.select_for_update().get(pk=run.id)
         if (
             current.deleted_at is not None
@@ -509,19 +608,6 @@ def _compute(run: DerivedMetricRun) -> None:
             or current.lease_expires_at <= timezone.now()
         ):
             raise RuntimeError("Metric execution lease expired before publication.")
-        # Durable per-run ordering survives clock rollback and a previous CH
-        # publish whose PostgreSQL acknowledgement failed. No timestamp tie.
-        previous = client.execute(
-            f"SELECT max(version) FROM derived_metric_commits WHERE {SCOPE_SQL} AND metric_id = %(metric_id)s AND run_id = %(run_id)s",
-            params,
-            settings=QUERY_SETTINGS,
-        )
-        params["version"] = int(previous[0][0] or 0) + 1
-        client.execute(
-            "INSERT INTO derived_metric_commits VALUES (%(org_id)s, %(workspace_id)s, %(project_id)s, %(metric_id)s, %(run_id)s, %(result_id)s, %(committed_at)s, %(version)s)",
-            params,
-            settings=QUERY_SETTINGS,
-        )
         DerivedMetricRun.objects.filter(pk=run.id, attempt_id=run.attempt_id).update(
             status=DerivedMetricRun.Status.COMPLETE,
             result_id=result_id,
@@ -546,6 +632,7 @@ def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
         raise MetricInputError(
             "This result is no longer available under source retention."
         )
+    _require_enrolled_run(run)
     require_computable(run.definition)
     if (
         run.status in {DerivedMetricRun.Status.RUNNING, DerivedMetricRun.Status.QUEUED}

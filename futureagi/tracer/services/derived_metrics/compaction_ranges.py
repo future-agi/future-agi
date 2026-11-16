@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from clickhouse_driver.errors import ServerException
 from django.db import connection, transaction
+from django.db.models import Sum
 
 from tracer.models.derived_metric import (
     MetricCompactionRange,
@@ -808,7 +809,13 @@ def stage_ranges(writer, attempt):
 
 def visibility_receipts(attempt):
     root = validate_registry(attempt, verified=True)
-    return [] if root is None else [{"attempt": str(attempt.id), "registry": root}]
+    if root is None:
+        return []
+    # Private key bounds must be purgeable. Retain only the verified output
+    # count in the immutable publication envelope, which already outlives them.
+    # The registry's own count is a RANGE count, not a stored-row count.
+    rows = attempt.compaction_ranges.aggregate(rows=Sum("row_count"))["rows"]
+    return [{"attempt": str(attempt.id), "registry": root, "row_count": rows or 0}]
 
 
 def range_retention_evidence(writer, attempt):

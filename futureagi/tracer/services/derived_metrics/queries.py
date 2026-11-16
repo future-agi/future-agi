@@ -273,7 +273,8 @@ def snapshot_select(
         SELECT {span_identity} AS span_id, s.id AS raw_span_id, s.trace_id AS raw_trace_id, s.trace_session_id AS raw_session_id,
             {sampling_identity} AS unit_sampling_id, {sampling_ambiguity} AS unit_sampling_ambiguous,
             {session} AS session_id, {user} AS user_id, {unit} AS unit_id,
-            s.start_time, s.end_time, s.updated_at, s._version, {group_expression} AS metric_group,
+            s.start_time AS start_time, s.end_time AS end_time,
+            s.updated_at AS updated_at, s._version AS _version, {group_expression} AS metric_group,
             if(%(cohort_key)s = '', '', if(mapContains(s.attrs_string, %(cohort_key)s), toJSONString(tuple('value', s.attrs_string[%(cohort_key)s])), '["missing"]')) AS cohort
             {projections}
         FROM span_versions s

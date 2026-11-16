@@ -27,7 +27,15 @@ pytestmark = [
 
 
 def published_fixture(
-    writer, workspace, project, *, kind, formula, values, level="conversation"
+    writer,
+    workspace,
+    project,
+    *,
+    kind,
+    formula,
+    values,
+    level="conversation",
+    watermark_ns=1,
 ):
     metric = DerivedMetric.objects.create(
         organization=workspace.organization,
@@ -89,7 +97,7 @@ def published_fixture(
             (),
             (),
             (),
-            {"watermark_ns": 1},
+            {"watermark_ns": watermark_ns},
         ),
         [definition],
         scope,
