@@ -514,11 +514,11 @@ class TestLaunch:
         refused = _refusal(_launch, source_run, user)
         options = launch_options(source_run)
 
-        assert refused == ("fix_suite_draft_open", 409)
+        assert refused == ("fix_draft_open", 409)
         assert not AgentFixRun.no_workspace_objects.exists()
         # The fix itself could start: only the variations it writes first are blocked.
         assert options.blocked is None
-        assert options.variations_blocked.code == "fix_suite_draft_open"
+        assert options.variations_blocked.code == "fix_draft_open"
         # A fix with enough failing cases writes no variations, so the draft is no matter.
         settings.AGENT_FIX_MIN_FAILING_CASES = 1
         fix_run = _launch(source_run, user)

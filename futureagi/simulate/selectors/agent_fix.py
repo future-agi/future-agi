@@ -1340,10 +1340,33 @@ def verified_cases_min() -> int:
     return held + -(-(HELD_BACK_SHARE - 1) * held // (1 + VARIATIONS_PER_CASE))
 
 
+_UNSAVED_WORDS = {"suite": "scenario", "environment": "setup"}
+
+
+def unsaved_changes(pieces: Iterable[str]) -> str | None:
+    """The unsaved changes the given draft pieces hold, in the words the user sees
+    ("scenario", "setup", or both); None when there are none."""
+    held = set(pieces)
+    words = [word for piece, word in _UNSAVED_WORDS.items() if piece in held]
+    return " and ".join(words) or None
+
+
+def fresh_draft_pieces(environment: HostedHarnessJob) -> list[str]:
+    """The pieces with an unsaved draft on the environment's current versions."""
+    from simulate.services.harness_versioning import drafts
+
+    return [
+        piece
+        for piece, ref in drafts.draft_refs(environment).items()
+        if ref.id is not None
+    ]
+
+
 def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | None:
     """What would refuse a fix that first writes variations of its failing cases, on top of
-    launch_blocker; None when nothing would. The environment's builder writes them, on top
-    of any unsaved scenario changes, so those must be saved or discarded first."""
+    launch_blocker; None when nothing would. The environment's builder writes them in its
+    chat's workspace, which holds any unsaved scenario or setup changes, so those must be
+    saved or discarded first: the variations are written from the run's cases only."""
     from simulate.services.harness_versioning import drafts
 
     environment = source_run.environment
@@ -1376,11 +1399,11 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
         drafts.require_no_rebuild(environment, piece="suite")
     except HostedHarnessError as exc:
         return exc
-    if drafts.fresh_draft(environment, "suite") is not None:
+    if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
         return HostedHarnessError(
-            "fix_suite_draft_open",
-            "Save or discard the environment's unsaved scenario changes first: the epoch"
-            " writes its variations of the failing cases on top of them",
+            "fix_draft_open",
+            f"This environment has unsaved {unsaved} changes. Save or discard them,"
+            " then run Epoch.",
             status_code=409,
         )
     return None
