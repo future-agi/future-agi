@@ -98772,6 +98772,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "undeclared",
         "instance_ids",
         "cut_short",
+        "checks",
       ],
       type: "object",
       properties: {
@@ -98831,6 +98832,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         cut_short: {
           title: "Cut short",
           type: "boolean",
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerCheck",
+          },
         },
       },
     },
@@ -124302,6 +124309,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The worker this participant is; absent for the agent and the actors.",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    WorkerCheck: {
+      required: ["name", "passed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          enum: ["not_applicable", "inconclusive", "unmeasured"],
         },
       },
     },
