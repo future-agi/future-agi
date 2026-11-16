@@ -76,6 +76,8 @@ from simulate.pydantic_schemas.agent_fix import (
     LaunchSuggested,
     LaunchSurface,
     Surface,
+    VerdictTier,
+    VerdictTierPart,
 )
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
@@ -971,16 +973,22 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def held_back_cases(fix_run: AgentFixRun) -> int:
+    """The different cases of the run the fix held back, a variation counting as the case
+    it varies."""
+    request = FixRequest.model_validate(fix_run.request)
+    return len(
+        {
+            request.variation_parents.get(key, key)
+            for key in request.held_back_scenario_keys
+        }
+    )
+
+
 def limited_validation(fix_run: AgentFixRun) -> bool:
     """Whether too few cases were held back to call this fix verified, however it scored:
-    they must come from HELD_BACK_VERIFIED_MIN different cases of the run, a variation
-    counting as the case it varies."""
-    request = FixRequest.model_validate(fix_run.request)
-    cases = {
-        request.variation_parents.get(key, key)
-        for key in request.held_back_scenario_keys
-    }
-    return len(cases) < HELD_BACK_VERIFIED_MIN
+    they must come from HELD_BACK_VERIFIED_MIN different cases of the run."""
+    return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
 
 
 # The tiers the engine's final check records for a finalist, in order.
@@ -996,6 +1004,42 @@ VERDICT_TIERS = (
 # The tiers that read skipped when what they check could not be measured. That proves
 # nothing either way, and refuses no candidate.
 UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
+
+
+def verdict_tiers(candidate: AgentFixCandidate) -> list[VerdictTier]:
+    """A candidate's checks as the fix page and the pull request read them, parsed from its
+    stored verdict: a check stored before a field existed reads that field's default.
+
+    An older engine gave the cost and latency check one status. For an agent whose cost the
+    platform does not meter, that status judged the reply time alone and the cost was never
+    measured. So the check reads as its reply time with that status, a cost unknown, and
+    not verified."""
+    tiers = [
+        VerdictTier.model_validate(tier)
+        for tier in (candidate.verdict or {}).get("tiers") or []
+    ]
+    if FixRequest.model_validate(candidate.fix_run.request).meters_agent_cost:
+        return tiers
+    return [
+        _unmetered_ceilings(tier)
+        if tier.name == "ceilings" and not tier.parts
+        else tier
+        for tier in tiers
+    ]
+
+
+def _unmetered_ceilings(tier: VerdictTier) -> VerdictTier:
+    cost = VerdictTierPart(name="agent cost", status="skipped")
+    # A skipped tier may not have measured the reply time either, so it says none.
+    if tier.status not in ("passed", "failed"):
+        return tier.model_copy(update={"parts": [cost]})
+    latency = VerdictTierPart(name="reply latency", status=tier.status)
+    return tier.model_copy(
+        update={
+            "status": "failed" if tier.status == "failed" else "skipped",
+            "parts": [latency, cost],
+        }
+    )
 
 
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
