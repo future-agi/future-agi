@@ -116,7 +116,8 @@ class QualificationDiagnosticsTests(unittest.TestCase):
             self.assertAlmostEqual(summary['first_offending_pair']['delta_seconds'], 2.01)
             outcome = p._milestone_outcome(args.out)
             self.assertEqual(outcome['failure']['resource_sampling_failure'], summary)
-            outer = Path(temporary)/'outer'; outer.mkdir()
+            outer = Path(temporary)/'outer'
+            outer.mkdir()
             p.retain_diagnostics(outer, failure=dict(eligible=False, milestone_outcome=outcome))
             diagnostic = json.loads((outer/'diagnostics.json').read_bytes())
             self.assertFalse(diagnostic['qualification_evidence'])
