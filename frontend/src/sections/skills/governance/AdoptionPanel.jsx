@@ -241,7 +241,7 @@ TraceDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-function AdoptionContent({ skill, days: externalDays, summary, about, details }) {
+function AdoptionContent({ skill, days: externalDays, summary, about, details, aboutOpen, onAboutToggle }) {
   const preview = usePreviewState();
   const [localDays, setDays] = useState(7);
   const days = externalDays ?? localDays;
@@ -394,7 +394,7 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
           {details}
           </Stack>
         </TechnicalDetails>}
-        <TechnicalDetails title="About this data">
+        <TechnicalDetails title="About this data" open={aboutOpen} onToggle={onAboutToggle}>
           <Stack spacing={1}>
             {target && data && <>
               <Typography variant="s3" color="text.secondary">
@@ -439,12 +439,12 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details })
     </Section>
   );
 }
-AdoptionContent.propTypes = { skill: PropTypes.object.isRequired, days: PropTypes.number, summary: PropTypes.node, about: PropTypes.node, details: PropTypes.node };
+AdoptionContent.propTypes = { skill: PropTypes.object.isRequired, days: PropTypes.number, summary: PropTypes.node, about: PropTypes.node, details: PropTypes.node, aboutOpen: PropTypes.bool, onAboutToggle: PropTypes.func };
 
-export default function AdoptionPanel({ skill, days, summary, about, details }) {
+export default function AdoptionPanel({ skill, days, summary, about, details, aboutOpen, onAboutToggle }) {
   const access = useSkillV11Scope();
   return (
-    <AdoptionContent key={`${access.identity}:${skill.id}:${days ?? "local"}`} skill={skill} days={days} summary={summary} about={about} details={details} />
+    <AdoptionContent key={`${access.identity}:${skill.id}:${days ?? "local"}`} skill={skill} days={days} summary={summary} about={about} details={details} aboutOpen={aboutOpen} onAboutToggle={onAboutToggle} />
   );
 }
 AdoptionPanel.propTypes = AdoptionContent.propTypes;

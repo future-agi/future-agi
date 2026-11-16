@@ -166,7 +166,7 @@ describe("Usage tab", () => {
 
 vi.mock("src/sections/skills/governance/AdoptionPanel", async () => {
   const { default: TechnicalDetails } = await import("../components/TechnicalDetails");
-  return { default: ({ summary, about, details }) => <div>Adoption panel{summary}<TechnicalDetails title="Counts and details">{details}</TechnicalDetails><TechnicalDetails title="About this data">{about}</TechnicalDetails></div> };
+  return { default: ({ summary, about, details, aboutOpen, onAboutToggle }) => <div>Adoption panel{summary}<TechnicalDetails title="Counts and details">{details}</TechnicalDetails><TechnicalDetails title="About this data" open={aboutOpen} onToggle={onAboutToggle}>{about}</TechnicalDetails></div> };
 });
 
 it('shows one time control and keeps detailed counts disclosed by default', () => {
@@ -176,4 +176,23 @@ it('shows one time control and keeps detailed counts disclosed by default', () =
   // The explanatory text lives in one disclosure, never several.
   expect(screen.getAllByRole('button', { name: 'About this data' })).toHaveLength(1);
   expect(ReactApexChart).not.toHaveBeenCalled();
+});
+
+it("keeps About this data open when the usage it describes finishes loading", () => {
+  useSkillUsage.mockReturnValue({ data: undefined, isPending: true, isError: false, refetch: vi.fn() });
+  const theme = createTheme({ palette: dsPalette("light"), typography: dsTypography });
+  const tree = () => (
+    <ThemeProvider theme={theme}>
+      <MemoryRouter initialEntries={["/"]}>
+        <UsageTab skill={skill} />
+      </MemoryRouter>
+    </ThemeProvider>
+  );
+  const view = render(tree());
+  fireEvent.click(screen.getByRole("button", { name: "About this data" }));
+  expect(screen.getByText(/A fetch doesn.t prove an agent used it\./)).toBeVisible();
+  useSkillUsage.mockReturnValue(success(usage));
+  view.rerender(tree());
+  expect(screen.getByRole("button", { name: "About this data" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText(/A fetch doesn.t prove an agent used it\./)).toBeVisible();
 });

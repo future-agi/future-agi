@@ -109,6 +109,9 @@ export default function UsageTab({ skill }) {
     Counts requests that fetched this skill. A fetch doesn&apos;t prove an
     agent used it.
   </Typography>;
+  // One open state for both renderings of "About this data": the standalone one shown while usage loads
+  // and the adoption panel's, so a disclosure the reader opened stays open when the data arrives.
+  const [aboutOpen, setAboutOpen] = useState(false);
   const usageShown = !(preview === "loading" || query.isPending || preview === "error" || query.isError || empty) && Boolean(usage);
   return (
     <Stack spacing={3}>
@@ -147,7 +150,7 @@ export default function UsageTab({ skill }) {
               { label: "Last fetch", value: <When value={usage.lastFetchedAt} /> },
               { label: "Versions fetched", value: usage.byVersion.filter((item) => item.count > 0).length },
             ]} sx={{ "& > .MuiBox-root > .MuiTypography-root": { typography: "s3" }, "& > .MuiBox-root > .MuiBox-root > .MuiTypography-root": { typography: "m1" } }} />}
-              about={fetchMeaning}
+              about={fetchMeaning} aboutOpen={aboutOpen} onAboutToggle={setAboutOpen}
               details={<>
             <Section
               title="Fetches by version"
@@ -256,7 +259,7 @@ export default function UsageTab({ skill }) {
         )
       )}
       {/* While the adoption panel is showing it carries this caveat inside its own "About this data"; otherwise it stands alone. */}
-      {!usageShown && <TechnicalDetails title="About this data">{fetchMeaning}</TechnicalDetails>}
+      {!usageShown && <TechnicalDetails title="About this data" open={aboutOpen} onToggle={setAboutOpen}>{fetchMeaning}</TechnicalDetails>}
     </Stack>
   );
 }
