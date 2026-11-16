@@ -64,18 +64,19 @@ def test_a_notice_that_evidence_never_arrived_keeps_its_count(organization, work
     ]
 
 
-def test_a_check_the_harness_left_unmeasured_reads_as_unmeasured_even_without_a_verdict():
+def test_a_check_s_result_is_its_verdict_never_its_reason_s_wording():
     assert (
         sub_goal_result(
-            {"held": None, "reason": "Unmeasured: the action log could not be read"}
+            {"held": None, "reason": "Unmeasured: x", "verdict": "unmeasured"}
         )
         == "unmeasured"
     )
     assert (
-        sub_goal_result({"held": None, "reason": "Inconclusive: both readings hold"})
-        == "inconclusive"
+        sub_goal_result(
+            {"held": None, "reason": "Unmeasured: the action log could not be read"}
+        )
+        is None
     )
-    assert sub_goal_result({"held": None, "reason": "no word"}) is None
 
 
 @pytest.mark.django_db
@@ -137,9 +138,9 @@ def test_a_trial_whose_evidence_is_unmeasured_is_errored_and_each_check_shows_it
                 "verdict": "unmeasured",
                 "evidence": ["world_state"],
             },
-            # An older harness says it by the reason alone.
             {
                 "name": "tells_the_customer",
+                "verdict": "unmeasured",
                 "held": None,
                 "reason": why,
                 "judged": False,

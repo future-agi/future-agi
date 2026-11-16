@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from minio.error import S3Error
 
-from simulate.services.harness_environment import call_actor_labels, edit_fault_targets
+from simulate.services.harness_environment import call_actor_labels, edit_fault_side
 from simulate.tests.test_harness_tool_status import CONTRACT
 
 JOB = SimpleNamespace(id="env-1")
@@ -19,22 +19,20 @@ def _storage_down(*args, **kwargs):
     raise S3Error("NoSuchKey", "gone", "r", "h", "i", None)
 
 
-@pytest.mark.parametrize("read", [call_actor_labels, edit_fault_targets])
-def test_storage_that_cannot_be_read_falls_back(read):
+def test_scenario_filter_names_fall_back_to_the_list_s_own_when_storage_cannot_be_read():
+    listed = {"call_actors": [{"id": "friend", "name": "Rowan"}]}
     with (
         patch("simulate.services.harness_versioning.drafts.edit_side", _storage_down),
-        patch("simulate.services.harness_environment.stage_output", return_value=None),
         patch(
-            "simulate.services.harness_environment.contract_data", return_value=CONTRACT
+            "simulate.services.harness_environment.stage_output", return_value=listed
         ),
-        patch("simulate.services.harness_environment.logger") as logger,
     ):
-        read(JOB)
+        labels = call_actor_labels(JOB)
 
-    logger.exception.assert_called_once()
+    assert labels["friend"] == "Rowan"
 
 
-@pytest.mark.parametrize("read", [call_actor_labels, edit_fault_targets])
+@pytest.mark.parametrize("read", [call_actor_labels, edit_fault_side])
 def test_a_bug_is_not_read_as_a_storage_outage(read):
     with (
         patch(
@@ -57,6 +55,7 @@ def test_fault_targets_fall_back_to_the_environment_s_own_contract():
             "simulate.services.harness_environment.contract_data", return_value=CONTRACT
         ),
     ):
-        targets = edit_fault_targets(JOB)
+        targets, cast = edit_fault_side(JOB)
 
     assert {one["tool"] for one in targets} >= {"issue_refund", "lookup_order"}
+    assert cast == []

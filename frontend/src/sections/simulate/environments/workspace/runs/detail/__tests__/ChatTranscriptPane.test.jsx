@@ -4,9 +4,9 @@ import PropTypes from "prop-types";
 import ChatTranscriptPane from "../ChatTranscriptPane";
 
 function Pane(props) {
-  return <ChatTranscriptPane callActors={[]} hasCustomer {...props} />;
+  return <ChatTranscriptPane participants={[]} hasCustomer {...props} />;
 }
-Pane.propTypes = { callActors: PropTypes.array, hasCustomer: PropTypes.bool };
+Pane.propTypes = { participants: PropTypes.array, hasCustomer: PropTypes.bool };
 
 const plainChat = [
   { role: "customer", text: "One ride please" },
@@ -21,7 +21,7 @@ describe("ChatTranscriptPane", () => {
     render(
       <Pane
         customerName="Maya"
-        callActors={[
+        participants={[
           { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
         ]}
         turns={[
@@ -51,7 +51,7 @@ describe("ChatTranscriptPane", () => {
       <Pane
         customerName="Oliver"
         hasCustomer={false}
-        callActors={[
+        participants={[
           {
             id: "manager",
             name: "Alex Vance",
@@ -80,7 +80,7 @@ describe("ChatTranscriptPane", () => {
   it("falls back to All when Others was picked and the next call has none", async () => {
     const { rerender } = render(
       <Pane
-        callActors={[{ id: "friend", channel: "chat_message" }]}
+        participants={[{ id: "friend", channel: "chat_message" }]}
         turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );

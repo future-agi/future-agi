@@ -31,6 +31,58 @@ FALLBACK_WORDS = {"silent": "Nothing happens", "decline": "They decline"}
 # An actor's own cap on a trial: the lines one who speaks says, the turns one acting through the world takes.
 CapField = Literal["max_turns", "max_lines"]
 
+# Each way of joining in a word or two; null is acting through the world only.
+CHANNEL_LABELS = {
+    "audio_mix": "Heard nearby",
+    "audio_handoff": "Takes the phone",
+    "ivr": "Phone menu",
+    "chat_message": "Writes in the chat",
+}
+# Each trigger kind as the editor offers it.
+TRIGGER_KIND_LABELS = {
+    "always": "Present from the start",
+    "on_tool": "When the agent calls an action",
+    "on_keyword": "When the agent says a word",
+    "mid_journey": "From an agent turn",
+    "contacted": "When the agent contacts them",
+    "after_seconds": "At a set time",
+    "conditional": "Once a record exists",
+    "probability": "By chance",
+}
+# The keys each kind reads when the runtime evaluates it, as the editor makes them; `on_call` above 1 and a chance are
+# kept, never made (`editable_trigger`).
+TRIGGER_FIELDS: dict[str, list[str]] = {
+    "always": [],
+    "contacted": [],
+    "on_tool": ["tool"],
+    "on_keyword": ["words"],
+    "mid_journey": ["turn"],
+    "after_seconds": ["seconds"],
+    "conditional": ["collection", "where"],
+    "probability": [],
+}
+
+
+class TriggerOption(TypedDict):
+    value: str
+    label: str
+
+
+def trigger_options(kinds: list[str]) -> list[TriggerOption]:
+    """Each trigger kind with its label; a kind a later release adds reads by its name."""
+    return [
+        {"value": kind, "label": TRIGGER_KIND_LABELS.get(kind, _kind_words(kind))}
+        for kind in kinds
+    ]
+
+
+def channel_label(channel: str | None) -> str | None:
+    """A way of joining in a word or two; none for acting through the world only, whose description says it."""
+    if channel is None:
+        return None
+    return CHANNEL_LABELS.get(channel, channel.replace("_", " ").capitalize())
+
+
 Side = Literal["caller", "world"]
 FallbackKind = Literal["silent", "decline", "action", "actor"]
 
@@ -118,7 +170,11 @@ def trigger_of(actor: ActorRecord | None) -> CallActorTrigger:
     """The actor's own trigger; an actor without one is there from the start."""
     activation = (actor or {}).get("activation")
     trigger = activation.get("trigger") if isinstance(activation, dict) else None
-    return trigger if isinstance(trigger, dict) and trigger else {"kind": "always"}
+    return (
+        cast(CallActorTrigger, trigger)
+        if isinstance(trigger, dict) and trigger
+        else {"kind": "always"}
+    )
 
 
 def effective_trigger(

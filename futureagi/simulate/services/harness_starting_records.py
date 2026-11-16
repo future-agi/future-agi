@@ -1,22 +1,21 @@
-"""A scenario's starting records: the seeded rows whose keys its ``fixture`` facts name.
-
-Choosing another record goes through the Scenarios draft write, so it is proved again on Save.
-"""
+"""A scenario's starting records, read-only: the seeded rows its fixture's facts name, each looked up by its key in
+the world's seed files (``store.json``, else ``world.sqlite``) of the draft, else the saved version. A record the seed
+does not hold reads as missing."""
 
 from __future__ import annotations
 
-import copy
 import json
 import sqlite3
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
-from typing import TypeAlias, TypedDict
+from dataclasses import dataclass, field
+from pathlib import PurePosixPath
+from typing import Literal, Protocol, TypeAlias, TypedDict
 
 import structlog
 from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import HostedHarnessJob
-from simulate.services.harness_actor_validation import Problem, problem
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
@@ -27,18 +26,12 @@ JsonValue: TypeAlias = (
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 )
 Key: TypeAlias = str | int
+Row: TypeAlias = dict[str, JsonValue]
 
-# Rows a record offers instead of its own; a bigger table lists its first ones and says how many it holds.
-ALTERNATIVES_MAX = 50
-# Rows read from each table of a `world.sqlite`.
-ROWS_READ_MAX = 1000
+# Other values a row's one-line summary carries after its key.
+SUMMARY_VALUES = 2
 # Facts that describe the fixture itself, never a record.
 _NOT_A_FACT = frozenset({"origin"})
-
-
-class SeededRow(TypedDict):
-    key: Key
-    fields: dict[str, JsonValue]
 
 
 class StartingRecord(TypedDict):
@@ -47,36 +40,43 @@ class StartingRecord(TypedDict):
     label: str
     table: str
     key_field: str
-    key: Key
-    fields: dict[str, JsonValue]
-    alternatives: list[SeededRow]
-    alternatives_total: int
+    key: str
+    # `seeded`: the seed holds the row. `missing`: it does not, and `note` says so.
+    status: Literal["seeded", "missing"]
+    # The row in one line (its key, then its first other values); null when missing.
+    summary: str | None
+    fields: Row | None
+    note: str | None
 
 
 class RowsUnavailable(TypedDict):
-    code: str
+    code: Literal["no_seed_rows", "files_unreadable"]
     reason: str
 
 
 class StartingRecords(TypedDict):
     scenario_key: str
     origin: str | None
-    # Whether a choice can be written: only where edits go to the unsaved changes.
-    editable: bool
     records: list[StartingRecord]
+    # Set when the scenario's own setup changes the world before the run, so the rows above are as seeded.
+    setup_note: str | None
     rows_unavailable: RowsUnavailable | None
 
 
-@dataclass(frozen=True)
-class _Table:
-    name: str
-    fields: frozenset[str]
-    primary: frozenset[str]
+class _Table(Protocol):
+    @property
+    def name(self) -> str: ...
+    @property
+    def fields(self) -> frozenset[str]: ...
+    @property
+    def primary(self) -> frozenset[str]: ...
+    @property
+    def unique(self) -> frozenset[str]: ...
     # Key fields that point at another table's row: the row is that one's, not this table's own.
-    referencing: frozenset[str]
-    # Each key field whose values are unique across the rows, by the value's text.
-    indexes: Mapping[str, Mapping[str, dict[str, JsonValue]]]
-    rows: list[dict[str, JsonValue]]
+    @property
+    def referencing(self) -> frozenset[str]: ...
+
+    def lookup(self, key_field: str, key: Key) -> Row | None: ...
 
 
 @dataclass(frozen=True)
@@ -85,6 +85,55 @@ class _Fact:
     name: str
     parent: str
     value: Key
+
+
+@dataclass(frozen=True)
+class _Schema:
+    primary: frozenset[str]
+    unique: frozenset[str]
+    referencing: frozenset[str]
+    fields: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _StoreTable:
+    """A table of `store.json`: its rows are in the file."""
+
+    name: str
+    fields: frozenset[str]
+    primary: frozenset[str]
+    unique: frozenset[str]
+    referencing: frozenset[str]
+    rows: list[Row] = field(repr=False)
+
+    def lookup(self, key_field: str, key: Key) -> Row | None:
+        return next((row for row in self.rows if _same(row.get(key_field), key)), None)
+
+
+@dataclass(frozen=True)
+class _SqliteTable:
+    """A table of `world.sqlite`, read by key from the database held in memory."""
+
+    name: str
+    fields: frozenset[str]
+    primary: frozenset[str]
+    unique: frozenset[str]
+    referencing: frozenset[str]
+    connection: sqlite3.Connection = field(repr=False)
+
+    def lookup(self, key_field: str, key: Key) -> Row | None:
+        if key_field not in self.fields:
+            return None
+        # Identifiers cannot be bound parameters; both come from the database's own catalogue and are quoted.
+        found = self.connection.execute(
+            f"select * from {_quoted(self.name)} where {_quoted(key_field)} = ? limit 1",
+            (key,),
+        ).fetchone()
+        return (
+            {str(name): _scalar(found[name]) for name in found.keys()}
+            if found
+            else None
+        )
 
 
 _NO_ROWS = RowsUnavailable(
@@ -97,6 +146,19 @@ _NO_ROWS = RowsUnavailable(
 _UNREADABLE = RowsUnavailable(
     code="files_unreadable", reason="This environment's world files can't be read."
 )
+_SETUP_NOTE = "This scenario's setup changes the world before each run, so the rows shown are as seeded."
+
+
+def _same(value: JsonValue, key: Key) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (str, int))
+        and str(value) == str(key)
+    )
+
+
+def _quoted(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _json(files: Mapping[str, bytes], name: str) -> object:
@@ -112,116 +174,84 @@ def _json(files: Mapping[str, bytes], name: str) -> object:
 def _scalar(value: object) -> JsonValue:
     if isinstance(value, bytes):
         return f"<{len(value)} bytes>"
-    if value is None or isinstance(value, (str, int, float, bool, list, dict)):
-        return value  # type: ignore[return-value]  # a JSON document's own values
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
     return str(value)
 
 
-def _sqlite_tables(
-    data: bytes,
-) -> dict[str, tuple[list[dict[str, JsonValue]], frozenset[str]]] | None:
-    """Each table's rows and primary key, from a `world.sqlite` held in memory; none when it is not a database."""
-    connection = sqlite3.connect(":memory:")
-    try:
-        connection.deserialize(data)
-        connection.row_factory = sqlite3.Row
-        names = [
-            str(row[0])
-            for row in connection.execute(
-                "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
-            )
-        ]
-        tables = {}
-        for name in names:
-            # A table name cannot be a bound parameter; it comes from the database itself and is quoted as one.
-            quoted = '"' + name.replace('"', '""') + '"'
-            primary = frozenset(
-                str(row["name"])
-                for row in connection.execute(f"pragma table_info({quoted})")  # noqa: S608 - quoted identifier
-                if row["pk"]
-            )
-            rows = [
-                {str(field): _scalar(row[field]) for field in row.keys()}
-                for row in connection.execute(
-                    f"select * from {quoted} limit ?",  # noqa: S608 - quoted identifier
-                    (ROWS_READ_MAX,),
-                )
-            ]
-            tables[name] = (rows, primary)
-        return tables
-    except sqlite3.DatabaseError:
-        logger.warning("starting_records_sqlite_unreadable", size=len(data))
-        return None
-    finally:
-        connection.close()
-
-
-def _table(
-    name: str,
-    rows: list[dict[str, JsonValue]],
-    schema: Mapping[str, object],
-    primary: frozenset[str],
-) -> _Table:
-    kinds = {str(field): str(kind).upper() for field, kind in schema.items()}
-    primary = primary | {
-        field for field, kind in kinds.items() if "PRIMARY KEY" in kind
-    }
-    keys = primary | {field for field, kind in kinds.items() if "UNIQUE" in kind}
-    indexes: dict[str, dict[str, dict[str, JsonValue]]] = {}
-    for field in keys:
-        index = {
-            str(row[field]): row
-            for row in rows
-            if isinstance(row.get(field), (str, int))
-            and not isinstance(row.get(field), bool)
-        }
-        if index and len(index) == len(rows):
-            indexes[field] = index
-    return _Table(
-        name=name,
-        fields=frozenset(kinds) | frozenset(field for row in rows for field in row),
-        primary=primary,
-        referencing=frozenset(
-            field for field in keys if "REFERENCES" in kinds.get(field, "")
+def _schema(columns: Mapping[str, object]) -> _Schema:
+    kinds = {str(name): str(kind).upper() for name, kind in columns.items()}
+    return _Schema(
+        primary=frozenset(
+            name for name, kind in kinds.items() if "PRIMARY KEY" in kind
         ),
-        indexes=indexes,
-        rows=rows,
+        unique=frozenset(name for name, kind in kinds.items() if "UNIQUE" in kind),
+        referencing=frozenset(
+            name for name, kind in kinds.items() if "REFERENCES" in kind
+        ),
+        fields=frozenset(kinds),
     )
 
 
-def _world(files: Mapping[str, bytes]) -> list[_Table] | RowsUnavailable:
-    """The world's seeded tables with their key fields, from the environment's own files."""
-    contract = _json(files, "contract.json")
-    schema = contract.get("data_schema") if isinstance(contract, dict) else None
-    schema = schema if isinstance(schema, dict) else {}
-
-    def columns(name: str) -> Mapping[str, object]:
-        found = schema.get(name)
-        return found if isinstance(found, dict) else {}
-
-    store = _json(files, "store.json")
-    seeded = store.get("rows") if isinstance(store, dict) else None
-    if isinstance(seeded, dict):
-        return [
-            _table(
-                str(name),
-                [row for row in rows if isinstance(row, dict)],
-                columns(str(name)),
-                frozenset(),
+def _store_tables(
+    seeded: Mapping[str, object], schemas: Mapping[str, _Schema]
+) -> list[_Table]:
+    tables: list[_Table] = []
+    for name, rows in sorted(seeded.items()):
+        if not isinstance(rows, list):
+            continue
+        held = [row for row in rows if isinstance(row, dict)]
+        schema = schemas.get(str(name)) or _schema({})
+        tables.append(
+            _StoreTable(
+                name=str(name),
+                fields=schema.fields
+                | frozenset(str(column) for row in held for column in row),
+                primary=schema.primary,
+                unique=schema.unique,
+                referencing=schema.referencing,
+                rows=held,
             )
-            for name, rows in sorted(seeded.items())
-            if isinstance(rows, list)
-        ]
-    database = files.get("world.sqlite")
-    if database:
-        tables = _sqlite_tables(database)
-        if tables is None:
-            return _UNREADABLE
-        return [
-            _table(name, rows, columns(name), primary)
-            for name, (rows, primary) in sorted(tables.items())
-        ]
-    return _NO_ROWS
+        )
+    return tables
+
+
+def _sqlite_tables(
+    connection: sqlite3.Connection, schemas: Mapping[str, _Schema]
+) -> list[_Table]:
+    """Each table's columns and keys from the database's catalogue; no row is read until one is looked up."""
+    tables: list[_Table] = []
+    names = connection.execute(
+        "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name"
+    ).fetchall()
+    for (name,) in names:
+        info = connection.execute(
+            "select name, pk from pragma_table_info(?)", (name,)
+        ).fetchall()
+        primary = [row["name"] for row in info if row["pk"]]
+        unique = set()
+        for index in connection.execute(
+            'select name, "unique" from pragma_index_list(?)', (name,)
+        ).fetchall():
+            columns = connection.execute(
+                "select name from pragma_index_info(?)", (index["name"],)
+            ).fetchall()
+            if index["unique"] and len(columns) == 1:
+                unique.add(str(columns[0]["name"]))
+        schema = schemas.get(name) or _schema({})
+        tables.append(
+            _SqliteTable(
+                name=str(name),
+                fields=schema.fields | frozenset(str(row["name"]) for row in info),
+                # A composite primary key names no one row by one fact.
+                primary=schema.primary
+                | (frozenset(primary) if len(primary) == 1 else frozenset()),
+                unique=schema.unique | frozenset(unique),
+                referencing=schema.referencing,
+                connection=connection,
+            )
+        )
+    return tables
 
 
 def _facts(value: object, path: tuple[str, ...] = ()) -> Iterator[_Fact]:
@@ -251,55 +281,66 @@ def _nouns(table: str) -> tuple[str, ...]:
     return (table, table[:-1]) if table.endswith("s") else (table,)
 
 
-def _names_key(name: str, table: _Table, field: str) -> bool:
-    """Whether a fact held under ``name`` is meant as ``field`` of ``table``: `rider_id`, `order_ids` for orders.id,
-    `product` for products.product_id."""
-    if name == field:
-        return True
+def _names_key(fact: _Fact, table: _Table, key_field: str) -> bool:
+    """Whether a fact is meant as ``key_field`` of ``table``: `rider_id`, `order_ids` for orders.id, `product` for
+    products.product_id. A bare `id` names a table only from inside a block that names it."""
+    if fact.name == key_field:
+        return key_field != "id" or fact.parent in _nouns(table.name)
     return any(
-        name in (f"{noun}_{field}", f"{noun}_{field}s")
-        or (name == noun and field in ("id", f"{noun}_id"))
+        fact.name in (f"{noun}_{key_field}", f"{noun}_{key_field}s")
+        or (fact.name == noun and key_field in ("id", f"{noun}_id"))
         for noun in _nouns(table.name)
     )
+
+
+def _summary(key_field: str, row: Row) -> str:
+    values = [
+        str(value)
+        for name, value in row.items()
+        if name != key_field
+        and value is not None
+        and value != ""
+        and not isinstance(value, (list, dict))
+    ]
+    return " · ".join([str(row[key_field]), *values[:SUMMARY_VALUES]])
 
 
 def _record_of(
     fact: _Fact, tables: list[_Table], named: frozenset[str]
 ) -> StartingRecord | None:
-    """The seeded row a fact names, if any. Where several tables hold it, the one the block around it names wins,
-    then the table sharing most of the fixture's names, then a primary key over a unique one, then a table's own
-    row over one that points at another table's."""
-    candidates = [
-        (
-            fact.parent in _nouns(table.name),
-            len(named & table.fields),
-            field in table.primary,
-            field not in table.referencing,
-            table,
-            field,
-        )
-        for table in tables
-        for field, index in table.indexes.items()
-        if str(fact.value) in index and _names_key(fact.name, table, field)
-    ]
+    """The record a fact names, looked up by its key. A held row beats a missing one; then the table the block
+    around the fact names, the table sharing most of the fixture's names, a primary key over a unique one, and a
+    table's own row over one that points at another table's. Tables come sorted by name and `max` keeps the first
+    of equals, so a tie goes to the first table by name."""
+    candidates = []
+    for table in tables:
+        for key_field in sorted(table.primary | table.unique):
+            if not _names_key(fact, table, key_field):
+                continue
+            row = table.lookup(key_field, fact.value)
+            rank = (
+                row is not None,
+                fact.parent in _nouns(table.name),
+                len(named & table.fields),
+                key_field in table.primary,
+                key_field not in table.referencing,
+            )
+            candidates.append((rank, table, key_field, row))
     if not candidates:
         return None
-    # Tables come sorted by name, and `max` keeps the first of equals, so a tie goes to the first table by name.
-    *_, table, field = max(candidates, key=lambda one: one[:4])
-    row = table.indexes[field][str(fact.value)]
-    others = [one for one in table.rows if str(one.get(field)) != str(fact.value)]
+    _, table, key_field, row = max(candidates, key=lambda one: one[0])
     return StartingRecord(
         path=list(fact.path),
         label=".".join(fact.path),
         table=table.name,
-        key_field=field,
-        key=fact.value,
+        key_field=key_field,
+        key=str(fact.value),
+        status="seeded" if row is not None else "missing",
+        summary=_summary(key_field, row) if row is not None else None,
         fields=row,
-        alternatives=[
-            SeededRow(key=one[field], fields=one)  # type: ignore[typeddict-item]  # an indexed key is str or int
-            for one in others[:ALTERNATIVES_MAX]
-        ],
-        alternatives_total=len(others),
+        note=None
+        if row is not None
+        else f"{table.name} has no seeded row with {key_field} {fact.value}.",
     )
 
 
@@ -313,17 +354,19 @@ def _records(fixture: object, tables: list[_Table]) -> list[StartingRecord]:
     ]
 
 
+def _token(value: JsonValue) -> str:
+    """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
+    return PurePosixPath(str(value or "").strip()).name.lower().replace("-", "_")
+
+
 def _scenario(
     suite: list[dict[str, JsonValue]], scenario_key: str
 ) -> dict[str, JsonValue]:
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
-    wanted = _scenario_token(scenario_key)
+    wanted = _token(scenario_key)
     for document in suite:
         if (
             wanted
-            and _scenario_token(document.get("scenario_key") or document.get("name"))
-            == wanted
+            and _token(document.get("scenario_key") or document.get("name")) == wanted
         ):
             return document
     raise HostedHarnessError(
@@ -331,146 +374,73 @@ def _scenario(
     )
 
 
-def _answer(
-    job: HostedHarnessJob,
+def _has_setup(
+    document: Mapping[str, JsonValue], suite_files: Mapping[str, bytes]
+) -> bool:
+    """Whether the scenario's setup changes the world: its `setup_code`, or the `setup.py` in its folder."""
+    if str(document.get("setup_code") or "").strip():
+        return True
+    folder = str(document.get("name") or "")
+    code = suite_files.get(f"scenarios/{folder}/setup.py", b"")
+    return b"def setup(" in code
+
+
+def _read(
     document: dict[str, JsonValue],
-    world: list[_Table] | RowsUnavailable,
-) -> StartingRecords:
+    environment_files: Mapping[str, bytes],
+) -> tuple[list[StartingRecord], RowsUnavailable | None]:
+    contract = _json(environment_files, "contract.json")
+    data_schema = contract.get("data_schema") if isinstance(contract, dict) else None
+    schemas = {
+        str(name): _schema(columns)
+        for name, columns in (
+            data_schema.items() if isinstance(data_schema, dict) else ()
+        )
+        if isinstance(columns, dict)
+    }
     fixture = document.get("fixture")
-    origin = fixture.get("origin") if isinstance(fixture, dict) else None
-    unavailable = world if isinstance(world, dict) else None
-    return StartingRecords(
-        scenario_key=str(document.get("scenario_key") or document.get("name") or ""),
-        origin=str(origin) if origin else None,
-        editable=drafts.drafts_apply(job),
-        records=[]
-        if unavailable or not isinstance(world, list)
-        else _records(fixture, world),
-        rows_unavailable=unavailable,
-    )
+    store = _json(environment_files, "store.json")
+    seeded = store.get("rows") if isinstance(store, dict) else None
+    if isinstance(seeded, dict):
+        return _records(fixture, _store_tables(seeded, schemas)), None
+    database = environment_files.get("world.sqlite")
+    if not database:
+        return [], _NO_ROWS
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.deserialize(database)
+        connection.row_factory = sqlite3.Row
+        return _records(fixture, _sqlite_tables(connection, schemas)), None
+    except sqlite3.DatabaseError:
+        logger.warning("starting_records_sqlite_unreadable", size=len(database))
+        return [], _UNREADABLE
+    finally:
+        connection.close()
 
 
 def starting_records(job: HostedHarnessJob, scenario_key: str) -> StartingRecords:
     """The records ``scenario_key`` starts from as the next run would read them: the draft's, else the saved ones."""
     try:
         sides = drafts.edit_sides(job)
-    except (S3Error, HostedHarnessError):
+    except (S3Error, HTTPError, HostedHarnessError):
         logger.warning(
             "starting_records_files_unreadable", job_id=str(job.id), exc_info=True
         )
         return StartingRecords(
             scenario_key=scenario_key,
             origin=None,
-            editable=False,
             records=[],
+            setup_note=None,
             rows_unavailable=_UNREADABLE,
         )
     document = _scenario(suite_documents(sides["suite"]), scenario_key)
-    return _answer(job, document, _world(sides["environment"]))
-
-
-def record_invalid(problems: list[Problem]) -> HostedHarnessError:
-    return HostedHarnessError(
-        "starting_record_invalid",
-        " ".join(one["message"] for one in problems),
-        status_code=400,
-        details={"problems": problems},
-    )
-
-
-def _with_fact(
-    fixture: dict[str, JsonValue], path: list[str], value: Key
-) -> dict[str, JsonValue]:
-    edited = copy.deepcopy(fixture)
-    holder: JsonValue = edited
-    for segment in path[:-1]:
-        holder = holder[int(segment)] if isinstance(holder, list) else holder[segment]  # type: ignore[index]
-    last = path[-1]
-    if isinstance(holder, list):
-        holder[int(last)] = value
-    elif isinstance(holder, dict):
-        holder[last] = value
-    return edited
-
-
-def choose_starting_record(
-    job: HostedHarnessJob,
-    scenario_key: str,
-    *,
-    path: list[str],
-    table: str,
-    key: str,
-    user: object,
-) -> StartingRecords:
-    """Start ``scenario_key`` from another seeded row of ``table``: the fact at ``path`` becomes that row's key, in the
-    suite draft. Only a fact that names a seeded record today can be changed, and only to a key the table holds."""
-    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
-
-    if not drafts.drafts_apply(job):
-        raise HostedHarnessError(
-            "starting_records_read_only",
-            "This environment was built before scenarios could be changed here; rebuild it to choose its records.",
-            status_code=409,
-        )
-    drafts.require_no_rebuild(job, piece="suite")
-    sides = drafts.edit_sides(job)
-    suite = suite_documents(sides["suite"])
-    document = _scenario(suite, scenario_key)
-    world = _world(sides["environment"])
-    if isinstance(world, dict):
-        raise HostedHarnessError(world["code"], world["reason"], status_code=409)
+    records, unavailable = _read(document, sides["environment"])
     fixture = document.get("fixture")
-    record = next(
-        (one for one in _records(fixture, world) if one["path"] == path), None
+    origin = fixture.get("origin") if isinstance(fixture, dict) else None
+    return StartingRecords(
+        scenario_key=str(document.get("scenario_key") or document.get("name") or ""),
+        origin=str(origin) if origin else None,
+        records=records,
+        setup_note=_SETUP_NOTE if _has_setup(document, sides["suite"]) else None,
+        rows_unavailable=unavailable,
     )
-    if record is None:
-        raise record_invalid(
-            [
-                problem(
-                    "path", "This fact doesn't name a seeded record of this scenario."
-                )
-            ]
-        )
-    if record["table"] != table:
-        raise record_invalid(
-            [
-                problem(
-                    "table",
-                    f"This fact names a record of {record['table']}, not {table}.",
-                )
-            ]
-        )
-    seeded = next(one for one in world if one.name == table)
-    row = seeded.indexes[record["key_field"]].get(key)
-    if row is None:
-        raise record_invalid(
-            [
-                problem(
-                    "key",
-                    f"{table} has no seeded row with {record['key_field']} {key}.",
-                )
-            ]
-        )
-    chosen = row[record["key_field"]]
-    value: Key = str(chosen) if isinstance(record["key"], str) else chosen  # type: ignore[assignment]  # indexed key
-    edited = {**document, "fixture": _with_fact(fixture, path, value)}  # type: ignore[arg-type]  # a fixture with a record is a dict
-    try:
-        written = drafts.write_suite_edit(
-            job, [edited if one is document else one for one in suite], user=user
-        )
-    except AuthoringArchiveKept as kept:
-        raise HostedHarnessError("not_saved", str(kept), status_code=409) from kept
-    if written is None:
-        raise HostedHarnessError(
-            "not_saved",
-            "The change could not be saved; read the scenario again.",
-            status_code=409,
-        )
-    logger.info(
-        "starting_record_chosen",
-        job_id=str(job.id),
-        scenario_key=scenario_key,
-        table=table,
-        key_field=record["key_field"],
-    )
-    return starting_records(job, scenario_key)

@@ -2,7 +2,7 @@
 transcript turns and recorded calls are an actor's, and the trial's World state with its end state, notices and the
 actors' model use already worked out."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
@@ -31,6 +31,43 @@ CUSTOMER_ROLES = ("user", "customer", "human")
 _FALLBACK_ACTED = ("fallback_action", "fallback_not_committed")
 
 Verdict = Literal["approved", "refused"]
+# What the world made of an action, and what became of a wait that ran out, as the harness records them.
+ACTION_OUTCOMES = {
+    "committed": "committed",
+    "refused": "refused by the world",
+    "faulted": "faulted",
+    "duplicate": "already done, not repeated",
+}
+WAIT_OUTCOMES = {
+    "timed_out": "No answer: nothing happened",
+    "declined": "No answer: the request was declined",
+    "fallback_action": "No answer: their fallback action was taken for them",
+    "fallback_not_committed": "No answer: their fallback action was tried for them and",
+    "answered_by": "No answer:",
+    "unresolved_at_end": "Still waited on when the trial ended",
+}
+DECISION_OUTCOMES = (*WAIT_OUTCOMES, *ACTION_OUTCOMES)
+# The scenario's problems, never the agent's.
+PROBLEMS = {
+    "no_world_door": "Could not act: this agent's tools run where no actor can act",
+    "not_listed": "Not an actor in this environment",
+}
+PLAYS = {
+    "mocked": "As scheduled",
+    "live": "Decided",
+    "history": "Before the run",
+    "waiting": "Waiting for a response",
+    "timeout": "Timed out",
+    "problem": "Could not take part",
+    "not_triggered": "Never came in",
+}
+VERDICT_WORDS = {"approved": "Approved", "refused": "Refused"}
+START_LINES = {
+    "seeded": "Started from the seeded records, as every trial does",
+    "first_trial": "Started from the same records as the first trial: compared with that trial's start, not a "
+    "sealed seed",
+    "unknown": "Whether this trial started from the seeded records could not be checked.",
+}
 
 
 class BlockedCall(TypedDict, total=False):
@@ -40,6 +77,10 @@ class BlockedCall(TypedDict, total=False):
     method: str
     tool: str
     count: int
+
+
+# Why the world refused a call until something happened first, as the door records it.
+APPROVAL_MISSING = "approval_missing"
 
 
 class StateChange(TypedDict, total=False):
@@ -78,6 +119,8 @@ class ActorDecision(TypedDict):
     fallback: FallbackView | None
     verdict: Verdict | None
     committed_after_refusal: bool
+    # The row as one sentence: who, how they played, what came of it.
+    line: str
 
 
 class ApprovalRequest(TypedDict):
@@ -163,6 +206,17 @@ class TrialStart(TypedDict, total=False):
     tables: list[str]
     # What the start was compared against: the sealed seed, or (older trials) the first trial's start.
     against: str
+    # What to say about it; None when there is nothing to say (a start that differs has its own notice).
+    line: str | None
+
+
+class Participant(TypedDict):
+    """Someone other than the person and the agent who took part in the call."""
+
+    id: str | None
+    name: str
+    role: str
+    channel: str | None
 
 
 class TrialState(TypedDict):
@@ -290,19 +344,24 @@ def _end_state_url(
     artifacts = metadata.get("hosted_harness_artifacts")
     end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
     url = end.get("url") if isinstance(end, dict) else None
-    if url:
+    if isinstance(url, str) and url:
         return url
     sealed = state.get("end_state_artifact")
     if not (isinstance(sealed, str) and sealed.startswith("sha256:")):
         return None
     run_test = call.test_execution.run_test
+    artifacts_of_run = HostedHarnessArtifact.no_workspace_objects.filter(
+        sha256=sealed.removeprefix("sha256:"),
+        kind="world_state",
+        job__payload__metadata__platform_run_id=str(call.test_execution_id),
+        job__organization_id=run_test.organization_id,
+    )
+    # In the run's own workspace; a run kept without one matches only artifacts kept without one.
     kept = (
-        HostedHarnessArtifact.no_workspace_objects.filter(
-            sha256=sealed.removeprefix("sha256:"),
-            kind="world_state",
-            job__payload__metadata__platform_run_id=str(call.test_execution_id),
-            job__organization_id=run_test.organization_id,
-            job__workspace_id=run_test.workspace_id,
+        (
+            artifacts_of_run.filter(job__workspace_id=run_test.workspace_id)
+            if run_test.workspace_id is not None
+            else artifacts_of_run.filter(job__workspace_id__isnull=True)
         )
         .values_list("object_key", flat=True)
         .first()
@@ -342,6 +401,31 @@ def _usage(
         "cost_usd": sum(one["cost_usd"] for one in summary),
     }
     return summary, total
+
+
+class Comparability(TypedDict):
+    """Whether a trial can stand beside its scenario's other trials in repeatability and run comparisons."""
+
+    comparable: bool
+    not_comparable_reason: str | None
+
+
+def comparability(call: CallExecution) -> Comparability:
+    """A trial is not comparable when its recorded start differs from the seeded records; the reason names the
+    tables. A trial with no recorded start, or one that started clean, is comparable."""
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    state = metadata.get(TRIAL_STATE_KEY)
+    start = state.get("start") if isinstance(state, dict) else None
+    if not (isinstance(start, dict) and start.get("state") == "differs"):
+        return {"comparable": True, "not_comparable_reason": None}
+    tables = (
+        ", ".join(str(one) for one in start.get("tables") or []) or "the seeded records"
+    )
+    return {
+        "comparable": False,
+        "not_comparable_reason": f"Did not start from the seeded records ({tables} differed), so it is left out of "
+        "repeatability and run comparisons.",
+    }
 
 
 def _start_notice(start: object) -> TrialNotice | None:
@@ -401,6 +485,105 @@ def _fallback(one: Mapping[str, Any], names: Mapping[str, str]) -> FallbackView 
     )
 
 
+def _number_words(value: object) -> str:
+    return (
+        f"{value:g}"
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else "?"
+    )
+
+
+def _wait_words(one: Mapping[str, Any], fallback: FallbackView | None) -> str | None:
+    """What a wait came to, for an actor the world waited on; None for any other play."""
+    play, outcome = one.get("play"), one.get("outcome")
+    if play == "waiting":
+        then = f", then: {fallback['label']}" if fallback else ""
+        return f"up to {_number_words(one.get('timeout_seconds'))} s{then}"
+    if play == "problem":
+        return PROBLEMS.get(str(one.get("problem") or "")) or one.get("why") or None
+    if play != "timeout" or outcome not in WAIT_OUTCOMES:
+        return None
+    if outcome == "fallback_not_committed":
+        return f"{WAIT_OUTCOMES[outcome]} {ACTION_OUTCOMES.get(str(one.get('action_outcome')), 'not committed')}"
+    if outcome == "answered_by":
+        return f"{WAIT_OUTCOMES[outcome]} {fallback['label'] if fallback else 'another actor answered'}"
+    return WAIT_OUTCOMES[str(outcome)]
+
+
+def _decision_line(shown: ActorDecision) -> str:
+    """A decision's row as one sentence: who, how they played, what it came to, the verdict and why."""
+    play = shown["play"]
+    waited = _wait_words(shown, shown["fallback"])
+    parts = [
+        shown["name"],
+        PLAYS.get(play, play),
+        waited or shown.get("action") or "Did nothing",
+        ACTION_OUTCOMES.get(str(shown.get("outcome"))) if play != "timeout" else None,
+        VERDICT_WORDS.get(str(shown["verdict"])),
+        shown.get("why") if play != "problem" else None,
+    ]
+    return " · ".join(str(part) for part in parts if part)
+
+
+def _start(start: Mapping[str, Any]) -> TrialStart:
+    """The start as kept, with what to say about it."""
+    state = str(start.get("state") or "")
+    said = START_LINES.get(
+        "first_trial"
+        if state == "seeded" and start.get("against") == "first_trial"
+        else state
+    )
+    return cast(TrialStart, {**start, "line": said})
+
+
+def participants(
+    metadata: object,
+    turns: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+) -> list[Participant]:
+    """Everyone other than the person and the agent who took part: each actor who spoke on the call, in the order
+    they first spoke, then each world actor who took an action in the trial (no channel). An actor planned for the
+    call who never spoke or acted (not triggered, not drawn) is never listed: only a turn or an action names one. A call stored before its actors were recorded reads them from its
+    turns alone."""
+    planned = {one["id"]: one for one in call_actors(metadata) if one.get("id")}
+    by_name = {one["name"]: one for one in planned.values() if one.get("name")}
+    found: dict[str, Participant] = {}
+    for turn in turns:
+        if turn.get("speaker_role") != "actor":
+            continue
+        actor_id, name = (
+            str(turn.get("actor_id") or ""),
+            str(turn.get("speaker_name") or ""),
+        )
+        actor = planned.get(actor_id) or by_name.get(name) or {}
+        key = str(actor.get("id") or actor_id or name)
+        if not key or key in found:
+            continue
+        found[key] = {
+            "id": actor.get("id") or actor_id or None,
+            "name": actor.get("name") or name or actor_id,
+            "role": actor.get("role") or str(turn.get("actor_role") or ""),
+            "channel": actor.get("channel") or str(turn.get("channel") or "") or None,
+        }
+    for action in actions:
+        actor_id = str(action.get("actor_id") or "")
+        actor = planned.get(actor_id) or {}
+        # An action in the world is the proof it took part, whatever its delivery says of the call's voices.
+        if (
+            action.get("kind") != "world_actor_action"
+            or not actor_id
+            or actor_id in found
+        ):
+            continue
+        found[actor_id] = {
+            "id": actor_id,
+            "name": actor.get("name") or str(action.get("actor_name") or actor_id),
+            "role": actor.get("role") or str(action.get("actor_role") or ""),
+            "channel": None,
+        }
+    return list(found.values())
+
+
 def _verdict(value: object) -> Verdict | None:
     return (
         "approved" if value == "approved" else "refused" if value == "refused" else None
@@ -414,6 +597,12 @@ def _decision(
     action the world did not commit says so), and an approval's verdict; a trial from before verdicts were recorded
     reads none."""
     actor = str(one.get("actor") or "")
+    # Codes the harness does not write are left out rather than served as words nobody reads.
+    known: dict[str, Collection[str]] = {
+        "outcome": DECISION_OUTCOMES,
+        "action_outcome": ACTION_OUTCOMES,
+        "problem": PROBLEMS,
+    }
     shown = cast(
         ActorDecision,
         {
@@ -429,7 +618,7 @@ def _decision(
                 "outcome",
                 "action_outcome",
             )
-            if key in one
+            if key in one and (key not in known or one[key] in known[key])
         },
     )
     if one.get("outcome") == "fallback_action" and one.get("action_outcome") not in (
@@ -460,6 +649,7 @@ def _decision(
             ),
         }
     )
+    shown["line"] = _decision_line(shown)
     return shown
 
 
@@ -488,8 +678,9 @@ def _writes(rows: object) -> list[ApprovalWrite]:
 
 
 def _approval(one: Mapping[str, Any], names: Mapping[str, str]) -> ApprovalLine:
-    request = one.get("request") if isinstance(one.get("request"), dict) else {}
-    decision = one.get("decision") if isinstance(one.get("decision"), dict) else {}
+    raw_request, raw_decision = one.get("request"), one.get("decision")
+    request = raw_request if isinstance(raw_request, dict) else {}
+    decision = raw_decision if isinstance(raw_decision, dict) else {}
     return {
         "request": {
             "action": _text(request.get("action")),
@@ -568,8 +759,35 @@ def _entries(raw: object) -> list[dict[str, Any]]:
     )
 
 
-def trial_state(call: CallExecution) -> TrialState | None:
-    """The trial's World state, ready to show; every list is present and `unreadable` is said once."""
+def _approval_notices(calls: Sequence[Mapping[str, Any]]) -> list[TrialNotice]:
+    """One notice per action of the agent's the world refused because no approval of it was recorded yet, with how
+    many times, in the order first refused."""
+    counts: dict[str, int] = {}
+    for one in calls:
+        if (
+            one.get("refusal_code") != APPROVAL_MISSING
+            or (one.get("actor_id") or AGENT) != AGENT
+        ):
+            continue
+        action = str(one.get("action") or one.get("name") or "")
+        counts[action] = counts.get(action, 0) + 1
+    return [
+        {
+            "code": APPROVAL_MISSING,
+            "action": action,
+            "count": count,
+            "message": f"The agent tried {action or 'a change'} before anyone approved it: refused"
+            + (f" ×{count}" if count > 1 else ""),
+        }
+        for action, count in counts.items()
+    ]
+
+
+def trial_state(
+    call: CallExecution, *, calls: Sequence[Mapping[str, Any]] = ()
+) -> TrialState | None:
+    """The trial's World state, ready to show; every list is present and `unreadable` is said once. ``calls`` are the
+    call's recorded tool calls, read for the writes the world held back for an approval."""
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     if state is None:
@@ -581,11 +799,13 @@ def trial_state(call: CallExecution) -> TrialState | None:
             kind=type(state).__name__,
         )
         return None
-    records = state.get("records") if isinstance(state.get("records"), dict) else {}
+    raw_records = state.get("records")
+    records = raw_records if isinstance(raw_records, dict) else {}
     unreadable = state.get("unreadable") is True or records.get("unreadable") is True
     changes = [
         cast(
-            StateChange, {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one
+            StateChange,
+            {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one,
         )
         for one in _entries(state.get("state_changes"))
     ]
@@ -633,6 +853,7 @@ def trial_state(call: CallExecution) -> TrialState | None:
         "usage": _entries(state.get("usage")),
         "usage_summary": usage,
         "notices": [one for one in notices if one]
+        + _approval_notices(calls)
         + [cast(TrialNotice, one) for one in _entries(state.get("notices"))],
     }
     if state.get("recorded") is False:
@@ -641,7 +862,7 @@ def trial_state(call: CallExecution) -> TrialState | None:
     if records and not unreadable:
         shown["records"] = _records(records)
     if isinstance(state.get("start"), dict):
-        shown["start"] = cast(TrialStart, state["start"])
+        shown["start"] = _start(state["start"])
     if total is not None:
         shown["usage_total"] = total
     if isinstance(state.get("limits"), dict):

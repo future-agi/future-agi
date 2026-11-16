@@ -193,15 +193,6 @@ export const ACTORS_COPY = {
       trigger: "Comes in",
       triggerHelp:
         "When they first take part; a scenario can give them its own",
-      modes: {
-        always: "Present from the start",
-        on_tool: "When the agent calls an action",
-        on_keyword: "When the agent says a word",
-        mid_journey: "From an agent turn",
-        contacted: "When the agent contacts them",
-        after_seconds: "At a set time",
-        conditional: "Once a record exists",
-      },
       triggerTool: "The action",
       triggerWords: "Words",
       triggerWordsHelp: "Separated by commas",

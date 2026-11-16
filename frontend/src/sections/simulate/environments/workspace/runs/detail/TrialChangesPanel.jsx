@@ -85,13 +85,6 @@ RecordsSection.propTypes = {
 };
 
 // A start that differs is reported among the notices instead.
-const startLine = (start) => {
-  if (!start || start.state === "differs") return null;
-  return start.state === "seeded" && start.against === "first_trial"
-    ? C.start.seededAgainstFirst
-    : C.start[start.state];
-};
-
 // Attempted, refused and committed are never summed into one number.
 export default function TrialChangesPanel({ trialState }) {
   if (!trialState)
@@ -112,7 +105,8 @@ function WorldState({ trialState }) {
   const approvals = trialState.approvals;
   const usage = trialState.usage_summary;
   const duplicates = trialState.duplicates;
-  const started = startLine(trialState.start);
+  // How the trial started, as the server says it; none to say for a start that differed (that is a notice).
+  const started = trialState.start?.line;
   // `changed_outside_world` shows with the records, not with the other notices.
   const allNotices = trialState.notices;
   const outside = allNotices.find(
@@ -227,7 +221,7 @@ function WorldState({ trialState }) {
           <Typography sx={quiet}>{C.preRunAbout}</Typography>
           {preRun.map((one, index) => (
             <Typography key={`pre-${index}`} sx={quiet}>
-              {`${one.name}: ${one.arguments?.text || one.action}`}
+              {one.line}
             </Typography>
           ))}
         </Box>
@@ -290,6 +284,8 @@ WorldState.propTypes = {
     start: PropTypes.shape({
       state: PropTypes.string,
       tables: PropTypes.arrayOf(PropTypes.string),
+      // How it started, worded by the server; null when there is nothing to say.
+      line: PropTypes.string,
     }),
     unreadable: PropTypes.bool,
     recorded: PropTypes.bool,

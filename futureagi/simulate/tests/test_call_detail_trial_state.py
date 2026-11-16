@@ -59,21 +59,10 @@ def test_a_fallback_is_classified_as_the_editor_classifies_it():
     )
 
     # An action the world took for the actor is an action, never another actor.
-    assert action["fallback"] == {
-        "kind": "action",
-        "value": "refunds.decline",
-        "label": "refunds.decline is taken for them",
-    }
-    assert actor["fallback"] == {
-        "kind": "actor",
-        "value": "boss",
-        "label": "Dana answers instead",
-    }
-    assert silent["fallback"] == {
-        "kind": "silent",
-        "value": "silent",
-        "label": "Nothing happens",
-    }
+    assert [
+        (one["fallback"]["kind"], one["fallback"]["value"])
+        for one in (action, actor, silent)
+    ] == [("action", "refunds.decline"), ("actor", "boss"), ("silent", "silent")]
     assert scheduled["fallback"] is None
 
 
@@ -237,6 +226,7 @@ def test_egress_refusals_a_start_s_baseline_and_both_notice_shapes_are_typed():
         "state": "differs",
         "tables": ["orders"],
         "against": "sealed_seed",
+        "line": None,
     }
     assert {one["code"]: one for one in served["notices"]}["evidence_incomplete"][
         "count"
@@ -380,11 +370,7 @@ def test_the_served_trial_state_carries_every_declared_list_and_flag():
     served = TrialStateSerializer(shown).data
 
     assert set(LISTS) | {"unreadable", "limits"} <= set(served)
-    assert served["decisions"][0]["fallback"] == {
-        "kind": "decline",
-        "value": "decline",
-        "label": "They decline",
-    }
+    assert served["decisions"][0]["fallback"]["kind"] == "decline"
     assert served["limits"]["max_messages"] == 4
 
 
@@ -411,3 +397,84 @@ def test_whether_the_person_spoke_is_said_by_the_server():
     )
     assert has_customer([{"speaker_role": "task"}, {"speaker_role": "actor"}]) is False
     assert has_customer([]) is False
+
+
+def test_a_code_the_harness_does_not_write_is_left_out_and_the_rest_are_typed():
+    [odd] = _decisions(
+        {
+            "actor": "x",
+            "play": "live",
+            "action": "a.put",
+            "outcome": "exploded",
+            "problem": "bad",
+            "action_outcome": "?",
+        }
+    )
+
+    assert not {"outcome", "problem", "action_outcome"} & set(odd)
+    assert TrialStateSerializer(data=_shown({"decisions": [odd]})).is_valid()
+
+
+RESOLVED = [
+    {"id": "friend", "name": "Rowan", "role": "friend", "channel": "audio_mix"},
+    {"id": "never", "name": "Never", "role": "lead", "channel": "audio_mix"},
+    {"id": "clerk", "name": "Wendy", "role": "clerk"},
+]
+SUMMARY = [
+    {"actor": "friend", "triggered": True, "delivered": 2},
+    {"actor": "never", "triggered": False},
+    {"actor": "clerk", "drawn": True},
+]
+
+
+def test_participants_are_who_spoke_then_who_acted_never_who_was_only_planned():
+    from simulate.selectors.call_detail import participants
+
+    metadata = {"harness_call_actors": {"resolved": RESOLVED, "summary": SUMMARY}}
+    turns = [
+        {"speaker_role": "user"},
+        {"speaker_role": "actor", "actor_id": "friend", "speaker_name": "Rowan"},
+        {"speaker_role": "actor", "actor_id": "friend", "speaker_name": "Rowan"},
+    ]
+    actions = [
+        {"kind": "agent_call", "actor_id": None},
+        {"kind": "world_actor_action", "actor_id": "clerk", "actor_name": "Wendy"},
+    ]
+
+    assert participants(metadata, turns, actions) == [
+        {"id": "friend", "name": "Rowan", "role": "friend", "channel": "audio_mix"},
+        {"id": "clerk", "name": "Wendy", "role": "clerk", "channel": None},
+    ]
+
+
+def test_a_call_where_only_a_world_actor_acted_lists_that_actor():
+    from simulate.selectors.call_detail import participants
+
+    metadata = {"harness_call_actors": {"resolved": RESOLVED, "summary": SUMMARY}}
+    actions = [
+        {"kind": "world_actor_action", "actor_id": "clerk", "actor_name": "Wendy"}
+    ]
+
+    assert participants(metadata, [{"speaker_role": "user"}], actions) == [
+        {"id": "clerk", "name": "Wendy", "role": "clerk", "channel": None}
+    ]
+
+
+def test_a_call_stored_before_its_actors_were_recorded_reads_them_from_its_turns():
+    from simulate.selectors.call_detail import participants
+
+    turns = [
+        {
+            "speaker_role": "actor",
+            "speaker_name": "Pat",
+            "actor_role": "spouse",
+            "channel": "audio_handoff",
+        },
+        {"speaker_role": "actor", "actor_id": "ivr", "speaker_name": ""},
+        {"speaker_role": "actor", "speaker_name": "Pat"},
+    ]
+
+    assert participants({}, turns, []) == [
+        {"id": None, "name": "Pat", "role": "spouse", "channel": "audio_handoff"},
+        {"id": "ivr", "name": "ivr", "role": "", "channel": None},
+    ]

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-# The four states the list's status pill knows. The pipeline reports far finer
-# stages; the raw one travels alongside as ``stage`` so a caller that wants
-# progress can still derive it.
+# The list's four status-pill states; the pipeline's finer stage travels alongside as ``stage``.
 STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"

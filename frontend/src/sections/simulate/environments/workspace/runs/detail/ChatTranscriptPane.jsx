@@ -79,14 +79,14 @@ ToolCall.propTypes = { call: PropTypes.any };
 export default function ChatTranscriptPane({
   turns,
   customerName,
-  callActors,
+  participants,
   hasCustomer,
 }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
   // The pane stays mounted across calls; the next call may have no others.
   const activeFilter =
-    roleFilter === "others" && !callActors.length ? "all" : roleFilter;
+    roleFilter === "others" && !participants.length ? "all" : roleFilter;
 
   const shown = turns.filter((s) => {
     if (
@@ -102,10 +102,10 @@ export default function ChatTranscriptPane({
 
   return (
     <>
-      {callActors.length > 0 && (
+      {participants.length > 0 && (
         <Box sx={{ px: 2, pt: 1.25 }}>
           <CallParticipants
-            actors={callActors}
+            participants={participants}
             customerName={customerName}
             withCustomer={hasCustomer}
           />
@@ -145,7 +145,7 @@ export default function ChatTranscriptPane({
           {(hasCustomer || !turns.some((s) => s.role === "task")) && (
             <Tab value="customer" label="Customer" />
           )}
-          {callActors.length > 0 && (
+          {participants.length > 0 && (
             <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
           )}
         </SegmentedTabs>
@@ -213,7 +213,8 @@ export default function ChatTranscriptPane({
 }
 ChatTranscriptPane.propTypes = {
   customerName: PropTypes.string,
-  callActors: PropTypes.arrayOf(
+  // Who took part, as the server says: one with no channel only acted in the world.
+  participants: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string,
       name: PropTypes.string,

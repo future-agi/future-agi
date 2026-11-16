@@ -1031,6 +1031,9 @@ def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
             "delay_seconds": None,
             "status": None,
             "message": "",
+            "approval": None,
+            "approved_when": {},
+            "line": "orders.refund: Unavailable on call 1",
         }
     ]
     assert (
@@ -1039,20 +1042,22 @@ def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
 
 
 def test_an_amend_refuses_a_test_condition_the_world_cannot_apply_with_why():
-    from simulate.services.scenario_faults import faults_problem
+    from simulate.services.scenario_faults import faults_problems
 
+    assert faults_problems([{"action": "orders.refund", "mode": "explode"}], None) == [
+        {"index": 0, "field": "mode", "message": "choose what happens to the call"}
+    ]
     assert (
-        faults_problem([{"action": "orders.refund", "mode": "explode"}], None)
-        == "choose what happens to the call"
-    )
-    assert (
-        faults_problem(
+        faults_problems(
             [{"action": "orders.refund", "mode": "timeout_after_commit", "on_call": 1}],
             None,
         )
-        is None
+        == []
     )
-    assert (
-        faults_problem("not a list", None)
-        == "a scenario's test conditions could not be read"
-    )
+    assert faults_problems("not a list", None) == [
+        {
+            "index": None,
+            "field": None,
+            "message": "a scenario's test conditions could not be read",
+        }
+    ]

@@ -3,7 +3,7 @@ actor sees and never sees."""
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from simulate.models import HostedHarnessJob
 from simulate.services.harness_actor_fields import (
@@ -14,17 +14,22 @@ from simulate.services.harness_actor_fields import (
     typed_fields,
 )
 from simulate.services.harness_actor_labels import (
+    TRIGGER_FIELDS,
     CapField,
     FallbackView,
+    TriggerOption,
     cap_field,
+    channel_label,
     editable_trigger,
     fallback_of,
     side_of,
     timeout_label,
     trigger_kinds,
     trigger_of,
+    trigger_options,
     when_label,
 )
+from simulate.services.harness_actor_merge import created_defaults
 from simulate.services.harness_actor_options import (
     FieldOptions,
     LimitField,
@@ -113,6 +118,10 @@ class ChannelOption(TypedDict):
     required_fields: list[str]
     # The actor's own cap that counts when it joins this way.
     cap_field: CapField
+    # The way of joining in a word or two; null for acting through the world only.
+    label: str | None
+    # `trigger_kinds` with their labels.
+    trigger_options: list[TriggerOption]
 
 
 class SideDefault(TypedDict):
@@ -150,6 +159,10 @@ class Cast(TypedDict):
     side_defaults: SideDefaults
     field_options: FieldOptions
     upload: UploadView
+    # The trigger keys each kind reads, so a form shows the inputs of the kind picked.
+    trigger_fields: dict[str, list[str]]
+    # A new actor as a read shows one, with what a create fills in for every field left as it is.
+    new_actor: ActorRow
 
 
 def _actor_row(
@@ -220,6 +233,8 @@ def _channel_options(
             "trigger_kinds": trigger_kinds(rules, channel),
             "required_fields": required_fields(rules, channel),
             "cap_field": cap_field(channel),
+            "label": channel_label(channel),
+            "trigger_options": trigger_options(trigger_kinds(rules, channel)),
         }
         for channel, about in ways
     ]
@@ -284,6 +299,17 @@ def cast_view(
         },
         "field_options": field_options(rules),
         "upload": upload_view(),
+        "trigger_fields": {kind: list(keys) for kind, keys in TRIGGER_FIELDS.items()},
+        # Read like any actor, as a create would write it: nameless, in no scenario.
+        "new_actor": _actor_row(
+            cast(ActorRecord, {**created_defaults(rules), "id": "", "name": ""}),
+            cast=actors,
+            names=names,
+            using=[],
+            action_names=action_names,
+            rules=rules,
+            defaults=defaults,
+        ),
     }
 
 

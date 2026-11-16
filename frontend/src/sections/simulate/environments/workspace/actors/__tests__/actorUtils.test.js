@@ -10,7 +10,10 @@ import {
   whereProblem,
   withStart,
 } from "../actorUtils";
-import { typedActor } from "./castFixtures";
+import { TRIGGER_FIELDS, cast, typedActor } from "./castFixtures";
+
+// A new actor as the panel opens it: the cast's `new_actor` on its side.
+const NEW = (side) => ({ ...cast([]).new_actor, side, channel: null });
 
 const MANAGER = typedActor({
   id: "manager",
@@ -103,25 +106,37 @@ describe("changesOf", () => {
   });
 
   it("sends the trigger only when how they come in really changes, built from its own fields", () => {
-    expect(changesOf(MANAGER, { triggerSeconds: "30" })).toEqual({});
-    expect(changesOf(MANAGER, { triggerSeconds: "45" })).toEqual({
+    expect(changesOf(MANAGER, { triggerSeconds: "30" }, TRIGGER_FIELDS)).toEqual({});
+    expect(changesOf(MANAGER, { triggerSeconds: "45" }, TRIGGER_FIELDS)).toEqual({
       trigger: { kind: "after_seconds", seconds: 45 },
     });
     expect(
-      changesOf(MANAGER, { mode: "on_tool", triggerTool: "crm.approve" }),
+      changesOf(
+        MANAGER,
+        { mode: "on_tool", triggerTool: "crm.approve" },
+        TRIGGER_FIELDS,
+      ),
     ).toEqual({ trigger: { kind: "on_tool", tool: "crm.approve" } });
     expect(
-      changesOf(MANAGER, { mode: "on_keyword", triggerWords: "refund, , VP" }),
+      changesOf(
+        MANAGER,
+        { mode: "on_keyword", triggerWords: "refund, , VP" },
+        TRIGGER_FIELDS,
+      ),
     ).toEqual({ trigger: { kind: "on_keyword", words: ["refund", "VP"] } });
-    expect(changesOf(MANAGER, { mode: "contacted" })).toEqual({
+    expect(changesOf(MANAGER, { mode: "contacted" }, TRIGGER_FIELDS)).toEqual({
       trigger: { kind: "contacted" },
     });
     expect(
-      changesOf(MANAGER, {
-        mode: "conditional",
-        triggerCollection: "approvals",
-        triggerWhere: '{"status": "pending"}',
-      }),
+      changesOf(
+        MANAGER,
+        {
+          mode: "conditional",
+          triggerCollection: "approvals",
+          triggerWhere: '{"status": "pending"}',
+        },
+        TRIGGER_FIELDS,
+      ),
     ).toEqual({
       trigger: {
         kind: "conditional",
@@ -186,10 +201,10 @@ describe("changesOf", () => {
   });
 
   it("sends a new actor only what was set, with the side it was added on", () => {
-    expect(changesOf({ side: "caller" }, {})).toEqual({ side: "caller" });
+    expect(changesOf(NEW("caller"), {})).toEqual({ side: "caller" });
     expect(
       changesOf(
-        { side: "world" },
+        NEW("world"),
         { name: "Sam", timing: "delayed", seconds: "5" },
       ),
     ).toEqual({

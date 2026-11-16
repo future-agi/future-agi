@@ -112,7 +112,7 @@ const withCallActors = [
 ];
 
 // Dana acts only in the world and never joins the call.
-const CALL_ACTORS = [
+const PARTICIPANTS = [
   { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
   { id: "son", name: "Sam", role: "son", channel: "audio_handoff" },
   { id: "dana", name: "Dana", role: "approver", channel: null },
@@ -126,7 +126,7 @@ const chipLabels = () =>
 
 describe("actors in voice transcripts", () => {
   it("names each actor with their role and how they were heard", () => {
-    render(<TranscriptView transcript={withCallActors} callActors={CALL_ACTORS} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(screen.getAllByText("Rowan · roommate").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sam · son").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Heard nearby").length).toBeGreaterThan(0);
@@ -135,7 +135,7 @@ describe("actors in voice transcripts", () => {
   });
 
   it("names an actor, not their raw role, on the speaker timeline", () => {
-    render(<TranscriptView transcript={withCallActors} callActors={CALL_ACTORS} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(
       screen.getByLabelText(/^Rowan · roommate · \d+:\d{2}$/),
     ).toBeInTheDocument();
@@ -146,7 +146,7 @@ describe("actors in voice transcripts", () => {
     render(
       <TranscriptView
         transcript={withCallActors}
-        callActors={CALL_ACTORS}
+        participants={PARTICIPANTS}
         customerName="Maya"
       />,
     );
@@ -163,7 +163,7 @@ describe("actors in voice transcripts", () => {
     render(
       <TranscriptView
         transcript={withCallActors}
-        callActors={CALL_ACTORS}
+        participants={PARTICIPANTS}
         customerName="Maya"
         hasCustomer={false}
       />,
@@ -201,7 +201,7 @@ describe("actors in voice transcripts", () => {
   });
 
   it("filters to the others on the call", async () => {
-    render(<TranscriptView transcript={withCallActors} callActors={CALL_ACTORS} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(chipLabels()).toEqual(["All", "Assistant", "Customer", "Others"]);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     expect(screen.getByText("Make it two")).toBeInTheDocument();
@@ -211,7 +211,7 @@ describe("actors in voice transcripts", () => {
   });
 
   it("shows every turn when Others was picked and the next call has none", async () => {
-    const { rerender } = render(<TranscriptView transcript={withCallActors} callActors={CALL_ACTORS} />);
+    const { rerender } = render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     rerender(<TranscriptView transcript={plainCall} />);
     expect(screen.queryByText("No matching turns")).toBeNull();
@@ -240,7 +240,7 @@ const showActions = (actions) =>
   render(
     <TranscriptView
       customerName="Maya"
-      callActors={[
+      participants={[
         { id: "manager", name: "Arjun Mehta", role: "store manager", channel: null },
       ]}
       transcript={[customer, ...functionCallTranscriptRows(actions)]}

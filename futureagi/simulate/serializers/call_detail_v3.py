@@ -4,6 +4,12 @@ from typing import get_args
 
 from rest_framework import serializers
 
+from simulate.selectors.call_detail import (
+    ACTION_OUTCOMES,
+    DECISION_OUTCOMES,
+    PLAYS,
+    PROBLEMS,
+)
 from simulate.serializers.harness_actors import (
     HarnessActorFallbackSerializer,
     HarnessActorLimitsSerializer,
@@ -72,6 +78,21 @@ class CallCallActorSerializer(serializers.Serializer):
     )
 
 
+class CallParticipantSerializer(serializers.Serializer):
+    """Someone other than the person and the agent who took part in the call."""
+
+    id = serializers.CharField(
+        allow_null=True,
+        help_text="The actor's id; null on a turn stored with a name only.",
+    )
+    name = serializers.CharField(allow_blank=True)
+    role = serializers.CharField(allow_blank=True)
+    channel = serializers.CharField(
+        allow_null=True,
+        help_text="How they were heard; null for an actor who only acted in the world.",
+    )
+
+
 class BlockedCallSerializer(serializers.Serializer):
     """One call the agent made to a host outside the test world, refused before it left the sandbox."""
 
@@ -128,17 +149,7 @@ class ActorDecisionSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="The actor's name, or its id when the trial did not name it.",
     )
-    play = serializers.ChoiceField(
-        choices=(
-            "mocked",
-            "live",
-            "history",
-            "waiting",
-            "timeout",
-            "problem",
-            "not_triggered",
-        )
-    )
+    play = serializers.ChoiceField(choices=tuple(PLAYS))
     action = serializers.CharField(required=False, allow_null=True)
     arguments = serializers.DictField(
         required=False,
@@ -148,9 +159,10 @@ class ActorDecisionSerializer(serializers.Serializer):
         required=False,
         help_text="`voice` when decided on the call by a speaking actor.",
     )
-    problem = serializers.CharField(
+    problem = serializers.ChoiceField(
+        choices=tuple(PROBLEMS),
         required=False,
-        help_text="For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
+        help_text="For `problem`: the scenario's problem, never the agent's.",
     )
     why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     status = serializers.IntegerField(required=False, allow_null=True)
@@ -160,7 +172,8 @@ class ActorDecisionSerializer(serializers.Serializer):
         help_text="What its fallback is, classified: nothing, a refusal, one of its own actions, or another actor "
         "answering; null when it has none.",
     )
-    outcome = serializers.CharField(
+    outcome = serializers.ChoiceField(
+        choices=DECISION_OUTCOMES,
         required=False,
         help_text=(
             "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was "
@@ -168,7 +181,8 @@ class ActorDecisionSerializer(serializers.Serializer):
             "made of it (committed, refused, faulted, duplicate)."
         ),
     )
-    action_outcome = serializers.CharField(
+    action_outcome = serializers.ChoiceField(
+        choices=tuple(ACTION_OUTCOMES),
         required=False,
         help_text="For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
     )
@@ -179,6 +193,9 @@ class ActorDecisionSerializer(serializers.Serializer):
     )
     committed_after_refusal = serializers.BooleanField(
         help_text="The agent committed a write after this actor refused it; false on a trial that predates verdicts."
+    )
+    line = serializers.CharField(
+        help_text="The row as one sentence: who, how they played, what it came to, the verdict and why."
     )
 
 
@@ -265,7 +282,8 @@ class TrialNoticeSerializer(serializers.Serializer):
 
     code = serializers.CharField(
         help_text="fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, "
-        "duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world"
+        "duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing "
+        "(the agent's change refused before anyone approved it: `action`, `count`)"
     )
     message = serializers.CharField(
         help_text="Plain words for the person reading the run."
@@ -315,10 +333,15 @@ class TrialRecordChangeSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Its values after; null when removed.",
     )
-    fields = serializers.ListField(
-        child=serializers.CharField(),
-        help_text="The fields a change changed; empty when added or removed.",
-    )
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        # `fields` is the name of the Serializer attribute holding them, so this field is added here.
+        fields = super().get_fields()
+        fields["fields"] = serializers.ListField(
+            child=serializers.CharField(),
+            help_text="The fields a change changed; empty when added or removed.",
+        )
+        return fields
 
 
 class TrialRecordsSerializer(serializers.Serializer):
@@ -336,6 +359,12 @@ class TrialStartSerializer(serializers.Serializer):
         choices=("sealed_seed", "first_trial"),
         required=False,
         help_text="What the start was compared with; absent on trials from before it was said.",
+    )
+    line = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="What to say about the start; null when there is nothing to say (a start that differs has its "
+        "own notice).",
     )
 
 

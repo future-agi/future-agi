@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
-from django.db import transaction
 
 from simulate.models import HostedHarnessJob
+from simulate.services.harness_actor_choices import (
+    new_choice_problems,
+    same_name_problems,
+)
+from simulate.services.harness_actor_drafts import draft_read, with_cast, written_cast
 from simulate.services.harness_actor_fields import record_defaults
 from simulate.services.harness_actor_merge import (
     ActorChanges,
@@ -19,22 +22,17 @@ from simulate.services.harness_actor_merge import (
     touched_fields,
 )
 from simulate.services.harness_actor_options import option_problems
-from simulate.services.harness_actor_reads import Cast, cast_view
+from simulate.services.harness_actor_reads import Cast
 from simulate.services.harness_actor_rules import (
-    ACTORS_FILE,
     LIMIT_FIELDS,
     ActorLimits,
     ActorRecord,
-    ActorRules,
-    UnresolvedPoint,
     actor_models,
     actor_not_found,
     actor_rules,
     agent_modality,
     cast_records,
-    read_json,
     scenarios_using,
-    stored_limits,
     unresolved_points,
     world_stores,
 )
@@ -48,14 +46,11 @@ from simulate.services.harness_actor_validation import (
     in_use_problem,
     joins_fixed_problem,
     limits_invalid,
-    new_choice_problems,
     permission_conflicts,
     problem,
     record_over_by,
     removal_problems,
-    same_name_problems,
 )
-from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.drafts import DraftRef
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
@@ -86,7 +81,7 @@ def accept_unresolved(
         )
     return written_cast(
         environment,
-        _with_cast(
+        with_cast(
             environment_files,
             cast_records(environment_files),
             actor_rules(environment_files),
@@ -149,7 +144,7 @@ def write_actor_limits(
         raise limits_invalid(problems)
     return written_cast(
         environment,
-        _with_cast(
+        with_cast(
             environment_files, cast_records(environment_files), rules, limits=clean
         ),
         suite_files,
@@ -208,46 +203,6 @@ def _edited(
         )
     actors.pop(index)
     return actors
-
-
-def _with_cast(
-    environment_files: dict[str, bytes],
-    actors: list[ActorRecord],
-    rules: ActorRules,
-    *,
-    limits: dict[str, Any] | None = None,
-    unresolved: list[UnresolvedPoint] | None = None,
-) -> dict[str, bytes]:
-    """The environment's files with this cast, keeping its limits and unresolved points (or these new ones), and every
-    other top-level key the stored file holds (a later release's, such as `actor_share`) as it is."""
-    kept = stored_limits(environment_files) if limits is None else limits
-    points = unresolved_points(environment_files) if unresolved is None else unresolved
-    stored = read_json(environment_files, ACTORS_FILE)
-    others = {
-        key: value
-        for key, value in (stored if isinstance(stored, dict) else {}).items()
-        if key not in _OWNED_KEYS
-    }
-    files = dict(environment_files)
-    # No actors, no limits and nothing else kept means no file, so removing the only actor leaves nothing to review.
-    files.pop(ACTORS_FILE, None)
-    if actors or kept or others:
-        body: dict[str, Any] = {
-            "schema": rules["formats"][ACTORS_FILE],
-            "actors": actors,
-        }
-        if kept:
-            body["limits"] = kept
-        if points:
-            body["unresolved"] = points
-        files[ACTORS_FILE] = (json.dumps({**body, **others}, indent=2) + "\n").encode(
-            "utf-8"
-        )
-    return files
-
-
-# The top-level keys of the actors file this writer builds; any other is a release's own and kept as stored.
-_OWNED_KEYS = ("schema", "actors", "limits", "unresolved")
 
 
 class ActorValidation(TypedDict):
@@ -424,6 +379,12 @@ def _refusal_problem(refusal: HostedHarnessError, op: str) -> Problem:
     return problem(field, refusal.message)
 
 
+def request_problems_verdict(problems: list[Problem]) -> ActorValidation:
+    """The check's answer for an edit whose request could not be read as a record: its problems alone, nothing
+    else judged until they are fixed."""
+    return {"problems": problems, "conflicts": [], "suggested_id": None, "over_by": 0}
+
+
 def check_actor_edit(
     environment: HostedHarnessJob,
     *,
@@ -503,7 +464,7 @@ def write_actor_edit(
         raise conflict_error(verdict["conflicts"])
     return written_cast(
         environment,
-        _with_cast(
+        with_cast(
             verdict["environment_files"],
             verdict["actors"],
             actor_rules(verdict["environment_files"]),
@@ -511,69 +472,6 @@ def write_actor_edit(
         verdict["suite_files"],
         verdict["refs"],
         user,
-    )
-
-
-def draft_read(
-    environment: HostedHarnessJob, expected_revision: int | None
-) -> tuple[dict[str, DraftRef], dict[str, bytes], dict[str, bytes]]:
-    """Both pieces' draft refs and files, refusing `draft_changed` (409) when the caller read an older revision. The
-    refs are read before the files, so an edit landing on either piece in between fails the write's check of both."""
-    refs = drafts.draft_refs(environment)
-    sides = drafts.edit_sides(environment)
-    if (
-        expected_revision is not None
-        and expected_revision != refs["environment"].revision
-    ):
-        raise HostedHarnessError(
-            "draft_changed",
-            "the actors were edited elsewhere since you read them; read them again",
-            status_code=409,
-        )
-    return refs, sides["environment"], sides["suite"]
-
-
-def written_cast(
-    environment: HostedHarnessJob,
-    environment_files: dict[str, bytes],
-    suite_files: dict[str, bytes],
-    refs: dict[str, DraftRef],
-    user: User | None,
-) -> Cast:
-    """Record the environment side of the draft and return the cast as it now reads. Both pieces' refs are checked:
-    a scenario saved meanwhile may name an actor this edit removes."""
-    try:
-        written = drafts.record_draft(
-            environment,
-            archives.pack_archive(archives.compose(environment_files, suite_files)),
-            origin="manual",
-            user=user,
-            expected=dict(refs),
-            pieces={"environment"},
-            # Validated against the scenarios: a scenario edit landing meanwhile refuses this one.
-            checked=set(drafts.DRAFT_PIECES),
-        )
-    except HostedHarnessError as exc:
-        if exc.code != "draft_changed":
-            raise
-        raise HostedHarnessError(
-            "draft_changed",
-            "the actors or scenarios were edited elsewhere since you read them; read them again",
-            status_code=409,
-        ) from exc
-    if written is None:
-        raise HostedHarnessError(
-            "drafts_unavailable",
-            "this environment does not keep drafts",
-            status_code=409,
-        )
-    transaction.on_commit(lambda: drafts.retire_chat_runtime(environment))
-    draft = written.environment
-    return cast_view(
-        environment_files,
-        suite_files,
-        draft.revision if draft is not None else None,
-        world_stores(environment),
     )
 
 

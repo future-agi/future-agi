@@ -48,7 +48,7 @@ class HarnessTriggerWhereValueField(serializers.JSONField):
         swagger_schema_fields = {"type": "string", "x-nullable": True}
 
     def to_internal_value(self, data):
-        value = super().to_internal_value(data)
+        value: object = super().to_internal_value(data)
         if isinstance(value, (dict, list)):
             raise serializers.ValidationError(
                 "A field's value is a string, number, true, false or null."
@@ -107,7 +107,7 @@ class HarnessActorResponseTimingChangeSerializer(serializers.Serializer):
 
 
 class HarnessActorBehaviourSerializer(serializers.Serializer):
-    style = serializers.CharField(allow_blank=True)
+    style = serializers.CharField(allow_blank=True)  # type: ignore[assignment]  # the API field is named style, as Field's own
     response_timing = HarnessActorResponseTimingSerializer()
 
 
@@ -123,7 +123,7 @@ class HarnessActorProvenanceSerializer(serializers.Serializer):
     origin = serializers.CharField(allow_blank=True)
     by = serializers.CharField(allow_null=True)
     # Who set each field: `editor`, or the builder that wrote it.
-    fields = serializers.DictField(child=serializers.CharField())
+    fields = serializers.DictField(child=serializers.CharField())  # type: ignore[assignment]  # the API field is named fields, as Serializer's own
 
 
 class HarnessActorLockedFieldSerializer(serializers.Serializer):
@@ -136,7 +136,7 @@ class HarnessActorFallbackSerializer(serializers.Serializer):
 
     kind = serializers.ChoiceField(choices=("silent", "decline", "action", "actor"))
     value = serializers.CharField()
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as Field's own
 
 
 class HarnessActorPermissionSerializer(serializers.Serializer):
@@ -180,7 +180,7 @@ class HarnessActorSerializer(serializers.Serializer):
     side = serializers.ChoiceField(choices=("caller", "world"))
     # Null: it acts through the world only, never speaking in the conversation.
     channel = serializers.CharField(allow_null=True)
-    parent = serializers.CharField(allow_null=True)
+    parent = serializers.CharField(allow_null=True)  # type: ignore[assignment]  # the API field is named parent, as Field's own
     on_behalf_of = serializers.CharField(allow_null=True)
     # The actor's identity in each world service, which another actor's actions address.
     identities = serializers.DictField(child=serializers.CharField(allow_blank=True))
@@ -264,6 +264,11 @@ class HarnessActorLimitFieldSerializer(serializers.Serializer):
     default_label = serializers.CharField(allow_null=True)
 
 
+class HarnessActorFieldOptionSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as Field's own
+
+
 class HarnessActorChannelOptionSerializer(serializers.Serializer):
     """One way an actor can join here; `channel` null is acting through the world only."""
 
@@ -274,11 +279,10 @@ class HarnessActorChannelOptionSerializer(serializers.Serializer):
     required_fields = serializers.ListField(child=serializers.CharField())
     # The actor's own cap that counts when it joins this way: lines for one who speaks, turns for one in the world.
     cap_field = serializers.ChoiceField(choices=("max_turns", "max_lines"))
-
-
-class HarnessActorFieldOptionSerializer(serializers.Serializer):
-    value = serializers.CharField()
-    label = serializers.CharField()
+    # The way of joining in a word or two; null for acting through the world only.
+    label = serializers.CharField(allow_null=True)  # type: ignore[assignment]  # the API field is named label, as Field's own
+    # `trigger_kinds` with their labels, in the same order.
+    trigger_options = HarnessActorFieldOptionSerializer(many=True)
 
 
 class HarnessActorFieldOptionsSerializer(serializers.Serializer):
@@ -336,7 +340,7 @@ class HarnessActorChangesSerializer(serializers.Serializer):
     # Kept only on a channel with a loudness; null is automatic.
     loudness_ratio = serializers.FloatField(required=False, allow_null=True)
     kind = serializers.CharField(required=False, max_length=100)
-    parent = serializers.CharField(
+    parent = serializers.CharField(  # type: ignore[assignment]  # the API field is named parent, as Field's own
         required=False, allow_null=True, allow_blank=True, max_length=64
     )
     # Long text is bounded by the record as a whole (`record_max_chars`) and the sealed rules.
@@ -365,10 +369,10 @@ class HarnessActorChangesSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=500), required=False, max_length=200
     )
     # A collection still picked keeps its stored entry.
-    records = HarnessActorRecordSourceSerializer(
+    records = HarnessActorRecordSourceSerializer(  # type: ignore[call-arg]  # DRF passes max_length to the list a many serializer makes; the stubs omit it
         many=True, required=False, max_length=200
     )
-    style = serializers.CharField(
+    style = serializers.CharField(  # type: ignore[assignment]  # the API field is named style, as Field's own
         required=False, allow_blank=True, trim_whitespace=False
     )
     response_timing = HarnessActorResponseTimingChangeSerializer(required=False)
@@ -567,6 +571,12 @@ class HarnessActorListSerializer(serializers.Serializer):
     side_defaults = HarnessActorSideDefaultsSerializer()
     field_options = HarnessActorFieldOptionsSerializer()
     upload = HarnessActorUploadSerializer()
+    # The trigger keys each kind reads (tool, words, turn, seconds, collection, where), by kind.
+    trigger_fields = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField())
+    )
+    # A new actor as a read shows one, with what a create fills in for every field left as it is; id and name empty.
+    new_actor = HarnessActorSerializer()
 
 
 class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
@@ -597,12 +607,14 @@ class HarnessActorSeenSerializer(serializers.Serializer):
     )
     # The value as one line a person reads.
     text = serializers.CharField(allow_blank=True)
+    # What the input is, in words.
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as Field's own
 
 
 class HarnessActorOthersPrivateSerializer(serializers.Serializer):
     """The fields a number of other actors each keep to themselves, as words."""
 
-    fields = serializers.ListField(child=serializers.CharField())
+    fields = serializers.ListField(child=serializers.CharField())  # type: ignore[assignment]  # the API field is named fields, as Serializer's own
     count = serializers.IntegerField()
 
 

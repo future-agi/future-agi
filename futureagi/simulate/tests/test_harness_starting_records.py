@@ -1,5 +1,5 @@
-"""A scenario's starting records: the seeded rows its fixture names, read from the world's seed files, and the choice
-of another row written to the suite draft."""
+"""A scenario's starting records, read-only: the seeded rows its fixture names, each looked up by its key in the
+world's seed files, held or missing."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ import json
 import sqlite3
 
 import pytest
+from urllib3.exceptions import HTTPError
 
-from accounts.models import Organization
+from accounts.models import Organization, Workspace
 from simulate.models import HostedHarnessJob
 from simulate.services.harness_versioning import drafts
-from simulate.services.harness_versioning.versions import (
-    record_authoring,
-    suite_documents,
-)
+from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_backfill import _legacy
@@ -50,7 +48,6 @@ CONTRACT = {
 USERS = [
     {"rider_id": "rdr_arjun", "phone": "+14155550101", "first_name": "Arjun"},
     {"rider_id": "rdr_priya", "phone": "+14155550102", "first_name": "Priya"},
-    {"rider_id": "rdr_kavita", "phone": "+14155550103", "first_name": "Kavita"},
 ]
 STORE = {
     "schema": [],
@@ -75,26 +72,19 @@ def versioning_on(settings):
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
 
 
-def _world_files(**world):
-    documents = [_scenario(SCENARIO, fixture=FIXTURE)]
-    return {
-        "scenarios.json": json.dumps(documents),
-        **{
-            f"scenarios/{one['name']}/scenario.json": json.dumps(one)
-            for one in documents
-        },
-        **world,
-    }
-
-
-def _rides(user, workspace, storage, key, **world):
+def _rides(user, workspace, storage, key, *, fixture=FIXTURE, scenario=None, **world):
+    document = _scenario(SCENARIO, fixture=fixture, **(scenario or {}))
     environment = _versioned(user, workspace, key, storage)
     record_authoring(
         environment,
         _authoring(
             names=NAMES[:1],
             contract=CONTRACT,
-            **_world_files(**world or {"store.json": json.dumps(STORE)}),
+            **{
+                "scenarios.json": json.dumps([document]),
+                f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+                **(world or {"store.json": json.dumps(STORE)}),
+            },
         ),
         origin="manual",
         user=user,
@@ -107,165 +97,146 @@ def _url(environment, key=KEY):
     return f"{BASE}/{environment.id}/scenarios/{key}/starting-records/"
 
 
-def _choose(auth_client, environment, **body):
-    return auth_client.put(
-        _url(environment),
-        {"path": ["identity", "rider_id"], "table": "users", **body},
-        format="json",
-    )
+def _by_label(response):
+    assert response.status_code == 200, response.content
+    return {one["label"]: one for one in response.json()["records"]}
 
 
-def _draft_fixture(environment):
-    suite = suite_documents(drafts.edit_sides(environment)["suite"])
-    return next(one for one in suite if one["name"] == SCENARIO)["fixture"]
-
-
-def _sqlite(tables):
+def _users_database(rows):
     connection = sqlite3.connect(":memory:")
-    for name, (columns, rows) in tables.items():
-        connection.execute(f"create table {name} ({columns})")
-        for row in rows:
-            connection.execute(
-                f"insert into {name} values ({', '.join('?' for _ in row)})", row
-            )
+    connection.execute(
+        "create table users (rider_id text primary key, phone text unique, first_name text)"
+    )
+    connection.executemany("insert into users values (?, ?, ?)", rows)
     connection.commit()
     data = connection.serialize()
     connection.close()
     return data
 
 
-def test_the_rows_the_fixture_names_are_served_with_the_rows_it_could_start_from_instead(
+def test_the_rows_the_fixture_names_are_served_with_their_fields(
     user, workspace, storage, auth_client
 ):
     environment = _rides(user, workspace, storage, "starting-served")
+
+    by_label = _by_label(auth_client.get(_url(environment)))
+
+    # The rider and the phone are records; the pickup and the first name are facts no key holds.
+    assert sorted(by_label) == ["identity.rider_id", "phone"]
+    rider = by_label["identity.rider_id"]
+    # The owning table wins over the wallet that points at it.
+    assert (rider["table"], rider["key"], rider["status"], rider["fields"]) == (
+        "users",
+        "rdr_arjun",
+        "seeded",
+        USERS[0],
+    )
+    # The phone names the rider's row, not the one-time code that shares its key.
+    assert by_label["phone"]["table"] == "users"
+
+
+def test_a_record_the_seed_does_not_hold_reads_as_missing(
+    user, workspace, storage, auth_client
+):
+    fixture = {**FIXTURE, "identity": {"rider_id": "rdr_nobody"}}
+    environment = _rides(user, workspace, storage, "starting-missing", fixture=fixture)
+
+    rider = _by_label(auth_client.get(_url(environment)))["identity.rider_id"]
+
+    assert (rider["table"], rider["status"], rider["fields"]) == (
+        "users",
+        "missing",
+        None,
+    )
+
+
+def test_a_world_sqlite_is_looked_up_by_key_however_far_down_the_row_is(
+    user, workspace, storage, auth_client
+):
+    # The named rider is the last of more rows than any read of the first ones would reach.
+    filler = [(f"rdr_{n}", f"+1000{n}", f"Rider {n}") for n in range(1500)]
+    database = _users_database([*filler, tuple(USERS[0].values())])
+    environment = _rides(
+        user, workspace, storage, "starting-sqlite", **{"world.sqlite": database}
+    )
+
+    rider = _by_label(auth_client.get(_url(environment)))["identity.rider_id"]
+
+    assert (rider["table"], rider["status"], rider["fields"]) == (
+        "users",
+        "seeded",
+        USERS[0],
+    )
+
+
+def test_a_scenario_whose_setup_changes_the_world_says_the_rows_are_as_seeded(
+    user, workspace, storage, auth_client
+):
+    plain = _rides(user, workspace, storage, "starting-no-setup")
+    with_setup = _rides(
+        user,
+        workspace,
+        storage,
+        "starting-setup",
+        scenario={"setup_code": "def setup(world):\n    world.insert('users', {})\n"},
+    )
+
+    assert auth_client.get(_url(plain)).json()["setup_note"] is None
+    assert auth_client.get(_url(with_setup)).json()["setup_note"]
+
+
+def test_the_records_are_read_only(user, workspace, storage, auth_client):
+    environment = _rides(user, workspace, storage, "starting-read-only")
+
+    sent = auth_client.put(
+        _url(environment),
+        {"path": ["identity", "rider_id"], "table": "users", "key": "rdr_priya"},
+        format="json",
+    )
+
+    assert sent.status_code == 405
+
+
+def test_an_environment_outside_the_caller_s_workspace_is_not_found(
+    user, workspace, storage, auth_client
+):
+    foreign = _rides(user, workspace, storage, "starting-foreign")
+    HostedHarnessJob.no_workspace_objects.filter(id=foreign.id).update(
+        organization=Organization.objects.create(name="Other org for starting records")
+    )
+    neighbour = _rides(user, workspace, storage, "starting-other-workspace")
+    HostedHarnessJob.no_workspace_objects.filter(id=neighbour.id).update(
+        workspace=Workspace.no_workspace_objects.create(
+            name="Other workspace for starting records",
+            organization=user.organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+    )
+
+    assert auth_client.get(_url(foreign)).status_code == 404
+    assert auth_client.get(_url(neighbour)).status_code == 404
+
+
+def test_world_files_storage_cannot_serve_read_as_unreadable_not_an_error(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    environment = _rides(user, workspace, storage, "starting-storage-down")
+
+    def storage_down(job):
+        raise HTTPError("connection reset")
+
+    monkeypatch.setattr(drafts, "edit_sides", storage_down)
 
     response = auth_client.get(_url(environment))
 
     assert response.status_code == 200, response.content
     body = response.json()
-    assert (
-        body["scenario_key"],
-        body["origin"],
-        body["editable"],
-        body["rows_unavailable"],
-    ) == (
-        KEY,
-        "seed",
-        True,
-        None,
+    assert (body["records"], body["rows_unavailable"]["code"]) == (
+        [],
+        "files_unreadable",
     )
-    by_label = {one["label"]: one for one in body["records"]}
-    # The rider and the phone are records; the pickup and the first name are facts no key holds.
-    assert sorted(by_label) == ["identity.rider_id", "phone"]
-    rider = by_label["identity.rider_id"]
-    # The owning table wins over the wallet that points at it.
-    assert (rider["table"], rider["key_field"], rider["key"]) == (
-        "users",
-        "rider_id",
-        "rdr_arjun",
-    )
-    assert rider["path"] == ["identity", "rider_id"]
-    assert rider["fields"] == USERS[0]
-    assert [one["key"] for one in rider["alternatives"]] == ["rdr_priya", "rdr_kavita"]
-    assert rider["alternatives"][0]["fields"] == USERS[1]
-    assert rider["alternatives_total"] == 2
-    # The phone names the rider's row, not the one-time code that shares its key.
-    assert (by_label["phone"]["table"], by_label["phone"]["key_field"]) == (
-        "users",
-        "phone",
-    )
-
-
-def test_a_world_sqlite_is_read_when_there_is_no_store(
-    user, workspace, storage, auth_client
-):
-    database = _sqlite(
-        {
-            "users": (
-                "rider_id text primary key, phone text, first_name text",
-                [tuple(one.values()) for one in USERS],
-            )
-        }
-    )
-    environment = _rides(
-        user, workspace, storage, "starting-sqlite", **{"world.sqlite": database}
-    )
-
-    body = auth_client.get(_url(environment)).json()
-
-    # The phone is UNIQUE by the contract, so it names the same row.
-    assert [one["label"] for one in body["records"]] == ["identity.rider_id", "phone"]
-    rider = body["records"][0]
-    assert (rider["table"], rider["key"], rider["fields"]) == (
-        "users",
-        "rdr_arjun",
-        USERS[0],
-    )
-    assert rider["alternatives_total"] == 2
-
-
-def test_a_chosen_row_is_written_to_the_suite_draft_and_the_saved_version_waits(
-    user, workspace, storage, auth_client
-):
-    environment = _rides(user, workspace, storage, "starting-chosen")
-    saved = environment.suite_version_id
-
-    response = _choose(auth_client, environment, key="rdr_priya")
-
-    assert response.status_code == 200, response.content
-    rider = next(
-        one for one in response.json()["records"] if one["label"] == "identity.rider_id"
-    )
-    assert (rider["key"], rider["fields"]) == ("rdr_priya", USERS[1])
-    environment.refresh_from_db()
-    assert environment.suite_version_id == saved
-    assert drafts.fresh_draft(environment, "suite") is not None
-    # Only the chosen fact moves; the rest of the fixture is as it was.
-    assert _draft_fixture(environment) == {
-        **FIXTURE,
-        "identity": {"rider_id": "rdr_priya", "first_name": "Arjun"},
-    }
-
-
-@pytest.mark.parametrize(
-    "body, field",
-    [
-        ({"key": "rdr_nobody"}, "key"),
-        ({"key": "rdr_priya", "table": "wallets"}, "table"),
-        ({"key": "rdr_priya", "path": ["identity", "first_name"]}, "path"),
-        ({"path": ["identity", "rider_id"], "table": "users"}, "key"),
-    ],
-)
-def test_a_choice_the_world_cannot_hold_is_refused_with_a_problem_on_its_field(
-    user, workspace, storage, auth_client, body, field
-):
-    environment = _rides(user, workspace, storage, f"starting-refused-{field}")
-    sent = (
-        auth_client.put(_url(environment), body, format="json")
-        if "key" not in body
-        else _choose(auth_client, environment, **body)
-    )
-
-    assert sent.status_code == 400, sent.content
-    answer = sent.json()
-    assert answer["error"] == "starting_record_invalid"
-    assert [one["field"] for one in answer["problems"]] == [field]
-    assert drafts.fresh_draft(environment, "suite") is None
-
-
-def test_another_organization_s_environment_is_not_found(
-    user, workspace, storage, auth_client
-):
-    environment = _rides(user, workspace, storage, "starting-foreign")
-    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-        organization=Organization.objects.create(name="Other org for starting records")
-    )
-
-    read = auth_client.get(_url(environment))
-    chosen = _choose(auth_client, environment, key="rdr_priya")
-
-    assert (read.status_code, chosen.status_code) == (404, 404)
-    assert drafts.fresh_draft(environment, "suite") is None
 
 
 def test_an_unknown_scenario_is_not_found(user, workspace, storage, auth_client):
@@ -277,17 +248,14 @@ def test_an_unknown_scenario_is_not_found(user, workspace, storage, auth_client)
     assert response.json()["error"] == "scenario_not_found"
 
 
-def test_an_older_environment_without_seeded_rows_says_so_and_takes_no_choice(
+def test_an_older_environment_without_seeded_rows_says_so(
     user, workspace, storage, auth_client
 ):
     environment = _legacy(user, workspace, "starting-legacy", storage)
 
-    read = auth_client.get(_url(environment))
-    chosen = _choose(auth_client, environment, key="rdr_priya")
+    response = auth_client.get(_url(environment))
 
-    assert read.status_code == 200, read.content
-    body = read.json()
-    assert body["records"] == [] and body["editable"] is False
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["records"] == []
     assert body["rows_unavailable"]["code"] == "no_seed_rows"
-    assert chosen.status_code == 409
-    assert chosen.json()["error"] == "starting_records_read_only"

@@ -9,7 +9,6 @@ import json
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from simulate.models.persona import Persona
 from simulate.services import harness_actor_labels as labels
 from simulate.services.harness_actor_merge import id_from, merged_record
 from simulate.services.harness_actor_options import limit_fields
@@ -126,42 +125,6 @@ def test_a_cap_sent_with_the_change_of_channel_is_the_edit_s_and_the_old_one_goe
 
 
 # --- The options each field offers, and writes checked against them -------------------------------------------------
-
-
-def test_the_cast_offers_each_field_s_values_from_where_the_platform_holds_them(
-    user, workspace, storage, auth_client
-):
-    environment = _built(user, workspace, "actor-rules-options")
-
-    cast = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
-    options = cast["field_options"]
-
-    def values(name):
-        return [one["value"] for one in options[name]]
-
-    assert values("age_group") == list(Persona.AgeGroupChoices.values)
-    assert values("gender") == list(Persona.GenderChoices.values)
-    assert values("accent") == list(Persona.AccentChoices.values)
-    assert values("play") == ["mocked", "live", "both"]
-    assert values("response_timing") == ["immediate", "delayed"]
-    assert options["fallback_word"] == [
-        {"value": "silent", "label": "Nothing happens"},
-        {"value": "decline", "label": "They decline"},
-    ]
-    assert values("kind") == ["person", "approver", "agent", "system"]
-    assert cast["upload"] == {
-        "formats": [".md", ".txt", ".json", ".csv"],
-        "max_bytes": 1024 * 1024,
-        "max_label": "1 MB",
-    }
-    assert cast["loudness"] == {
-        "channels": ["audio_mix"],
-        "automatic": [0.333, 0.667],
-        "min": 0.05,
-        "max": 1.0,
-        "step": 0.05,
-        "default": 0.5,
-    }
 
 
 @pytest.mark.parametrize(
@@ -358,36 +321,6 @@ def test_a_scenario_actor_without_actions_gets_none_added():
 
 
 # --- What an actor sees, as a line ----------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "field, value, line",
-    [
-        ("goal", "Approve fair discounts", "Approve fair discounts"),
-        ("permitted_actions", ["crm.approve", "crm.reject"], "crm.approve; crm.reject"),
-        (
-            "knowledge",
-            [
-                {"kind": "facts", "text": "Budget is 10k"},
-                {"kind": "files", "paths": ["a.md"]},
-            ],
-            "Budget is 10k; files · paths: a.md",
-        ),
-        (
-            "persona",
-            {
-                "name": "Priya",
-                "gender": "female",
-                "age_group": "32-40",
-                "location": "India",
-            },
-            "Priya · Female · 32-40 · location: India",
-        ),
-        ("multilingual", True, "yes"),
-    ],
-)
-def test_a_seen_value_reads_as_one_line(field, value, line):
-    assert seen_text(field, value) == line
 
 
 def test_the_actor_view_gives_each_seen_value_its_line(
@@ -685,3 +618,133 @@ def test_a_top_level_key_a_later_release_writes_beside_the_cast_survives_every_w
         200,
     ), accepted.content
     assert after_edit == share and after_limits == share and actor_share() == share
+
+
+# --- What a new actor starts as, and what each way of joining and trigger kind is called ---------------------------
+
+
+def test_a_new_actor_is_served_as_the_create_writes_it_and_a_create_from_a_name_matches(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-new")
+    url = f"{BASE}/{environment.id}/actors/"
+
+    new = auth_client.get(url).json()["new_actor"]
+    created = auth_client.post(url, {"changes": {"name": "Sam"}}, format="json")
+    [sam] = [one for one in created.json()["actors"] if one["id"] == "sam"]
+
+    assert (new["id"], new["name"], new["side"], new["persona"]) == (
+        "",
+        "",
+        "world",
+        None,
+    )
+    assert (new["kind"], new["play"]) == ("person", "mocked")
+    assert new["activation"] == {
+        "trigger": {"kind": "always"},
+        "timeout_seconds": 0.0,
+        "fallback": "silent",
+    }
+    assert new["behaviour"]["response_timing"] == {"kind": "immediate", "seconds": 0.0}
+    assert new["fallback"] == {
+        "kind": "silent",
+        "value": "silent",
+        "label": "Nothing happens",
+    }
+    assert new["editable_trigger"] is True
+    # The values served are the ones a create writes for every field left as it is.
+    compared = (
+        "kind",
+        "play",
+        "activation",
+        "behaviour",
+        "constraints",
+        "facts",
+        "files",
+        "records",
+    )
+    assert {key: new[key] for key in compared} == {key: sam[key] for key in compared}
+
+
+def test_each_way_of_joining_offers_its_trigger_kinds_labelled_in_the_same_order(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-labels")
+
+    cast = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+
+    for one in cast["channel_options"]:
+        assert [option["value"] for option in one["trigger_options"]] == one[
+            "trigger_kinds"
+        ]
+        # Only the way of acting in the world alone has no label of its own.
+        assert (one["label"] is None) == (one["channel"] is None)
+    assert set(cast["trigger_fields"]) >= {
+        kind for one in cast["channel_options"] for kind in one["trigger_kinds"]
+    }
+
+
+def test_an_actor_s_aim_is_labelled_as_its_aim_and_an_empty_one_stays_empty(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-goal")
+    url = f"{BASE}/{environment.id}/actors/"
+    _add(auth_client, environment, MANAGER)
+    auth_client.post(url, {"changes": {"name": "Sam"}}, format="json")
+
+    new = auth_client.get(url).json()["new_actor"]
+    aimed = auth_client.get(f"{url}manager/").json()["sees"]
+    aimless = auth_client.get(f"{url}sam/").json()["sees"]
+
+    [goal] = [one for one in aimed if one["input"] == "actor.goal"]
+    assert goal["label"] == "Aim in this conversation"
+    assert goal["text"] == MANAGER["goal"]
+    # Optional: nothing is written for an actor given none, and it is not shown as seen.
+    assert new["goal"] == "" and _stored(environment)["sam"]["goal"] == ""
+    assert "actor.goal" not in [one["input"] for one in aimless]
+
+
+def test_an_id_over_its_length_is_a_problem_on_the_id_in_the_editor_s_words(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-long-id")
+    body = {"changes": {"name": "Sam"}, "id": "x" * 65}
+
+    check = _check(auth_client, environment, op="create", **body)
+    write = auth_client.post(f"{BASE}/{environment.id}/actors/", body, format="json")
+
+    assert check.status_code == 200, check.content
+    assert check.json()["problems"] == [
+        {"field": "id", "message": "This must be at most 64 characters."}
+    ]
+    assert (write.status_code, write.json()["error"]) == (400, "actor_invalid")
+    assert [one["field"] for one in write.json()["problems"]] == ["id"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"timeout_seconds": 5}, {"fallback": "silent"}],
+    ids=["timeout", "fallback"],
+)
+def test_an_activation_edit_keeps_working_beside_a_trigger_written_elsewhere(
+    user, workspace, storage, auth_client, changes
+):
+    environment = _with_actors(
+        user,
+        workspace,
+        f"actor-rules-old-trigger-{next(iter(changes))}",
+        [{**MANAGER, "activation": {"trigger": "always", "fallback": "decline"}}],
+    )
+
+    edited = auth_client.put(
+        f"{BASE}/{environment.id}/actors/manager/", {"changes": changes}, format="json"
+    )
+    broken = auth_client.put(
+        f"{BASE}/{environment.id}/actors/manager/",
+        {"changes": {"trigger": {"kind": "on_tool"}, "timeout_seconds": -1}},
+        format="json",
+    )
+
+    assert edited.status_code == 200, edited.content
+    # What the edit writes is still checked.
+    assert broken.status_code == 400

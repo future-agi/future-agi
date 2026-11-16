@@ -460,7 +460,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         catalogue,
         receipts,
         rows,
-        targets=door_targets(contract, rules),
+        targets=door_targets(contract, rules, actor_cast),
         actor_cast=actor_cast,
     )
     personas = _personas(scenarios)
@@ -488,6 +488,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         scenario_docs,
         call_actors=call_actors,
         rules=rules,
+        cast=actor_cast,
     )
     return {
         "id": str(job.id),
@@ -525,11 +526,19 @@ def environment_actor_side(
         return [], actor_rules({})
 
 
-def edit_fault_targets(job: HostedHarnessJob) -> list[FaultTarget] | None:
-    """The fault targets a scenario-fault edit is judged against, from the files the next edit builds on.
+def edit_fault_side(
+    job: HostedHarnessJob,
+) -> tuple[list[FaultTarget] | None, list[ActorRecord]]:
+    """The fault targets a scenario-fault edit is judged against, and the cast who could approve a change, from the
+    files the next edit builds on.
 
-    Unreadable files fall back to the environment's contract, logged; None when the contract says nothing of the door."""
-    from simulate.services.harness_actor_rules import actor_rules, read_json
+    Unreadable files fall back to the environment's contract and no cast, logged; the targets are None when the
+    contract says nothing of the door."""
+    from simulate.services.harness_actor_rules import (
+        actor_rules,
+        cast_records,
+        read_json,
+    )
     from simulate.services.harness_tool_reach import door_targets
     from simulate.services.harness_versioning import drafts
     from simulate.services.hosted_harness import HostedHarnessError
@@ -537,12 +546,13 @@ def edit_fault_targets(job: HostedHarnessJob) -> list[FaultTarget] | None:
     try:
         files, _ = drafts.edit_side(job, "environment")
         contract = read_json(files, "contract.json") or contract_data(job)
-        return door_targets(contract, actor_rules(files))
+        cast = cast_records(files)
+        return door_targets(contract, actor_rules(files), cast), cast
     except (S3Error, HTTPError, HostedHarnessError):
         logger.exception(
             "fault_targets_environment_files_unreadable", job_id=str(job.id)
         )
-        return door_targets(contract_data(job), actor_rules({}))
+        return door_targets(contract_data(job), actor_rules({}), []), []
 
 
 def _names_actors(call_actors: object, scenario_docs: object) -> bool:
@@ -871,6 +881,7 @@ def _contract_section(
     *,
     call_actors: object,
     rules: ActorRules,
+    cast: list[ActorRecord],
 ) -> dict[str, Any] | None:
     if not contract:
         return None
@@ -891,7 +902,7 @@ def _contract_section(
     section["door_reach"] = door_reach(contract)
     section["production_only"] = production_only(contract)
     section["tool_status"] = tool_status(contract)
-    section["fault_targets"] = fault_targets(contract, rules)
+    section["fault_targets"] = fault_targets(contract, rules, cast)
     return section
 
 

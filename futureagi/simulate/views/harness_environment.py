@@ -152,12 +152,15 @@ def _limits_refused(errors: dict) -> Response:
 
 
 def _changes_problems(errors: dict) -> list[Problem] | None:
-    """The problems of an actor's `changes` its serializer refuses, on the editor's fields; none when the request is
-    wrong elsewhere too."""
-    changes = errors.get("changes")
-    if set(errors) != {"changes"} or not isinstance(changes, dict):
+    """The problems of an actor's `changes` and `id` their serializer refuses, on the editor's fields; none when the
+    request is wrong elsewhere too."""
+    changes = errors.get("changes", {})
+    if not set(errors) <= {"changes", "id"} or not isinstance(changes, dict):
         return None
-    return editor_problems(HarnessActorChangesSerializer(), changes)
+    return editor_problems(HarnessActorChangesSerializer(), changes) + editor_problems(
+        HarnessActorValidateSerializer(),
+        {key: value for key, value in errors.items() if key == "id"},
+    )
 
 
 def _actor_write_refused(errors: dict) -> Response:
@@ -180,9 +183,7 @@ def _actor_check_refused(errors: dict) -> Response:
         return Response(
             build_error_envelope(errors), status=status.HTTP_400_BAD_REQUEST
         )
-    return Response(
-        {"problems": problems, "conflicts": [], "suggested_id": None, "over_by": 0}
-    )
+    return Response(harness_actors.request_problems_verdict(problems))
 
 
 def _upload_refused(errors: dict) -> Response:

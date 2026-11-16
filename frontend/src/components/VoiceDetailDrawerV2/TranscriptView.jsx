@@ -581,7 +581,7 @@ const FILTERS = [
 const TranscriptView = ({
   transcript,
   customerName,
-  callActors = [],
+  participants = [],
   hasCustomer = true,
   onAnnotate,
   embedded = false,
@@ -629,12 +629,12 @@ const TranscriptView = ({
   );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
-  const filters = callActors.length
+  const filters = participants.length
     ? [...FILTERS, { id: "others", label: DEFAULT_ROLE_LABELS.others }]
     : FILTERS;
   // The view stays mounted across calls; the next call may have no others.
   const activeFilter =
-    filter === "others" && !callActors.length ? "all" : filter;
+    filter === "others" && !participants.length ? "all" : filter;
 
   const filteredTurns = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -847,7 +847,7 @@ const TranscriptView = ({
           timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
         <CallParticipants
-          actors={callActors}
+          participants={participants}
           customerName={customerName}
           withCustomer={hasCustomer}
         />
@@ -1075,7 +1075,8 @@ const TranscriptView = ({
 
 TranscriptView.propTypes = {
   customerName: PropTypes.string,
-  callActors: PropTypes.arrayOf(PropTypes.object),
+  // Who took part in the call, as the server says; none for a call with no actors.
+  participants: PropTypes.arrayOf(PropTypes.object),
   hasCustomer: PropTypes.bool,
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,

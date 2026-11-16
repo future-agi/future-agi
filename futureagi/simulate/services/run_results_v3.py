@@ -244,10 +244,8 @@ def _provider(call: CallExecution) -> str | None:
 
 
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """Return provider-recorded function calls without exposing provider internals.
-
-    A hosted call's world actors' actions follow the agent's calls; each carries its `actor_id`.
-    """
+    """Provider-recorded function calls without provider internals; a hosted call's world actors' actions follow the
+    agent's calls, each with its `actor_id`."""
     provider_data = call.provider_call_data
     calls: list[dict[str, Any]] = []
     for payload in (provider_data if isinstance(provider_data, dict) else {}).values():

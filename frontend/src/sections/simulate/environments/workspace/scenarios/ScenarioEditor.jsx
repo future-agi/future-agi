@@ -22,7 +22,11 @@ import {
 } from "./scenarioEditor.constants";
 import TestConditionsEditor from "./TestConditionsEditor";
 import StartingRecords from "./StartingRecords";
-import { TEST_CONDITIONS_COPY, fileFault } from "./testConditions.constants";
+import {
+  TEST_CONDITIONS_COPY,
+  fileFault,
+  storedFault,
+} from "./testConditions.constants";
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
@@ -43,6 +47,8 @@ export default function ScenarioEditor({
   env,
 }) {
   const [saveError, setSaveError] = useState("");
+  // The server's problems with the test conditions, each naming the fault (`index`) and its field.
+  const [faultProblems, setFaultProblems] = useState([]);
   const [saving, setSaving] = useState(false);
   const editableFields = useMemo(
     () => scenarioEditing?.editable_fields ?? [],
@@ -89,7 +95,7 @@ export default function ScenarioEditor({
       maxTurns: row.maxTurns ?? "",
       backgroundNoise: noiseKey(row.backgroundNoise),
       keywords: asList(row.keywords),
-      faults: Array.isArray(row.faults) ? row.faults : [],
+      faults: Array.isArray(row.faults) ? row.faults.map(storedFault) : [],
       persona: {
         name: p.name ?? "",
         ageGroup: p.age_group ?? "",
@@ -108,6 +114,7 @@ export default function ScenarioEditor({
   useEffect(() => {
     if (base) setDraft(base);
     setSaveError("");
+    setFaultProblems([]);
   }, [base]);
 
   // The amend ops for the fields that actually changed AND are writable, plus
@@ -197,13 +204,16 @@ export default function ScenarioEditor({
   const save = async () => {
     if (!changes.length || saving) return;
     setSaveError("");
+    setFaultProblems([]);
     setSaving(true);
     // A refusal or failed save keeps the editor open with the edits in it.
     const answer = await onSave({ changes, rework });
     setSaving(false);
     const refused = answer.refused.find((one) => one.field === "faults");
     if (refused) {
-      setSaveError(refused.why);
+      // Placed under the fault and field each names; the receipt's one sentence only when it names none.
+      if (refused.problems.length) setFaultProblems(refused.problems);
+      else setSaveError(refused.why);
       return;
     }
     if (answer.failed) return;
@@ -372,8 +382,11 @@ export default function ScenarioEditor({
             env={env}
             disabled={!canEdit("faults")}
             error={saveError}
+            problems={faultProblems}
           />
-          {env?.id && <StartingRecords envId={env.id} scenarioKey={row.scenarioKey} />}
+          {env?.id && (
+            <StartingRecords envId={env.id} scenarioKey={row.scenarioKey} />
+          )}
 
           {(canEdit("max_turns") || canEdit("background_noise")) && (
             <>

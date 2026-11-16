@@ -77,6 +77,30 @@ export const ACTIONS = [
   },
 ];
 
+// The cast's words for each trigger kind.
+const KIND_LABELS = {
+  always: "Present from the start",
+  on_tool: "When the agent calls an action",
+  on_keyword: "When the agent says a word",
+  mid_journey: "From an agent turn",
+  contacted: "When the agent contacts them",
+  after_seconds: "At a set time",
+  conditional: "Once a record exists",
+};
+const optionsOf = (kinds) =>
+  kinds.map((value) => ({ value, label: KIND_LABELS[value] }));
+
+// The trigger keys each kind takes.
+export const TRIGGER_FIELDS = {
+  always: [],
+  on_tool: ["tool"],
+  on_keyword: ["words"],
+  mid_journey: ["turn"],
+  contacted: [],
+  after_seconds: ["seconds"],
+  conditional: ["collection", "where"],
+};
+
 const WORLD_KINDS = [
   "always",
   "on_tool",
@@ -95,25 +119,31 @@ const SPEAKING_KINDS = [
 export const CHANNEL_OPTIONS = [
   {
     channel: null,
+    label: null,
     description: "They act only through the world's actions.",
     loudness: false,
     trigger_kinds: WORLD_KINDS,
+    trigger_options: optionsOf(WORLD_KINDS),
     required_fields: [],
     cap_field: "max_turns",
   },
   {
     channel: "audio_mix",
+    label: "Heard nearby",
     description: "a voice near the person",
     loudness: true,
     trigger_kinds: SPEAKING_KINDS,
+    trigger_options: optionsOf(SPEAKING_KINDS),
     required_fields: ["role"],
     cap_field: "max_lines",
   },
   {
     channel: "audio_handoff",
+    label: "Takes the phone",
     description: "takes the phone",
     loudness: false,
     trigger_kinds: SPEAKING_KINDS,
+    trigger_options: optionsOf(SPEAKING_KINDS),
     required_fields: ["role"],
     cap_field: "max_lines",
   },
@@ -188,6 +218,9 @@ export const cast = (actors, extra = {}) => ({
   actor_models: [],
   has_caller: actors.some((one) => one.side === "caller"),
   side_defaults: { caller: { channel: "audio_mix" }, world: { channel: null } },
+  // What a new actor starts as, before its side and way of joining.
+  new_actor: typedActor({ id: "", name: "", side: null, when_label: "" }),
+  trigger_fields: TRIGGER_FIELDS,
   record_max_chars: 65536,
   limit_fields: LIMIT_FIELDS,
   limits: {},

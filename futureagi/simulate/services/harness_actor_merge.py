@@ -81,18 +81,18 @@ VOICE_FIELDS = ("gender", "age_group", "accent")
 ACTIVATION_FIELDS = ("trigger", "timeout_seconds", "fallback", "fallback_arguments")
 
 
-# The record fields each patch field is written into.
+# The record path each patch field is written into.
 _RECORD_FIELD = {
-    **dict.fromkeys(VOICE_FIELDS, "persona"),
-    **dict.fromkeys(CONSTRAINT_FIELDS, "constraints"),
+    **{name: f"persona.{name}" for name in VOICE_FIELDS},
+    **{name: f"constraints.{name}" for name in CONSTRAINT_FIELDS},
     **dict.fromkeys(("facts", "files", "records"), "knowledge"),
-    **dict.fromkeys(("style", "response_timing"), "behaviour"),
-    **dict.fromkeys(ACTIVATION_FIELDS, "activation"),
+    **{name: f"behaviour.{name}" for name in ("style", "response_timing")},
+    **{name: f"activation.{name}" for name in ACTIVATION_FIELDS},
 }
 
 
 def touched_fields(changes: ActorChanges) -> set[str]:
-    """The record fields a patch writes: what a check of the edit is about."""
+    """The record paths a patch writes (`activation.timeout_seconds`, `name`): what a check of the edit is about."""
     return {_RECORD_FIELD.get(name, name) for name in changes}
 
 

@@ -3,6 +3,10 @@
 from typing import Literal, get_args
 
 FaultMode = Literal[
-    "timeout_before_commit", "timeout_after_commit", "unavailable", "error"
+    "timeout_before_commit",
+    "timeout_after_commit",
+    "unavailable",
+    "error",
+    "approval_required",
 ]
 FAULT_MODES: tuple[FaultMode, ...] = get_args(FaultMode)

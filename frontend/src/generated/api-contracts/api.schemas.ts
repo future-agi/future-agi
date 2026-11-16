@@ -19487,6 +19487,11 @@ export interface HarnessEnvironmentToolStatusApi {
   tool: string;
   /** simulated: the world's door stands in front of it; in_process: it runs inside the agent; unsupported: it reaches a system the test world has no copy of; unknown: the build read nothing about it. */
   status: HarnessEnvironmentToolStatusApiStatus;
+  /**
+   * What a test does with it, in words.
+   * @minLength 1
+   */
+  status_label: string;
   /** Restored to the seeded records before each trial; null when not known. */
   reset_between_trials: boolean;
   /**
@@ -19519,6 +19524,29 @@ export const HarnessFaultModeApiMode = {
   timeout_after_commit: "timeout_after_commit",
   unavailable: "unavailable",
   error: "error",
+  approval_required: "approval_required",
+} as const;
+
+/**
+ * On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.
+ */
+export interface HarnessApprovalOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export type HarnessFaultModeApiFieldsItem =
+  (typeof HarnessFaultModeApiFieldsItem)[keyof typeof HarnessFaultModeApiFieldsItem];
+
+export const HarnessFaultModeApiFieldsItem = {
+  on_call: "on_call",
+  delay_seconds: "delay_seconds",
+  status: "status",
+  message: "message",
+  approval: "approval",
+  approved_when: "approved_when",
 } as const;
 
 /**
@@ -19528,6 +19556,15 @@ export interface HarnessFaultModeApi {
   mode: HarnessFaultModeApiMode;
   /** @minLength 1 */
   label: string;
+  /**
+   * The line shown under the choice.
+   * @minLength 1
+   */
+  hint: string;
+  /** On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it. */
+  approval_options?: HarnessApprovalOptionApi[];
+  /** The fault values this mode reads; the editor asks for these and no others. */
+  fields: HarnessFaultModeApiFieldsItem[];
 }
 
 export interface HarnessFaultDefaultsApi {
@@ -19536,14 +19573,24 @@ export interface HarnessFaultDefaultsApi {
   status: number;
 }
 
+export interface HarnessFaultFloorApi {
+  min: number;
+}
+
 export interface HarnessFaultRangeApi {
   min: number;
   max: number;
 }
 
+export interface HarnessFaultLengthApi {
+  max_length: number;
+}
+
 export interface HarnessFaultBoundsApi {
+  on_call: HarnessFaultFloorApi;
   delay_seconds: HarnessFaultRangeApi;
   status: HarnessFaultRangeApi;
+  message: HarnessFaultLengthApi;
 }
 
 export interface HarnessEnvironmentFaultTargetApi {
@@ -20039,6 +20086,8 @@ export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 
 export type HarnessActorListApiChannels = { [key: string]: string };
 
+export type HarnessActorListApiTriggerFields = { [key: string]: string[] };
+
 export type HarnessActorApiSide =
   (typeof HarnessActorApiSide)[keyof typeof HarnessActorApiSide];
 
@@ -20284,6 +20333,13 @@ export const HarnessActorChannelOptionApiCapField = {
   max_lines: "max_lines",
 } as const;
 
+export interface HarnessActorFieldOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
 export interface HarnessActorChannelOptionApi {
   /** @minLength 1 */
   channel: string;
@@ -20293,6 +20349,9 @@ export interface HarnessActorChannelOptionApi {
   trigger_kinds: string[];
   required_fields: string[];
   cap_field: HarnessActorChannelOptionApiCapField;
+  /** @minLength 1 */
+  label: string;
+  trigger_options: HarnessActorFieldOptionApi[];
 }
 
 export type HarnessActorLimitFieldApiKind =
@@ -20321,13 +20380,6 @@ export interface HarnessActorSideDefaultApi {
 export interface HarnessActorSideDefaultsApi {
   caller: HarnessActorSideDefaultApi;
   world: HarnessActorSideDefaultApi;
-}
-
-export interface HarnessActorFieldOptionApi {
-  /** @minLength 1 */
-  value: string;
-  /** @minLength 1 */
-  label: string;
 }
 
 export interface HarnessActorFieldOptionsApi {
@@ -20368,6 +20420,8 @@ export interface HarnessActorListApi {
   side_defaults: HarnessActorSideDefaultsApi;
   field_options: HarnessActorFieldOptionsApi;
   upload: HarnessActorUploadApi;
+  trigger_fields: HarnessActorListApiTriggerFields;
+  new_actor: HarnessActorApi;
 }
 
 export interface HarnessActorUnresolvedAcceptApi {
@@ -20556,6 +20610,8 @@ export interface HarnessActorSeenApi {
   value: HarnessActorSeenApiValue;
   source: HarnessActorSeenApiSource;
   text: string;
+  /** @minLength 1 */
+  label: string;
 }
 
 export interface HarnessActorOthersPrivateApi {
@@ -20657,6 +20713,8 @@ export interface HarnessCompareSummaryApi {
   current_pass_rate: number | null;
   against_pass_rate: number | null;
   margin: number;
+  /** Trials of either run left out because they did not start from the seeded records. */
+  excluded_not_comparable: number;
 }
 
 export interface HarnessRunPinnedVersionsApi {
@@ -21577,6 +21635,10 @@ export type HarnessEnvironmentFileUploadedApiChannels = {
   [key: string]: string;
 };
 
+export type HarnessEnvironmentFileUploadedApiTriggerFields = {
+  [key: string]: string[];
+};
+
 export interface HarnessEnvironmentFileUploadedApi {
   actors: HarnessActorApi[];
   source: HarnessEnvironmentFileUploadedApiSource;
@@ -21598,6 +21660,8 @@ export interface HarnessEnvironmentFileUploadedApi {
   side_defaults: HarnessActorSideDefaultsApi;
   field_options: HarnessActorFieldOptionsApi;
   upload: HarnessActorUploadApi;
+  trigger_fields: HarnessEnvironmentFileUploadedApiTriggerFields;
+  new_actor: HarnessActorApi;
   /**
    * Where the file was stored in the environment, as the knowledge sources list it.
    * @minLength 1
@@ -21880,29 +21944,19 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
 }
 
 /**
- * The row's key, a string or an integer.
+ * seeded: the world's seed holds the row. missing: it does not, and note says so.
  */
-export type HarnessSeededRowApiKey = { [key: string]: unknown };
+export type HarnessStartingRecordApiStatus =
+  (typeof HarnessStartingRecordApiStatus)[keyof typeof HarnessStartingRecordApiStatus];
+
+export const HarnessStartingRecordApiStatus = {
+  seeded: "seeded",
+  missing: "missing",
+} as const;
 
 /**
  * The row as the world is seeded with it.
  */
-export type HarnessSeededRowApiFields = {
-  [key: string]: { [key: string]: unknown };
-};
-
-/**
- * Other rows of the table the scenario could start from instead, the first few.
- */
-export interface HarnessSeededRowApi {
-  /** The row's key, a string or an integer. */
-  key: HarnessSeededRowApiKey;
-  /** The row as the world is seeded with it. */
-  fields: HarnessSeededRowApiFields;
-}
-
-export type HarnessStartingRecordApiKey = { [key: string]: unknown };
-
 export type HarnessStartingRecordApiFields = {
   [key: string]: { [key: string]: unknown };
 };
@@ -21910,18 +21964,34 @@ export type HarnessStartingRecordApiFields = {
 export interface HarnessStartingRecordApi {
   /** Where the fact sits in the scenario's fixture, one segment per level (a list position as digits). */
   path: string[];
-  /** @minLength 1 */
+  /**
+   * The path as one name.
+   * @minLength 1
+   */
   label: string;
   /** @minLength 1 */
   table: string;
   /** @minLength 1 */
   key_field: string;
-  key: HarnessStartingRecordApiKey;
+  /**
+   * The fact's value, as text.
+   * @minLength 1
+   */
+  key: string;
+  /** seeded: the world's seed holds the row. missing: it does not, and note says so. */
+  status: HarnessStartingRecordApiStatus;
+  /**
+   * The row in one line: its key, then up to 2 of its other values; null when missing.
+   * @minLength 1
+   */
+  summary: string;
+  /** The row as the world is seeded with it. */
   fields: HarnessStartingRecordApiFields;
-  /** Other rows of the table the scenario could start from instead, the first few. */
-  alternatives: HarnessSeededRowApi[];
-  /** @minimum 0 */
-  alternatives_total: number;
+  /**
+   * Why the record is missing, in words to show.
+   * @minLength 1
+   */
+  note: string;
 }
 
 export type HarnessRowsUnavailableApiCode =
@@ -21949,30 +22019,13 @@ export interface HarnessStartingRecordsApi {
    * @minLength 1
    */
   origin: string;
-  /** Whether a choice can be written to this environment's draft. */
-  editable: boolean;
   records: HarnessStartingRecordApi[];
+  /**
+   * Set when the scenario's setup changes the world before each run, so the rows are as seeded.
+   * @minLength 1
+   */
+  setup_note: string;
   rows_unavailable: HarnessRowsUnavailableApi;
-}
-
-export interface HarnessStartingRecordChoiceApi {
-  /**
-   * The `path` of one of the scenario's starting records.
-   * @minItems 1
-   * @maxItems 32
-   */
-  path: string[];
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  table: string;
-  /**
-   * The key of the seeded row to start from instead.
-   * @minLength 1
-   * @maxLength 1024
-   */
-  key: string;
 }
 
 export interface HarnessVerifyCreateApi {
@@ -22897,6 +22950,13 @@ export interface HarnessScenarioCoverageApi {
   overlay_intensity?: string;
 }
 
+/**
+ * For approval_required: the arguments that action must carry to approve; empty otherwise.
+ */
+export type HarnessScenarioFaultApiApprovedWhen = {
+  [key: string]: { [key: string]: unknown };
+};
+
 export interface HarnessScenarioFaultApi {
   action: string;
   /**
@@ -22914,6 +22974,18 @@ export interface HarnessScenarioFaultApi {
   status: number;
   /** For an error. */
   message: string;
+  /**
+   * For approval_required: the world action that records the decision.
+   * @minLength 1
+   */
+  approval: string;
+  /** For approval_required: the arguments that action must carry to approve; empty otherwise. */
+  approved_when: HarnessScenarioFaultApiApprovedWhen;
+  /**
+   * The test condition as one line: its tool (else its action), what happens, on which call, and the value its mode reads.
+   * @minLength 1
+   */
+  line: string;
 }
 
 /**
@@ -23114,6 +23186,21 @@ export const HarnessScenarioAmendReceiptApiCode = {
   not_saved: "not_saved",
 } as const;
 
+/**
+ * For fault_invalid: every test condition the world cannot apply, each by its place in the list; empty on any other receipt.
+ */
+export interface HarnessFaultProblemApi {
+  /** Its place in the scenario's list; null when the list itself is unreadable. */
+  index: number;
+  /**
+   * The test-condition field it is shown under; null when it is no one field's.
+   * @minLength 1
+   */
+  field: string;
+  /** @minLength 1 */
+  message: string;
+}
+
 export interface HarnessScenarioAmendReceiptApi {
   scenario: string;
   outcome: HarnessScenarioAmendReceiptApiOutcome;
@@ -23126,6 +23213,8 @@ export interface HarnessScenarioAmendReceiptApi {
    * @minLength 1
    */
   field: string;
+  /** For fault_invalid: every test condition the world cannot apply, each by its place in the list; empty on any other receipt. */
+  problems: HarnessFaultProblemApi[];
 }
 
 export interface HarnessScenarioAmendDraftApi {
@@ -27347,6 +27436,24 @@ export interface CallCallActorApi {
 }
 
 /**
+ * Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join.
+ */
+export interface CallParticipantApi {
+  /**
+   * The actor's id; null on a turn stored with a name only.
+   * @minLength 1
+   */
+  id: string;
+  name: string;
+  role: string;
+  /**
+   * How they were heard; null for an actor who only acted in the world.
+   * @minLength 1
+   */
+  channel: string;
+}
+
+/**
  * Calls to hosts outside the test world, refused before they left: counted in refused, never a change.
  */
 export interface BlockedCallApi {
@@ -27481,6 +27588,11 @@ export interface TrialStartApi {
   tables?: string[];
   /** What the start was compared with; absent on trials from before it was said. */
   against?: TrialStartApiAgainst;
+  /**
+   * What to say about the start; null when there is nothing to say (a start that differs has its own notice).
+   * @minLength 1
+   */
+  line?: string;
 }
 
 export type ActorDecisionApiPlay =
@@ -27494,6 +27606,49 @@ export const ActorDecisionApiPlay = {
   timeout: "timeout",
   problem: "problem",
   not_triggered: "not_triggered",
+} as const;
+
+/**
+ * For `problem`: the scenario's problem, never the agent's.
+ */
+export type ActorDecisionApiProblem =
+  (typeof ActorDecisionApiProblem)[keyof typeof ActorDecisionApiProblem];
+
+export const ActorDecisionApiProblem = {
+  no_world_door: "no_world_door",
+  not_listed: "not_listed",
+} as const;
+
+/**
+ * For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
+ */
+export type ActorDecisionApiOutcome =
+  (typeof ActorDecisionApiOutcome)[keyof typeof ActorDecisionApiOutcome];
+
+export const ActorDecisionApiOutcome = {
+  timed_out: "timed_out",
+  declined: "declined",
+  fallback_action: "fallback_action",
+  fallback_not_committed: "fallback_not_committed",
+  answered_by: "answered_by",
+  unresolved_at_end: "unresolved_at_end",
+  committed: "committed",
+  refused: "refused",
+  faulted: "faulted",
+  duplicate: "duplicate",
+} as const;
+
+/**
+ * For a fallback action: what the world made of it (committed, refused, faulted, duplicate).
+ */
+export type ActorDecisionApiActionOutcome =
+  (typeof ActorDecisionApiActionOutcome)[keyof typeof ActorDecisionApiActionOutcome];
+
+export const ActorDecisionApiActionOutcome = {
+  committed: "committed",
+  refused: "refused",
+  faulted: "faulted",
+  duplicate: "duplicate",
 } as const;
 
 /**
@@ -27529,29 +27684,25 @@ export interface ActorDecisionApi {
    * @minLength 1
    */
   channel?: string;
-  /**
-   * For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.
-   * @minLength 1
-   */
-  problem?: string;
+  /** For `problem`: the scenario's problem, never the agent's. */
+  problem?: ActorDecisionApiProblem;
   why?: string;
   status?: number;
   timeout_seconds?: number;
   fallback: HarnessActorFallbackApi;
-  /**
-   * For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
-   * @minLength 1
-   */
-  outcome?: string;
-  /**
-   * For a fallback action: what the world made of it (committed, refused, faulted, duplicate).
-   * @minLength 1
-   */
-  action_outcome?: string;
+  /** For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate). */
+  outcome?: ActorDecisionApiOutcome;
+  /** For a fallback action: what the world made of it (committed, refused, faulted, duplicate). */
+  action_outcome?: ActorDecisionApiActionOutcome;
   /** For an approval: what the actor decided; null when it decided none or the trial predates verdicts. */
   verdict: ActorDecisionApiVerdict;
   /** The agent committed a write after this actor refused it; false on a trial that predates verdicts. */
   committed_after_refusal: boolean;
+  /**
+   * The row as one sentence: who, how they played, what it came to, the verdict and why.
+   * @minLength 1
+   */
+  line: string;
 }
 
 export interface ApprovalRequestApi {
@@ -27661,7 +27812,7 @@ export interface ActorUsageTotalApi {
  */
 export interface TrialNoticeApi {
   /**
-   * fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world
+   * fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)
    * @minLength 1
    */
   code: string;
@@ -27858,9 +28009,15 @@ export interface CallExecutionV3DetailResponseApi {
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
   call_actors: CallCallActorApi[];
+  /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */
+  participants: CallParticipantApi[];
   /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
   has_customer: boolean;
   trial_state: TrialStateApi;
+  /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
+  comparable: boolean;
+  /** @minLength 1 */
+  not_comparable_reason: string;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
@@ -28249,6 +28406,8 @@ export interface ReliabilityApi {
   pass_hat_k_scenarios: number;
   pass_hat_k_passed: number;
   pass_hat_k_excluded: number;
+  /** Trials left out because they did not start from the seeded records. */
+  excluded_not_comparable: number;
   trials_passed: number;
   trials_evaluated: number;
   pass_rate_interval: ReliabilityIntervalApi;
@@ -28345,6 +28504,7 @@ export interface TrendApi {
   cost_cents: TotalMetricStatsApi;
   execution_id: string;
   started_at: string;
+  excluded_not_comparable: number;
 }
 
 export interface RunAnalyticsV3ResponseApi {

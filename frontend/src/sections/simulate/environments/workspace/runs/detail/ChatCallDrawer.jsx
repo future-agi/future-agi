@@ -301,7 +301,7 @@ export default function ChatCallDrawer({
               <ChatTranscriptPane
                 turns={turns}
                 customerName={callDetail?.persona}
-                callActors={callDetail?.callActors || []}
+                participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
               />
             )}

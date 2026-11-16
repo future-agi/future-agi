@@ -190,7 +190,7 @@ const VoiceLeftPanel = ({
                     <TranscriptView
                       transcript={filteredTranscript}
                       customerName={data?.persona}
-                      callActors={data?.call_actors}
+                      participants={data?.participants}
                       hasCustomer={data?.has_customer}
                       embedded={embedded}
                     />

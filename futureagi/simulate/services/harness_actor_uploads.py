@@ -7,6 +7,7 @@ import re
 from typing import TYPE_CHECKING
 
 from simulate.models import HostedHarnessJob
+from simulate.services.harness_actor_drafts import draft_read, written_cast
 from simulate.services.harness_actor_fields import knowledge_of
 from simulate.services.harness_actor_options import size_label
 from simulate.services.harness_actor_reads import Cast
@@ -18,7 +19,6 @@ from simulate.services.harness_actor_rules import (
     cast_records,
     readable_file,
 )
-from simulate.services.harness_actors import draft_read, written_cast
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ def _taken(base: str, path: str, actors: list[ActorRecord]) -> HostedHarnessErro
             if readers
             else ""
         )
-        + "; rename the file to upload it",
+        + "; pick it from the files they can read, or rename this one to upload it as well",
         status_code=409,
         details={"readers": readers},
     )

@@ -626,15 +626,9 @@ def record_draft(
     nudge: Any = None,
     checked: set[str] | None = None,
 ) -> DraftWrite | None:
-    """Write an edited authoring tree into the environment's drafts.
-
-    Each piece whose content differs from its default becomes, or updates, that
-    piece's one draft; one equal to its default discards the draft. ``expected`` is the
-    drafts the writer started from: another edit since refuses with ``draft_changed``.
-    ``pieces`` limits the writes and the check (both by default); ``checked`` widens the check
-    to a piece the write was validated against but does not write; ``nudge`` tags a draft
-    this call creates. ``None`` once drafts no longer apply: the caller saves as before.
-    """
+    """Write an edited tree into each differing piece's draft (an equal piece discards it); ``expected`` refuses
+    ``draft_changed`` after another edit, ``pieces`` limits writes and check, ``checked`` widens the check, ``nudge``
+    tags a new draft. None once drafts no longer apply: the caller saves as before."""
     from simulate.services.hosted_harness_conversation import (
         require_checkpoint_scenarios,
     )
@@ -644,7 +638,7 @@ def record_draft(
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
     from simulate.selectors.stage_outputs import stage_output
-    from simulate.services.harness_actor_rules import actor_rules
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
     from simulate.services.scenario_faults import require_valid_faults
 
@@ -653,9 +647,11 @@ def record_draft(
         environment, "suite_version", None
     )
     before = (base.documents or {}).get("scenarios") if base is not None else None
+    cast = cast_records(split.environment)
     require_valid_faults(
         prepared.scenarios,
-        targets=door_targets(prepared.contract, actor_rules(split.environment)),
+        targets=door_targets(prepared.contract, actor_rules(split.environment), cast),
+        cast=cast,
         before=before
         if isinstance(before, list)
         else stage_output(environment, "scenarios"),

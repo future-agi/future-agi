@@ -33,6 +33,7 @@ from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
 if TYPE_CHECKING:
+    from simulate.services.harness_actor_rules import ActorRecord
     from simulate.services.scenario_faults import FaultTarget
 
 logger = logging.getLogger(__name__)
@@ -2178,7 +2179,7 @@ class HostedHarnessProvider:
             else ([], actor_rules({}))
         )
         contract = contract_data(job)
-        targets = fault_targets(contract, rules)
+        targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
         def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
@@ -2244,7 +2245,17 @@ class HostedHarnessProvider:
         )
 
     def amend_scenarios(self, request, pk) -> Response:
-        """Edit an environment's authored suite, one receipt per requested change."""
+        """Edit an environment's authored suite, one receipt per requested change. Every receipt lists the test
+        conditions it refused (`problems`), empty unless it refused faults."""
+        response = self._amend_scenarios(request, pk)
+        receipts = (
+            response.data.get("receipts") if isinstance(response.data, dict) else None
+        )
+        for receipt in receipts or []:
+            receipt.setdefault("problems", [])
+        return response
+
+    def _amend_scenarios(self, request, pk) -> Response:
         from simulate.services.hosted_harness_gateway import (
             SCENARIO_EDIT_ON_RUN,
             AuthoringArchiveKept,
@@ -2366,6 +2377,7 @@ class HostedHarnessProvider:
                 spread.extend({**change, "scenario": name} for name in meant)
             # Read once, and only when a change sets a scenario's faults.
             fault_targets: list[FaultTarget] | None = None
+            cast: list[ActorRecord] = []
             targets_read = False
             for change in spread:
                 name = str(change.get("scenario") or "")
@@ -2436,21 +2448,39 @@ class HostedHarnessProvider:
                         continue
                     if field == "faults":
                         from simulate.services.harness_environment import (
-                            edit_fault_targets,
+                            edit_fault_side,
                         )
-                        from simulate.services.scenario_faults import faults_problem
+                        from simulate.services.scenario_faults import (
+                            faults_as_stored,
+                            faults_problems,
+                            scenario_approvers,
+                        )
 
+                        change = {
+                            **change,
+                            "value": faults_as_stored(change.get("value")),
+                        }
                         if not targets_read:
-                            fault_targets, targets_read = edit_fault_targets(job), True
-                        problem = faults_problem(change.get("value"), fault_targets)
-                        if problem:
+                            (fault_targets, cast), targets_read = (
+                                edit_fault_side(job),
+                                True,
+                            )
+                        problems = faults_problems(
+                            change.get("value"),
+                            fault_targets,
+                            approvers=scenario_approvers(target, cast),
+                        )
+                        if problems:
+                            said = "; ".join(one["message"] for one in problems)
                             receipts.append(
                                 {
                                     "scenario": name,
                                     "outcome": "refused",
-                                    "why": f"the test world cannot apply this test condition: {problem}",
+                                    "why": f"the test world cannot apply this test condition: {said}",
                                     "code": "fault_invalid",
                                     "field": "faults",
+                                    # Each under its own fault: its place in the list, its field and why.
+                                    "problems": problems,
                                 }
                             )
                             continue

@@ -24,38 +24,6 @@ export const TRIAL_CHANGES_COPY = {
     `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count}`,
   noChange: "No change: it committed nothing",
   decisionsHeading: "What the actors chose",
-  plays: {
-    mocked: "As scheduled",
-    live: "Decided",
-    history: "Before the run",
-    waiting: "Waiting for a response",
-    timeout: "Timed out",
-    problem: "Could not take part",
-    not_triggered: "Never came in",
-  },
-  waited: (one) =>
-    `up to ${one.timeout_seconds} s${one.fallback ? `, then: ${one.fallback.label}` : ""}`,
-  outcomes: {
-    timed_out: "No answer: nothing happened",
-    declined: "No answer: the request was declined",
-    fallback_action: "No answer: their fallback action was taken for them",
-    fallback_not_committed: (outcome) =>
-      `No answer: their fallback action was tried for them and ${outcome}`,
-    unresolved_at_end: "Still waited on when the trial ended",
-    answered_by: (fallback) => `No answer: ${fallback.label}`,
-  },
-  actionOutcomes: {
-    committed: "committed",
-    refused: "refused by the world",
-    faulted: "faulted",
-    duplicate: "already done, not repeated",
-  },
-  // Scenario problems, never the agent's.
-  problems: {
-    no_world_door:
-      "Could not act: this agent's tools run where no actor can act",
-    not_listed: "Not an actor in this environment",
-  },
   preRunHeading: "Before the run",
   preRunAbout:
     "What the actors wrote in the world before the agent started: the trial's starting point, never graded.",
@@ -77,20 +45,12 @@ export const TRIAL_CHANGES_COPY = {
   usageBy: (who, model, line) =>
     `${who}${model ? ` on ${model}` : ""}: ${line}`,
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
-  nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",
   inProcess:
     "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
   unreadable:
     "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
-  start: {
-    seeded: "Started from the seeded records, as every trial does",
-    seededAgainstFirst:
-      "Started from the same records as the first trial: compared with that trial's start, not a sealed seed",
-    unknown:
-      "Whether this trial started from the seeded records could not be checked.",
-  },
   endStateLead: "The world as this trial ended is kept:",
   endState: "download its records and action log",
   recordsHeading: "Records before and after",

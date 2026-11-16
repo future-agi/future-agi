@@ -471,6 +471,9 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
         help_text="simulated: the world's door stands in front of it; in_process: it runs inside the agent; "
         "unsupported: it reaches a system the test world has no copy of; unknown: the build read nothing about it.",
     )
+    status_label = serializers.CharField(
+        help_text="What a test does with it, in words."
+    )
     reset_between_trials = serializers.BooleanField(
         allow_null=True,
         help_text="Restored to the seeded records before each trial; null when not known.",
@@ -505,9 +508,39 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
     tables = HarnessToolTablesSerializer()
 
 
+class HarnessApprovalOptionSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+
+
 class HarnessFaultModeSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=FAULT_MODES)
     label = serializers.CharField()
+    hint = serializers.CharField(help_text="The line shown under the choice.")
+    approval_options = HarnessApprovalOptionSerializer(
+        many=True,
+        required=False,
+        help_text="On approval_required only: the world actions the cast's actors hold that the approval could be "
+        "recorded by, each with who holds it.",
+    )
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        # `fields` is the name of the Serializer attribute holding them, so this field is added here.
+        fields = super().get_fields()
+        fields["fields"] = serializers.ListField(
+            child=serializers.ChoiceField(
+                choices=(
+                    "on_call",
+                    "delay_seconds",
+                    "status",
+                    "message",
+                    "approval",
+                    "approved_when",
+                )
+            ),
+            help_text="The fault values this mode reads; the editor asks for these and no others.",
+        )
+        return fields
 
 
 class HarnessFaultDefaultsSerializer(serializers.Serializer):
@@ -523,9 +556,19 @@ class HarnessFaultRangeSerializer(serializers.Serializer):
     max = serializers.FloatField()
 
 
+class HarnessFaultFloorSerializer(serializers.Serializer):
+    min = serializers.IntegerField()
+
+
+class HarnessFaultLengthSerializer(serializers.Serializer):
+    max_length = serializers.IntegerField()
+
+
 class HarnessFaultBoundsSerializer(serializers.Serializer):
+    on_call = HarnessFaultFloorSerializer()
     delay_seconds = HarnessFaultRangeSerializer()
     status = HarnessFaultRangeSerializer()
+    message = HarnessFaultLengthSerializer()
 
 
 class HarnessEnvironmentFaultTargetSerializer(serializers.Serializer):
@@ -842,6 +885,18 @@ class HarnessScenarioFaultSerializer(serializers.Serializer):
     delay_seconds = serializers.FloatField(allow_null=True, help_text="For a timeout.")
     status = serializers.IntegerField(allow_null=True, help_text="For an error.")
     message = serializers.CharField(allow_blank=True, help_text="For an error.")
+    approval = serializers.CharField(
+        allow_null=True,
+        help_text="For approval_required: the world action that records the decision.",
+    )
+    approved_when = serializers.DictField(
+        child=serializers.JSONField(),
+        help_text="For approval_required: the arguments that action must carry to approve; empty otherwise.",
+    )
+    line = serializers.CharField(
+        help_text="The test condition as one line: its tool (else its action), what happens, on which call, and the "
+        "value its mode reads."
+    )
 
 
 class HarnessScenarioPersonaSerializer(serializers.Serializer):
@@ -1357,6 +1412,9 @@ class HarnessCompareSummarySerializer(serializers.Serializer):
     current_pass_rate = serializers.FloatField(allow_null=True)
     against_pass_rate = serializers.FloatField(allow_null=True)
     margin = serializers.FloatField()
+    excluded_not_comparable = serializers.IntegerField(
+        help_text="Trials of either run left out because they did not start from the seeded records."
+    )
 
 
 class HarnessCompareVersionsSerializer(serializers.Serializer):

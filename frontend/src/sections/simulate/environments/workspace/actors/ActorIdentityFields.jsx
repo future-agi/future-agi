@@ -5,8 +5,6 @@ import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
-const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
-const channelLabel = (channel) => CHANNEL_LABELS[channel] || channel;
 
 export default function ActorIdentityFields({
   form,
@@ -67,11 +65,12 @@ export default function ActorIdentityFields({
         options={channelOptions.map((one) =>
           one.channel === null
             ? { value: "", label: F.noChannel }
-            : { value: one.channel, label: channelLabel(one.channel) },
+            : { value: one.channel, label: one.label },
         )}
         disabled={Boolean(channelLock)}
         helperText={channelLock ? channelLock.reason : chosen?.description}
-        startLabel={startChannel ? channelLabel(startChannel) : F.noChannel}
+        // A stored way of joining the cast no longer offers reads by its own name.
+        startLabel={startChannel || F.noChannel}
       />
       {form.value("channel") && (
         <ActorVoiceFields

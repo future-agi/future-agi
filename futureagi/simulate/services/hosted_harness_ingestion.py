@@ -1276,25 +1276,12 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
 SUB_GOAL_PASSED: dict[str | None, bool] = {"pass": True, "fail": False}
 
 
-# The reason prefixes the harness gives a sub-goal it did not decide (its `verdict_named`).
-_UNDECIDED_PREFIXES = {"Unmeasured: ": "unmeasured", "Inconclusive: ": "inconclusive"}
-
-
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
-    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`, and an
-    undecided one without a verdict from its reason's prefix, as the harness names it."""
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
     if goal.get("verdict"):
         return str(goal["verdict"])
     if not isinstance(goal.get("held"), bool):
-        reason = str(goal.get("reason") or "")
-        return next(
-            (
-                named
-                for prefix, named in _UNDECIDED_PREFIXES.items()
-                if reason.startswith(prefix)
-            ),
-            None,
-        )
+        return None
     return "pass" if goal["held"] else "fail"
 
 

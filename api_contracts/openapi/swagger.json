@@ -53121,7 +53121,7 @@
         "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_starting_records",
-                "description": "The seeded rows this scenario's facts name, each with the other rows it could start from instead.",
+                "description": "The seeded rows this scenario's facts name, each looked up by its key: held, or missing from the seed.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -53140,39 +53140,6 @@
                 "tags": [
                     "simulate"
                 ],
-                "x-runtime-response-validation": true
-            },
-            "put": {
-                "operationId": "simulate_api_harness-environments_choose_starting_record",
-                "description": "Start this scenario from another seeded row, in the unsaved changes; Save proves it again.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/HarnessStartingRecordChoice"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/HarnessStartingRecords"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "simulate"
-                ],
-                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -141898,6 +141865,7 @@
             "required": [
                 "tool",
                 "status",
+                "status_label",
                 "reset_between_trials",
                 "runs_at",
                 "writes",
@@ -141927,6 +141895,12 @@
                         "unsupported",
                         "unknown"
                     ]
+                },
+                "status_label": {
+                    "title": "Status label",
+                    "description": "What a test does with it, in words.",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "reset_between_trials": {
                     "title": "Reset between trials",
@@ -141996,11 +141970,33 @@
                 }
             }
         },
+        "HarnessApprovalOption": {
+            "description": "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessFaultMode": {
             "description": "The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.",
             "required": [
                 "mode",
-                "label"
+                "label",
+                "hint",
+                "fields"
             ],
             "type": "object",
             "properties": {
@@ -142011,13 +142007,42 @@
                         "timeout_before_commit",
                         "timeout_after_commit",
                         "unavailable",
-                        "error"
+                        "error",
+                        "approval_required"
                     ]
                 },
                 "label": {
                     "title": "Label",
                     "type": "string",
                     "minLength": 1
+                },
+                "hint": {
+                    "title": "Hint",
+                    "description": "The line shown under the choice.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "approval_options": {
+                    "description": "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessApprovalOption"
+                    }
+                },
+                "fields": {
+                    "description": "The fault values this mode reads; the editor asks for these and no others.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "on_call",
+                            "delay_seconds",
+                            "status",
+                            "message",
+                            "approval",
+                            "approved_when"
+                        ]
+                    }
                 }
             }
         },
@@ -142043,6 +142068,18 @@
                 }
             }
         },
+        "HarnessFaultFloor": {
+            "required": [
+                "min"
+            ],
+            "type": "object",
+            "properties": {
+                "min": {
+                    "title": "Min",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessFaultRange": {
             "required": [
                 "min",
@@ -142060,18 +142097,38 @@
                 }
             }
         },
-        "HarnessFaultBounds": {
+        "HarnessFaultLength": {
             "required": [
-                "delay_seconds",
-                "status"
+                "max_length"
             ],
             "type": "object",
             "properties": {
+                "max_length": {
+                    "title": "Max length",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessFaultBounds": {
+            "required": [
+                "on_call",
+                "delay_seconds",
+                "status",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "on_call": {
+                    "$ref": "#/definitions/HarnessFaultFloor"
+                },
                 "delay_seconds": {
                     "$ref": "#/definitions/HarnessFaultRange"
                 },
                 "status": {
                     "$ref": "#/definitions/HarnessFaultRange"
+                },
+                "message": {
+                    "$ref": "#/definitions/HarnessFaultLength"
                 }
             }
         },
@@ -144067,6 +144124,25 @@
                 }
             }
         },
+        "HarnessActorFieldOption": {
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessActorChannelOption": {
             "required": [
                 "channel",
@@ -144074,7 +144150,9 @@
                 "loudness",
                 "trigger_kinds",
                 "required_fields",
-                "cap_field"
+                "cap_field",
+                "label",
+                "trigger_options"
             ],
             "type": "object",
             "properties": {
@@ -144114,6 +144192,18 @@
                         "max_turns",
                         "max_lines"
                     ]
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "trigger_options": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActorFieldOption"
+                    }
                 }
             }
         },
@@ -144179,25 +144269,6 @@
                 },
                 "world": {
                     "$ref": "#/definitions/HarnessActorSideDefault"
-                }
-            }
-        },
-        "HarnessActorFieldOption": {
-            "required": [
-                "value",
-                "label"
-            ],
-            "type": "object",
-            "properties": {
-                "value": {
-                    "title": "Value",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1
                 }
             }
         },
@@ -144301,7 +144372,9 @@
                 "limit_fields",
                 "side_defaults",
                 "field_options",
-                "upload"
+                "upload",
+                "trigger_fields",
+                "new_actor"
             ],
             "type": "object",
             "properties": {
@@ -144402,6 +144475,20 @@
                 },
                 "upload": {
                     "$ref": "#/definitions/HarnessActorUpload"
+                },
+                "trigger_fields": {
+                    "title": "Trigger fields",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "new_actor": {
+                    "$ref": "#/definitions/HarnessActor"
                 }
             }
         },
@@ -144787,7 +144874,8 @@
                 "input",
                 "value",
                 "source",
-                "text"
+                "text",
+                "label"
             ],
             "type": "object",
             "properties": {
@@ -144812,6 +144900,11 @@
                 "text": {
                     "title": "Text",
                     "type": "string"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -145093,7 +145186,8 @@
                 "not_applicable",
                 "current_pass_rate",
                 "against_pass_rate",
-                "margin"
+                "margin",
+                "excluded_not_comparable"
             ],
             "type": "object",
             "properties": {
@@ -145142,6 +145236,11 @@
                 "margin": {
                     "title": "Margin",
                     "type": "number"
+                },
+                "excluded_not_comparable": {
+                    "title": "Excluded not comparable",
+                    "description": "Trials of either run left out because they did not start from the seeded records.",
+                    "type": "integer"
                 }
             }
         },
@@ -147132,6 +147231,8 @@
                 "side_defaults",
                 "field_options",
                 "upload",
+                "trigger_fields",
+                "new_actor",
                 "uploaded_path"
             ],
             "type": "object",
@@ -147233,6 +147334,20 @@
                 },
                 "upload": {
                     "$ref": "#/definitions/HarnessActorUpload"
+                },
+                "trigger_fields": {
+                    "title": "Trigger fields",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "new_actor": {
+                    "$ref": "#/definitions/HarnessActor"
                 },
                 "uploaded_path": {
                     "title": "Uploaded path",
@@ -147945,29 +148060,6 @@
                 }
             }
         },
-        "HarnessSeededRow": {
-            "description": "Other rows of the table the scenario could start from instead, the first few.",
-            "required": [
-                "key",
-                "fields"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "description": "The row's key, a string or an integer.",
-                    "type": "object"
-                },
-                "fields": {
-                    "title": "Fields",
-                    "description": "The row as the world is seeded with it.",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object"
-                    }
-                }
-            }
-        },
         "HarnessStartingRecord": {
             "required": [
                 "path",
@@ -147975,9 +148067,10 @@
                 "table",
                 "key_field",
                 "key",
+                "status",
+                "summary",
                 "fields",
-                "alternatives",
-                "alternatives_total"
+                "note"
             ],
             "type": "object",
             "properties": {
@@ -147991,6 +148084,7 @@
                 },
                 "label": {
                     "title": "Label",
+                    "description": "The path as one name.",
                     "type": "string",
                     "minLength": 1
                 },
@@ -148006,26 +148100,41 @@
                 },
                 "key": {
                     "title": "Key",
-                    "type": "object"
+                    "description": "The fact's value, as text.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "description": "seeded: the world's seed holds the row. missing: it does not, and note says so.",
+                    "type": "string",
+                    "enum": [
+                        "seeded",
+                        "missing"
+                    ]
+                },
+                "summary": {
+                    "title": "Summary",
+                    "description": "The row in one line: its key, then up to 2 of its other values; null when missing.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 },
                 "fields": {
                     "title": "Fields",
+                    "description": "The row as the world is seeded with it.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "object"
-                    }
+                    },
+                    "x-nullable": true
                 },
-                "alternatives": {
-                    "description": "Other rows of the table the scenario could start from instead, the first few.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessSeededRow"
-                    }
-                },
-                "alternatives_total": {
-                    "title": "Alternatives total",
-                    "type": "integer",
-                    "minimum": 0
+                "note": {
+                    "title": "Note",
+                    "description": "Why the record is missing, in words to show.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -148057,8 +148166,8 @@
             "required": [
                 "scenario_key",
                 "origin",
-                "editable",
                 "records",
+                "setup_note",
                 "rows_unavailable"
             ],
             "type": "object",
@@ -148075,53 +148184,21 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
-                "editable": {
-                    "title": "Editable",
-                    "description": "Whether a choice can be written to this environment's draft.",
-                    "type": "boolean"
-                },
                 "records": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessStartingRecord"
                     }
                 },
+                "setup_note": {
+                    "title": "Setup note",
+                    "description": "Set when the scenario's setup changes the world before each run, so the rows are as seeded.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
                 "rows_unavailable": {
                     "$ref": "#/definitions/HarnessRowsUnavailable"
-                }
-            }
-        },
-        "HarnessStartingRecordChoice": {
-            "required": [
-                "path",
-                "table",
-                "key"
-            ],
-            "type": "object",
-            "properties": {
-                "path": {
-                    "description": "The `path` of one of the scenario's starting records.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "maxLength": 255,
-                        "minLength": 1
-                    },
-                    "maxItems": 32,
-                    "minItems": 1
-                },
-                "table": {
-                    "title": "Table",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "key": {
-                    "title": "Key",
-                    "description": "The key of the seeded row to start from instead.",
-                    "type": "string",
-                    "maxLength": 1024,
-                    "minLength": 1
                 }
             }
         },
@@ -150110,7 +150187,10 @@
                 "on_call",
                 "delay_seconds",
                 "status",
-                "message"
+                "message",
+                "approval",
+                "approved_when",
+                "line"
             ],
             "type": "object",
             "properties": {
@@ -150155,6 +150235,27 @@
                     "title": "Message",
                     "description": "For an error.",
                     "type": "string"
+                },
+                "approval": {
+                    "title": "Approval",
+                    "description": "For approval_required: the world action that records the decision.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "approved_when": {
+                    "title": "Approved when",
+                    "description": "For approval_required: the arguments that action must carry to approve; empty otherwise.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    }
+                },
+                "line": {
+                    "title": "Line",
+                    "description": "The test condition as one line: its tool (else its action), what happens, on which call, and the value its mode reads.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -150630,13 +150731,43 @@
                 }
             }
         },
+        "HarnessFaultProblem": {
+            "description": "For fault_invalid: every test condition the world cannot apply, each by its place in the list; empty on any other receipt.",
+            "required": [
+                "index",
+                "field",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "index": {
+                    "title": "Index",
+                    "description": "Its place in the scenario's list; null when the list itself is unreadable.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "field": {
+                    "title": "Field",
+                    "description": "The test-condition field it is shown under; null when it is no one field's.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessScenarioAmendReceipt": {
             "required": [
                 "scenario",
                 "outcome",
                 "why",
                 "code",
-                "field"
+                "field",
+                "problems"
             ],
             "type": "object",
             "properties": {
@@ -150679,6 +150810,13 @@
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
+                },
+                "problems": {
+                    "description": "For fault_invalid: every test condition the world cannot apply, each by its place in the list; empty on any other receipt.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessFaultProblem"
+                    }
                 }
             }
         },
@@ -160178,6 +160316,40 @@
                 }
             }
         },
+        "CallParticipant": {
+            "description": "Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join.",
+            "required": [
+                "id",
+                "name",
+                "role",
+                "channel"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The actor's id; null on a turn stored with a name only.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "description": "How they were heard; null for an actor who only acted in the world.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
         "BlockedCall": {
             "description": "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
             "required": [
@@ -160449,6 +160621,13 @@
                         "sealed_seed",
                         "first_trial"
                     ]
+                },
+                "line": {
+                    "title": "Line",
+                    "description": "What to say about the start; null when there is nothing to say (a start that differs has its own notice).",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -160460,7 +160639,8 @@
                 "play",
                 "fallback",
                 "verdict",
-                "committed_after_refusal"
+                "committed_after_refusal",
+                "line"
             ],
             "type": "object",
             "properties": {
@@ -160509,9 +160689,12 @@
                 },
                 "problem": {
                     "title": "Problem",
-                    "description": "For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
+                    "description": "For `problem`: the scenario's problem, never the agent's.",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "no_world_door",
+                        "not_listed"
+                    ]
                 },
                 "why": {
                     "title": "Why",
@@ -160534,13 +160717,29 @@
                     "title": "Outcome",
                     "description": "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "timed_out",
+                        "declined",
+                        "fallback_action",
+                        "fallback_not_committed",
+                        "answered_by",
+                        "unresolved_at_end",
+                        "committed",
+                        "refused",
+                        "faulted",
+                        "duplicate"
+                    ]
                 },
                 "action_outcome": {
                     "title": "Action outcome",
                     "description": "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "committed",
+                        "refused",
+                        "faulted",
+                        "duplicate"
+                    ]
                 },
                 "verdict": {
                     "title": "Verdict",
@@ -160556,6 +160755,12 @@
                     "title": "Committed after refusal",
                     "description": "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
                     "type": "boolean"
+                },
+                "line": {
+                    "title": "Line",
+                    "description": "The row as one sentence: who, how they played, what it came to, the verdict and why.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -160819,7 +161024,7 @@
             "properties": {
                 "code": {
                     "title": "Code",
-                    "description": "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world",
+                    "description": "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
                     "type": "string",
                     "minLength": 1
                 },
@@ -160970,8 +161175,11 @@
                 "evaluations",
                 "function_calls",
                 "call_actors",
+                "participants",
                 "has_customer",
                 "trial_state",
+                "comparable",
+                "not_comparable_reason",
                 "scoring_status",
                 "csat_status",
                 "csat_reason"
@@ -161452,6 +161660,13 @@
                         "$ref": "#/definitions/CallCallActor"
                     }
                 },
+                "participants": {
+                    "description": "Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CallParticipant"
+                    }
+                },
                 "has_customer": {
                     "title": "Has customer",
                     "description": "The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke.",
@@ -161459,6 +161674,17 @@
                 },
                 "trial_state": {
                     "$ref": "#/definitions/TrialState"
+                },
+                "comparable": {
+                    "title": "Comparable",
+                    "description": "False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons.",
+                    "type": "boolean"
+                },
+                "not_comparable_reason": {
+                    "title": "Not comparable reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 },
                 "scoring_status": {
                     "title": "Scoring status",
@@ -162880,6 +163106,7 @@
                 "pass_hat_k_scenarios",
                 "pass_hat_k_passed",
                 "pass_hat_k_excluded",
+                "excluded_not_comparable",
                 "trials_passed",
                 "trials_evaluated",
                 "pass_rate_interval",
@@ -162945,6 +163172,11 @@
                 },
                 "pass_hat_k_excluded": {
                     "title": "Pass hat k excluded",
+                    "type": "integer"
+                },
+                "excluded_not_comparable": {
+                    "title": "Excluded not comparable",
+                    "description": "Trials left out because they did not start from the seeded records.",
                     "type": "integer"
                 },
                 "trials_passed": {
@@ -163274,7 +163506,8 @@
                 "tokens",
                 "cost_cents",
                 "execution_id",
-                "started_at"
+                "started_at",
+                "excluded_not_comparable"
             ],
             "type": "object",
             "properties": {
@@ -163316,6 +163549,10 @@
                     "type": "string",
                     "format": "date-time",
                     "x-nullable": true
+                },
+                "excluded_not_comparable": {
+                    "title": "Excluded not comparable",
+                    "type": "integer"
                 }
             }
         },

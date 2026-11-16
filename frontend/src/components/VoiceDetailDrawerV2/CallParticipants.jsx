@@ -8,24 +8,24 @@ const customerParty = (customerName) =>
     ? { speakerName: customerName, actorRole: DEFAULT_ROLE_LABELS.user }
     : { speakerName: DEFAULT_ROLE_LABELS.user };
 
-// Actors with no channel act only in the world, so they are left out.
+// Who took part, as the server says; one who only acted in the world (no channel) was never on the call.
 export default function CallParticipants({
-  actors,
+  participants,
   customerName,
   withCustomer = true,
 }) {
-  const speakers = actors.filter((actor) => actor.channel);
+  const speakers = participants.filter((one) => one.channel);
   if (speakers.length === 0) return null;
   const line = [
     ...(withCustomer
       ? [{ key: "customer", party: customerParty(customerName) }]
       : []),
-    ...speakers.map((actor) => ({
-      key: actor.id,
+    ...speakers.map((one) => ({
+      key: one.id,
       party: {
-        speakerName: actor.name || actor.id,
-        actorRole: actor.role,
-        channel: actor.channel,
+        speakerName: one.name,
+        actorRole: one.role,
+        channel: one.channel,
       },
     })),
     { key: "agent", party: { speakerName: DEFAULT_ROLE_LABELS.assistant } },
@@ -53,7 +53,8 @@ export default function CallParticipants({
 }
 
 CallParticipants.propTypes = {
-  actors: PropTypes.arrayOf(PropTypes.object).isRequired,
+  // The call's `participants`: `{id, name, role, channel}` each.
+  participants: PropTypes.arrayOf(PropTypes.object).isRequired,
   customerName: PropTypes.string,
   withCustomer: PropTypes.bool,
 };

@@ -9,18 +9,6 @@ const quiet = {
 };
 const HEADING = { typography: "s2", fontWeight: 600 };
 
-function timing(one) {
-  if (one.play === "waiting") return C.waited(one);
-  if (one.play === "problem") return C.problems[one.problem] || one.why;
-  if (one.play !== "timeout") return null;
-  if (one.outcome === "fallback_not_committed")
-    return C.outcomes.fallback_not_committed(
-      C.actionOutcomes[one.action_outcome],
-    );
-  const said = C.outcomes[one.outcome];
-  return typeof said === "function" ? said(one.fallback) : said;
-}
-
 // A change committed after a refusal gets its own line, never read as the agent having waited.
 export default function TrialDecisions({ approvals, decisions }) {
   return (
@@ -59,18 +47,8 @@ export default function TrialDecisions({ approvals, decisions }) {
           <Typography sx={HEADING}>{C.decisionsHeading}</Typography>
           {decisions.map((one, index) => (
             <Box key={`${one.actor}-${index}`}>
-              <Typography sx={quiet}>
-                {[
-                  one.name,
-                  C.plays[one.play] || one.play,
-                  timing(one) || one.action || C.nothing,
-                  one.play !== "timeout" && C.actionOutcomes[one.outcome],
-                  C.verdicts[one.verdict],
-                  one.why,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
+              {/* The row's sentence as the server words it. */}
+              <Typography sx={quiet}>{one.line}</Typography>
               {one.committed_after_refusal && (
                 <Typography
                   sx={{ typography: "s2", fontWeight: 600, color: "error.main" }}
@@ -112,13 +90,8 @@ TrialDecisions.propTypes = {
     PropTypes.shape({
       actor: PropTypes.string,
       name: PropTypes.string.isRequired,
-      play: PropTypes.string,
-      fallback: PropTypes.shape({
-        kind: PropTypes.string,
-        value: PropTypes.string,
-        label: PropTypes.string,
-      }),
-      verdict: PropTypes.oneOf(["approved", "refused"]),
+      // The whole row, worded by the server.
+      line: PropTypes.string.isRequired,
       committed_after_refusal: PropTypes.bool,
     }),
   ).isRequired,

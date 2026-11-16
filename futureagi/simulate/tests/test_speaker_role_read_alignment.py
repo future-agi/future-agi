@@ -26,9 +26,13 @@ from tracer.models.observability_provider import ProviderChoices
 
 
 class _Rows(list):
-    """A transcript queryset stand-in: a list that also takes select_related."""
+    """A transcript queryset stand-in: a list that takes `with_speakers`' annotation, giving each row the speaker a
+    real annotated row carries (none, on these turns)."""
 
-    def select_related(self, *_fields):
+    def annotate(self, **_fields):
+        for row in self:
+            if not hasattr(row, "speaker_name"):
+                row.speaker_name, row.actor_id = "", None
         return self
 
 

@@ -13,19 +13,26 @@ import {
 
 const F = ACTORS_COPY.worldActors.form;
 
+// The trigger kinds the chosen way of joining offers and the cast's labels for them; only the inputs the picked kind
+// takes (`triggerKeys`) show.
 export default function ActorTriggerFields({
   form,
   actor,
-  triggerKinds,
+  triggerOptions,
+  triggerKeys,
   actionIds,
   collections,
   fallbackWords,
   others,
 }) {
-  const existing = Boolean(actor.id);
   const { initial } = form;
-  const mode = form.value("mode");
-  const modeLabel = (one) => F.modes[one] || words(one);
+  const takes = (key) => triggerKeys.includes(key);
+  // A stored kind the chosen way of joining no longer offers reads by its own name.
+  const startModeLabel =
+    initial.mode === KEPT
+      ? actor.when_label
+      : triggerOptions.find((one) => one.value === initial.mode)?.label ||
+        words(initial.mode);
   const fallbackOptions = [
     ...fallbackWords.map((one) => ({
       value: fallbackKey({ kind: one.value, value: one.value }),
@@ -45,53 +52,46 @@ export default function ActorTriggerFields({
     acts && parsedArguments(form.value("fallback_arguments")) === null
       ? F.fallbackArgumentsWrong
       : "";
-  const where =
-    mode === "conditional" ? whereProblem(form.value("triggerWhere")) : "";
+  const where = takes("where") ? whereProblem(form.value("triggerWhere")) : "";
   const field = (name, label, extra = {}) => (
     <ActorField form={form} name={name} label={label} {...extra} />
   );
   return (
     <>
       {field("mode", F.trigger, {
-        options: triggerKinds.map((one) => ({
-          value: one,
-          label: modeLabel(one),
-        })),
+        options: triggerOptions,
         helperText: F.triggerHelp,
-        startLabel:
-          initial.mode === KEPT ? actor.when_label : modeLabel(initial.mode),
+        startLabel: startModeLabel,
       })}
-      {mode === "on_tool" &&
+      {takes("tool") &&
         field("triggerTool", F.triggerTool, {
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
         })}
-      {mode === "on_keyword" &&
+      {takes("words") &&
         field("triggerWords", F.triggerWords, {
           helperText: F.triggerWordsHelp,
         })}
-      {mode === "mid_journey" &&
+      {takes("turn") &&
         field("triggerTurn", F.triggerTurn, {
           type: "number",
           inputProps: { min: 1 },
         })}
-      {mode === "after_seconds" &&
+      {takes("seconds") &&
         field("triggerSeconds", F.triggerSeconds, {
           type: "number",
           inputProps: { min: 0 },
         })}
-      {mode === "conditional" && (
-        <>
-          {field("triggerCollection", F.triggerCollection, {
-            options: collections.map((one) => ({ value: one, label: one })),
-            startLabel: initial.triggerCollection,
-          })}
-          {field("triggerWhere", F.triggerWhere, {
-            error: Boolean(where),
-            helperText: where || F.triggerWhereHelp,
-          })}
-        </>
-      )}
+      {takes("collection") &&
+        field("triggerCollection", F.triggerCollection, {
+          options: collections.map((one) => ({ value: one, label: one })),
+          startLabel: initial.triggerCollection,
+        })}
+      {takes("where") &&
+        field("triggerWhere", F.triggerWhere, {
+          error: Boolean(where),
+          helperText: where || F.triggerWhereHelp,
+        })}
       {field("timeout", F.timeout, {
         type: "number",
         helperText: F.timeoutHelp,
@@ -99,7 +99,7 @@ export default function ActorTriggerFields({
       })}
       {field("fallback", F.fallback, {
         options: fallbackOptions,
-        startLabel: existing ? actor.fallback.label : undefined,
+        startLabel: actor.fallback.label,
       })}
       {acts &&
         field("fallback_arguments", F.fallbackArguments, {
@@ -112,9 +112,12 @@ export default function ActorTriggerFields({
 
 ActorTriggerFields.propTypes = {
   form: ACTOR_FORM_SHAPE.isRequired,
-  // `{side}` for a new actor.
+  // The cast's actor, or its `new_actor` for a new one.
   actor: PropTypes.object.isRequired,
-  triggerKinds: PropTypes.arrayOf(PropTypes.string).isRequired,
+  // The chosen way of joining's `trigger_options`.
+  triggerOptions: OPTIONS_SHAPE.isRequired,
+  // The trigger keys the picked kind takes, from the cast's `trigger_fields`.
+  triggerKeys: PropTypes.arrayOf(PropTypes.string).isRequired,
   actionIds: PropTypes.arrayOf(PropTypes.string).isRequired,
   collections: PropTypes.arrayOf(PropTypes.string).isRequired,
   // Fallbacks that are neither an action nor an actor.

@@ -31,6 +31,7 @@ const UNAVAILABLE = {
   tool: "refund",
   mode: "unavailable",
   mode_label: "Unavailable",
+  line: "refund: Unavailable on call 1",
   on_call: 1,
   delay_seconds: null,
   status: null,
@@ -226,6 +227,7 @@ describe("ScenarioDrawer actors", () => {
           tool: "orders.refund",
           mode: "timeout_after_commit",
           mode_label: "Runs, then the answer is lost",
+          line: "orders.refund: Runs, then the answer is lost on call 1 after 5 s",
           on_call: 1,
           delay_seconds: 5,
           status: null,
@@ -236,6 +238,7 @@ describe("ScenarioDrawer actors", () => {
           tool: "inventory.reserve",
           mode: "unavailable",
           mode_label: "Unavailable",
+          line: "inventory.reserve: Unavailable",
           on_call: null,
           delay_seconds: null,
           status: null,
@@ -264,6 +267,7 @@ describe("ScenarioDrawer actors", () => {
           tool: "update_order_status",
           mode: "error",
           mode_label: "Answers with an error",
+          line: "update_order_status: Answers with an error on call 1 (503: The order status service is down)",
           on_call: 1,
           delay_seconds: null,
           status: 503,
@@ -312,5 +316,28 @@ describe("ScenarioDrawer actors", () => {
       door_problem: null,
     });
     expect(screen.queryByText(/cannot/)).toBeNull();
+  });
+
+  it("shows a test condition naming no tool by the server's line, never as null, with no route under it", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "refunds.void",
+          tool: null,
+          mode: "unavailable",
+          mode_label: "Unavailable",
+          line: "refunds.void: Unavailable on call 1",
+          on_call: 1,
+          delay_seconds: null,
+          status: null,
+          message: "",
+        },
+      ],
+    });
+    expect(
+      screen.getByText("refunds.void: Unavailable on call 1"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/null/)).toBeNull();
   });
 });

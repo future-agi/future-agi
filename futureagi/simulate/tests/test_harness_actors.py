@@ -5,9 +5,9 @@ import json
 import pytest
 
 from simulate.services import (
+    harness_actor_choices,
     harness_actor_reads,
     harness_actor_rules,
-    harness_actor_validation,
     harness_actors,
 )
 from simulate.services.harness_versioning import archives, drafts
@@ -771,12 +771,9 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     rules = harness_actor_rules.actor_rules(files)
     renamed = {**MANAGER, "name": "Priya R."}
     assert (
-        harness_actor_validation.new_choice_problems(MANAGER, renamed, files, rules)
-        == []
+        harness_actor_choices.new_choice_problems(MANAGER, renamed, files, rules) == []
     )
-    assert (
-        harness_actor_validation.new_choice_problems(None, MANAGER, files, rules) != []
-    )
+    assert harness_actor_choices.new_choice_problems(None, MANAGER, files, rules) != []
 
     environment = _built(user, workspace, "actors-kept-values")
     call_actor = {
@@ -875,18 +872,16 @@ def test_a_call_actor_never_takes_the_name_of_a_caller_it_is_with():
     colleague = {"id": "colleague", "name": "Jordan Taylor", "channel": "audio_mix"}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            "simulate.services.harness_actor_validation.suite_documents",
+            "simulate.services.harness_actor_choices.suite_documents",
             lambda files: [json.loads(raw) for raw in files.values()],
         )
         # The caller of a scenario that does not include the actor may share its name.
         assert (
-            harness_actor_validation.new_choice_problems(
-                None, colleague, {}, rules, suite
-            )
+            harness_actor_choices.new_choice_problems(None, colleague, {}, rules, suite)
             == []
         )
         renamed = {**colleague, "name": "mei lin"}
-        problems = harness_actor_validation.new_choice_problems(
+        problems = harness_actor_choices.new_choice_problems(
             colleague, renamed, {}, rules, suite
         )
     assert problems == [
@@ -1319,7 +1314,7 @@ def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
         user=user,
         expected_revision=None,
     )
-    real = harness_actors.drafts.edit_sides
+    real = drafts.edit_sides
     raced = []
 
     def edit_lands_meanwhile(env):
@@ -1336,9 +1331,7 @@ def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
             )
         return sides
 
-    with patch.object(
-        harness_actors.drafts, "edit_sides", side_effect=edit_lands_meanwhile
-    ):
+    with patch.object(drafts, "edit_sides", side_effect=edit_lands_meanwhile):
         with pytest.raises(HostedHarnessError) as refused:
             harness_actors.write_actor_edit(
                 environment,

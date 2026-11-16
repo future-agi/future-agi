@@ -27,7 +27,9 @@ from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.call_detail import (
     call_actors,
+    comparability,
     has_customer,
+    participants,
     tagged_function_calls,
     transcript_turns,
     trial_state,
@@ -36,6 +38,7 @@ from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
     CallCallActorSerializer,
+    CallParticipantSerializer,
     FunctionCallSerializer,
     TrialStateSerializer,
 )
@@ -542,6 +545,9 @@ class ReliabilitySerializer(serializers.Serializer):
     pass_hat_k_scenarios = serializers.IntegerField()
     pass_hat_k_passed = serializers.IntegerField()
     pass_hat_k_excluded = serializers.IntegerField()
+    excluded_not_comparable = serializers.IntegerField(
+        help_text="Trials left out because they did not start from the seeded records."
+    )
     trials_passed = serializers.IntegerField()
     trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
@@ -602,6 +608,7 @@ class ModalityBreakdownSerializer(RunSummarySerializer):
 class TrendSerializer(RunSummarySerializer):
     execution_id = serializers.UUIDField()
     started_at = serializers.DateTimeField(allow_null=True)
+    excluded_not_comparable = serializers.IntegerField()
 
 
 class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
@@ -634,11 +641,21 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
     call_actors = CallCallActorSerializer(many=True)
+    participants = CallParticipantSerializer(
+        many=True,
+        help_text="Who else took part: each actor who spoke, in the order they first spoke, then each world actor "
+        "who acted. Never an actor planned for the call who did not join.",
+    )
     has_customer = serializers.BooleanField(
         help_text="The simulated person spoke in the call; false when an actor's message or the scenario's task "
         "started it and the person never spoke."
     )
     trial_state = TrialStateSerializer(allow_null=True)
+    comparable = serializers.BooleanField(
+        help_text="False when the trial did not start from the seeded records; it is then left out of "
+        "repeatability, pass^k and run comparisons."
+    )
+    not_comparable_reason = serializers.CharField(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -659,8 +676,11 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "evaluations",
             "function_calls",
             "call_actors",
+            "participants",
             "has_customer",
             "trial_state",
+            "comparable",
+            "not_comparable_reason",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -925,6 +945,7 @@ def build_call_execution_detail(
             metric["kind"] = (
                 "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
             )
+    calls = tagged_function_calls(function_calls(call))
     data.update(
         {
             "goal": normalized["goal"],
@@ -940,11 +961,13 @@ def build_call_execution_detail(
             "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
-            "function_calls": tagged_function_calls(function_calls(call)),
+            "function_calls": calls,
             "call_actors": actors,
+            "participants": participants(call.call_metadata, data["transcript"], calls),
             "has_customer": has_customer(data["transcript"]),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
-            "trial_state": trial_state(call),
+            "trial_state": trial_state(call, calls=calls),
+            **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

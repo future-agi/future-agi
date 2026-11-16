@@ -1,56 +1,59 @@
-// A mode missing here shows without a hint.
-export const TEST_CONDITION_HINTS = {
-  timeout_before_commit:
-    "The call waits, then times out. Nothing changes in the world.",
-  timeout_after_commit:
-    "The world makes the change, then the agent hears a timeout. A retry makes it twice.",
-  unavailable: "Unavailable: the service answers that it is down.",
-  error: "The service answers with the status and message you set.",
-};
-
-export const TIMEOUT_MODES = ["timeout_before_commit", "timeout_after_commit"];
-
 export const TEST_CONDITIONS_COPY = {
   heading: "Hidden · test conditions",
   empty: "Tools behave normally",
   add: "Add a test condition",
   tool: "Tool",
   whatHappens: "What happens",
-  onCall: "On which call",
-  delay: "Delay in seconds",
-  status: "Status",
-  message: "Message",
+  // Each field a mode can take, by the name the server lists it under.
+  fields: {
+    on_call: "On which call",
+    delay_seconds: "Delay in seconds",
+    status: "Status",
+    message: "Message",
+    approval: "Approval it needs",
+    approved_when: "Approved when (optional)",
+  },
+  conditionsHelp: 'Field values the approval holds, such as {"status": "approved"}',
   remove: "Remove",
   inProcess: "This tool runs inside the agent, so it cannot be held",
 };
 
-export const testConditionRoute = (fault) =>
-  fault.tool !== fault.action ? fault.action : "";
+// How a field the server lists is typed in: numbers, key/value conditions as a JSON object, anything else as text.
+export const NUMBER_FIELDS = ["on_call", "delay_seconds", "status"];
+export const OBJECT_FIELDS = ["approved_when"];
 
-export function testConditionLine(fault) {
-  return [
-    `${fault.tool}: ${fault.mode_label}`,
-    fault.on_call != null && ` on call ${fault.on_call}`,
-    fault.delay_seconds != null && ` after ${fault.delay_seconds} s`,
-    fault.status != null &&
-      ` (${fault.status}${fault.message ? `: ${fault.message}` : ""})`,
-  ]
-    .filter(Boolean)
-    .join("");
-}
-
-// Only the fields the mode reads; numbers go as they are so the server can refuse a null.
-export function fileFault(fault) {
-  const stored = {
-    action: fault.action,
-    mode: fault.mode,
-    on_call: fault.on_call,
-  };
-  if (TIMEOUT_MODES.includes(fault.mode))
-    stored.delay_seconds = fault.delay_seconds;
-  if (fault.mode === "error") {
-    stored.status = fault.status;
-    if (fault.message) stored.message = fault.message;
+// Why typed conditions are not yet a JSON object, or "".
+export const objectProblem = (text) => {
+  if (!String(text).trim()) return "";
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? ""
+      : TEST_CONDITIONS_COPY.conditionsHelp;
+  } catch {
+    return TEST_CONDITIONS_COPY.conditionsHelp;
   }
-  return stored;
-}
+};
+
+// A field's value as typed: an emptied number or condition is null; read only once `objectProblem` is "".
+export const asTyped = (key, typed) => {
+  const empty = String(typed).trim() === "";
+  if (NUMBER_FIELDS.includes(key)) return empty ? null : Number(typed);
+  if (OBJECT_FIELDS.includes(key)) return empty ? null : JSON.parse(typed);
+  return typed;
+};
+
+// The route a fault holds, when it reads differently from the tool's name; none when it names no tool.
+export const testConditionRoute = (fault) =>
+  fault.tool && fault.tool !== fault.action ? fault.action : "";
+
+// What the editor holds for a fault the scenario row resolved: its display fields kept, and the values its mode does
+// not read (null, or an empty message) left out, so it goes back as it was stored.
+export const storedFault = (fault) =>
+  Object.fromEntries(
+    Object.entries(fault).filter(([, value]) => value !== null && value !== ""),
+  );
+
+// A fault as the scenario file keeps it: the display fields dropped, every value as typed.
+export const fileFault = ({ tool, mode_label: modeLabel, line, ...stored }) =>
+  stored;

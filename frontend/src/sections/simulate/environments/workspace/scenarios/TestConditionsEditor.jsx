@@ -11,27 +11,17 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import TestConditionField from "./TestConditionField";
 import {
+  NUMBER_FIELDS,
+  OBJECT_FIELDS,
   TEST_CONDITIONS_COPY,
-  TEST_CONDITION_HINTS,
-  TIMEOUT_MODES,
-  fileFault,
-  testConditionLine,
+  asTyped,
+  objectProblem,
   testConditionRoute,
 } from "./testConditions.constants";
 
-const EMPTY = {
-  action: "",
-  mode: "",
-  on_call: "",
-  delay_seconds: "",
-  status: "",
-  message: "",
-};
-const NUMBERS = ["on_call", "delay_seconds", "status"];
-
-const asNumber = (typed) =>
-  String(typed).trim() === "" ? null : Number(typed);
+const EMPTY = { action: "", mode: "" };
 
 // An in-process tool is listed but cannot be chosen; the server validates the rest.
 export default function TestConditionsEditor({
@@ -40,14 +30,24 @@ export default function TestConditionsEditor({
   env,
   disabled = false,
   error = "",
+  problems = [],
 }) {
   const [form, setForm] = useState(null);
   const targets = env?.faultTargets;
   const set = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
+  // A field not typed yet is empty.
+  const typedIn = (key) => form[key] ?? "";
   const target = form && targets?.find((one) => one.action === form.action);
   const modes = target ? target.modes : [];
-  const bound = (key) => target?.bounds[key] || {};
+  // The picked mode, with the fields it takes and what it means for the agent.
+  const mode = modes.find((one) => one.mode === form?.mode);
+  // Conditions that are not yet a JSON object say why under their field, and hold Add back.
+  const unreadable =
+    Boolean(mode) &&
+    mode.fields.some(
+      (key) => OBJECT_FIELDS.includes(key) && objectProblem(typedIn(key)),
+    );
   // Falls back to the new tool's first mode when it lacks the picked one.
   const pickTool = (event) => {
     const picked = targets.find((one) => one.action === event.target.value);
@@ -55,22 +55,27 @@ export default function TestConditionsEditor({
     setForm((current) => ({
       ...current,
       ...Object.fromEntries(
-        NUMBERS.filter((key) => current[key] === "").map((key) => [
-          key,
-          picked.defaults[key] ?? "",
-        ]),
+        NUMBER_FIELDS.filter((key) => !current[key] && current[key] !== 0).map(
+          (key) => [key, picked.defaults[key] ?? ""],
+        ),
       ),
       action: picked.action,
       mode: offered.includes(current.mode) ? current.mode : offered[0] || "",
     }));
   };
+  // Every field the mode takes, as typed, and no other; shown by its tool and mode until the server resolves it.
   const add = () => {
-    const fault = fileFault({
-      ...form,
-      ...Object.fromEntries(NUMBERS.map((key) => [key, asNumber(form[key])])),
-    });
-    const label = modes.find((one) => one.mode === form.mode)?.label;
-    onChange([...faults, { ...fault, tool: target.tool, mode_label: label }]);
+    const fault = {
+      action: form.action,
+      mode: form.mode,
+      ...Object.fromEntries(
+        mode.fields.map((key) => [key, asTyped(key, typedIn(key))]),
+      ),
+    };
+    onChange([
+      ...faults,
+      { ...fault, tool: target.tool, line: `${target.tool}: ${mode.label}` },
+    ]);
     setForm(null);
   };
 
@@ -89,14 +94,26 @@ export default function TestConditionsEditor({
           spacing={1}
         >
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{ typography: "s1" }}>
-              {testConditionLine(fault)}
-            </Typography>
+            <Typography sx={{ typography: "s1" }}>{fault.line}</Typography>
             {testConditionRoute(fault) && (
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
                 {testConditionRoute(fault)}
               </Typography>
             )}
+            {/* The server's problems with this fault, each by the field it names. */}
+            {problems
+              .filter((one) => one.index === index)
+              .map((one) => (
+                <Typography
+                  key={`${one.field}-${one.message}`}
+                  role="alert"
+                  sx={{ typography: "s2", color: "error.main" }}
+                >
+                  {one.field
+                    ? `${TEST_CONDITIONS_COPY.fields[one.field] || one.field}: ${one.message}`
+                    : one.message}
+                </Typography>
+              ))}
           </Box>
           {!disabled && (
             <IconButton
@@ -168,7 +185,7 @@ export default function TestConditionsEditor({
             value={form.mode}
             onChange={set("mode")}
             disabled={!target}
-            helperText={TEST_CONDITION_HINTS[form.mode]}
+            helperText={mode?.hint}
           >
             {modes.map((one) => (
               <MenuItem key={one.mode} value={one.mode}>
@@ -176,45 +193,19 @@ export default function TestConditionsEditor({
               </MenuItem>
             ))}
           </TextField>
-          <Stack direction="row" spacing={1.5}>
-            <TextField
-              size="small"
-              type="number"
-              label={TEST_CONDITIONS_COPY.onCall}
-              value={form.on_call}
-              onChange={set("on_call")}
-              inputProps={{ min: 1 }}
-            />
-            {TIMEOUT_MODES.includes(form.mode) && (
-              <TextField
-                size="small"
-                type="number"
-                label={TEST_CONDITIONS_COPY.delay}
-                value={form.delay_seconds}
-                onChange={set("delay_seconds")}
-                inputProps={bound("delay_seconds")}
+          {/* The fields the picked mode takes, as the tool lists them. */}
+          <Stack direction="row" flexWrap="wrap" gap={1.5}>
+            {(mode ? mode.fields : []).map((key) => (
+              <TestConditionField
+                key={key}
+                name={key}
+                mode={mode}
+                value={typedIn(key)}
+                bounds={target.bounds[key]}
+                onChange={set(key)}
               />
-            )}
-            {form.mode === "error" && (
-              <TextField
-                size="small"
-                type="number"
-                label={TEST_CONDITIONS_COPY.status}
-                value={form.status}
-                onChange={set("status")}
-                inputProps={bound("status")}
-              />
-            )}
+            ))}
           </Stack>
-          {form.mode === "error" && (
-            <TextField
-              size="small"
-              label={TEST_CONDITIONS_COPY.message}
-              value={form.message}
-              onChange={set("message")}
-              inputProps={{ maxLength: 500 }}
-            />
-          )}
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button size="small" color="inherit" onClick={() => setForm(null)}>
               Cancel
@@ -222,7 +213,7 @@ export default function TestConditionsEditor({
             <Button
               size="small"
               variant="contained"
-              disabled={!form.action || !form.mode}
+              disabled={!form.action || !form.mode || unreadable}
               onClick={add}
             >
               {TEST_CONDITIONS_COPY.add}
@@ -243,8 +234,14 @@ TestConditionsEditor.propTypes = {
         tool: PropTypes.string,
         action: PropTypes.string,
         reachable: PropTypes.bool,
+        // Each mode the world can apply, with the fields it takes and what it means for the agent.
         modes: PropTypes.arrayOf(
-          PropTypes.shape({ mode: PropTypes.string, label: PropTypes.string }),
+          PropTypes.shape({
+            mode: PropTypes.string,
+            label: PropTypes.string,
+            fields: PropTypes.arrayOf(PropTypes.string),
+            hint: PropTypes.string,
+          }),
         ),
         defaults: PropTypes.object,
         bounds: PropTypes.object,
@@ -253,4 +250,12 @@ TestConditionsEditor.propTypes = {
   }),
   disabled: PropTypes.bool,
   error: PropTypes.string,
+  // The server's problems: `{index, field, message}` each, `index` the fault in `faults`.
+  problems: PropTypes.arrayOf(
+    PropTypes.shape({
+      index: PropTypes.number,
+      field: PropTypes.string,
+      message: PropTypes.string,
+    }),
+  ),
 };

@@ -17,15 +17,16 @@ export const KEPT = "kept";
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
-const TRIGGER_FIELDS = [
-  "mode",
-  "triggerTool",
-  "triggerWords",
-  "triggerTurn",
-  "triggerSeconds",
-  "triggerCollection",
-  "triggerWhere",
-];
+// The form field each trigger key the cast's `trigger_fields` names is typed in.
+export const TRIGGER_INPUTS = {
+  tool: "triggerTool",
+  words: "triggerWords",
+  turn: "triggerTurn",
+  seconds: "triggerSeconds",
+  collection: "triggerCollection",
+  where: "triggerWhere",
+};
+const TRIGGER_FIELDS = ["mode", ...Object.values(TRIGGER_INPUTS)];
 
 const typed = (value) => (value == null ? "" : value);
 
@@ -33,38 +34,29 @@ const orNull = (text) => (String(text).trim() === "" ? null : text);
 const numberOrNull = (text) =>
   String(text).trim() === "" ? null : Number(text);
 
-// Call only once `whereProblem` is "", so `triggerWhere` parses.
-export const triggerOf = (read) => {
-  switch (read("mode")) {
-    case "on_tool":
-      return { kind: "on_tool", tool: read("triggerTool") };
-    case "on_keyword":
-      return {
-        kind: "on_keyword",
-        words: String(read("triggerWords"))
-          .split(",")
-          .map((one) => one.trim())
-          .filter(Boolean),
-      };
-    case "mid_journey":
-      return { kind: "mid_journey", turn: numberOrNull(read("triggerTurn")) };
-    case "after_seconds":
-      return {
-        kind: "after_seconds",
-        seconds: numberOrNull(read("triggerSeconds")),
-      };
-    case "conditional": {
-      const where = String(read("triggerWhere")).trim();
-      return {
-        kind: "conditional",
-        collection: read("triggerCollection"),
-        where: where ? JSON.parse(where) : {},
-      };
-    }
-    default:
-      return { kind: read("mode") };
-  }
+// How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a match as
+// JSON (only read once `whereProblem` is "").
+const TRIGGER_VALUES = {
+  words: (text) =>
+    String(text)
+      .split(",")
+      .map((one) => one.trim())
+      .filter(Boolean),
+  turn: numberOrNull,
+  seconds: numberOrNull,
+  where: (text) => (String(text).trim() ? JSON.parse(text) : {}),
 };
+
+// The trigger the form's fields make: its kind and each key the cast's `trigger_fields` lists for that kind.
+export const triggerOf = (read, keys) => ({
+  kind: read("mode"),
+  ...Object.fromEntries(
+    keys.map((key) => {
+      const typedIn = read(TRIGGER_INPUTS[key]);
+      return [key, TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn];
+    }),
+  ),
+});
 
 export const whereProblem = (text) => {
   if (!String(text || "").trim()) return "";
@@ -96,47 +88,20 @@ export const fallbackKey = ({ kind, value }) => `${kind}:${value}`;
 const fallbackValue = (key) => key.slice(key.indexOf(":") + 1);
 export const fallbackActs = (key) => key.startsWith("action:");
 
-const NEW_FIELDS = {
-  id: "",
-  name: "",
-  role: "",
-  channel: "",
-  loudness_ratio: null,
-  gender: "",
-  age_group: "",
-  accent: "",
-  kind: "person",
-  parent: "",
-  goal: "",
-  may_agree: "",
-  private: "",
-  escalate_when: "",
-  stop_when: "",
-  facts: "",
-  files: [],
-  records: [],
-  style: "",
-  timing: "immediate",
-  seconds: 0,
-  permitted: [],
-  play: "mocked",
-  mode: "always",
-  triggerTool: "",
-  triggerWords: "",
-  triggerTurn: 1,
-  triggerSeconds: 0,
-  triggerCollection: "",
-  triggerWhere: "",
-  timeout: 0,
-  fallback: "silent:silent",
-  fallback_arguments: "",
-  model: "",
-  max_turns: "",
-  max_lines: "",
+// A trigger key's value as its input holds it; a key the stored trigger lacks starts empty.
+const triggerInput = (trigger, key) => {
+  if (!(key in trigger)) return "";
+  if (key === "words") return trigger.words.join(", ");
+  if (key === "where")
+    return Object.keys(trigger.where).length
+      ? JSON.stringify(trigger.where)
+      : "";
+  return trigger[key];
 };
 
+// What each field starts from: the cast's actor, or for a new one the cast's `new_actor` on its side.
 export const initialFields = (actor) => {
-  if (!actor?.id) return { ...NEW_FIELDS, channel: typed(actor?.channel) };
+  if (!actor) return {};
   const { activation, behaviour, constraints } = actor;
   const { trigger } = activation;
   return {
@@ -163,20 +128,12 @@ export const initialFields = (actor) => {
     permitted: actor.permitted_actions,
     play: actor.play,
     mode: actor.editable_trigger ? trigger.kind : KEPT,
-    triggerTool: "tool" in trigger ? trigger.tool : NEW_FIELDS.triggerTool,
-    triggerWords:
-      "words" in trigger ? trigger.words.join(", ") : NEW_FIELDS.triggerWords,
-    triggerTurn: "turn" in trigger ? trigger.turn : NEW_FIELDS.triggerTurn,
-    triggerSeconds:
-      "seconds" in trigger ? trigger.seconds : NEW_FIELDS.triggerSeconds,
-    triggerCollection:
-      "collection" in trigger
-        ? trigger.collection
-        : NEW_FIELDS.triggerCollection,
-    triggerWhere:
-      trigger.where && Object.keys(trigger.where).length
-        ? JSON.stringify(trigger.where)
-        : "",
+    ...Object.fromEntries(
+      Object.entries(TRIGGER_INPUTS).map(([key, input]) => [
+        input,
+        triggerInput(trigger, key),
+      ]),
+    ),
     timeout: activation.timeout_seconds,
     fallback: fallbackKey(actor.fallback),
     fallback_arguments:
@@ -200,8 +157,8 @@ export const hasEdits = (actor, fields) => {
   return Object.keys(fields).some((name) => differs(fields[name], start[name]));
 };
 
-/** Only the edited fields, by request name; the service merges them. `actor` is `{side}` for a new one. */
-export const changesOf = (actor, fields) => {
+/** Only the edited fields, by request name; the service merges them. `triggerKeys` maps a kind to its trigger keys. */
+export const changesOf = (actor, fields, triggerKeys = {}) => {
   const start = initialFields(actor);
   const edited = (name) => name in fields && differs(fields[name], start[name]);
   const read = (name) => (name in fields ? fields[name] : start[name]);
@@ -241,7 +198,7 @@ export const changesOf = (actor, fields) => {
   if (edited("permitted")) changes.permitted_actions = read("permitted");
   if (edited("play")) changes.play = read("play");
   if (TRIGGER_FIELDS.some(edited) && read("mode") !== KEPT)
-    changes.trigger = triggerOf(read);
+    changes.trigger = triggerOf(read, triggerKeys[read("mode")] || []);
   if (edited("timeout"))
     changes.timeout_seconds = numberOrNull(read("timeout"));
   if (edited("fallback")) changes.fallback = fallbackValue(read("fallback"));

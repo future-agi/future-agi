@@ -1068,6 +1068,20 @@ SCENARIO_AMEND_CODES = (
 )
 
 
+class HarnessFaultProblemSerializer(serializers.Serializer):
+    """Why the test world cannot apply one test condition."""
+
+    index = serializers.IntegerField(
+        allow_null=True,
+        help_text="Its place in the scenario's list; null when the list itself is unreadable.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The test-condition field it is shown under; null when it is no one field's.",
+    )
+    message = serializers.CharField()
+
+
 class HarnessScenarioAmendReceiptSerializer(serializers.Serializer):
     """What became of one change to one scenario."""
 
@@ -1084,6 +1098,11 @@ class HarnessScenarioAmendReceiptSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The scenario field the receipt is about: `faults` for a test condition, `persona`, or the set "
         "field; null for a whole-scenario change.",
+    )
+    problems = HarnessFaultProblemSerializer(
+        many=True,
+        help_text="For fault_invalid: every test condition the world cannot apply, each by its place in the list; "
+        "empty on any other receipt.",
     )
 
 

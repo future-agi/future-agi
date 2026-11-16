@@ -206,8 +206,7 @@ export const getActors = async (envId) =>
 export const getActorView = async (envId, actorId) =>
   (await axios.get(actorPath(envId, actorId))).data;
 /**
- * Create, replace or delete one actor in the draft; resolves to the cast. A stale `revision` is refused with
- * `draft_changed`.
+ * Create, replace or delete one actor in the draft; resolves to the cast. A stale `revision` is `draft_changed`.
  */
 export const editActor = async (
   envId,
@@ -862,8 +861,7 @@ export function useEditActor(envId) {
 export const ACTOR_CHECK_DELAY_MS = 400;
 
 /**
- * Debounced `checkActor` on `request` (null asks nothing). `verdict` is null unless it answers exactly `request`.
- * @returns {{ verdict: ?Object, pending: boolean, isError: boolean, error: ?Object, retry: () => void }}
+ * Debounced `checkActor` on `request` (null asks nothing); `verdict` is null unless it answers exactly `request`.
  */
 export function useActorCheck(envId, request) {
   const asked = request ? JSON.stringify(request) : null;

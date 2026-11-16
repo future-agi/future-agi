@@ -1,16 +1,10 @@
-"""A scenario's starting records: the seeded rows its facts name, and the choice of another one."""
+"""A scenario's starting records: the seeded rows its facts name, read-only."""
 
 from __future__ import annotations
 
 from rest_framework import serializers
 
-
-class HarnessSeededRowSerializer(serializers.Serializer):
-    key = serializers.JSONField(help_text="The row's key, a string or an integer.")
-    fields = serializers.DictField(
-        child=serializers.JSONField(),
-        help_text="The row as the world is seeded with it.",
-    )
+from simulate.services.harness_starting_records import SUMMARY_VALUES
 
 
 class HarnessStartingRecordSerializer(serializers.Serializer):
@@ -18,16 +12,28 @@ class HarnessStartingRecordSerializer(serializers.Serializer):
         child=serializers.CharField(),
         help_text="Where the fact sits in the scenario's fixture, one segment per level (a list position as digits).",
     )
-    label = serializers.CharField()
+    label = serializers.CharField(  # type: ignore[assignment]  # the API field is named label, as Field's own
+        help_text="The path as one name."
+    )
     table = serializers.CharField()
     key_field = serializers.CharField()
-    key = serializers.JSONField()
-    fields = serializers.DictField(child=serializers.JSONField())
-    alternatives = HarnessSeededRowSerializer(
-        many=True,
-        help_text="Other rows of the table the scenario could start from instead, the first few.",
+    key = serializers.CharField(help_text="The fact's value, as text.")
+    status = serializers.ChoiceField(
+        choices=("seeded", "missing"),
+        help_text="seeded: the world's seed holds the row. missing: it does not, and note says so.",
     )
-    alternatives_total = serializers.IntegerField(min_value=0)
+    summary = serializers.CharField(
+        allow_null=True,
+        help_text=f"The row in one line: its key, then up to {SUMMARY_VALUES} of its other values; null when missing.",
+    )
+    fields = serializers.DictField(  # type: ignore[assignment]  # the API field is named fields, as Serializer's own
+        child=serializers.JSONField(),
+        allow_null=True,
+        help_text="The row as the world is seeded with it.",
+    )
+    note = serializers.CharField(
+        allow_null=True, help_text="Why the record is missing, in words to show."
+    )
 
 
 class HarnessRowsUnavailableSerializer(serializers.Serializer):
@@ -41,24 +47,12 @@ class HarnessStartingRecordsSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Where the fixture's data comes from: seed, generated or mixed.",
     )
-    editable = serializers.BooleanField(
-        help_text="Whether a choice can be written to this environment's draft."
-    )
     records = HarnessStartingRecordSerializer(many=True)
+    setup_note = serializers.CharField(
+        allow_null=True,
+        help_text="Set when the scenario's setup changes the world before each run, so the rows are as seeded.",
+    )
     rows_unavailable = HarnessRowsUnavailableSerializer(
         allow_null=True,
         help_text="Why the world's rows can't be read, or null when they can.",
-    )
-
-
-class HarnessStartingRecordChoiceSerializer(serializers.Serializer):
-    path = serializers.ListField(
-        child=serializers.CharField(max_length=255),
-        min_length=1,
-        max_length=32,
-        help_text="The `path` of one of the scenario's starting records.",
-    )
-    table = serializers.CharField(max_length=255)
-    key = serializers.CharField(
-        max_length=1024, help_text="The key of the seeded row to start from instead."
     )

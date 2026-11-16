@@ -46,15 +46,20 @@ export default function ActorForm({
     name in holder ? holder[name] : initial[name];
   const value = readerOf(fields);
   // Null while a JSON field does not parse; that field shows why.
+  // The trigger keys each kind takes, as the cast lists them.
+  const triggerKeys = context.triggerFields;
   const requestOf = () => {
-    if (value("mode") === "conditional" && whereProblem(value("triggerWhere")))
+    if (
+      (triggerKeys[value("mode")] || []).includes("where") &&
+      whereProblem(value("triggerWhere"))
+    )
       return null;
     if (
       fallbackActs(value("fallback")) &&
       parsedArguments(value("fallback_arguments")) === null
     )
       return null;
-    const changes = changesOf(actor, fields);
+    const changes = changesOf(actor, fields, triggerKeys);
     if (existing) return { op: "replace", actorId: actor.id, changes };
     const id = String(value("id")).trim();
     return { op: "create", changes, ...(id ? { id } : {}) };
@@ -88,12 +93,15 @@ export default function ActorForm({
     .join("|");
   const [confirmedFor, setConfirmedFor] = useState("");
   const shareConfirmed = conflicts.length > 0 && confirmedFor === conflictKey;
-  const shown = fieldsOnScreen(value, {
-    capField,
-    loud: Boolean(chosen?.loudness),
-    models: context.actorModels.length > 0,
-    more,
-  });
+  // Nothing is on screen while the form is closed.
+  const shown = !actor
+    ? new Set()
+    : fieldsOnScreen(value, {
+        capField,
+        loud: Boolean(chosen?.loudness),
+        models: context.actorModels.length > 0,
+        more,
+      });
   const fieldOf = (one) =>
     shown.has(PROBLEM_FIELDS[one.field]) ? PROBLEM_FIELDS[one.field] : null;
   const form = {
@@ -184,7 +192,8 @@ export default function ActorForm({
             <ActorTriggerFields
               form={form}
               actor={actor}
-              triggerKinds={chosen ? chosen.trigger_kinds : []}
+              triggerOptions={chosen ? chosen.trigger_options : []}
+              triggerKeys={triggerKeys[value("mode")] || []}
               actionIds={context.actions.map((one) => one.action)}
               collections={context.knowledgeSources.records.map(
                 (one) => one.collection,
@@ -267,7 +276,7 @@ export default function ActorForm({
 
 ActorForm.propTypes = {
   envId: PropTypes.string.isRequired,
-  // `{side}` for a new actor, null while the form is closed.
+  // The cast's `new_actor` on its side for a new actor, null while the form is closed.
   actor: PropTypes.object,
   context: PropTypes.shape({
     actions: PropTypes.arrayOf(PropTypes.object).isRequired,
@@ -275,13 +284,17 @@ ActorForm.propTypes = {
     channelOptions: PropTypes.arrayOf(
       PropTypes.shape({
         channel: PropTypes.string,
+        label: PropTypes.string,
         description: PropTypes.string,
         loudness: PropTypes.bool,
-        trigger_kinds: PropTypes.arrayOf(PropTypes.string),
+        trigger_options: OPTIONS_SHAPE,
         required_fields: PropTypes.arrayOf(PropTypes.string),
         cap_field: PropTypes.oneOf(["max_turns", "max_lines"]),
       }),
     ).isRequired,
+    // The trigger keys each kind takes: `{kind: [key]}`.
+    triggerFields: PropTypes.objectOf(PropTypes.arrayOf(PropTypes.string))
+      .isRequired,
     fieldOptions: PropTypes.shape({
       kind: OPTIONS_SHAPE.isRequired,
       play: OPTIONS_SHAPE.isRequired,

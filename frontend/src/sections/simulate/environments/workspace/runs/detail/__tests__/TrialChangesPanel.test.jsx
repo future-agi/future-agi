@@ -23,8 +23,6 @@ function TrialChangesPanel({ trialState }) {
 }
 TrialChangesPanel.propTypes = { trialState: PropTypes.object };
 
-const DECLINE = { kind: "decline", value: "decline", label: "They decline" };
-const DEPUTY = { kind: "actor", value: "deputy", label: "Dev answers instead" };
 const CHANGE = {
   kind: "action",
   value: "approvals.change",
@@ -176,6 +174,7 @@ describe("TrialChangesPanel", () => {
               play: "live",
               action: "crm.request_approval",
               why: "12% is within my limit",
+              line: "Priya Raman · Decided · crm.request_approval · 12% is within my limit",
             },
             {
               actor: "manager",
@@ -183,6 +182,7 @@ describe("TrialChangesPanel", () => {
               play: "live",
               action: null,
               why: "already approved",
+              line: "Priya Raman · Decided · Did nothing · already approved",
             },
           ],
         }}
@@ -206,83 +206,6 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("reads an actor's refused action apart from a committed one", () => {
-    render(
-      <TrialChangesPanel
-        trialState={{
-          state_changes: [
-            {
-              who: "coworker",
-              name: "Sam Lee",
-              attempted: 1,
-              committed: 0,
-              refused: 1,
-              faulted: 0,
-              duplicate: 0,
-              committed_actions: [],
-            },
-            {
-              who: "manager",
-              name: "Priya Raman",
-              attempted: 1,
-              committed: 1,
-              refused: 0,
-              faulted: 0,
-              duplicate: 0,
-              committed_actions: ["crm.approve_discount"],
-            },
-          ],
-          decisions: [
-            {
-              actor: "coworker",
-              name: "Sam Lee",
-              play: "live",
-              action: "crm.approve_discount",
-              outcome: "refused",
-            },
-            {
-              actor: "manager",
-              name: "Priya Raman",
-              play: "mocked",
-              action: "crm.approve_discount",
-              outcome: "committed",
-            },
-          ],
-        }}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "Sam Lee · Decided · crm.approve_discount · refused by the world",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Priya Raman · As scheduled · crm.approve_discount · committed",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("says an actor whose trigger never came in plainly, never as a raw code", () => {
-    render(
-      <TrialChangesPanel
-        trialState={{
-          state_changes: [],
-          decisions: [
-            {
-              actor: "dana",
-              name: "Dana",
-              play: "not_triggered",
-              why: "its trigger never came in this trial",
-            },
-          ],
-        }}
-      />,
-    );
-    expect(screen.getByText(/Never came in/)).toBeInTheDocument();
-    expect(screen.queryByText(/not_triggered/)).not.toBeInTheDocument();
-  });
-
   it("says nothing changed when the trial recorded nothing", () => {
     render(
       <TrialChangesPanel trialState={{ state_changes: [], decisions: [] }} />,
@@ -291,72 +214,6 @@ describe("TrialChangesPanel", () => {
       screen.getByText("Nothing changed in the world in this trial."),
     ).toBeInTheDocument();
   });
-  it("shows the world waiting on an actor and the configured outcome when it does not answer", () => {
-    render(
-      <TrialChangesPanel
-        trialState={{
-          state_changes: [
-            {
-              who: "deputy",
-              name: "Dev",
-              attempted: 1,
-              committed: 1,
-              committed_actions: ["deals.approve"],
-            },
-          ],
-          decisions: [
-            {
-              actor: "manager",
-              name: "manager",
-              play: "waiting",
-              timeout_seconds: 30,
-              fallback: DECLINE,
-            },
-            {
-              actor: "manager",
-              name: "manager",
-              play: "timeout",
-              fallback: DECLINE,
-              outcome: "declined",
-            },
-            {
-              actor: "lead",
-              name: "lead",
-              play: "waiting",
-              timeout_seconds: 20,
-              fallback: DEPUTY,
-            },
-            {
-              actor: "lead",
-              name: "lead",
-              play: "timeout",
-              fallback: DEPUTY,
-              outcome: "answered_by",
-            },
-          ],
-        }}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "manager · Waiting for a response · up to 30 s, then: They decline",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "manager · Timed out · No answer: the request was declined",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "lead · Waiting for a response · up to 20 s, then: Dev answers instead",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("lead · Timed out · No answer: Dev answers instead"),
-    ).toBeInTheDocument();
-  });
-
   it("names a commit the agent was told timed out, and a fallback the world refused", () => {
     render(
       <TrialChangesPanel
@@ -387,6 +244,7 @@ describe("TrialChangesPanel", () => {
               fallback: CHANGE,
               outcome: "fallback_not_committed",
               action_outcome: "refused",
+              line: "Alex Vance · Timed out · No answer: their fallback action was tried for them and refused by the world",
             },
             {
               actor: "alex",
@@ -395,6 +253,7 @@ describe("TrialChangesPanel", () => {
               fallback: CHANGE,
               outcome: "fallback_action",
               action_outcome: "committed",
+              line: "Alex Vance · Timed out · No answer: their fallback action was taken for them",
             },
           ],
         }}
@@ -440,40 +299,6 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("names an actor that could not take part as the scenario's problem, and an open wait", () => {
-    render(
-      <TrialChangesPanel
-        trialState={{
-          state_changes: [],
-          decisions: [
-            {
-              actor: "auditor",
-              name: "auditor",
-              play: "problem",
-              problem: "no_world_door",
-            },
-            {
-              actor: "manager",
-              name: "manager",
-              play: "timeout",
-              outcome: "unresolved_at_end",
-            },
-          ],
-        }}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "auditor · Could not take part · Could not act: this agent's tools run where no actor can act",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "manager · Timed out · Still waited on when the trial ended",
-      ),
-    ).toBeInTheDocument();
-  });
-
   it("shows what actors wrote before the run apart, and each approval with whether the agent waited", () => {
     render(
       <TrialChangesPanel
@@ -498,6 +323,7 @@ describe("TrialChangesPanel", () => {
               play: "history",
               action: "slack.post",
               arguments: { text: "20% for Acme?" },
+              line: "Priya: 20% for Acme?",
             },
           ],
           approvals: [
@@ -519,30 +345,6 @@ describe("TrialChangesPanel", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Before the run · /)).toBeNull();
-  });
-
-  it("names a pre-run writer who changed nothing in the trial by the name its message carries", () => {
-    render(
-      <TrialChangesPanel
-        trialState={{
-          state_changes: [],
-          decisions: [],
-          pre_run: [
-            {
-              actor: "lead",
-              name: "Sam Lee",
-              play: "history",
-              action: "chat.post_message",
-              arguments: { text: "Margins are tight on deal 9." },
-            },
-          ],
-        }}
-      />,
-    );
-    expect(
-      screen.getByText("Sam Lee: Margins are tight on deal 9."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/^lead:/)).toBeNull();
   });
 
   it("says each actor's model use per model, then the trial's in all, as the server sums them", () => {
@@ -711,35 +513,25 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    [
-      { state: "seeded", tables: [] },
-      "Started from the seeded records, as every trial does",
-    ],
-    [
-      { state: "unknown", tables: [] },
-      "Whether this trial started from the seeded records could not be checked.",
-    ],
-    [
-      { state: "seeded", tables: [], against: "sealed_seed" },
-      "Started from the seeded records, as every trial does",
-    ],
-    [
-      { state: "seeded", tables: [], against: "first_trial" },
-      "Started from the same records as the first trial: compared with that trial's start, not a sealed seed",
-    ],
-  ])(
-    "says whether the trial started from the seeded records (%o)",
-    (start, line) => {
-      render(
-        <TrialChangesPanel
-          trialState={{ state_changes: [], decisions: [], start }}
-        />,
-      );
-      expect(screen.getByText(line)).toBeInTheDocument();
-    },
-  );
-
+  it("says how the trial started as the server words it, and nothing when the server has nothing to say", () => {
+    const line =
+      "Started from the same records as the first trial: compared with that trial's start, not a sealed seed";
+    render(
+      <TrialChangesPanel
+        trialState={{
+          start: { state: "seeded", tables: [], against: "first_trial", line },
+        }}
+      />,
+    );
+    expect(screen.getByText(line)).toBeInTheDocument();
+    cleanup();
+    render(
+      <TrialChangesPanel
+        trialState={{ start: { state: "differs", tables: ["orders"], line: null } }}
+      />,
+    );
+    expect(screen.queryByText(/Started from/)).toBeNull();
+  });
   it("puts a trial that did not start clean under Worth knowing, in the server's notice", () => {
     const message =
       "Did not start from the seeded records: orders differed. Results of this trial may not repeat.";
@@ -817,6 +609,7 @@ describe("TrialChangesPanel", () => {
               outcome: "committed",
               verdict: "refused",
               committed_after_refusal: true,
+              line: "Priya Raman · Decided · approvals.put · committed · Refused",
             },
           ],
           approvals: [
@@ -879,6 +672,7 @@ describe("TrialChangesPanel", () => {
               outcome: "committed",
               verdict: "approved",
               committed_after_refusal: false,
+              line: "Priya Raman · Decided · approvals.put · committed · Approved",
             },
           ],
         }}

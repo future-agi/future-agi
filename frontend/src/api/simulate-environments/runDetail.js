@@ -635,7 +635,8 @@ export function mapCallDetail(raw) {
     persona: raw.persona ?? null,
     // Absent without actors or faults.
     trial_state: raw.trial_state ?? null,
-    callActors: raw.call_actors,
+    // Who took part in the call, as the server says, and whether a customer did.
+    participants: raw.participants,
     hasCustomer: raw.has_customer,
     turns,
     stats: {

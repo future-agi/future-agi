@@ -25,6 +25,25 @@ class Seen(TypedDict):
     source: str
     # The value as one line a person reads: lists joined, fields as "field: value", never raw JSON.
     text: str
+    # What the input is, in words; its own name when it has none here.
+    label: str
+
+
+# Each input an actor's brief is built from, in words.
+SEEN_LABELS = {
+    "actor.name": "Name",
+    "actor.role": "Role",
+    "actor.persona": "Persona",
+    "actor.goal": "Aim in this conversation",
+    "actor.constraints": "What they may agree to and keep to themselves",
+    "actor.behaviour": "How they behave",
+    "actor.prompt": "Their prompt",
+    "actor.surface": "How they reach the agent",
+    "actor.knowledge": "What they know",
+    "scenario.instruction": "What they do in this scenario",
+    "scenario.knowledge": "What they know in this scenario",
+    "caller.situation": "The caller's situation, without the caller's own details",
+}
 
 
 def readable(value: object) -> str:
@@ -185,6 +204,9 @@ def actor_view(
                 "value": value,
                 "source": source,
                 "text": seen_text(field, value),
+                "label": SEEN_LABELS.get(
+                    f"{source}.{field}", field.replace("_", " ").capitalize()
+                ),
             }
         )
     hidden = rules["evaluator_only"]

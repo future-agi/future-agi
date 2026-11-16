@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
-import { CHANNEL_OPTIONS, CLEAN, cast, typedActor } from "./castFixtures";
+import {
+  CHANNEL_OPTIONS,
+  CLEAN,
+  TRIGGER_FIELDS,
+  cast,
+  typedActor,
+} from "./castFixtures";
 
 let verdict;
 vi.mock("src/api/simulate-environments/versions", () => ({
@@ -19,6 +25,7 @@ const { default: ActorForm } = await import("../ActorForm");
 const contextOf = (data) => ({
   actions: data.actions,
   channelOptions: data.channel_options,
+  triggerFields: data.trigger_fields,
   fieldOptions: data.field_options,
   loudness: data.loudness,
   uploadRules: data.upload,
@@ -26,6 +33,13 @@ const contextOf = (data) => ({
   actorModels: data.actor_models,
   knowledgeSources: data.knowledge_sources,
   others: data.actors,
+});
+
+// A new actor as the panel opens it: the cast's `new_actor` on its side.
+const newActor = (side, channel = null, data = cast([])) => ({
+  ...data.new_actor,
+  side,
+  channel,
 });
 
 const renderForm = (actor, { data = cast([]), onSave = vi.fn() } = {}) =>
@@ -61,7 +75,7 @@ describe("ActorForm", () => {
 
   it("titles a new actor's form Add actor, with the side it is added on", () => {
     verdict = CLEAN;
-    renderForm({ side: "caller" });
+    renderForm(newActor("caller"));
     expect(screen.getByText("Add actor")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -72,7 +86,7 @@ describe("ActorForm", () => {
 
   it("offers only the ways of coming in the chosen channel takes", () => {
     verdict = CLEAN;
-    renderForm({ side: "world" });
+    renderForm(newActor("world"));
     fireEvent.mouseDown(screen.getByLabelText("Comes in"));
     expect(
       screen.getByRole("option", { name: "When the agent contacts them" }),
@@ -99,7 +113,7 @@ describe("ActorForm", () => {
 
   it("offers the voice choices the cast lists, with Any for none", () => {
     verdict = CLEAN;
-    renderForm({ side: "caller", channel: "audio_mix" });
+    renderForm(newActor("caller", "audio_mix"));
     fireEvent.mouseDown(screen.getByLabelText("Age"));
     expect(
       screen.getAllByRole("option").map((one) => one.textContent),
@@ -114,7 +128,7 @@ describe("ActorForm", () => {
 
   it("shows the id the server will give in a cleared id field", () => {
     verdict = { ...CLEAN, suggested_id: "sam_lee" };
-    renderForm({ side: "world" });
+    renderForm(newActor("world"));
     const id = screen.getByLabelText("Id");
     expect(id).toHaveValue("sam_lee");
     fireEvent.change(id, { target: { value: "" } });
@@ -193,5 +207,64 @@ describe("ActorForm", () => {
     expect(
       screen.getByRole("button", { name: "Save to draft" }),
     ).toBeDisabled();
+  });
+
+  it("starts a new actor from the cast's new_actor, never from defaults of its own", () => {
+    verdict = CLEAN;
+    const data = cast([], {
+      new_actor: typedActor({
+        id: "",
+        name: "",
+        kind: "approver",
+        trigger: { kind: "contacted" },
+        timeout: 45,
+      }),
+    });
+    renderForm(newActor("world", null, data), { data });
+    expect(screen.getByLabelText("Kind (optional)")).toHaveTextContent(
+      "An approver",
+    );
+    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+      "When the agent contacts them",
+    );
+    expect(screen.getByLabelText("Waits, in seconds (optional)")).toHaveValue(
+      45,
+    );
+  });
+
+  it("shows only the trigger inputs the cast lists for the picked kind, and sends them typed", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    // A release where being contacted also takes a delay.
+    const data = cast([], {
+      trigger_fields: { ...TRIGGER_FIELDS, contacted: ["seconds"] },
+    });
+    renderForm(typedActor({ id: "ops", name: "Ops" }), { data, onSave });
+    fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    fireEvent.click(
+      screen.getByRole("option", { name: "When the agent contacts them" }),
+    );
+    expect(screen.queryByLabelText("From the agent's turn")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Seconds after the start"), {
+      target: { value: "12" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
+      kind: "contacted",
+      seconds: 12,
+    });
+  });
+
+  it("labels each way of joining as the cast does", () => {
+    verdict = CLEAN;
+    const data = cast([], {
+      channel_options: CHANNEL_OPTIONS.map((one) =>
+        one.channel === "audio_mix" ? { ...one, label: "Beside the caller" } : one,
+      ),
+    });
+    renderForm(newActor("caller", "audio_mix", data), { data });
+    expect(
+      screen.getByLabelText("How they join the conversation"),
+    ).toHaveTextContent("Beside the caller");
   });
 });

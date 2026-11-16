@@ -96,11 +96,11 @@ def test_a_stated_method_is_kept():
 
 def test_a_contract_that_is_not_one_has_no_tools():
     assert tool_status(None) == []
-    assert fault_targets("nope", RULES) == []
+    assert fault_targets("nope", RULES, []) == []
 
 
 def test_fault_targets_name_the_route_as_the_world_action():
-    targets = _by_tool(fault_targets(CONTRACT, RULES))
+    targets = _by_tool(fault_targets(CONTRACT, RULES, []))
 
     named = ("tool", "action", "reachable", "writes")
     assert {key: targets["issue_refund"][key] for key in named} == {
@@ -122,7 +122,7 @@ def test_without_entrypoints_the_tools_are_offered_by_name():
 
     assert [
         (one["tool"], one["action"], one["reachable"], one["writes"], one["modes"])
-        for one in fault_targets(contract, RULES)
+        for one in fault_targets(contract, RULES, [])
     ] == [("a", "a", False, False, []), ("b", "b", False, False, [])]
 
 
@@ -130,7 +130,7 @@ def test_a_fault_on_a_tool_inside_the_agent_cannot_work():
     problem = door_problem(
         faults=[{"action": "lookup_order", "mode": "unavailable"}],
         actors=[],
-        targets=door_targets(CONTRACT, RULES),
+        targets=door_targets(CONTRACT, RULES, []),
     )
 
     assert problem is not None
@@ -143,7 +143,7 @@ def test_a_fault_named_by_its_route_on_a_reachable_tool_works():
         door_problem(
             faults=[{"action": "orders.refund", "mode": "unavailable"}],
             actors=[{"id": "boss", "actions": [{"action": "orders.refund"}]}],
-            targets=door_targets(CONTRACT, RULES),
+            targets=door_targets(CONTRACT, RULES, []),
         )
         is None
     )
@@ -160,12 +160,12 @@ def test_an_acting_actor_needs_a_door_somewhere():
         actors=[
             {"id": "clerk", "trigger": {"kind": "on_tool", "tool": "lookup_order"}}
         ],
-        targets=door_targets(contract, RULES),
+        targets=door_targets(contract, RULES, []),
     )
     speaking = door_problem(
         faults=[],
         actors=[{"id": "friend", "instruction": "hi"}],
-        targets=door_targets(contract, RULES),
+        targets=door_targets(contract, RULES, []),
     )
 
     assert acting == {"code": "actor_no_door", "message": NO_WORLD_DOOR}
@@ -177,13 +177,13 @@ def test_a_contract_that_says_nothing_of_the_door_raises_nothing():
         door_problem(
             faults=[{"action": "x", "mode": "unavailable"}],
             actors=[{"id": "a", "actions": [{"action": "x"}]}],
-            targets=door_targets({"tools": ["x"]}, RULES),
+            targets=door_targets({"tools": ["x"]}, RULES, []),
         )
         is None
     )
     assert (
         door_problem(
-            faults="junk", actors="junk", targets=door_targets(CONTRACT, RULES)
+            faults="junk", actors="junk", targets=door_targets(CONTRACT, RULES, [])
         )
         is None
     )
@@ -207,11 +207,11 @@ def test_a_fault_action_follows_the_sealed_naming():
         ],
     }
 
-    targets = {one["tool"]: one["action"] for one in fault_targets(contract, rules)}
+    targets = {one["tool"]: one["action"] for one in fault_targets(contract, rules, [])}
     problem = door_problem(
         faults=[{"action": "orders_hold", "mode": "unavailable"}],
         actors=[],
-        targets=door_targets(contract, rules),
+        targets=door_targets(contract, rules, []),
     )
 
     assert (targets["issue_refund"], targets["hold"]) == (
@@ -220,3 +220,46 @@ def test_a_fault_action_follows_the_sealed_naming():
     )
     # A fault named the sealed way is found, so its unreachable tool reads as a problem.
     assert problem is not None and problem["code"] == "fault_unreachable"
+
+
+def test_an_argument_s_unit_reaches_the_tools_card_as_the_contract_writes_it():
+    contract = {
+        "tools": [
+            {
+                "name": "issue_refund",
+                "args": [
+                    "amount",
+                    {"name": "currency", "type": "string", "unit": "ISO 4217 code"},
+                    "reason",
+                ],
+                "arg_types": {"amount": "integer"},
+                "arg_units": {"amount": "cents, USD"},
+            }
+        ]
+    }
+
+    assert tool_status(contract)[0]["arguments"] == [
+        {"name": "amount", "type": "integer", "unit": "cents, USD"},
+        {"name": "currency", "type": "string", "unit": "ISO 4217 code"},
+        {"name": "reason", "type": None, "unit": None},
+    ]
+
+
+def test_the_tables_a_tool_reads_and_changes_are_shown_when_the_contract_declares_them():
+    declared = {
+        "name": "issue_refund",
+        "tables_read": ["orders"],
+        "tables_changed": ["refunds", "orders"],
+    }
+    rows = _by_tool(tool_status({"tools": [declared, {"name": "audit"}]}))
+
+    tables = rows["issue_refund"]["tables"]
+    assert (tables["recorded"], tables["read"], tables["changed"]) == (
+        True,
+        ["orders"],
+        ["refunds", "orders"],
+    )
+    assert (rows["audit"]["tables"]["recorded"], rows["audit"]["tables"]["read"]) == (
+        False,
+        [],
+    )

@@ -58,8 +58,13 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     setUploadMoved(false);
     setEditing({ actor, revision });
   };
+  // A new actor starts as the cast's `new_actor`, on its side's way of joining.
   const addOn = (side) =>
-    openForm({ side, channel: data.side_defaults[side].channel });
+    openForm({
+      ...data.new_actor,
+      side,
+      channel: data.side_defaults[side].channel,
+    });
   const cast = data?.actors || [];
   const revision = data?.revision;
   // On a refused save or upload the form moves onto the refreshed record, keeping what was typed.
@@ -75,6 +80,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const context = data && {
     actions: data.actions,
     channelOptions: data.channel_options,
+    triggerFields: data.trigger_fields,
     fieldOptions: data.field_options,
     loudness: data.loudness,
     uploadRules: data.upload,

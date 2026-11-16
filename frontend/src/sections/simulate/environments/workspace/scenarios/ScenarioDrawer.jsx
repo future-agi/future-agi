@@ -8,7 +8,6 @@ import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { ACTORS_COPY } from "../actors/actors.constants";
 import {
   TEST_CONDITIONS_COPY,
-  testConditionLine,
   testConditionRoute,
 } from "./testConditions.constants";
 
@@ -216,9 +215,7 @@ function ScenarioSheet({ row }) {
         {row.faults?.length > 0 ? (
           row.faults.map((fault, index) => (
             <Box key={`${fault.action}-${index}`}>
-              <Typography className="sd-val">
-                {testConditionLine(fault)}
-              </Typography>
+              <Typography className="sd-val">{fault.line}</Typography>
               {testConditionRoute(fault) && (
                 <Typography
                   className="sd-val"

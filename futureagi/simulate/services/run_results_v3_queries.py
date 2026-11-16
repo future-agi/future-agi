@@ -74,7 +74,11 @@ from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
     SIMULATED_USER_ONLY,
 )
-from simulate.services.run_reliability_v3 import build_reliability
+from simulate.services.run_reliability_v3 import (
+    NOT_COMPARABLE,
+    build_reliability,
+    comparable_trials,
+)
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
     NormalizedEvalNumber,
@@ -1463,7 +1467,7 @@ def build_run_comparison(
         labels: dict[str, str] = {}
         trials: dict[str, run_compare.ScenarioTrials] = {}
         fields = ["result_scenario_key", "result_scenario", "result_outcome"]
-        calls = calls.order_by()
+        calls = calls.order_by().exclude(NOT_COMPARABLE)
         if with_pairs:
             calls = calls.annotate(
                 result_receipt_sub_goals=_json_value(
@@ -1526,6 +1530,7 @@ def build_run_comparison(
         if with_pairs:
             current_trials = verdicts(queryset)[2]
             pairs, summary = run_compare.scenario_pairs(current_trials, {})
+            summary["excluded_not_comparable"] = queryset.filter(NOT_COMPARABLE).count()
             comparison.update(
                 pairs=pairs,
                 summary=summary,
@@ -1537,8 +1542,9 @@ def build_run_comparison(
                 },
             )
         return comparison
+    previous_calls = run_calls_queryset(previous)
     current_verdicts, current_labels, current_trials = verdicts(queryset)
-    previous_verdicts, _, previous_trials = verdicts(run_calls_queryset(previous))
+    previous_verdicts, _, previous_trials = verdicts(previous_calls)
     shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
     comparison = {
         "available": True,
@@ -1558,6 +1564,11 @@ def build_run_comparison(
     if with_pairs:
         comparison.update(
             _run_pairs(execution, previous, current_trials, previous_trials)
+        )
+        # Trials of either run that did not start from the seeded records, left out of every verdict.
+        comparison["summary"]["excluded_not_comparable"] = (
+            queryset.filter(NOT_COMPARABLE).count()
+            + previous_calls.filter(NOT_COMPARABLE).count()
         )
     return comparison
 
@@ -1622,7 +1633,8 @@ def _run_pairs(
 
 
 def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
-    return build_reliability(run_calls_queryset(execution), execution.trials)
+    comparable, excluded = comparable_trials(run_calls_queryset(execution))
+    return build_reliability(comparable, execution.trials, excluded)
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
@@ -1772,22 +1784,32 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         execution, [sibling["id"] for sibling in siblings]
     )
     trend_rows = (
-        trend_queryset.order_by()
+        trend_queryset.exclude(NOT_COMPARABLE)
+        .order_by()
         .values("test_execution_id")
         .annotate(**_aggregate_expressions(include_percentiles=False))
     )
     trend_summaries = {
         row["test_execution_id"]: _summary_from_values(row) for row in trend_rows
     }
+    trend_excluded = dict(
+        trend_queryset.filter(NOT_COMPARABLE)
+        .order_by()
+        .values("test_execution_id")
+        .annotate(excluded=Count("id"))
+        .values_list("test_execution_id", "excluded")
+    )
     trends = [
         {
             "execution_id": str(sibling["id"]),
             "started_at": sibling["started_at"],
             **trend_summaries.get(sibling["id"], _summary_from_values({})),
+            "excluded_not_comparable": trend_excluded.get(sibling["id"], 0),
         }
         for sibling in reversed(siblings)
     ]
-    reliability = build_reliability(queryset, execution.trials)
+    comparable, excluded = comparable_trials(queryset)
+    reliability = build_reliability(comparable, execution.trials, excluded)
     comparison = build_run_comparison(execution, queryset)
     return {
         "execution": {

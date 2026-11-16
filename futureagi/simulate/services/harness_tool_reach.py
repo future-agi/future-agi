@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 import structlog
@@ -11,12 +11,17 @@ import structlog
 from simulate.models import HostedHarnessJob
 from simulate.selectors.environment_documents import contract_data
 from simulate.selectors.stage_outputs import stage_output
-from simulate.services.harness_actor_rules import ActorRules, world_actions
+from simulate.services.harness_actor_rules import (
+    ActorRecord,
+    ActorRules,
+    world_actions,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.scenario_faults import (
     FAULT_BOUNDS,
     FAULT_DEFAULTS,
     FaultTarget,
+    approval_options,
     fault_modes,
     scenario_key,
     target_of,
@@ -159,10 +164,8 @@ class PinnedEnvironment(Protocol):
 def _version_documents(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None
 ) -> dict[str, Any]:
-    return (
-        getattr(pins, "environment_version", None)
-        and pins.environment_version.documents
-    ) or {}
+    version = pins.environment_version if pins is not None else None
+    return (version.documents if version is not None else None) or {}
 
 
 def _version_scenarios(
@@ -316,6 +319,7 @@ class ToolStatus(TypedDict):
     # simulated: the world's door stands in front of it; in_process: it runs inside the agent; unsupported: it
     # reaches a system the test world has no copy of; unknown: the build read nothing about where it runs.
     status: ToolState
+    status_label: str
     # Whether the world restores what it changes before each trial; None when where it runs is not known.
     reset_between_trials: bool | None
     # Where it runs: the agent's callable, or the tools service route; None when the contract names neither.
@@ -426,6 +430,42 @@ def _tables(spec: Mapping[str, Any]) -> ToolTables:
     }
 
 
+# What a test does with each tool, in words. The harness has no recorded-response or approved-external-connection
+# kind of tool: a tool is behind the world's door, inside the agent, or reaches a system the world has no copy of.
+STATUS_LABELS: dict[ToolState, str] = {
+    "simulated": "Simulated",
+    "in_process": "Runs inside the agent",
+    "unsupported": "Unsupported",
+    "unknown": "Where it runs is not known",
+}
+
+
+def _arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
+    """A tool's arguments with their type and unit as the contract writes them: by name in `arg_types` and
+    `arg_units`, or on an argument written as an object (`{name, type, unit}`)."""
+    types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
+    arguments: list[ToolArgument] = []
+    args = spec.get("args")
+    for arg in args if isinstance(args, list) else []:
+        own = arg if isinstance(arg, dict) else {"name": arg}
+        name = own.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        kind, unit = own.get("type"), own.get("unit")
+        arguments.append(
+            {
+                "name": name,
+                "type": (kind if isinstance(kind, str) and kind else None)
+                or types.get(name)
+                or None,
+                "unit": (unit if isinstance(unit, str) and unit else None)
+                or units.get(name)
+                or None,
+            }
+        )
+    return arguments
+
+
 def tool_status(contract: object) -> list[ToolStatus]:
     """Each contract tool as the Tools card shows it: its arguments, what it returns, when it refuses, where it runs
     in a test, whether the world resets it between trials and what it changes."""
@@ -443,23 +483,16 @@ def tool_status(contract: object) -> list[ToolStatus]:
             status = "simulated" if reach[name] else "in_process"
         else:
             status = "unknown"
-        types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
         statuses.append(
             {
                 "tool": name,
                 "status": status,
+                "status_label": STATUS_LABELS[status],
                 "reset_between_trials": reach[name] if known else None,
                 "runs_at": _runs_at(entries.get(name)),
                 "writes": _writes(entries.get(name)),
                 "description": str(spec.get("description") or ""),
-                "arguments": [
-                    {
-                        "name": arg,
-                        "type": types.get(arg) or None,
-                        "unit": units.get(arg) or None,
-                    }
-                    for arg in _texts(spec.get("args"))
-                ],
+                "arguments": _arguments(spec),
                 "returns": [
                     {"name": field, "kind": kind}
                     for field, kind in _words(spec.get("returns")).items()
@@ -484,20 +517,31 @@ def _action_names(contract: dict[str, Any], rules: ActorRules) -> dict[str, str]
     return names
 
 
-def _target(tool: str, action: str, *, reachable: bool, writes: bool) -> FaultTarget:
+def _target(
+    tool: str,
+    action: str,
+    *,
+    reachable: bool,
+    writes: bool,
+    cast: Sequence[ActorRecord],
+) -> FaultTarget:
+    approvals = approval_options(action, cast)
     return {
         "tool": tool,
         "action": action,
         "reachable": reachable,
         "writes": writes,
-        "modes": fault_modes(reachable=reachable, writes=writes),
+        "modes": fault_modes(reachable=reachable, writes=writes, approvals=approvals),
         "defaults": FAULT_DEFAULTS,
         "bounds": FAULT_BOUNDS,
     }
 
 
-def fault_targets(contract: object, rules: ActorRules) -> list[FaultTarget]:
-    """Each contract tool a fault can name, whether the door holds it, whether it writes and its fault modes.
+def fault_targets(
+    contract: object, rules: ActorRules, cast: Sequence[ActorRecord]
+) -> list[FaultTarget]:
+    """Each contract tool a fault can name, whether the door holds it, whether it writes and its fault modes; for a
+    write, the actions of ``cast`` (the environment's actors) an approval of it could be recorded by.
 
     A tool with no world action is named by the tool itself."""
     contract = contract if isinstance(contract, dict) else {}
@@ -511,22 +555,25 @@ def fault_targets(contract: object, rules: ActorRules) -> list[FaultTarget]:
                 actions.get(str(entry["tool"]), str(entry["tool"])),
                 reachable=bool(reach.get(str(entry["tool"]))),
                 writes=_writes(entry),
+                cast=cast,
             )
             for entry in entries
         ]
     return [
-        _target(name, name, reachable=False, writes=False)
+        _target(name, name, reachable=False, writes=False, cast=cast)
         for name in _tool_specs(contract)
     ]
 
 
-def door_targets(contract: object, rules: ActorRules) -> list[FaultTarget] | None:
+def door_targets(
+    contract: object, rules: ActorRules, cast: Sequence[ActorRecord]
+) -> list[FaultTarget] | None:
     """The fault targets a scenario's door problem and its faults are judged against, once per page; None when the
     contract says nothing about the world's door."""
     contract = contract if isinstance(contract, dict) else {}
     if not door_reach(contract):
         return None
-    return fault_targets(contract, rules)
+    return fault_targets(contract, rules, cast)
 
 
 def _acts(actor: object) -> bool:
