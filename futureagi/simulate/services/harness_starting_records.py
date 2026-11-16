@@ -502,6 +502,20 @@ def seeded_row(
     return _with_tables(files.environment, find)
 
 
+def archive_scenario_files(archive: bytes, scenario_key: str) -> ScenarioFiles | None:
+    """The scenario as a builder's save holds it, with that save's world; None when the save has no such scenario."""
+    from simulate.services.harness_versioning import archives
+
+    split = archives.split_authoring(archives.read_archive(archive))
+    try:
+        document = _scenario(suite_documents(split.suite), scenario_key)
+    except HostedHarnessError:
+        return None
+    return ScenarioFiles(
+        document=document, suite=split.suite, environment=split.environment
+    )
+
+
 def scenario_files(job: HostedHarnessJob, scenario_key: str) -> ScenarioFiles:
     """The scenario as the next run would read it; storage that can't serve the files raises ``HostedHarnessError``."""
     try:

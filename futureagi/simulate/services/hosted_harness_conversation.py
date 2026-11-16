@@ -2038,6 +2038,9 @@ def promote_conversation_checkpoint(
     }
     suite = (outputs.get("scenarios") or {}).get("data")
     require_checkpoint_scenarios(suite)
+    from simulate.services.harness_starting_record_rework import refuse_invented
+
+    refuse_invented(environment, archive)
 
     observed_revision = environment_authoring_revision(environment)
     stale_revision = None

@@ -26,6 +26,7 @@ from simulate.services.harness_starting_records import (
     Row,
     ScenarioFiles,
     StartingRecord,
+    archive_scenario_files,
     scenario_files,
     scenario_records,
     scenario_token,
@@ -308,6 +309,31 @@ def latest_rework(
     key = str(files.document.get("scenario_key") or files.document.get("name") or "")
     message = _latest_message(job, key)
     return _request(message, files, records) if message is not None else None
+
+
+def refuse_invented(environment: HostedHarnessJob, archive: bytes) -> None:
+    """Refuse a builder's save that starts a scenario from a record it was asked to, with facts about that record
+    that are not the record as seeded. Checked on every save, so an invented record never reaches the scenario."""
+    latest: dict[str, HostedHarnessConversationMessage] = {}
+    for message in _Message.no_workspace_objects.filter(
+        conversation__job=environment,
+        role=_Message.Role.USER,
+        payload___origin=REWORK_ORIGIN,
+    ).order_by("sequence"):
+        latest[str(message.payload.get("_scenario_key") or "")] = message
+    for scenario_key, message in latest.items():
+        files = archive_scenario_files(archive, scenario_key) if scenario_key else None
+        if files is None:
+            continue
+        why = _not_as_seeded(
+            files, scenario_records(files)[0], message.payload["_record"]
+        )
+        if why:
+            raise HostedHarnessError(
+                "starting_record_not_as_seeded",
+                f"scenario {scenario_key} does not start from the record as seeded: {why}",
+                status_code=409,
+            )
 
 
 def _refuse_unready(job: HostedHarnessJob) -> None:

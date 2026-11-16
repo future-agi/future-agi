@@ -292,3 +292,61 @@ def test_a_rework_outside_the_caller_s_workspace_is_not_found_and_never_sent(
 
     assert response.status_code == 404
     assert not _requests(environment).exists()
+
+
+@pytest.mark.parametrize(
+    "first_name", ["Priyanka", None], ids=["invented", "not a field"]
+)
+def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario(
+    user, workspace, storage, auth_client, first_name
+):
+    from simulate.services.harness_starting_records import scenario_files
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import (
+        promote_conversation_checkpoint,
+    )
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import (
+        CONTRACT,
+        SCENARIO,
+        STORE,
+    )
+    from simulate.tests.test_harness_versioning_record import _authoring, _scenario
+    from simulate.tests.test_hosted_harness_conversation import (
+        _put_conversation_checkpoint,
+    )
+
+    environment = _rides(user, workspace, storage, f"rework-save-{first_name}")
+    assert _rework(auth_client, environment).status_code == 202
+    message = _requests(environment).get()
+    identity = {"rider_id": "rdr_priya"}
+    if first_name is not None:
+        identity["first_name"] = first_name
+    else:
+        identity["days_since_signup"] = 5
+    document = _scenario(SCENARIO, fixture={**FIXTURE, "identity": identity})
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(STORE),
+        },
+    )
+    key, digest = _put_conversation_checkpoint(message.conversation, storage, body)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        promote_conversation_checkpoint(
+            message.conversation,
+            object_key=key,
+            digest=digest,
+            sequence=1,
+            expected_revision=message.payload.get("_environment_revision") or "",
+            command=message,
+        )
+
+    assert refused.value.code == "starting_record_not_as_seeded"
+    environment.refresh_from_db()
+    # Neither the saved scenario nor its unsaved changes hold the invented record: a run reads the original.
+    assert scenario_files(environment, KEY).document["fixture"] == FIXTURE
