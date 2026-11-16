@@ -30,6 +30,8 @@ import Section from "src/components/section";
 import TestInventoryReview from "./TestInventoryReview";
 import CapabilityNotice from "../components/CapabilityNotice";
 import ActionReason, { reasonProps } from "../components/ActionReason";
+import Money from "../components/Money";
+import TechnicalDetails from "../components/TechnicalDetails";
 import { useSkillsAccess } from "../utils/access";
 import AdminAllowanceRequest, { allowanceRequestText } from "./AdminAllowanceRequest";
 
@@ -719,7 +721,7 @@ export default function TestRunSetup({
             label="Estimated-cost stop (USD)"
             value={settings.cost}
             inputProps={{ inputMode: "decimal" }}
-            helperText={`Enter a positive amount up to USD ${limits.maxEstimatedCostUsd}. This is a provider estimate, not an invoice.`}
+            helperText={<>Enter a positive amount up to <Money value={limits.maxEstimatedCostUsd} round="down" />. This is a provider estimate, not an invoice.</>}
             onChange={(event) => change({ cost: event.target.value })}
           />
           <TextField
@@ -786,14 +788,27 @@ export default function TestRunSetup({
                 : ""}
             </Typography>
             <Typography variant="s1">
-              Upper-bound estimate USD {plan.preview.estimate.upperBoundUsd} ·
-              stop at USD {plan.configuration.limits.maxEstimatedCostUsd}
+              Upper-bound estimate{" "}
+              <Money value={plan.preview.estimate.upperBoundUsd} round="up" /> ·
+              stop at{" "}
+              <Money value={plan.configuration.limits.maxEstimatedCostUsd} round="up" />
             </Typography>
             <Typography variant="s3" color="text.secondary">
               Uses your workspace model connection. Provider billing may differ
-              from this estimate. Price source:{" "}
-              {plan.preview.estimate.pricingSource}.
+              from this estimate.
             </Typography>
+            <TechnicalDetails title="Technical details">
+              <Stack spacing={0.5}>
+                <Typography variant="s3" color="text.secondary">
+                  Exact upper-bound estimate: USD{" "}
+                  {plan.preview.estimate.upperBoundUsd} · exact stop: USD{" "}
+                  {plan.configuration.limits.maxEstimatedCostUsd}
+                </Typography>
+                <Typography variant="s3" color="text.secondary">
+                  Price source: {plan.preview.estimate.pricingSource}
+                </Typography>
+              </Stack>
+            </TechnicalDetails>
             <Box component="details">
               <Typography component="summary" variant="s3">
                 Effective execution limits

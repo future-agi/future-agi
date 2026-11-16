@@ -25,6 +25,30 @@ export function allowanceInput(value) {
   return kept.length <= 2 ? `${whole}.${kept.padEnd(2, '0')}` : `${whole}.${kept}`;
 }
 
+// ---- Money: "$0.24", "under $0.01", "$25" for people; the exact decimal stays in a tooltip or Details ----
+const MONEY_TEXT = /^(\d+)(?:\.(\d+))?$/;
+/**
+ * Rounds on the decimal text, never through floating point ("1.10000000" is $1.10, not $1.11).
+ * round: "nearest" for observed estimates, "up" for ceilings and stops (the figure shown never
+ * understates what may be spent), "down" for the most a field accepts (the figure shown is
+ * always accepted). Returns null for a missing value; callers say "unknown", never "$0".
+ */
+export function formatUsd(value, { round = 'nearest' } = {}) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  const match = MONEY_TEXT.exec(text);
+  if (!match) return `USD ${text}`;
+  const whole = BigInt(match[1]);
+  const fraction = (match[2] || '').replace(/0+$/, '');
+  if (!fraction) return `$${whole.toLocaleString('en-US')}`;
+  const cents = fraction.slice(0, 2).padEnd(2, '0');
+  const rest = fraction.slice(2);
+  if (whole === 0n && cents === '00') return round === 'down' ? '$0' : 'under $0.01';
+  let total = whole * 100n + BigInt(cents);
+  if ((round === 'up' && /[1-9]/.test(rest)) || (round === 'nearest' && rest >= '5')) total += 1n;
+  return `$${(total / 100n).toLocaleString('en-US')}.${String(total % 100n).padStart(2, '0')}`;
+}
+
 // ---- Dates: one vocabulary across Skills (never seconds in primary views) ----
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;

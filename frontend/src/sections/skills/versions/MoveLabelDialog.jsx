@@ -141,7 +141,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           "This label changed while you were reviewing it. Reload the current label, review the changes, then try again.",
         );
       } else if (['candidate_changed', 'evidence_mismatch', 'evidence_expired', 'evidence_share_required'].includes(getSkillErrorCode(failure))) {
-        setError('The selected evidence cannot be attached. Review it, run tests again, or explicitly continue without attachment. Your selections are preserved.');
+        setError('The selected evidence cannot be attached. Review it, run tests again, or remove the attachment and continue without it. Your selections are preserved.');
       } else {
         setError("Could not move this label. Try again.");
       }
@@ -263,7 +263,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         {ready && current === target && <ActionReason id="move-action-reason-1" reason="Choose a different version" />}
         {!canMove && <Alert severity="info">A workspace admin or organization admin must move this protected label. Publishing an ordinary version remains available.</Alert>}
         {targetVersion.isError && <ErrorState title="Could not load the target version" onRetry={targetVersion.refetch} />}
-        {validTarget && !noEvidence && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />}
+        {validTarget && !noEvidence && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="" />}
         <TextField
           label="Note (optional)"
           size="small"
@@ -276,9 +276,10 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         />
       </Stack>
       {/* The consequence and the missing-evidence warning sit right above the action, not up in the form. */}
-      {(noEvidence || movesProduction) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
+      {(noEvidence || movesProduction || evidenceRunId) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
         {noEvidence && <Alert severity="warning" action={<Button color="inherit" size="small" component={RouterLink} to={`${paths.dashboard.skills.edit(skill.id)}?tab=tests`}>Run tests</Button>}>No tests run for these files. Not tested is not a pass.</Alert>}
         {movesProduction && <Typography variant="s1">Apps that follow production pick up v{target} the next time they fetch. Pinned versions don&apos;t change.</Typography>}
+        {evidenceRunId && <Typography variant="s1">Moving saves the attached test evidence with this label change.</Typography>}
       </Stack>}
     </ModalWrapper>
   );

@@ -12,6 +12,7 @@ import EmptyState from 'src/components/empty-state';
 import ErrorState from 'src/components/error-state';
 import StatusBadge from 'src/components/status-badge';
 import ActionReason from "../components/ActionReason";
+import Money from "../components/Money";
 import AssistProposal from './AssistProposal';
 
 const titles = { draft: 'Draft with AI', description: 'Improve when this skill is used', summary: 'Summarize changes' };
@@ -182,7 +183,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
         <ActionReason id="assist-action-reason-1" reason={locked ? 'Finish the current request first' : !selectedModel?.canRun ? 'Choose an available workspace model' : !/^(?:\d+)(?:\.\d{1,8})?$/.test(spend) || Number(spend) <= 0 ? 'Enter an estimated-cost stop' : kind === 'draft' && !instruction.trim() ? 'Describe the task first' : kind === 'description' && !routingReady ? 'Choose reviewed use and non-use examples' : ''} />
         <Box><Button variant="outlined" disabled={locked || !selectedModel?.canRun || !/^(?:\d+)(?:\.\d{1,8})?$/.test(spend) || Number(spend) <= 0 || (kind === 'draft' && !instruction.trim()) || (kind === 'description' && !routingReady)} onClick={preview}>{preparing ? 'Saving and previewing…' : 'Preview data and spend'}</Button></Box>
         {error && <Alert severity="error">{error}</Alert>}
-        {review && !proposalId && <Section title="Confirm outbound processing" description={`Estimated upper bound: USD ${review.plan.estimate.upperBoundUsd}`}>
+        {review && !proposalId && <Section title="Confirm outbound processing" description={<>Estimated upper bound: <Money value={review.plan.estimate.upperBoundUsd} round="up" /></>}>
           <Stack spacing={1.5}>
             <Typography variant="s1">Provider: {review.plan.providerDisclosure.provider}. Uses your workspace model connection. Provider billing may differ from this estimate.</Typography>
             <Typography variant="s3" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{review.plan.allowance.inputBytes} input bytes · up to {review.plan.allowance.maxOutputTokens} output tokens · {review.plan.allowance.deadlineSeconds}-second stop ceiling, not a completion promise.</Typography>

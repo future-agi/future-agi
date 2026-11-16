@@ -6,6 +6,7 @@ import StatusBadge from 'src/components/status-badge';
 import EmptyState from 'src/components/empty-state';
 import TextDiff from 'src/sections/skills/components/TextDiff';
 import ChecksList from 'src/sections/skills/components/ChecksList';
+import Money from 'src/sections/skills/components/Money';
 
 export default function AssistProposal({ proposal, beforeFiles, isStale, applying, onApply, onUseSummary }) {
   if (proposal.payloadExpired) return <EmptyState variant="no-results" title="Proposal details expired" description="The proposal text is no longer retained. Start a new preview to request another suggestion." />;
@@ -41,7 +42,7 @@ export default function AssistProposal({ proposal, beforeFiles, isStale, applyin
       {proposed.reason && <Typography variant="s1">{proposed.reason}</Typography>}
       {proposed.tradeoffs?.length > 0 && <Section title="Tradeoffs"><Box component="ul" sx={{ m: 0, pl: 2 }}>{proposed.tradeoffs.map((tradeoff, index) => <Typography component="li" variant="s1" key={index}>{tradeoff}</Typography>)}</Box></Section>}
       {proposal.checks && <Section title="Static checks"><ChecksList checks={proposal.checks} dense /></Section>}
-      {proposal.metrics && <Typography variant="s3" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>Provider estimate: {proposal.metrics.taskCost.knownEstimateUsd === null ? 'unknown' : `USD ${proposal.metrics.taskCost.knownEstimateUsd}`}{!proposal.metrics.taskCost.complete ? ' · partial; some usage is unknown' : ''}. This is not a provider invoice.</Typography>}
+      {proposal.metrics && <Typography variant="s3" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>Provider estimate: <Money value={proposal.metrics.taskCost.knownEstimateUsd} />{!proposal.metrics.taskCost.complete ? ' · partial; some usage is unknown' : ''}. This is not a provider invoice.</Typography>}
       <Typography variant="s3" color="text.secondary">Nothing is published or promoted. Applying a proposal only changes your draft.</Typography>
       <Box>
         {proposal.kind === 'summary' ? (

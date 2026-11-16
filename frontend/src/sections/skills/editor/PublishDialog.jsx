@@ -234,7 +234,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           {checks && <ChecksList checks={checks} />}
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
         </ReviewSection>
-        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
+        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="It is saved with the new version when you publish." />
         {/* With AI drafting off for the workspace nothing about it is shown; a missing permission keeps the disabled button and its reason. */}
         {options.data?.assistEnabled && <>
           <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />

@@ -23,6 +23,8 @@ import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import HumanCheckReviewController from "../review/HumanCheckReviewController";
+import Money from "../components/Money";
+import TechnicalDetails from "../components/TechnicalDetails";
 
 // Official Solar geometry, registered locally so evidence can always be closed offline.
 addIcon("solar:close-linear", {
@@ -434,17 +436,20 @@ function AttemptContent({
                   : call.usage.knownTotalTokens}
                 {!call.usage.complete ? " · partial usage" : ""} · known
                 estimate:{" "}
-                {call.cost.knownEstimateUsd === null
-                  ? "Unknown"
-                  : `USD ${call.cost.knownEstimateUsd}`}{" "}
-                · reserved: USD {call.cost.reservedEstimateUsd}
+                <Money value={call.cost.knownEstimateUsd} unknown="Unknown" />{" "}
+                · reserved:{" "}
+                <Money value={call.cost.reservedEstimateUsd} round="up" unknown="Unknown" />
               </Typography>
               <Typography variant="s3" component="p" color="text.secondary">
-                {call.cost.unknownCalls} unknown calls ·{" "}
-                {call.cost.pricingSource} · latency{" "}
+                {call.cost.unknownCalls} unknown calls · latency{" "}
                 {call.latencyMs === null ? "Unknown" : `${call.latencyMs} ms`} ·
                 finish {call.finishReason ?? "Unknown"}
               </Typography>
+              <TechnicalDetails title="Technical details">
+                <Typography variant="s3" component="p" color="text.secondary">
+                  Price source: {call.cost.pricingSource ?? "Unknown"}
+                </Typography>
+              </TechnicalDetails>
               {call.error && (
                 <Typography variant="s3">
                   {call.error.code}: {call.error.message}

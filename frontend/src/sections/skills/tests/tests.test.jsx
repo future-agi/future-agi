@@ -796,6 +796,18 @@ describe("reviewed run setup", () => {
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(api.create.mock.calls[1][0]).toBe(first);
   });
+  it("rounds the reviewed plan's ceiling up and keeps its price source in Technical details", async () => {
+    api.preview.mockResolvedValue({ ...preview, estimate: { upperBoundUsd: "0.23869440", pricingSource: "fixture-prices" } });
+    mount(setup());
+    await configure();
+    await reviewPlan();
+    expect(screen.getByText("$0.24")).toHaveAttribute("title", "Exact: USD 0.23869440");
+    expect(screen.getByText("$1")).toHaveAttribute("title", "Exact: USD 1.00");
+    expect(screen.queryByText(/fixture-prices/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
+    expect(screen.getByText("Price source: fixture-prices")).toBeInTheDocument();
+    expect(screen.getByText(/Exact upper-bound estimate: USD 0\.23869440/)).toBeInTheDocument();
+  });
   it("retains the idempotency key after capacity rejection when retrying the same plan", async () => {
     api.create.mockRejectedValueOnce({
       code: "skills_capacity_exceeded",
@@ -1144,7 +1156,21 @@ describe("truthful result evidence", () => {
     expect(
       screen.getByText(/Detailed evidence expired. Summary counts/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Task model: historical-task-2025/)).toBeInTheDocument();
+    expect(screen.queryByText(/harness-recorded/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
     expect(screen.getByText(/harness-recorded/)).toBeInTheDocument();
+  });
+  it("shows run costs as money for people and keeps the exact estimate on hover", () => {
+    api.run.data.metrics = {
+      ...api.run.data.metrics,
+      taskCost: { ...cost, knownEstimateUsd: "0.00004770", complete: true, unknownCalls: 0 },
+      judgeCost: { ...cost, knownEstimateUsd: "0.00000000", complete: true, unknownCalls: 0 },
+    };
+    mount(<TestRunResults skillId={ids.skill} runId={ids.run} />);
+    expect(screen.getByText("under $0.01")).toHaveAttribute("title", "Exact: USD 0.00004770");
+    expect(screen.getByText("$0")).toHaveAttribute("title", "Exact: USD 0.00000000");
+    expect(screen.queryByText(/USD 0\.0000/)).not.toBeInTheDocument();
   });
   it("requests stop explicitly and never cancels on unmount", async () => {
     api.run.data.status = "running";
@@ -1264,6 +1290,52 @@ describe("truthful result evidence", () => {
       screen.getByRole("button", { name: "Continue without attachment" }),
     );
     expect(onSelectRun).toHaveBeenCalledWith(null);
+  });
+  it("shows an explicit attached state for shared current evidence and removes it only on request", () => {
+    Object.assign(api.evidence.data.runs[0], { visibility: "workspace", canAttach: true });
+    const onSelectRun = vi.fn();
+    const element = (selectedRunId) => (
+      <MemoryRouter initialEntries={["/dashboard/skills/skill?tab=tests"]}>
+        <TestEvidence
+          skillId={ids.skill}
+          candidate={{ kind: "draft", revision: 7 }}
+          onSelectRun={onSelectRun}
+          selectedRunId={selectedRunId}
+          recordedWith="It is saved with the new version when you publish."
+        />
+      </MemoryRouter>
+    );
+    const view = render(element(undefined));
+    expect(screen.queryByText(/Evidence attached/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Attach this evidence" }));
+    expect(onSelectRun).toHaveBeenCalledExactlyOnceWith(ids.run);
+    view.rerender(element(ids.run));
+    const row = screen.getByText(/^Evidence attached: test run from/).closest('[role="status"]');
+    expect(row).toHaveFocus();
+    expect(within(row).getByText(/1 test case · 0 answer regressions · shared with workspace\. It is saved with the new version when you publish\./)).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "View attached results" })).toHaveAttribute("href", expect.stringContaining(`run=${ids.run}`));
+    expect(screen.queryByRole("button", { name: "Attach this evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue without attachment" })).not.toBeInTheDocument();
+    expect(onSelectRun).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(row).getByRole("button", { name: "Remove attachment" }));
+    expect(onSelectRun).toHaveBeenLastCalledWith(null);
+  });
+  it("never shows selected evidence as attached once it stops matching the candidate", () => {
+    Object.assign(api.evidence.data.runs[0], { visibility: "workspace", canAttach: true, currentness: { ...currentness, content: false } });
+    const onSelectRun = vi.fn();
+    mount(
+      <TestEvidence
+        skillId={ids.skill}
+        candidate={{ kind: "draft", revision: 7 }}
+        selectedRunId={ids.run}
+        onSelectRun={onSelectRun}
+      />,
+    );
+    expect(screen.queryByText(/Evidence attached/)).not.toBeInTheDocument();
+    expect(screen.getByText(/selected evidence no longer matches/)).toBeInTheDocument();
+    expect(onSelectRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continue without attachment" }));
+    expect(onSelectRun).toHaveBeenCalledExactlyOnceWith(null);
   });
 });
 
