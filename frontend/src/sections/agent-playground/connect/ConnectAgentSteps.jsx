@@ -37,7 +37,14 @@ const estimateLine = (agent) => {
 };
 
 /** The agents a scan found: pick one, or name a folder the scan missed. */
-export function FoundAgents({ scan, picked, onPick, onManual }) {
+export function FoundAgents({
+  scan,
+  picked,
+  onPick,
+  onManual,
+  manualLabel = "Not in the list? Name its folder",
+  failedManualLabel = "Name the agent's folder yourself",
+}) {
   const [query, setQuery] = useState("");
   const agents = useMemo(() => scan?.agents || [], [scan?.agents]);
   const needle = query.trim().toLowerCase();
@@ -68,9 +75,7 @@ export function FoundAgents({ scan, picked, onPick, onManual }) {
     return (
       <Stack spacing={1}>
         <Alert severity="warning">{`Couldn't find the agents: ${reason}`}</Alert>
-        <TextLink onClick={onManual}>
-          Name the agent&apos;s folder yourself
-        </TextLink>
+        <TextLink onClick={onManual}>{failedManualLabel}</TextLink>
       </Stack>
     );
   }
@@ -165,7 +170,7 @@ export function FoundAgents({ scan, picked, onPick, onManual }) {
             : "Some agents may be missing from this list."}
         </Typography>
       )}
-      <TextLink onClick={onManual}>Not in the list? Name its folder</TextLink>
+      <TextLink onClick={onManual}>{manualLabel}</TextLink>
     </Stack>
   );
 }
@@ -174,6 +179,8 @@ FoundAgents.propTypes = {
   picked: PropTypes.object,
   onPick: PropTypes.func.isRequired,
   onManual: PropTypes.func.isRequired,
+  manualLabel: PropTypes.string,
+  failedManualLabel: PropTypes.string,
 };
 
 /** A folder the scan missed, named by hand. */

@@ -12,7 +12,7 @@ import {
 } from "src/api/agents/agentConnect";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
-import { AgentDetails, FoundAgents, ManualAgent } from "./ConnectAgentSteps";
+import { AgentDetails, FoundAgents } from "./ConnectAgentSteps";
 import { TextLink } from "./connectBits";
 import {
   clearConnectDraft,
@@ -24,8 +24,9 @@ import { UPLOAD_SOURCE } from "./connectSources";
 import { MONO } from "./connectStyles";
 import FolderUploadField from "./FolderUploadField";
 
-const defaultName = (picked, folder) =>
-  (picked?.subfolder ? picked.name : folder?.name) || picked?.name || "";
+const WHOLE_UPLOAD = "Connect the uploaded folder anyway";
+
+const defaultName = (picked, folder) => folder?.name || picked?.name || "";
 
 /**
  * Connect an agent from a folder: upload it, find the agents in it, pick one,
@@ -47,7 +48,6 @@ export default function UploadConnectFlow() {
   const [scanId, setScanId] = useState(draft.scanId || null);
   const [picked, setPicked] = useState(draft.picked || null);
   const [manual, setManual] = useState(!!draft.manual);
-  const [subfolder, setSubfolder] = useState(draft.subfolder || "");
   const [name, setName] = useState(draft.name || "");
   const [values, setValues] = useState({});
   const startScan = useStartScan();
@@ -55,13 +55,13 @@ export default function UploadConnectFlow() {
   const connect = useConnectAgent();
 
   useEffect(() => {
-    const next = { stage, folder, scanId, picked, manual, subfolder, name };
+    const next = { stage, folder, scanId, picked, manual, name };
     if (draftHasProgress(next)) {
       saveConnectDraft(next, UPLOAD_SOURCE);
     } else {
       clearConnectDraft(UPLOAD_SOURCE);
     }
-  }, [stage, folder, scanId, picked, manual, subfolder, name]);
+  }, [stage, folder, scanId, picked, manual, name]);
 
   const source = folder?.sourceId
     ? { kind: "archive", archive_artifact_id: folder.sourceId }
@@ -86,21 +86,18 @@ export default function UploadConnectFlow() {
     });
 
   const toDetails = () => {
-    const chosen = manual
-      ? { name: "", subfolder: subfolder.trim(), envNames: [] }
-      : picked;
-    setName((current) => current || defaultName(chosen, folder));
+    setName(
+      (current) => current || defaultName(manual ? null : picked, folder),
+    );
     setStage("details");
   };
 
-  const chosenFolder = manual ? subfolder.trim() : picked?.subfolder || "";
   const envNames = manual ? [] : picked?.envNames || [];
 
   const connectAgent = () =>
     connect.mutate(
       {
         ...source,
-        ...(chosenFolder ? { subfolder: chosenFolder } : {}),
         name: name.trim(),
         env_values: Object.fromEntries(
           Object.entries(values).filter(([, value]) => value),
@@ -130,9 +127,7 @@ export default function UploadConnectFlow() {
         {folder?.name}
       </Box>
       {stage === "details"
-        ? chosenFolder
-          ? ` · ${chosenFolder}/`
-          : " · folder root"
+        ? " · the whole folder"
         : ` · ${folder?.files} file${folder?.files === 1 ? "" : "s"}`}
       {" · "}
       <TextLink
@@ -150,8 +145,8 @@ export default function UploadConnectFlow() {
     body = (
       <>
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          Pick the folder with the agent&apos;s code. We upload it once, then
-          list the agents in it.
+          Pick the folder with the agent&apos;s code, not a whole repository. We
+          upload it once and read it as one agent.
         </Typography>
         <FolderUploadField
           folder={folder}
@@ -184,17 +179,25 @@ export default function UploadConnectFlow() {
       <>
         {folderLine}
         {manual ? (
-          <ManualAgent
-            subfolder={subfolder}
-            onSubfolder={setSubfolder}
-            onBack={() => setManual(false)}
-          />
+          <Stack spacing={1} data-testid="connect-whole-upload">
+            <Typography sx={{ typography: "s1" }}>
+              {`We connect ${folder?.name || "the upload"} as one agent and read it from the top of the folder.`}
+            </Typography>
+            <TextLink onClick={() => setManual(false)}>
+              Back to the agents we found
+            </TextLink>
+          </Stack>
         ) : (
           <FoundAgents
             scan={scan.data}
             picked={picked}
             onPick={setPicked}
-            onManual={() => setManual(true)}
+            onManual={() => {
+              setPicked(null);
+              setManual(true);
+            }}
+            manualLabel={WHOLE_UPLOAD}
+            failedManualLabel={WHOLE_UPLOAD}
           />
         )}
       </>
