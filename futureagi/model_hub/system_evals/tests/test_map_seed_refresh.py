@@ -67,9 +67,7 @@ def test_map_upgrade_preserves_catalog_and_repeat_seed_is_idempotent(
         # Preserve the actual runtime failure separately from the raw score:
         # the old local helper name is rejected by the production compiler.
         with pytest.raises(ValueError, match='"_p" is an invalid variable name'):
-            custom_code_eval(
-                old_code, hypothesis=["a", "a", "b"], reference=["a", "b"]
-            )
+            custom_code_eval(old_code, hypothesis=["a", "a", "b"], reference=["a", "b"])
 
         assert seeder.seed_evals() == (0, 1, len(definitions) - 1)
         after = _rows()
