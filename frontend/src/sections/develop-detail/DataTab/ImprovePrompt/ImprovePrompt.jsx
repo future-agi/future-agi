@@ -434,7 +434,7 @@ const LeftSection = ({
       >
         <Typography
           fontWeight={600}
-          sx={{ fontSize: "13px" }}
+          sx={{ fontSize: "12px" }}
           color="text.primary"
         >
           Improve AI
@@ -500,7 +500,7 @@ const LeftSection = ({
                     name={"improvement_requirements"}
                   />
                 ) : (
-                  <Typography sx={{ fontSize: "13px" }}>
+                  <Typography sx={{ fontSize: "12px" }}>
                     {promptData}
                   </Typography>
                 )}
@@ -551,7 +551,7 @@ const LeftSection = ({
             paddingBottom: "10px",
           }}
         >
-          <Typography sx={{ fontSize: "13px" }}>
+          <Typography sx={{ fontSize: "12px" }}>
             To run the Improvement, It has to be run prompt only.
           </Typography>
         </Box>
@@ -678,7 +678,7 @@ const RightSection = ({
       >
         <Typography
           fontWeight={600}
-          sx={{ fontSize: "13px" }}
+          sx={{ fontSize: "12px" }}
           color="text.secondary"
         >
           Prompt Improvement
@@ -730,7 +730,7 @@ const RightSection = ({
           paddingTop: isGenerateVisible && "0px",
           overflow: "auto",
           lineHeight: "24px",
-          fontSize: "13px",
+          fontSize: "12px",
           // paddingBottom: "10px",
           borderRadius: "8px",
           backgroundColor: "background.neutral",
@@ -770,7 +770,7 @@ const AllInputField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",

@@ -49,6 +49,10 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness-jobs/secret-files/",
     # Signed over its raw bytes and may carry committer emails; never read early.
     "/simulate/api/harness/github/webhook/",
+    # A builder chat's guest calls carry chat text and tool results.
+    "/simulate/api/harness/conversations/",
+    # The fix engine's model calls and callbacks carry the agent's source and transcripts.
+    "/simulate/api/agent-fix-engine/",
 )
 
 
@@ -310,7 +314,11 @@ class OTelContextMiddleware:
                 is_error and self.capture_response_on_error
             )
 
-            if should_capture and hasattr(response, "content"):
+            if (
+                should_capture
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and hasattr(response, "content")
+            ):
                 self._capture_response_body(span, response, is_error)
 
         except Exception as e:

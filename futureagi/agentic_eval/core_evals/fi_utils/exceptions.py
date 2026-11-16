@@ -1,9 +1,5 @@
-
-
 class CustomException(Exception):
-    def __init__(
-        self, message: str | None = None, extra_info: dict | None = None
-    ):
+    def __init__(self, message: str | None = None, extra_info: dict | None = None):
         self.message = message
         self.extra_info = extra_info
         super().__init__(self.message)

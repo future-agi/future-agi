@@ -141,6 +141,7 @@ def run_eval(monkeypatch, family, owner):
         organization_id=ID,
         workspace_id=ID,
         project_ids=[ID],
+        configured_project_ids=[ID],
         template_id=ID,
         start_date=now - timedelta(days=1),
         end_date=now,

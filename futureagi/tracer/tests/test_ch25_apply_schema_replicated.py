@@ -402,9 +402,7 @@ class TestAttrValueBloomIndexFile:
             "arrayMap(x -> lower(x), mapValues(attrs_string))" in s for s in adds
         )
         # number values are indexed raw — number filters never case-fold
-        assert any(
-            "mapValues(attrs_number)" in s and "arrayMap" not in s for s in adds
-        )
+        assert any("mapValues(attrs_number)" in s and "arrayMap" not in s for s in adds)
         for s in adds:
             assert "IF NOT EXISTS" in s
             assert "TYPE bloom_filter(0.01)" in s

@@ -56,6 +56,7 @@ type Server struct {
 	registry         *providers.Registry
 	engine           *pipeline.Engine
 	handlers         *Handlers
+	catalogue        *modeldb.Catalogue
 	keyStore         *auth.KeyStore
 	keyHandlers      *KeyHandlers
 	metricsRegistry  *metrics.Registry
@@ -68,21 +69,40 @@ type Server struct {
 	videoExporter    otel.SpanExporter
 	videoInitErr     error
 	shadowFlusher    *routing.ShadowFlusher
+	router           *Router
 	ready            atomic.Bool
 }
 
-// PriceTableName is the name the price table keys a provider's models under,
-// as the provider that served an org's request states it: the org's own
-// instance when the org has one, else the config.yaml provider with that ID.
-func (s *Server) PriceTableName(orgID, providerID string) string {
-	var p providers.Provider
-	if orgID != "" && s.OrgProviderCache != nil {
-		p = s.OrgProviderCache.Get(orgID, providerID)
+// ServedPriceTableName is the name the price table keys the models of the
+// provider that served rc under; see Handlers.servedPriceTableName.
+func (s *Server) ServedPriceTableName(rc *models.RequestContext) string {
+	return s.handlers.servedPriceTableName(rc)
+}
+
+// ReportedCostVendor is the vendor whose own statement of what rc cost the
+// cost plugin may record, judged on the provider instance that served rc, or
+// "" when rc is priced from the catalogue. See providers.ReportedCostVendor
+// for the rule.
+//
+// The instance is the one the chat handlers recorded as answering
+// (rc.ServedBy): an org's instance and the operator's share a provider ID,
+// and a model fallback can move a request from one to the other while the
+// routing markers still describe the first. Routes that record none have no
+// fallback, and are judged the way the handlers resolve them: the org's
+// instance when it served (an internal key never uses it), else the
+// config.yaml provider.
+func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
+	if p, ok := rc.ServedBy.(providers.Provider); ok && p != nil {
+		return providers.ReportedCostVendor(p, rc.Provider)
 	}
-	if p == nil && s.registry != nil {
-		p, _ = s.registry.GetProvider(providerID)
+	if s.handlers == nil {
+		return ""
 	}
-	return providers.PriceTableName(p)
+	p, ok := s.handlers.servingProvider(rc)
+	if !ok {
+		return ""
+	}
+	return providers.ReportedCostVendor(p, rc.Provider)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -183,13 +203,22 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	// Create health monitor.
+	// Share the router's monitor so adaptive weights are driven by actual
+	// request outcomes. A separate monitor would stay empty forever.
 	var healthMonitor *routing.HealthMonitor
 	var latencyTracker *routing.LatencyTracker
-	if registry.Router() != nil {
-		latencyTracker = registry.Router().GetLatencyTracker()
+	if router := registry.Router(); router != nil {
+		latencyTracker = router.GetLatencyTracker()
+		healthMonitor = router.GetHealthMonitor()
 	}
-	healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
+		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	} else {
+		healthMonitor.SetCircuitBreakerRegistry(cbReg)
+	}
 
 	// Create traffic mirror.
 	var mirror *routing.Mirror
@@ -238,6 +267,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	handlers.videoIPACL = cfg.IPACL
+	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -263,6 +293,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Set up async inference support.
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
+	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
+	handlers.resultIPACL = cfg.IPACL
 
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
@@ -285,6 +317,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -379,6 +412,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				if err != nil {
 					return err
 				}
+				recordServedBy(callRC, provider)
 				callRC.Response = resp
 				callRC.ResolvedModel = resp.Model
 				return nil
@@ -548,6 +582,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Admin endpoints (core).
 	router.Handle("POST", "/-/reload", s.reloadHandler)
 	router.Handle("GET", "/-/config", s.configHandler)
+	router.Handle("GET", "/-/model-catalogue/source", s.catalogueSourceHandler)
 	router.Handle("GET", "/-/health/providers", s.providerHealthHandler)
 	router.Handle("GET", "/-/health/providers/{org_id}", s.orgProviderHealthHandler)
 
@@ -575,6 +610,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -854,7 +890,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -862,8 +898,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if authHeader != "" {
-				httpReq.Header.Set("Authorization", authHeader)
+			if caller.Authorization != "" {
+				httpReq.Header.Set("Authorization", caller.Authorization)
+			}
+			// The chat handler records client_ip from the peer and the
+			// trusted X-Forwarded-For hops; give it the A2A caller's, not
+			// httptest's placeholder address.
+			httpReq.RemoteAddr = caller.RemoteAddr
+			for _, v := range caller.ForwardedFor {
+				httpReq.Header.Add("X-Forwarded-For", v)
 			}
 
 			rec := httptest.NewRecorder()
@@ -930,10 +973,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
+	s.router = router
+
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -948,6 +993,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		WriteTimeout:      cfg.Server.WriteTimeout,
 		IdleTimeout:       cfg.Server.IdleTimeout,
+		// 0 leaves net/http's default (1MB).
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
 
 	return s
@@ -1124,6 +1171,29 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SetCatalogue gives the server the catalogue that config reloads rebuild
+// from and the source endpoint reports on. Call it before serving.
+func (s *Server) SetCatalogue(c *modeldb.Catalogue) {
+	s.catalogue = c
+	s.handlers.catalogue = c
+}
+
+// catalogueSourceHandler reports which pricing catalogue is loaded.
+func (s *Server) catalogueSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	if s.catalogue == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no model catalogue is managed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(s.catalogue.Info())
+}
+
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
@@ -1137,6 +1207,11 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	// Limit batch request body to 10MB to prevent OOM.
@@ -1180,6 +1255,11 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")
@@ -1234,6 +1314,11 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Batch results belong to the administrator, not an API-key organization.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 	batchID := r.URL.Query().Get("batch_id")

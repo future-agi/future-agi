@@ -216,19 +216,20 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
 
             if not validation.get("valid"):
-                return _error_response(
-                    validation.get("error", "Invalid credentials.")
-                )
+                return _error_response(validation.get("error", "Invalid credentials."))
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
             is_action_only = data["platform"] in ACTION_ONLY_PLATFORMS
-            if is_action_only and IntegrationConnection.objects.filter(
-                organization=organization,
-                workspace=workspace,
-                platform=data["platform"],
-            ).exists():
+            if (
+                is_action_only
+                and IntegrationConnection.objects.filter(
+                    organization=organization,
+                    workspace=workspace,
+                    platform=data["platform"],
+                ).exists()
+            ):
                 return _error_response(
                     f"{data['platform'].title()} is already connected for this workspace. "
                     "Edit the existing connection in Settings > Integrations to rotate keys."
@@ -371,7 +372,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             instance = self.get_object()
             if instance.platform == IntegrationPlatform.SLACK:
-                return _error_response("Reconnect Slack through OAuth to change this connection.")
+                return _error_response(
+                    "Reconnect Slack through OAuth to change this connection."
+                )
             if instance.platform == IntegrationPlatform.GITHUB:
                 return _error_response(
                     "Reconnect GitHub through the GitHub App to change this connection."

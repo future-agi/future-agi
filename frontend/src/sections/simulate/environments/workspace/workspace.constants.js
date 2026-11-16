@@ -36,7 +36,7 @@ export const WORKSPACE_TABS = [
   // Shown only once the environment has a fix (Fix my agent).
   {
     id: "improvements",
-    label: "Improvements",
+    label: "Epochs",
     icon: "solar:magic-stick-3-linear",
     badge: "improvements",
   },
