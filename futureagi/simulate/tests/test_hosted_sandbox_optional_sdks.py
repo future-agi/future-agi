@@ -82,6 +82,7 @@ def test_github_source_without_git_is_a_clean_501(monkeypatch):
     job = SimpleNamespace(
         id="job-1",
         organization_id="org-1",
+        workspace_id=None,
         payload={
             "source": {"kind": "github", "repository": "acme/agent", "ref": "main"}
         },
