@@ -21,7 +21,7 @@ const UI_READY = 60_000;
 const ENV_ID = 'env-voice-support';
 const ENV_NAME = 'Customer Support Line';
 const AGENT_NAME = 'Customer Support Line agent';
-const RUN_TEST_ID = 'e2e-sim8-run-test';
+const RUN_TEST_ID = 'e2e-sim9a-run-test';
 
 // Two failing cases: below scenarios_min (3), so no fix can start from this run.
 const FAILING = [
@@ -41,7 +41,12 @@ const LIMITS = {
   verified_cases_min: 6,
   scenarios_max: 200,
 };
-const DEFAULTS = { surfaces: ['prompt'], budget_credits: 1500, max_minutes: 150 };
+// An untraced agent: no model to lock, its cost unmetered; the limit margins at their default.
+const DEFAULTS = {
+  surfaces: ['prompt'], budget_credits: 1500, max_minutes: 150,
+  allowed_models: [], agent_cost_metered: false, agent_calls_unmeasured: false,
+  reply_latency_margin_pct: 25, cost_margin_pct: 25,
+};
 
 // launchError and addCasesMessage in frontend/src/sections/simulate/environments/
 // workspace/improvements/launchFormView.js; the link and the confirmation in LaunchFixDialog.jsx.
@@ -68,7 +73,7 @@ function runCalls(executionId: string): Json {
     summary: null,
     execution: {
       id: executionId,
-      ordinal: 8,
+      ordinal: 9,
       status: 'completed',
       agent_version: 'v1',
       started_at: '2026-11-14T09:00:00Z',
@@ -103,7 +108,7 @@ const DIAGNOSIS: Json = {
 // shaped as fixtureLaunchOptions in frontend/src/api/simulate-environments/__tests__/fixtures/fixRuns.js.
 function launchOptions(executionId: string): Json {
   return {
-    source_run: { id: executionId, number: 8, state: 'completed', finished_at: '2026-11-14T09:30:00Z' },
+    source_run: { id: executionId, number: 9, state: 'completed', finished_at: '2026-11-14T09:30:00Z' },
     environment: { id: ENV_ID, name: ENV_NAME, version: 1 },
     agent: { name: AGENT_NAME, kind: 'archive', version_id: 'agv-1', version_number: 1, ref: null },
     scenarios: [
@@ -158,16 +163,16 @@ async function stubRunApi(page: Page, executionId: string) {
   return seen;
 }
 
-test('SIM-E2E-008: a run with too few failing cases to fix sends the builder a request for more like them', {
+test('SIM-E2E-009: a run with too few failing cases to fix sends the builder a request for more like them', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-008', area: 'simulate',
+    id: 'SIM-E2E-009', area: 'simulate',
     userGoal: 'A developer whose run has too few failing cases to start a fix sends the builder a request for more cases like them',
-    steps: ['open a finished run of the environment with 2 failing cases', 'open Debug failures', 'press Improve',
+    steps: ['open a finished run of the environment with 2 failing cases', 'open Debug failures', 'press Run Epoch',
             'read the launch form footer', 'press Add cases with the builder', 'read the confirmation',
             'press Open the builder', 'read the builder chat'],
     browserChecks: [
-      'the footer reads that a fix needs at least 3 failing cases, ends with "Add cases with the builder", and Start improvement is disabled',
+      'the footer reads that at least 3 failing cases are needed, ends with "Add cases with the builder", and the form\'s Run Epoch is disabled',
       'the link asks first: the confirmation says the page will be left, the choices dropped, and that the user saves, runs again and improves from the new run, while the URL stays on the run',
       'Open the builder lands on the environment\'s Scenarios tab',
       'the builder chat holds exactly the request naming refund-over-200 (escalated) and identity-phone (verified_identity), unsent',
@@ -191,17 +196,17 @@ test('SIM-E2E-008: a run with too few failing cases to fix sends the builder a r
     await expect(page.getByRole('button', { name: 'Debug failures' })).toBeEnabled({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  await test.step('ui: the diagnosis offers Improve', async () => {
+  await test.step('ui: the diagnosis offers Run Epoch', async () => {
     await page.getByRole('button', { name: 'Debug failures' }).click();
-    await expect(page.getByRole('button', { name: 'Improve', exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByRole('button', { name: 'Run Epoch', exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  const form = page.getByRole('dialog').filter({ hasText: `Improve ${AGENT_NAME}` });
+  const form = page.getByRole('dialog').filter({ hasText: `Run Epoch on ${AGENT_NAME}` });
   await test.step('ui: check 1, the footer names the minimum and offers the builder', async () => {
-    await page.getByRole('button', { name: 'Improve', exact: true }).click();
+    await page.getByRole('button', { name: 'Run Epoch', exact: true }).click();
     await expect(form.getByText(MINIMUM_ERROR)).toBeVisible({ timeout: UI_READY });
     await expect(form.getByRole('button', { name: LINK })).toBeVisible({ timeout: UI_READY });
-    await expect(form.getByRole('button', { name: 'Start improvement' })).toBeDisabled({ timeout: UI_READY });
+    await expect(form.getByRole('button', { name: 'Run Epoch', exact: true })).toBeDisabled({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   const confirm = page.getByRole('dialog').filter({ hasText: CONFIRM_TITLE });

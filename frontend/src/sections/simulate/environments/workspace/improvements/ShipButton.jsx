@@ -5,6 +5,7 @@ import {
   Button,
   InputBase,
   MenuItem,
+  Stack,
   TextField,
   Typography,
 } from "@mui/material";
@@ -21,37 +22,37 @@ import {
 
 import { downloadText } from "./downloadText";
 import ShipConfirmDialog, { Row } from "./ShipConfirmDialog";
-import { isShipped, overridableOf, winnerOf } from "./fixRunView";
+import { gradingNote, isShipped, overridableOf, winnerOf } from "./fixRunView";
 
 const REASON_MAX = 2000;
 
 // Ship refusals in the product's words; the server's are written for logs.
 const SHIP_ERROR_COPY = {
-  fix_override_reason_required: "Give a reason to ship this trial anyway.",
+  fix_override_reason_required: "Give a reason to ship this candidate anyway.",
   fix_override_not_needed:
-    "This trial passed every check. Ship it without a reason.",
+    "This candidate passed every check. Ship it without a reason.",
   fix_candidate_not_proven:
-    "This trial can't ship: it failed more than a must-pass check.",
-  fix_run_active: "Wait for the improvement to finish, then ship.",
+    "This candidate can't ship: it failed more than a must-pass check.",
+  fix_run_active: "Wait for the epoch to finish, then ship.",
 };
 
 const shipHint = (fix, candidate, anyway) => {
   if (anyway) {
-    return `Ships Trial ${candidate.attempt} although it broke must-pass checks, with your reason`;
+    return `Ships Candidate ${candidate.attempt} although it broke must-pass checks, with your reason`;
   }
   return fix.agent?.kind === "github"
-    ? `Opens a pull request with Trial ${candidate.attempt}'s change on the agent's repository`
-    : `Makes Trial ${candidate.attempt}'s version the environment's default`;
+    ? `Opens a pull request with Candidate ${candidate.attempt}'s change on the agent's repository`
+    : `Makes Candidate ${candidate.attempt}'s version the environment's default`;
 };
 
 const trialLabel = (c) =>
-  `Trial ${c.attempt} · ${c.outcome === "winner" ? "Winner" : "Broke must-pass checks"}`;
+  `Candidate ${c.attempt} · ${c.outcome === "winner" ? "Winner" : "Broke must-pass checks"}`;
 
 // Which trial ships, when more than one can: the winner first, then each trial
 // only its must-pass check refused.
 function TrialPicker({ trials, picked, onPick }) {
   return (
-    <Row label="Trial">
+    <Row label="Candidate">
       {/* The house picker, as RunDialog's version fields. */}
       <TextField
         select
@@ -59,7 +60,7 @@ function TrialPicker({ trials, picked, onPick }) {
         fullWidth
         value={picked.id}
         onChange={(e) => onPick(e.target.value)}
-        inputProps={{ "aria-label": "Trial to ship" }}
+        inputProps={{ "aria-label": "Candidate to ship" }}
       >
         {trials.map((c) => (
           <MenuItem key={c.id} value={c.id}>
@@ -160,7 +161,7 @@ export default function ShipButton({ fix }) {
     // Named, since the page leads with the winner and a trial shipped anyway may be another.
     return (
       <Button size="small" variant="contained" disabled>
-        {`Trial ${shipped.attempt} is the default`}
+        {`Candidate ${shipped.attempt} is the default`}
       </Button>
     );
   }
@@ -201,27 +202,38 @@ export default function ShipButton({ fix }) {
       setBusy(false);
     }
   };
+  const note = gradingNote(fix);
   return (
     <>
-      <CustomTooltip
-        show
-        title={shipHint(fix, trials[0], !winner)}
-        size="small"
-        arrow
-      >
-        <Box component="span">
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={busy}
-            startIcon={<Iconify icon="solar:upload-linear" width={16} />}
-            onClick={() => setConfirming(true)}
+      <Stack direction="row" alignItems="center" spacing={1}>
+        {note && (
+          <Typography
+            data-testid="ship-grading-note"
+            sx={{ typography: "s3", color: "text.secondary", maxWidth: 280 }}
           >
-            {winner ? "Ship" : "Ship anyway"}
-          </Button>
-        </Box>
-      </CustomTooltip>
+            {note}
+          </Typography>
+        )}
+        <CustomTooltip
+          show
+          title={shipHint(fix, trials[0], !winner)}
+          size="small"
+          arrow
+        >
+          <Box component="span">
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={busy || fix.eval_grading === "pending"}
+              startIcon={<Iconify icon="solar:upload-linear" width={16} />}
+              onClick={() => setConfirming(true)}
+            >
+              {winner ? "Ship" : "Ship anyway"}
+            </Button>
+          </Box>
+        </CustomTooltip>
+      </Stack>
       <ShipConfirmDialog
         fix={fix}
         candidate={candidate}

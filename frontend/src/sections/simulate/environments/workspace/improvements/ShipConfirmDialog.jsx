@@ -107,8 +107,8 @@ export default function ShipConfirmDialog({
       closeDisabled={busy}
       title={
         github
-          ? `Open a pull request for Trial ${candidate.attempt}?`
-          : `Make Trial ${candidate.attempt}'s version the default?`
+          ? `Open a pull request for Candidate ${candidate.attempt}?`
+          : `Make Candidate ${candidate.attempt}'s version the default?`
       }
       content={
         <Stack spacing={1.25}>

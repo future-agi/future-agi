@@ -19,7 +19,7 @@ const UI_READY = 60_000;
 const ENV_ID = 'env-voice-support';
 const BASE_VERSION_ID = 'agv-8';
 const SHIPPER = 'E2E Developer';
-// The must-pass check Trial 2 broke, as overridable_regressions words it
+// The must-pass check Candidate 2 broke, as overridable_regressions words it
 // ("scenario key: check", futureagi/simulate/selectors/agent_fix.py).
 const REGRESSION = 'on-time-cancel: escalated';
 
@@ -61,15 +61,15 @@ function trial(fixId: string, attempt: number, outcome: string, extra: Json = {}
 }
 
 // GET /simulate/api/agent-fix-runs/<id>/: a finished fix in AgentFixRunSerializer's
-// read shape (the fix() fixture): a winner (Trial 3), a trial only the must-pass
-// check refused (Trial 2), and a trial its targets refused (Trial 1).
+// read shape (the fix() fixture): a winner (Candidate 3), a candidate only the must-pass
+// check refused (Candidate 2), and a candidate its targets refused (Candidate 1).
 function finishedFix(fixId: string): Json {
   return {
     id: fixId,
-    number: 9,
+    number: 10,
     environment_id: ENV_ID,
     environment: { name: 'Customer Support Line', version: 1, default_agent_version_id: BASE_VERSION_ID },
-    source_run_id: 'e2e-sim9-source-run',
+    source_run_id: 'e2e-sim10-source-run',
     source_run_number: 1,
     base_agent_version_id: BASE_VERSION_ID,
     agent: { name: 'Customer Support Line agent', kind: 'archive', version_number: 8, ref: null },
@@ -166,27 +166,27 @@ async function stubFixApi(page: Page, fixId: string) {
   return seen;
 }
 
-test('SIM-E2E-009: a trial only its must-pass check refused ships on the developer\'s reason', {
+test('SIM-E2E-010: a candidate only its must-pass check refused ships on the developer\'s reason', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-009', area: 'simulate',
-    userGoal: 'A developer ships a fix\'s trial that broke only must-pass checks, giving a reason, and sees which trial is now the default and who shipped it, when and why',
-    steps: ['open a finished fix with a winner and a trial only must-pass refused', 'read that trial\'s row',
-            'press Ship', 'pick that trial in the Trial dropdown', 'read the checks it broke', 'type the reason',
-            'press Make default', 'read the header and the trial\'s row'],
+    id: 'SIM-E2E-010', area: 'simulate',
+    userGoal: 'A developer ships an epoch\'s candidate that broke only must-pass checks, giving a reason, and sees which candidate is now the default and who shipped it, when and why',
+    steps: ['open a finished epoch with a winner and a candidate only must-pass refused', 'read that candidate\'s row',
+            'press Ship', 'pick that candidate in the Candidate dropdown', 'read the checks it broke', 'type the reason',
+            'press Make default', 'read the header and the candidate\'s row'],
     browserChecks: [
-      'Trial 2\'s row reads "Broke must-pass: on-time-cancel: escalated"',
-      'Ship opens on the winner; picking Trial 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed',
-      'exactly one POST goes to Trial 2\'s make-default, with exactly the minted reason as override_reason',
-      'the header reads "Trial 2 is the default"',
-      'Trial 2\'s row reads "Shipped anyway by E2E Developer" with the minted reason',
+      'Candidate 2\'s row reads "Broke must-pass: on-time-cancel: escalated"',
+      'Ship opens on the winner; picking Candidate 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed',
+      'exactly one POST goes to Candidate 2\'s make-default, with exactly the minted reason as override_reason',
+      'the header reads "Candidate 2 is the default"',
+      'Candidate 2\'s row reads "Shipped anyway by E2E Developer" with the minted reason',
     ],
   }),
 }, async ({ page, actor }, testInfo) => {
   // 6 browser steps, each bounded by its own UI_READY: 6 × 60s = 360s, plus 60s
   // headroom so a slow run fails on the step that ran out.
   test.setTimeout(420_000);
-  const fixId = `e2e-sim9-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const fixId = `e2e-sim10-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const reason = `${fixId}: the new escalation wording is intended`;
   await testInfo.attach('seeded', {
     body: JSON.stringify({ organizationId: actor.organizationId, envId: ENV_ID, fixId, reason }),
@@ -195,7 +195,7 @@ test('SIM-E2E-009: a trial only its must-pass check refused ships on the develop
   const seen = await stubFixApi(page, fixId);
   const row = page.getByTestId('trial-2');
 
-  await test.step('ui: check 1, the trial lists the must-pass check it broke', async () => {
+  await test.step('ui: check 1, the candidate lists the must-pass check it broke', async () => {
     await page.goto(`/dashboard/simulate/environments/${ENV_ID}/improvements/${fixId}`);
     await expect(row.getByText(`Broke must-pass: ${REGRESSION}`, { exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
@@ -203,17 +203,17 @@ test('SIM-E2E-009: a trial only its must-pass check refused ships on the develop
   const dialog = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: 'Make default' }) });
   await test.step('ui: Ship opens on the winner', async () => {
     await page.getByRole('button', { name: 'Ship', exact: true }).click();
-    await expect(dialog.getByRole('combobox', { name: 'Trial to ship' })).toHaveText('Trial 3 · Winner', { timeout: UI_READY });
+    await expect(dialog.getByRole('combobox', { name: 'Candidate to ship' })).toHaveText('Candidate 3 · Winner', { timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  await test.step('ui: check 2, picking Trial 2 needs a reason', async () => {
-    await dialog.getByRole('combobox', { name: 'Trial to ship' }).click();
-    await page.getByRole('option', { name: 'Trial 2 · Broke must-pass checks', exact: true }).click();
+  await test.step('ui: check 2, picking Candidate 2 needs a reason', async () => {
+    await dialog.getByRole('combobox', { name: 'Candidate to ship' }).click();
+    await page.getByRole('option', { name: 'Candidate 2 · Broke must-pass checks', exact: true }).click();
     await expect(dialog.getByText(`Must-pass ${REGRESSION}`, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(dialog.getByRole('button', { name: 'Make default' })).toBeDisabled({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
-  await test.step('ui: check 3, Make default sends the reason for Trial 2', async () => {
+  await test.step('ui: check 3, Make default sends the reason for Candidate 2', async () => {
     await dialog.getByRole('textbox', { name: 'Why ship it anyway?' }).fill(reason);
     await dialog.getByRole('button', { name: 'Make default' }).click();
     await expect.poll(() => seen.shipPosts.length, { timeout: UI_READY }).toBe(1);
@@ -223,8 +223,8 @@ test('SIM-E2E-009: a trial only its must-pass check refused ships on the develop
     });
   }, { timeout: UI_READY });
 
-  await test.step('ui: check 4, the header names the trial that is now the default', async () => {
-    await expect(page.getByRole('button', { name: 'Trial 2 is the default', exact: true })).toBeDisabled({ timeout: UI_READY });
+  await test.step('ui: check 4, the header names the candidate that is now the default', async () => {
+    await expect(page.getByRole('button', { name: 'Candidate 2 is the default', exact: true })).toBeDisabled({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   await test.step('ui: check 5, the row says who shipped it and why', async () => {

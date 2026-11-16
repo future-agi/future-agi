@@ -2951,7 +2951,7 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:215`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
 
 **Tags:** —
 
@@ -2959,24 +2959,51 @@
 
 1. open a finished run of the environment
 2. open Debug failures
-3. press Improve
+3. press Run Epoch
 4. read the Scenarios row of the launch form
-5. press Start improvement
+5. press Run Epoch in the form
 6. read the epoch page
 
 **Browser observations:**
 
-- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 must keep passing", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
-- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits and 150 minutes
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 - the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
-### SIM-E2E-008 — a run with too few failing cases to fix sends the builder a request for more like them
+### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
+
+**Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
+
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the finished epoch
+2. read its ending
+3. open How it was decided
+4. press Run a new epoch
+5. read the model lock
+6. type a cost limit of 0.01
+7. press Run Epoch
+8. read the new epoch's page
+
+**Browser observations:**
+
+- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
+- the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
+- the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-009 — a run with too few failing cases to fix sends the builder a request for more like them
 
 **Goal:** A developer whose run has too few failing cases to start a fix sends the builder a request for more cases like them
 
-**Spec:** `flows/simulate/add-cases-to-builder.spec.ts:161`
+**Spec:** `flows/simulate/add-cases-to-builder.spec.ts:166`
 
 **Tags:** —
 
@@ -2984,7 +3011,7 @@
 
 1. open a finished run of the environment with 2 failing cases
 2. open Debug failures
-3. press Improve
+3. press Run Epoch
 4. read the launch form footer
 5. press Add cases with the builder
 6. read the confirmation
@@ -2993,15 +3020,15 @@
 
 **Browser observations:**
 
-- the footer reads that a fix needs at least 3 failing cases, ends with "Add cases with the builder", and Start improvement is disabled
+- the footer reads that at least 3 failing cases are needed, ends with "Add cases with the builder", and the form's Run Epoch is disabled
 - the link asks first: the confirmation says the page will be left, the choices dropped, and that the user saves, runs again and improves from the new run, while the URL stays on the run
 - Open the builder lands on the environment's Scenarios tab
 - the builder chat holds exactly the request naming refund-over-200 (escalated) and identity-phone (verified_identity), unsent
 - no fix is launched (no POST to agent-fix-runs)
 
-### SIM-E2E-009 — a trial only its must-pass check refused ships on the developer's reason
+### SIM-E2E-010 — a candidate only its must-pass check refused ships on the developer's reason
 
-**Goal:** A developer ships a fix's trial that broke only must-pass checks, giving a reason, and sees which trial is now the default and who shipped it, when and why
+**Goal:** A developer ships an epoch's candidate that broke only must-pass checks, giving a reason, and sees which candidate is now the default and who shipped it, when and why
 
 **Spec:** `flows/simulate/ship-anyway.spec.ts:169`
 
@@ -3009,19 +3036,19 @@
 
 **User steps:**
 
-1. open a finished fix with a winner and a trial only must-pass refused
-2. read that trial's row
+1. open a finished epoch with a winner and a candidate only must-pass refused
+2. read that candidate's row
 3. press Ship
-4. pick that trial in the Trial dropdown
+4. pick that candidate in the Candidate dropdown
 5. read the checks it broke
 6. type the reason
 7. press Make default
-8. read the header and the trial's row
+8. read the header and the candidate's row
 
 **Browser observations:**
 
-- Trial 2's row reads "Broke must-pass: on-time-cancel: escalated"
-- Ship opens on the winner; picking Trial 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed
-- exactly one POST goes to Trial 2's make-default, with exactly the minted reason as override_reason
-- the header reads "Trial 2 is the default"
-- Trial 2's row reads "Shipped anyway by E2E Developer" with the minted reason
+- Candidate 2's row reads "Broke must-pass: on-time-cancel: escalated"
+- Ship opens on the winner; picking Candidate 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed
+- exactly one POST goes to Candidate 2's make-default, with exactly the minted reason as override_reason
+- the header reads "Candidate 2 is the default"
+- Candidate 2's row reads "Shipped anyway by E2E Developer" with the minted reason
