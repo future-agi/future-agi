@@ -1067,7 +1067,7 @@ describe("CallWorkersPanel", () => {
       expect(screen.queryByTestId("stopped-by-user")).toBeNull();
     });
 
-    it("says nothing was kept for a cancelled call with no evidence", () => {
+    it("says a cancelled call with no evidence was stopped before any participant's work, not that nothing was kept", () => {
       result = {
         data: timeline({ collection: "no_evidence", events: [], steps: [] }),
         isLoading: false,
@@ -1076,10 +1076,11 @@ describe("CallWorkersPanel", () => {
       render(<CallWorkersPanel callExecutionId="c1" callStatus="cancelled" />);
       expect(
         screen.getByText(
-          "Stopped by the user; nothing from the call was kept.",
+          "Stopped by the user before any participant's work was recorded.",
         ),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("stopped-by-user")).toBeNull();
+      expect(screen.queryByText(/nothing from the call was kept/)).toBeNull();
     });
   });
 });

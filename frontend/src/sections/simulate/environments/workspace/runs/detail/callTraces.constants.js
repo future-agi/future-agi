@@ -132,6 +132,7 @@ export const CALL_WORKERS_COPY = {
   workerCleanup: (name, cleanup) => `${name}: ${cleanup}`,
   stoppedByUser:
     "Stopped by the user during this call. Turns up to the stop are shown; the agent's reply to the last message never arrived.",
+  // Scoped to the participants: the transcript up to the stop is kept and shown on its own tab.
   stoppedByUserNoEvidence:
-    "Stopped by the user; nothing from the call was kept.",
+    "Stopped by the user before any participant's work was recorded.",
 };
