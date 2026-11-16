@@ -15,7 +15,11 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import HarnessAssembledBundle, HostedHarnessJob
+from simulate.models import (
+    HarnessAssembledBundle,
+    HarnessSuiteValidation,
+    HostedHarnessJob,
+)
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import review
 from simulate.services.harness_versioning.candidate_sets import (
@@ -55,6 +59,7 @@ from simulate.services.harness_versioning.versions import (
     next_number,
     note_revision,
     pair_archive,
+    record_proofs,
     require_not_busy,
     set_defaults,
 )
@@ -232,6 +237,12 @@ def _promote_set(
             member_rows(locked, (suite_version.documents or {}).get("scenarios") or []),
         )
     targets = {"environment": environment_version, "suite": suite_version}
+    proved = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=built["suite"], environment_version=built["environment"]
+    ).first()
+    if proved is not None and proved.proofs:
+        # Proved before Save paired its cases with rows: recorded again, on what was saved.
+        record_proofs(suite_version, environment_version, proved.proofs, proved.job)
     moved = {
         piece
         for piece in DRAFT_PIECES

@@ -724,3 +724,65 @@ def test_a_listed_reason_reads_by_its_first_item_not_its_heading(code, why, deta
     from simulate.services.harness_scenario_lifecycle import REASON_TEXTS, reason_text
 
     assert reason_text(code, {"why": why}) == REASON_TEXTS[code].format(why=detail)
+
+
+def test_a_candidate_proved_before_save_keeps_its_proofs_and_reads_validated(
+    user, workspace, storage
+):
+    from simulate.tests.test_harness_affected_scenarios import LOOKUP, REFUND, _doc
+
+    environment = _environment(user, workspace, storage, "lc-candidate")
+    _suite(environment, _ten())
+    saved = HarnessSuiteVersion.no_workspace_objects.get(
+        id=environment.suite_version_id
+    )
+    added = _doc("partial-refund", solution=(LOOKUP, REFUND), sub_goals=("refunded",))
+    candidate = _copy(
+        saved,
+        HarnessSuiteVersion,
+        status="candidate",
+        documents={**saved.documents, "scenarios": [*_ten(), added]},
+    )
+
+    # The validation's proofs name the scenario folders, as ALK writes them.
+    proofs = {"partial_refund": PROVED, **dict.fromkeys(KEYS, PROVED)}
+    validation = record_proofs(candidate, environment.environment_version, proofs, None)
+
+    assert validation.proofs["partial-refund"]["proved"] is True
+    assert validation.status == "passed"
+    assert (
+        _views(environment, suite=candidate)["partial-refund"]["state"] == "validated"
+    )
+    assert not HostedHarnessScenario.no_workspace_objects.filter(
+        job=environment, scenario_key="partial-refund"
+    ).exists()
+
+
+def test_a_legacy_suite_kept_as_written_is_not_warned_as_never_proved(
+    user, workspace, storage
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.services.harness_versioning.run_warnings import run_warnings
+    from simulate.services.hosted_harness import resolve_run_pins
+
+    environment = _environment(user, workspace, storage, "lc-legacy-warning")
+    _suite(environment, _ten())
+    legacy = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=legacy.id).update(lifecycle_legacy=True)
+    _proofs(environment, {key: {"holds": True} for key in KEYS})
+    newer = _copy(legacy, HarnessSuiteVersion, lifecycle_legacy=False)
+    _members_of(legacy, newer)
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        suite_version=newer
+    )
+    environment.refresh_from_db()
+
+    warnings = {
+        one["code"]: one["message"]
+        for one in run_warnings(environment, resolve_run_pins(environment))
+    }
+
+    assert "suite_unproved" not in warnings
+    assert (
+        "0 proved, 10 kept as written, 0 not proved" in warnings["suite_partly_proved"]
+    )

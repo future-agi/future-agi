@@ -203,3 +203,51 @@ def test_starting_a_check_that_would_end_on_our_side_says_so(auth_client, certif
         response = _post(auth_client, certified)
 
     assert response.json()["message"] == validation.UNAVAILABLE_REASON
+
+
+@pytest.mark.parametrize(
+    ("ours", "reason", "why"),
+    [
+        (
+            False,
+            "validation_failed",
+            "the agent did not pass this environment's checks",
+        ),
+        (True, "validation_ended_on_our_side", validation.UNAVAILABLE_REASON),
+    ],
+)
+def test_a_failed_validation_still_says_why_after_a_reload_until_a_newer_one(
+    auth_client, certified, ours, reason, why
+):
+    from simulate.models import HarnessAssembledBundle, HarnessSuiteValidation
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version_id=certified.suite_version_id
+    ).delete()
+    job_id = _post(auth_client, certified).json()["job_id"]
+    HostedHarnessJob.no_workspace_objects.filter(id=job_id).update(
+        state=HostedHarnessJob.State.FAILED,
+        failure={"code": "authoring_runtime_validation_failed"},
+    )
+    if ours:
+        HarnessAssembledBundle._base_manager.filter(id=_row(certified).id).update(
+            error={
+                "last_attempt": {"code": validation.CHECK_UNAVAILABLE, "job_id": job_id}
+            }
+        )
+
+    def unproved():
+        certified.refresh_from_db()
+        return scenario_lifecycle(
+            certified,
+            suite_version=certified.suite_version,
+            environment_version=certified.environment_version,
+        ).values()
+
+    views = list(unproved())
+    assert views and all(view["reason"] == reason for view in views)
+    assert all(why in view["reason_text"] for view in views)
+
+    _post(auth_client, certified)
+    assert {view["reason"] for view in unproved()} == {"not_validated"}

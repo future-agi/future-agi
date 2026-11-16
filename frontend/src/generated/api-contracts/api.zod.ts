@@ -39681,6 +39681,11 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .describe(
         "Every selected case's needs were read from its stored documents.",
       ),
+    next: zod
+      .enum(["validate_first", "run_unvalidated"])
+      .describe(
+        "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
+      ),
     running: zod
       .number()
       .min(
@@ -40103,6 +40108,11 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         .boolean()
         .describe(
           "Every selected case's needs were read from its stored documents.",
+        ),
+      next: zod
+        .enum(["validate_first", "run_unvalidated"])
+        .describe(
+          "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
         ),
       running: zod
         .number()
@@ -57214,6 +57224,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         reasons: zod
           .record(zod.string(), zod.string().min(1))
           .describe("Each holding row's reason, in plain words."),
+        next: zod
+          .enum(["validate_first", "run_unvalidated"])
+          .optional()
+          .describe("As the run preview's selection.next."),
       })
       .optional()
       .describe(

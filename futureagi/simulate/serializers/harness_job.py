@@ -869,6 +869,12 @@ class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
         child=serializers.CharField(),
         help_text="Each holding row's reason, in plain words.",
     )
+    next = serializers.ChoiceField(
+        choices=("validate_first", "run_unvalidated"),
+        allow_null=True,
+        required=False,
+        help_text="As the run preview's selection.next.",
+    )
 
 
 class HarnessRunCreateResponseSerializer(serializers.Serializer):

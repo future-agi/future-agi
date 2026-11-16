@@ -20101,6 +20101,17 @@ export interface HarnessCapabilityGradingApi {
 }
 
 /**
+ * When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.
+ */
+export type HarnessCapabilitySelectionCountsApiNext =
+  (typeof HarnessCapabilitySelectionCountsApiNext)[keyof typeof HarnessCapabilitySelectionCountsApiNext];
+
+export const HarnessCapabilitySelectionCountsApiNext = {
+  validate_first: "validate_first",
+  run_unvalidated: "run_unvalidated",
+} as const;
+
+/**
  * Held-back cases per readiness row that held them.
  */
 export type HarnessRunHeldBackApiBy = { [key: string]: number };
@@ -20144,6 +20155,8 @@ export interface HarnessCapabilitySelectionCountsApi {
   grading: HarnessCapabilityGradingApi;
   /** Every selected case's needs were read from its stored documents. */
   requirements_recorded: boolean;
+  /** When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise. */
+  next: HarnessCapabilitySelectionCountsApiNext;
   /**
    * Selected cases a run of this selection would send.
    * @minimum 0
@@ -21281,6 +21294,17 @@ export interface HarnessRunCreateApi {
 }
 
 /**
+ * As the run preview's selection.next.
+ */
+export type HarnessRunReadinessSelectionApiNext =
+  (typeof HarnessRunReadinessSelectionApiNext)[keyof typeof HarnessRunReadinessSelectionApiNext];
+
+export const HarnessRunReadinessSelectionApiNext = {
+  validate_first: "validate_first",
+  run_unvalidated: "run_unvalidated",
+} as const;
+
+/**
  * Each holding row's reason, in plain words.
  */
 export type HarnessRunReadinessSelectionApiReasons = { [key: string]: string };
@@ -21303,6 +21327,8 @@ export interface HarnessRunReadinessSelectionApi {
   held_back: HarnessRunHeldBackApi;
   /** Each holding row's reason, in plain words. */
   reasons: HarnessRunReadinessSelectionApiReasons;
+  /** As the run preview's selection.next. */
+  next?: HarnessRunReadinessSelectionApiNext;
 }
 
 export interface HarnessRunCreateResponseApi {

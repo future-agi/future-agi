@@ -119,6 +119,8 @@ class SelectionView(Scope):
     dropped: list[DroppedCase]
     grading: Grading
     requirements_recorded: bool
+    # What a run does when every selected case is held back only for not being validated on the pairing.
+    next: validation.UnprovedNext | None
 
 
 class Affected(TypedDict):
@@ -232,6 +234,7 @@ def selection_report(
                 "truncated": len(not_gradable) > LIST_LIMIT,
             },
             "requirements_recorded": placement.recorded,
+            "next": _unproved_next(pairing, pair_bundle(pairing), placement),
             "running": requested - len(by_bucket["blocked"]),
             "held_back": {
                 "count": len(held_back),
@@ -286,6 +289,7 @@ class RunSelection(Scope):
     held_back: HeldBack
     # Each holding row's reason, in plain words.
     reasons: dict[str, str]
+    next: validation.UnprovedNext | None
 
 
 @dataclass(frozen=True)
@@ -326,6 +330,20 @@ def _held_back(
     return held, by, reasons
 
 
+def _unproved_next(
+    pairing: Pairing, bundle: HarnessAssembledBundle | None, placement: _Placement
+) -> validation.UnprovedNext | None:
+    """What a run does when every selected case is held back only for not being validated on the pairing; the run
+    route acts on this same value."""
+    if (
+        not placement.placed
+        or placement.dropped
+        or any(one.by != [NOT_VALIDATED_ROW] for one in placement.placed)
+    ):
+        return None
+    return validation.unproved_next(pairing.environment, pairing.agent_version, bundle)
+
+
 def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
     """The requested cases a run holds back, placed as ``selection_report`` places
     them: a case in the blocked bucket is held back and named, never sent.
@@ -355,6 +373,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             "running": len(keys) - len(held),
             "held_back": {"count": len(held), **_capped(held), "by": dict(by)},
             "reasons": reasons,
+            "next": _unproved_next(pairing, bundle, placement),
         },
         held=frozenset(held),
         report=report,

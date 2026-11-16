@@ -177,8 +177,8 @@ def _pins(job):
 
 
 def _proved(environment, suite=None, keys=()):
-    """A validation of the pair (the defaults, or ``suite`` on them) that proved ``keys``
-    and left the pair partly proved, so a run sends those cases and still warns."""
+    """A validation of the pair (the defaults, or ``suite`` on them) that proved ``keys``,
+    so a run sends those cases."""
     from simulate.tests.harness_validation import prove_pair
 
     prove_pair(environment, environment.environment_version, suite, keys=list(keys))
@@ -258,7 +258,8 @@ class TestNoPicks:
             },
             "suite": {"id": str(environment.suite_version_id), "label": "v2"},
         }
-        assert [one["code"] for one in body["warnings"]] == ["suite_partly_proved"]
+        # Its only case is proved, so nothing is warned about the suite.
+        assert body["warnings"] == []
 
     def test_with_versioning_off_the_202_has_no_versions(
         self, auth_client, user, workspace, storage, settings
@@ -929,13 +930,10 @@ class TestWarnings:
         return run_warnings(environment, resolve_run_pins(environment, picks=picks))
 
     def test_a_proved_default_pair_has_no_warnings(self, user, workspace, storage):
+        from simulate.tests.harness_validation import prove_pair
+
         environment = _environment(user, workspace, "pk-w-none", storage)
-        HarnessSuiteValidation.no_workspace_objects.create(
-            suite_version=environment.suite_version,
-            environment_version=environment.environment_version,
-            status="passed",
-            proved_at=timezone.now(),
-        )
+        prove_pair(environment)
 
         assert self._warnings(environment) == []
 
@@ -967,7 +965,12 @@ class TestWarnings:
                 suite_version=environment.suite_version
             ).values_list("scenario_key", flat=True)
         )
-        kept = {"format": 2, "proved": False, "kept_as_written": True}
+        kept = {
+            "format": 2,
+            "proved": False,
+            "kept_as_written": True,
+            "blocked_reason": "solution_assumed",
+        }
         HarnessSuiteValidation.no_workspace_objects.create(
             suite_version=environment.suite_version,
             environment_version=environment.environment_version,
@@ -1229,7 +1232,7 @@ class TestRunPlan:
         )
 
         assert response.status_code == 202, response.content
-        assert [one["code"] for one in plan["warnings"]] == ["suite_partly_proved"]
+        assert plan["warnings"] == []
         assert plan["bundle_cached"] is None
         assert response.json()["warnings"] == plan["warnings"]
 

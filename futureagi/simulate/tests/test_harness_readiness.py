@@ -1027,6 +1027,7 @@ class TestApi:
             "dropped",
             "grading",
             "requirements_recorded",
+            "next",
             "running",
             "held_back",
             "reasons",

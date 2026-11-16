@@ -584,6 +584,32 @@ def add_members(
     )
 
 
+def suite_cases(suite_version: HarnessSuiteVersion) -> list[tuple[str, Any, Any]]:
+    """Each case of a suite version as ``(key, scenario row id, content)``.
+
+    A candidate is paired with identity rows only when Save promotes it, so until then its cases are its own
+    documents, under the keys that pairing will give them and with no row. Writes nothing.
+    """
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", "scenario_id", "content")
+    )
+    if members or suite_version.status != VersionStatus.CANDIDATE:
+        return members
+    from simulate.services.harness_scenarios import plan_pairs
+
+    documents = [
+        dict(one)
+        for one in (suite_version.documents or {}).get("scenarios") or []
+        if isinstance(one, Mapping)
+    ]
+    return [
+        (planned.key, None, _member_content(planned.doc))
+        for planned in plan_pairs(suite_version.job, documents, exact=True)
+    ]
+
+
 def with_actor_digests(
     version: HarnessEnvironmentVersion, documents: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -732,11 +758,7 @@ def record_proofs(
 
     if not isinstance(proofs, dict):
         return None
-    members = list(
-        HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version=suite_version
-        ).values_list("scenario_key", "scenario_id", "content")
-    )
+    members = suite_cases(suite_version)
     by_token = {_scenario_token(key): key for key, _, _ in members}
     incoming = {
         by_token[_scenario_token(key)]: value

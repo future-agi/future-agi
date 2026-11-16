@@ -1433,6 +1433,13 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     requirements_recorded = serializers.BooleanField(
         help_text="Every selected case's needs were read from its stored documents."
     )
+    next = serializers.ChoiceField(
+        choices=("validate_first", "run_unvalidated"),
+        allow_null=True,
+        help_text="When every selected case is held back only for not being validated on the pairing: a run"
+        " validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here"
+        " (run_unvalidated). Null otherwise.",
+    )
     running = serializers.IntegerField(
         min_value=0, help_text="Selected cases a run of this selection would send."
     )

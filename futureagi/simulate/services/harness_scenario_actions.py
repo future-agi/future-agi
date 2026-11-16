@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from django.db import transaction
@@ -196,6 +196,15 @@ def validate_scenarios(
     }, 202
 
 
+def check_ending(job: HostedHarnessJob) -> tuple[Literal["unavailable", "failed"], str]:
+    """How a validation that neither runs nor completed ended: on our side, or failed by the pairing; and why."""
+    from simulate.services.harness_versioning import validation
+
+    if validation.ended_on_our_side(job):
+        return "unavailable", validation.UNAVAILABLE_REASON
+    return "failed", validation.failed_reason(job.failure or {})
+
+
 def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, Any]:
     from simulate.services.harness_versioning import validation
 
@@ -214,12 +223,8 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, A
     elif job.state == HostedHarnessJob.State.COMPLETED:
         state, finished = "finished", job.updated_at.isoformat()
         message = None if recorded else NO_RESULTS
-    elif validation.ended_on_our_side(job):
-        state, finished = "unavailable", job.updated_at.isoformat()
-        message = validation.UNAVAILABLE_REASON
     else:
-        state, finished = "failed", job.updated_at.isoformat()
-        message = validation.failed_reason(job.failure or {})
+        (state, message), finished = check_ending(job), job.updated_at.isoformat()
     return {
         "state": state,
         "job_id": str(job.id),

@@ -1273,3 +1273,24 @@ def require_pair_runnable(
             status_code=409,
             details={"reason_code": error.get("code"), "reason": reason},
         )
+
+
+# What a run does with cases held back only because they are not validated on its pairing.
+UnprovedNext = Literal["validate_first", "run_unvalidated"]
+
+
+def unproved_next(
+    environment: HostedHarnessJob,
+    agent_version: AgentVersion | None,
+    bundle: HarnessAssembledBundle | None,
+) -> UnprovedNext | None:
+    """Read from the pairing's bundle, writing nothing: validate first (the run starts the check and is asked again),
+    or run them unvalidated (the last check ended on our side for a cause that repeats here). ``None`` when no check
+    can run here or one already runs."""
+    if agent_version is None or not can_validate(environment, agent_version.id):
+        return None
+    if bundle is not None and live_check(bundle.id) is not None:
+        return None
+    if bundle is not None and repeats_unavailable(bundle):
+        return "run_unvalidated"
+    return "validate_first"

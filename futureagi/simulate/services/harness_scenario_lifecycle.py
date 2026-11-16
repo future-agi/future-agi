@@ -49,6 +49,13 @@ REASON_TEXTS = {
     "apply_failed": "This change could not be applied: {why}. Fix it in the builder chat or discard it.",
     "archived": "Archived on {date}: {archive_reason}",
     "validation_unavailable": "Validation is not available on this installation; this case runs unvalidated.",
+    "validation_failed": "The last validation of these versions failed: {failure}.",
+    "validation_ended_on_our_side": "The last validation of these versions did not finish: {failure}.",
+}
+# A failed validation's ending, as `check_ending` reads it, by the reason its unproved cases give.
+ENDING_REASONS = {
+    "failed": "validation_failed",
+    "unavailable": "validation_ended_on_our_side",
 }
 WARNING_TEXTS = {
     "solution_assumed": "Kept as written: {k} of {n} solution steps never ran, because {tools} have no endpoint here.",
@@ -350,15 +357,15 @@ def scenario_lifecycle(
     """Every member's lifecycle on this pair, keyed by scenario key; empty without a pair."""
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning import validation
+    from simulate.services.harness_versioning.versions import suite_cases
 
     if suite_version is None or environment_version is None:
         return {}
-    members = HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version=suite_version
-    )
-    if keys is not None:
-        members = members.filter(scenario_key__in=keys)
-    contents = dict(members.values_list("scenario_key", "content"))
+    contents = {
+        key: content
+        for key, _, content in suite_cases(suite_version)
+        if keys is None or key in keys
+    }
     proofs = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=suite_version, environment_version=environment_version
@@ -378,6 +385,7 @@ def scenario_lifecycle(
         and environment_version.id == environment.environment_version_id
     )
     unavailable = not validation.can_validate(environment, environment.agent_version_id)
+    ended = _last_check_ending(environment, suite_version, environment_version)
     resolved = resolve(
         environment,
         environment_version,
@@ -447,6 +455,12 @@ def scenario_lifecycle(
             view = _view("draft", reason="validation_incomplete", entry=entry)
         elif unavailable:
             view = _view("draft", reason="validation_unavailable")
+        elif ended is not None:
+            view = _view(
+                "draft",
+                reason=ENDING_REASONS[ended[0]],
+                reason_extra={"failure": ended[1]},
+            )
         else:
             view = _view("draft", reason="not_validated")
         content = contents.get(key) or {}
@@ -505,6 +519,29 @@ def scenario_lifecycle(
                 )
         views[key] = view
     return views
+
+
+def _last_check_ending(
+    environment: HostedHarnessJob,
+    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion,
+) -> tuple[Literal["unavailable", "failed"], str] | None:
+    """How the newest validation of this pair ended, when it failed; a newer one, running or done, replaces it."""
+    from simulate.services.harness_scenario_actions import check_ending
+
+    last = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=environment.id,
+            suite_version=suite_version,
+            environment_version=environment_version,
+            payload__metadata__certify_only=True,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if last is None or last.state != HostedHarnessJob.State.FAILED:
+        return None
+    return check_ending(last)
 
 
 def _uncaptured_check(

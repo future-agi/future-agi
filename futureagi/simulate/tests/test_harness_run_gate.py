@@ -240,3 +240,65 @@ def test_the_preview_says_why_each_held_back_case_cannot_run(user, workspace, st
     shown = preview["reasons"][selection.NOT_VALIDATED_ROW]
     assert REASON_TEXTS["no_negative_control"] in shown
     assert REASON_TEXTS["vacuous"] in shown
+
+
+def _preview_next(environment, keys):
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+
+    return selection.selection_report(
+        resolve_pairing(environment), keys=keys, trials=1
+    )["selection"]["next"]
+
+
+def test_the_preview_says_a_run_validates_first_and_the_run_does(
+    user, workspace, storage
+):
+    environment = _environment(user, workspace, storage, "gate-next-validate")
+    _suite(environment, _ten())
+    _without_proofs(environment)
+
+    assert _preview_next(environment, KEYS) == "validate_first"
+    with pytest.raises(HostedHarnessError) as refused:
+        _run(environment, KEYS, key="next-validate")
+    assert refused.value.code == "pair_validating"
+
+
+def test_the_preview_says_cases_run_unvalidated_and_the_run_sends_them(
+    user, workspace, storage
+):
+    environment = _environment(user, workspace, storage, "gate-next-unvalidated")
+    _suite(environment, _ten())
+    _without_proofs(environment)
+    HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+        state="pending",
+        object_key=None,
+        error={
+            "last_attempt": {"code": validation.CHECK_UNAVAILABLE, "template": "t:1"}
+        },
+    )
+    _built(environment)
+    before = _proving_jobs(environment)
+
+    with patch.object(validation, "_template", return_value="t:1"):
+        assert _preview_next(environment, KEYS) == "run_unvalidated"
+        run = _run(environment, KEYS, key="next-unvalidated")
+
+    chosen = run.payload["metadata"]["readiness_selection"]
+    assert (chosen["running"], chosen["validation"]) == (len(KEYS), "not_enforced")
+    assert _proving_jobs(environment) == before
+
+
+def test_no_next_step_while_some_cases_run_or_no_check_can(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "gate-next-none")
+    _suite(environment, _ten())
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(proofs=dict.fromkeys(LOOKUP_KEYS, PROVED))
+
+    assert _preview_next(environment, KEYS) is None
+    assert _preview_next(environment, REFUND_KEYS) == "validate_first"
+    with patch.object(validation, "can_validate", return_value=False):
+        assert _preview_next(environment, REFUND_KEYS) is None
+    with patch.object(validation, "live_check", return_value=object()):
+        assert _preview_next(environment, REFUND_KEYS) is None

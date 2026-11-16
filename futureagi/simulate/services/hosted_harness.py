@@ -965,17 +965,6 @@ def _readiness_plan(
     return _ReadinessPlan(pins=_pins(resolved), plan=plan)
 
 
-def _only_unvalidated(planned: _ReadinessPlan, key: str) -> bool:
-    """Whether the case's only held-back row is that it is not validated on the pair."""
-    from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
-
-    rows = ((planned.plan.view.get("cases") or {}).get(key) or {}).get("by")
-    if rows is not None:
-        return list(rows) == [NOT_VALIDATED_ROW]
-    by = planned.plan.view.get("held_back", {}).get("by") or {}
-    return set(by) == {NOT_VALIDATED_ROW}
-
-
 def _validate_unproved_pair(
     environment: HostedHarnessJob,
     planned: _ReadinessPlan | None,
@@ -999,10 +988,11 @@ def _validate_unproved_pair(
         or planned.plan is None
     ):
         return set()
-    held = planned.plan.held
-    if not scenario_keys or not all(key in held for key in scenario_keys):
-        return set()
-    if not all(_only_unvalidated(planned, key) for key in scenario_keys):
+    # The run preview shows this same decision.
+    step = planned.plan.view["next"]
+    if step == "run_unvalidated":
+        return set(scenario_keys)
+    if step != "validate_first":
         return set()
     key = resolved.assembly_key or assembly.bundle_key(
         resolved.runtime, resolved.environment_version, resolved.suite_version
@@ -1010,8 +1000,6 @@ def _validate_unproved_pair(
     bundle = HarnessAssembledBundle._base_manager.filter(
         job_id=environment.id, assembly_key=key
     ).first()
-    if bundle is not None and validation.live_check(bundle.id) is not None:
-        return set()
     ready = bundle is not None and bundle.state == HarnessAssembledBundle.State.READY
     started = validation.start_validation(
         environment,

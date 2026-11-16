@@ -16,6 +16,10 @@ from simulate.models import (
     HarnessSuiteValidation,
     HostedHarnessJob,
 )
+from simulate.services.harness_scenario_lifecycle import (
+    lifecycle_counts,
+    scenario_lifecycle,
+)
 from simulate.services.harness_versioning.assembly import bundle_key, certify_enabled
 from simulate.services.harness_versioning.read import (
     _agent_label,
@@ -23,10 +27,7 @@ from simulate.services.harness_versioning.read import (
     _message_label,
     version_refs,
 )
-from simulate.services.harness_versioning.versions import (
-    pair_proof_counts,
-    versioning_enabled,
-)
+from simulate.services.harness_versioning.versions import versioning_enabled
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -214,19 +215,24 @@ def run_warnings(
     environment_label = _message_label(_label(environment_version.version_number))
     warnings = []
     suite_label = _message_label(_label(suite_version.version_number))
-    status, proofs = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            suite_version=suite_version, environment_version=environment_version
-        )
-        .values_list("status", "proofs")
-        .first()
-    ) or (None, None)
-    counts = (
-        pair_proof_counts(suite_version.id, environment_version.id)
-        if status != HarnessSuiteValidation.Status.PASSED and proofs
-        else None
+    # As the scenario lifecycle reads the pair, so a legacy case kept as written counts as one.
+    counts = lifecycle_counts(
+        scenario_lifecycle(
+            environment,
+            suite_version=suite_version,
+            environment_version=environment_version,
+        ).values()
     )
-    if counts and (counts["proved"] or counts["kept_as_written"]):
+    if not counts["proved"] and not counts["kept_as_written"]:
+        warnings.append(
+            _warning(
+                "suite_unproved",
+                f"Suite {suite_label} hasn't been proved"
+                f" against environment {environment_label}",
+                "suite",
+            )
+        )
+    elif counts["kept_as_written"] or counts["not_proved"]:
         # Validated, but not every case proved: say how the cases stand, not "not proved".
         warnings.append(
             _warning(
@@ -234,15 +240,6 @@ def run_warnings(
                 f"Suite {suite_label} on environment {environment_label}:"
                 f" {counts['proved']} proved, {counts['kept_as_written']} kept as written,"
                 f" {counts['not_proved']} not proved",
-                "suite",
-            )
-        )
-    elif status != HarnessSuiteValidation.Status.PASSED:
-        warnings.append(
-            _warning(
-                "suite_unproved",
-                f"Suite {suite_label} hasn't been proved"
-                f" against environment {environment_label}",
                 "suite",
             )
         )
