@@ -310,10 +310,21 @@ describe("useCallListNavigation", () => {
     expect(result.current.hasNext).toBe(false);
   });
 
-  it("gives a call opened from Analytics no prev/next and reads nothing", () => {
+  it("reads the open call's row from the table, so the drawer isn't left with a snapshot", async () => {
+    const { result } = setup({ callId: "c2" });
+    await waitFor(() =>
+      expect(result.current.openRow).toMatchObject({
+        id: "c2",
+        scenario: "Scenario c2",
+      }),
+    );
+  });
+
+  it("gives a call opened from Analytics no prev/next or row and reads nothing", () => {
     const { result } = setup({ callId: "c2", source: "analytics" });
     expect(result.current.hasPrev).toBe(false);
     expect(result.current.hasNext).toBe(false);
+    expect(result.current.openRow).toBeNull();
     expect(axios.get).not.toHaveBeenCalled();
   });
 

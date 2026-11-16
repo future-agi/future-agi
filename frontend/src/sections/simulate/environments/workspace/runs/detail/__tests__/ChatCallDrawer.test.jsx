@@ -16,6 +16,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
       callDetail: mocks.callDetail,
       isLoading: mocks.loading,
     }),
+    useHasWorkers: () => false,
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });

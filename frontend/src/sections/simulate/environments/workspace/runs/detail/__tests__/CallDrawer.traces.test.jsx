@@ -8,6 +8,8 @@ import { useLLMTracingStore } from "src/sections/projects/LLMTracing/states";
 // data hooks and the two heavy drawers' bodies are stood in for.
 const mocks = vi.hoisted(() => ({
   traces: { projectId: null, traces: [], isError: false },
+  hasWorkers: false,
+  voiceTabs: [],
 }));
 
 vi.mock("src/components/iconify", () => ({ default: () => <span /> }));
@@ -18,10 +20,12 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   return {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
-    useCallExecutionV3Detail: () => ({
-      data: { id: "voice-1", transcript: [] },
-      isPending: false,
-    }),
+    useHasWorkers: () => mocks.hasWorkers,
+    // A call not read yet is pending, as the next call is while its detail loads.
+    useCallExecutionV3Detail: (id) =>
+      id === "voice-1"
+        ? { data: { id: "voice-1", transcript: [] }, isPending: false }
+        : { data: undefined, isPending: true },
     useCallTraces: () => mocks.traces,
   };
 });
@@ -52,17 +56,35 @@ vi.mock("src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer", async ()
   };
 });
 
+// A Participants step asks for its trace at its own span, as the real panel's Open in Traces does, and offers it
+// only when the drawer lists that trace.
+vi.mock("../CallWorkersPanel", () => ({
+  default: function WorkersStub({ onOpenTrace, traceIds = [] }) {
+    return traceIds.includes("trace-1") ? (
+      <button type="button" onClick={() => onOpenTrace("trace-1", "span-7")}>
+        open step trace
+      </button>
+    ) : null;
+  },
+}));
+
 vi.mock("src/components/VoiceDetailDrawerV2", async () => {
   const { useState } = await import("react");
   return {
     default: function VoiceStub({
       leftPanelTabs,
+      leftPanelTab,
+      onLeftPanelTabChange,
       onPrev,
       onNext,
       hasPrev,
       hasNext,
     }) {
-      const [tab, setTab] = useState("transcript");
+      mocks.voiceTabs = leftPanelTabs ?? [];
+      // Follows a tab its host holds, as VoiceLeftPanel does.
+      const [ownTab, setOwnTab] = useState("transcript");
+      const tab = leftPanelTab ?? ownTab;
+      const setTab = onLeftPanelTabChange ?? setOwnTab;
       const active = (leftPanelTabs ?? []).find((t) => t.value === tab);
       return (
         <div data-testid="voice-drawer">
@@ -119,6 +141,7 @@ const renderVoice = (props = {}) =>
 
 beforeEach(() => {
   mocks.traces = { projectId: "hidden-project", traces: ROWS, isError: false };
+  mocks.hasWorkers = false;
 });
 
 afterEach(() => {
@@ -267,5 +290,103 @@ describe("CallDrawer — Escape", () => {
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CallDrawer: Open in Traces from a Participants step", () => {
+  beforeEach(() => {
+    mocks.hasWorkers = true;
+  });
+
+  it("opens the step's trace over a chat call and keeps it open", async () => {
+    const user = userEvent.setup();
+    renderChat();
+
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+
+    expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
+    expect(urlHasTrace()).toBe(true);
+    expect(useLLMTracingStore.getState().traceDetailDrawerOpen).toMatchObject({
+      traceId: "trace-1",
+      spanId: "span-7",
+    });
+  });
+
+  it("opens the step's trace over a voice call and keeps it open", async () => {
+    const user = userEvent.setup();
+    renderVoice();
+
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+
+    expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
+    expect(urlHasTrace()).toBe(true);
+    expect(useLLMTracingStore.getState().traceDetailDrawerOpen).toMatchObject({
+      traceId: "trace-1",
+      spanId: "span-7",
+    });
+  });
+
+  it("asks the voice panel to keep Participants mounted across tabs, and not Traces", () => {
+    renderVoice();
+    const kept = Object.fromEntries(
+      mocks.voiceTabs.map((tab) => [tab.value, Boolean(tab.keepMounted)]),
+    );
+    expect(kept).toEqual({ traces: false, workers: true });
+  });
+
+  it("offers no Open in Traces for a trace the call does not list, on chat and voice", async () => {
+    const user = userEvent.setup();
+    mocks.traces = {
+      projectId: "hidden-project",
+      traces: [{ traceId: "trace-9", name: "other" }],
+      isError: false,
+    };
+    const chat = renderChat();
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    expect(
+      screen.queryByRole("button", { name: "open step trace" }),
+    ).toBeNull();
+    chat.unmount();
+
+    renderVoice();
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    expect(
+      screen.queryByRole("button", { name: "open step trace" }),
+    ).toBeNull();
+  });
+
+  it("does not reopen the trace on a voice call after stepping to the next call and back", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderVoice({ hasPrev: true, hasNext: true });
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("trace-drawer")).not.toBeInTheDocument();
+
+    const step = (task) =>
+      rerender(
+        <CallDrawer
+          task={task}
+          executionId="run-1"
+          agentType="voice"
+          onClose={() => {}}
+          hasPrev
+          hasNext
+        />,
+      );
+    // The next call lists none of this one's traces; the panel unmounts while its detail loads.
+    mocks.traces = { projectId: "hidden-project", traces: [], isError: false };
+    step({ id: "voice-2", simulationCallType: "voice" });
+    mocks.traces = {
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    };
+    step(voiceTask);
+
+    expect(screen.queryByTestId("trace-drawer")).not.toBeInTheDocument();
+    expect(urlHasTrace()).toBe(false);
   });
 });

@@ -16,9 +16,20 @@ import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
 import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 import { isOtherRole } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+import { seriesColor } from "src/theme/data-colors";
 
 // `task`: a scenario's start message no person or actor sent.
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer", task: "Task" };
+const ROLE_LABEL = {
+  agent: "Assistant",
+  customer: "Customer",
+  task: "Task",
+  tool: "Tool call",
+};
+const TOOL_SERIES = 1;
+const isHandOffRow = (turn) =>
+  turn.role === "tool" &&
+  Array.isArray(turn.toolCalls) &&
+  turn.toolCalls.some((call) => call?.delegated_to);
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -157,10 +168,19 @@ export default function ChatTranscriptPane({
             key={i}
             sx={{
               borderLeft: "2px solid",
-              borderColor:
-                s.role === "agent" ? "text.secondary" : "text.disabled",
+              // Each speaker keeps its own mark, so a tool call never reads as the customer.
+              borderColor: (t) =>
+                s.role === "agent"
+                  ? t.palette.text.secondary
+                  : s.role === "tool"
+                    ? seriesColor(t, TOOL_SERIES)
+                    : t.palette.text.disabled,
               bgcolor:
-                s.role === "agent" ? "action.hover" : "background.neutral",
+                s.role === "agent"
+                  ? "action.hover"
+                  : s.role === "tool"
+                    ? "transparent"
+                    : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
@@ -177,7 +197,9 @@ export default function ChatTranscriptPane({
               }}
             >
               {turnStamp(s, i)} ·{" "}
-              {isOtherRole(s.role) ? (
+              {isHandOffRow(s) ? (
+                "Hand-off"
+              ) : isOtherRole(s.role) ? (
                 <OtherPartyName party={s} color="text.subtitle" />
               ) : (
                 ROLE_LABEL[s.role] || s.role
