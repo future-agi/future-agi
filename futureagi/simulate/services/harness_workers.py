@@ -371,8 +371,7 @@ def _in_order(events: list[WorkerEvent]) -> None:
         event["seq"] = seq
 
 
-# Where a background job's top span carries the run it belongs to, and where the tool call that launched it says which
-# run it started, as the LangGraph and traceAI instrumentors record them.
+# Where LangGraph and traceAI record a background job's run, and where its launching call names the run it started.
 _ASYNC_RUN_KEYS = ("gen_ai.conversation.id", "session.id", "thread_id", "run_id")
 _ASYNC_LAUNCH_OUTPUT_KEYS = ("output.value", "gen_ai.tool.call.result")
 
@@ -440,9 +439,7 @@ def worker_timeline(
     started_at: str | None = None,
 ) -> WorkerTimeline:
     """Each worker (declared, observed or both) and the call's worker events in order; `traced_calls` are raw sealed rows.
-
-    A background job runs as its own trace, so its top agent span has no parent: one whose run key a tool call returned
-    in its output is placed under that tool call, as that launch's hand-off (`launch: "async"`)."""
+    A background job's top span, whose run key a tool call returned, is placed under that call (`launch: "async"`)."""
     by_id = {str(span["span_id"]): span for span in spans}
     launched = _async_launches(list(by_id.values()))
     for root, launch in launched.items():
@@ -888,8 +885,7 @@ def worker_timeline(
                     "delegation_id"
                 ) == span_event.get("delegation_id"):
                     one["row"] = index
-    # A background job the runtime joined to the tool call that launched it: the hand-off row names that call as its
-    # parent event while its own place is unknown. It is a hand-off made by that launch, as a job read from spans is.
+    # A job joined to its launching call names that call as its parent event, so it is a hand-off made by that launch.
     by_event = {
         str((row.get("runtime_ids") or {}).get("event_id")): index
         for index, row in enumerate(rows)
@@ -897,18 +893,18 @@ def worker_timeline(
     }
     launched_by: dict[int, int] = {}
     for index, call in enumerate(rows):
-        launch = by_event.get(
+        launcher = by_event.get(
             str((call.get("runtime_ids") or {}).get("parent_event_id") or "")
         )
         if (
-            launch is not None
-            and launch not in shown
+            launcher is not None
+            and launcher not in shown
             and index not in shown
             and str(call.get("delegated_to") or "").strip()
-            and not str(rows[launch].get("delegated_to") or "").strip()
+            and not str(rows[launcher].get("delegated_to") or "").strip()
             and placed_in(call).get("relationship") == "unknown"
         ):
-            launched_by[index] = launch
+            launched_by[index] = launcher
     for index, call in enumerate(rows):
         by = by_of(call)
         if (not by and not call.get("delegated_to")) or index in shown:
@@ -1228,8 +1224,7 @@ def worker_states(
         elif out:
             state = _STILL_OUT.get(trial, "no_return")
         elif trial in _CUT_SHORT_TRIALS:
-            # Seen only through its tool calls in a trial cut short: its hand-off was still open, so it takes the
-            # trial's ending.
+            # Seen only through its tool calls in a trial cut short: its hand-off was still open, so it takes that ending.
             ended["state"] = _STILL_OUT[trial]
             ended["seen"] = "tool_calls_only"
             workers.append(ended)
@@ -1344,7 +1339,8 @@ def _call_attempt(
     )
     receipt = getattr(execution, "receipt", None) if execution is not None else None
     if receipt is not None:
-        return receipt.attempt
+        attempt: HostedHarnessAttempt = receipt.attempt
+        return attempt
     return job.attempts.filter(attempt_number=job.current_attempt_number).first()
 
 
