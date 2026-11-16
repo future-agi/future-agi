@@ -51295,7 +51295,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         step: {
           title: "Step",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           "x-nullable": true,
         },
         plan: {
@@ -51441,6 +51441,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "defaults",
         "limits",
         "blocked",
+        "variations_blocked",
       ],
       type: "object",
       properties: {
@@ -51475,6 +51476,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixLaunchLimits",
         },
         blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
         },
       },
@@ -51572,6 +51576,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "out_of_budget",
             "stopped",
             "failed",
+            "too_few_cases",
           ],
         },
         stage: {
@@ -51583,7 +51588,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Step",
           description: "A finished fix is done, whatever the engine last said.",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           readOnly: true,
           "x-nullable": true,
         },
@@ -51730,6 +51735,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "out_of_budget",
             "stopped",
             "failed",
+            "too_few_cases",
           ],
         },
         stage: {
@@ -51741,7 +51747,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Step",
           description: "A finished fix is done, whatever the engine last said.",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           readOnly: true,
           "x-nullable": true,
         },
@@ -94444,6 +94450,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "budget_credits_max",
         "max_minutes_max",
         "scenarios_min",
+        "cases_min",
+        "variations_per_case",
+        "verified_cases_min",
         "scenarios_max",
       ],
       type: "object",
@@ -94458,6 +94467,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         scenarios_min: {
           title: "Scenarios min",
+          type: "integer",
+        },
+        cases_min: {
+          title: "Cases min",
+          type: "integer",
+        },
+        variations_per_case: {
+          title: "Variations per case",
+          type: "integer",
+        },
+        verified_cases_min: {
+          title: "Verified cases min",
           type: "integer",
         },
         scenarios_max: {
@@ -94763,6 +94784,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         max_minutes: {
           title: "Max minutes",
           type: "integer",
+        },
+        variations_pending: {
+          title: "Variations pending",
+          type: "boolean",
+          default: false,
+        },
+        variation_parents: {
+          title: "Variation parents",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+          default: {},
         },
       },
     },

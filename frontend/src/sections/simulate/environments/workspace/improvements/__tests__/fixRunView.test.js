@@ -10,6 +10,7 @@ import {
   identityLine,
   isShipped,
   outcomeLabel,
+  STATE_LABEL,
   stepRows,
   verdictCards,
   winnerOf,
@@ -134,6 +135,54 @@ describe("step rows", () => {
   it("omits lines whose data has not arrived", () => {
     const rows = stepRows(byId("fix-unknown-identity"));
     expect(rows.slice(0, 3).map((r) => r.lines)).toEqual([[], [], []]);
+  });
+
+  it("starts with writing variations when the run had too few failing cases", () => {
+    const fix = byId("fix-search");
+    const pending = {
+      ...fix,
+      step: "variations",
+      plan: null,
+      request: {
+        ...fix.request,
+        target_scenario_keys: ["a", "b", "c", "d"],
+        variations_pending: true,
+        variation_parents: {},
+      },
+    };
+    const rows = stepRows(pending);
+    expect(rows.map((r) => [r.id, r.state])).toEqual([
+      ["variations", "now"],
+      ["reproduce", "todo"],
+      ["search", "todo"],
+      ["verify", "todo"],
+      ["done", "todo"],
+    ]);
+    expect(rows[0].lines).toEqual([
+      "Writes variations of the 4 failing cases, then keeps those the current version also fails",
+    ]);
+
+    const settled = stepRows({
+      ...fix,
+      request: {
+        ...pending.request,
+        target_scenario_keys: ["a", "b", "c", "d", "a-v1", "b-v2"],
+        variations_pending: false,
+        variation_parents: { "a-v1": "a", "b-v2": "b" },
+      },
+    });
+    expect(settled.map((r) => [r.id, r.state]).slice(0, 3)).toEqual([
+      ["variations", "done"],
+      ["reproduce", "done"],
+      ["search", "now"],
+    ]);
+    expect(settled[0].lines).toEqual([
+      "Kept 2 variations the current version failed: 6 failing cases",
+    ]);
+  });
+
+  it("names the ending of a fix with too few failing cases", () => {
+    expect(STATE_LABEL.too_few_cases).toBe("Too few failing cases");
   });
 
   it("marks every step done once the fix is done", () => {
