@@ -2958,7 +2958,7 @@ def test_a_later_read_scheduled_before_a_rerun_does_not_run():
         assert not again.called
 
 
-def test_a_hand_off_is_not_counted_as_one_of_the_call_s_tool_calls():
+def test_a_hand_off_or_a_world_actor_s_action_is_not_one_of_the_call_s_tool_calls():
     from simulate.selectors.call_detail import tool_call_count
 
     transcript = [
@@ -2969,6 +2969,10 @@ def test_a_hand_off_is_not_counted_as_one_of_the_call_s_tool_calls():
             ]
         },
         {"tool_calls": None},
-        {"tool_calls": [{"name": "notify"}]},
     ]
-    assert tool_call_count(transcript) == 2
+    calls = [
+        {"name": "notify", "kind": "agent_call"},
+        {"name": "audit", "kind": "agent_call", "delegated_to": "audit"},
+        {"name": "cancel", "kind": "world_actor_action"},
+    ]
+    assert tool_call_count(transcript, calls) == 2

@@ -302,18 +302,21 @@ def _actor_turn(row: dict[str, Any], actor: Mapping[str, str]) -> dict[str, Any]
     }
 
 
-def tool_call_count(transcript: Sequence[Mapping[str, object]]) -> int:
-    """The tool calls in a call's transcript; a hand-off to another agent is a Participants step, not a tool call."""
-    count = 0
+def tool_call_count(
+    transcript: Sequence[Mapping[str, object]], calls: Sequence[Mapping[str, object]]
+) -> int:
+    """The agent's tool calls in the transcript and the tagged function calls; a world actor's action is not one, and a
+    hand-off to another agent is a Participants step, not a tool call."""
+    made: list[object] = [
+        one for one in calls if one.get("kind") != "world_actor_action"
+    ]
     for turn in transcript:
-        calls = turn.get("tool_calls")
-        if isinstance(calls, list):
-            count += sum(
-                1
-                for one in calls
-                if not (isinstance(one, Mapping) and one.get("delegated_to"))
-            )
-    return count
+        listed = turn.get("tool_calls")
+        if isinstance(listed, list):
+            made.extend(listed)
+    return sum(
+        1 for one in made if not (isinstance(one, Mapping) and one.get("delegated_to"))
+    )
 
 
 def transcript_turns(
