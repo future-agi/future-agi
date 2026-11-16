@@ -147,6 +147,9 @@ func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.Provi
 		DefaultTimeout: 60 * time.Second,
 		MaxConcurrent:  100,
 		ConnPoolSize:   100,
+		// The operator's switch for this provider ID holds for every org's
+		// instance of it. It only ever makes the gateway trust less.
+		IgnoreProviderCost: ok && baseCfg.IgnoreProviderCost,
 	}, true
 }
 
