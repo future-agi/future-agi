@@ -596,9 +596,8 @@ def _door_reach(pairing: Pairing) -> dict[str, bool]:
     (`door_unreached`). The same rule as the actors' `harness_actors.door_reach`."""
     contract = (pairing.environment_version.documents or {}).get("contract")
     contract = contract if isinstance(contract, Mapping) else {}
-    runtime = (
-        contract.get("runtime") if isinstance(contract.get("runtime"), Mapping) else {}
-    )
+    raw_runtime = contract.get("runtime")
+    runtime: Mapping = raw_runtime if isinstance(raw_runtime, Mapping) else {}
     python = str(runtime.get("language") or "python").strip().lower() in (
         "",
         "python",
