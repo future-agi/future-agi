@@ -82,7 +82,7 @@ export const noReviewsYet = (query) => (query.isError && httpStatus(query.error)
 // what passed; only a run that carried a recorded failure speaks about a repair.
 export function nativeConclusion({ candidate, reference, passed, total, result, decision }) {
   if (!result) return decision === 'release_ready' ? 'Application checks passed for these cases.' : 'Hold this release.';
-  const lead = `v${candidate} passed ${passed} of ${total} cases`;
+  const lead = `v${candidate} passed ${passed} of ${total} ${total === 1 ? 'case' : 'cases'}`;
   if (result.reproduction === 'not_requested') return `${lead}.`;
   const reproduction = result.reproduction === 'reproduced'
     ? `the recorded failure reproduced${reference ? ` on v${reference}` : ''}`
@@ -120,12 +120,34 @@ export function nativeSummaryConclusion(summary) {
   }).length;
   return nativeConclusion({ candidate: candidate[0]?.version, reference: cases.find((cell) => cell.variant === 'reference')?.version, passed, total: ids.length, result: summary.result });
 }
-// Release impact as short sentences: "2 connected apps move with this release. 1 is pinned and stays put."
-export function impactSentence({ following = 0, pinned = 0, unobserved = 0 }) {
-  const moving = following === 0 ? 'No connected apps move' : following === 1 ? '1 connected app moves' : `${following} connected apps move`;
-  return [
-    `${moving} with this release.`,
-    pinned ? `${pinned} ${pinned === 1 ? 'is pinned and stays' : 'are pinned and stay'} put.` : null,
-    unobserved ? `${unobserved} ${unobserved === 1 ? "app hasn't" : "apps haven't"} reported a version yet.` : null,
-  ].filter(Boolean).join(' ');
+// Release impact as short sentences. Every app is counted once: "moves" and "pinned" split the apps,
+// and "hasn't reported" is said of those same apps, never as a third group. With three apps or fewer
+// and their names known, each is named: "acme-support production agent follows production and moves
+// v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet."
+const hasVerb = (count) => (count === 1 ? "hasn't" : "haven't");
+export function impactSentence({ following = 0, pinned = 0, unobserved = 0, apps } = {}, transition) {
+  const total = following + pinned;
+  const to = transition?.version;
+  const from = transition?.expectedVersion;
+  const move = to == null ? 'moves with this release' : from == null ? `moves to v${to}` : `moves v${from} → v${to}`;
+  const named = Array.isArray(apps) && apps.length === total && total > 0 && total <= 3 && transition?.label;
+  if (named) {
+    // A per-app report status is named only when the app rows agree with the reviewed count.
+    const attributed = apps.filter((app) => !app.reported).length === unobserved;
+    const pinnedLast = [...apps].sort((a, b) => (a.selector?.version != null) - (b.selector?.version != null));
+    const sentences = pinnedLast.map((app) => {
+      const pin = app.selector?.version;
+      const base = pin != null ? `${app.name} is pinned to v${pin} and doesn't move` : `${app.name} follows ${transition.label} and ${move}`;
+      return `${base}${attributed && !app.reported ? "; it hasn't reported a version yet" : ''}.`;
+    });
+    if (!attributed && unobserved) sentences.push(`${unobserved === total ? (total === 1 ? "It hasn't" : `None of the ${total} has`) : `${unobserved} of the ${total} ${hasVerb(unobserved)}`} reported a version yet.`);
+    return sentences.join(' ');
+  }
+  if (total === 0) return 'No connected apps move with this release.';
+  const verb = (count) => (count === 1 ? move : move.replace(/^moves/, 'move'));
+  const counts = pinned === 0
+    ? `${following} connected ${following === 1 ? 'app' : 'apps'} ${verb(following)}.`
+    : `Of ${total} connected ${total === 1 ? 'app' : 'apps'}: ${following === 0 ? 'none moves' : `${following} ${verb(following)}`}; ${pinned} ${pinned === 1 ? "is pinned and doesn't" : "are pinned and don't"} move.`;
+  const reports = unobserved ? ` ${unobserved === total ? (total === 1 ? "It hasn't" : `None of the ${total} has`) : `${unobserved} of the ${total} ${hasVerb(unobserved)}`} reported a version yet.` : '';
+  return `${counts}${reports}`;
 }

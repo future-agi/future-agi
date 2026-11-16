@@ -502,7 +502,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       });
       const outcome = (await page.getByText(/^Repair (not )?verified:/).first().textContent()) ?? '';
       mark('note', { label: outcome });
-      expect(outcome).toMatch(/^Repair verified: v2 passed 1 of 1 cases; the recorded failure reproduced on v1\./);
+      expect(outcome).toMatch(/^Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1\./);
       await scrollTo(page.getByText(/^Repair (not )?verified:/).first(), 400);
       await caption('Repair verified: the failure reproduces on v1 and does not on v2.');
     }
@@ -533,7 +533,7 @@ test('skills walkthrough', async ({ browser, request }) => {
         await expect(page.getByLabel('Assigned reviewer')).toBeVisible();
         await noPlaceholders();
       });
-      const evidence = page.getByText(/^Repair verified: v2 passed 1 of 1 cases; the recorded failure reproduced on v1\.$/).first();
+      const evidence = page.getByText(/^Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1\.$/).first();
       await point(evidence);
       await caption('The verified run goes with the request: v2 passed, and the v1 failure reproduced.');
       const reviewer = page.getByLabel('Assigned reviewer');
@@ -560,7 +560,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await loading(ack, () => inboxRow.click());
       await expect(ack).toBeEnabled();
       await noPlaceholders();
-      const seen = page.getByText(/^Repair verified: v2 passed 1 of 1 cases; the recorded failure reproduced on v1\.$/).first();
+      const seen = page.getByText(/^Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1\.$/).first();
       await expect(seen).toBeVisible();
       await point(seen);
       await caption('She sees the exact change and the attached run\'s real outcomes before approving.');

@@ -85,7 +85,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
     {!links.length && <Typography variant="s3">No linked skills. AGENTS.md remains standing context.</Typography>}
-    {proposed && !readOnly && <Alert severity="info">{links.length} skills from your migration are proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
+    {proposed && !readOnly && <Alert severity="info">{links.length} {links.length === 1 ? 'skill' : 'skills'} from your migration {links.length === 1 ? 'is' : 'are'} proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
     {links.length > 0 && <Container sx={{ maxWidth: 1 }}><Collection {...(compact ? { spacing: 1.5, role: 'list' } : { size: 'small' })} aria-label="Linked skills">
       {!compact && <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Skill', 'Update rule', 'Version in this context', 'Status', 'Action'].map((heading) => <TableCell key={heading}>{heading}</TableCell>)}<TableCell padding="checkbox"><Box component="span" sx={visuallyHidden}>Details</Box></TableCell></TableRow></TableHead>}
       <Rows>{links.map((link) => {

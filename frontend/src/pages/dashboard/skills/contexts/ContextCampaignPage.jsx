@@ -34,7 +34,7 @@ function CreateInventory({ inventory, submission, onSubmission, onClose, onCreat
   };
   return <ModalWrapper open onClose={onClose} title="Review fixed repository inventory" actionBtnTitle={submission ? 'Recover original submission' : 'Create draft rollout'} onSubmit={submit} isValid={valid && Boolean(name.trim())} isLoading={create.isPending}>
     <TextField label="Rollout name" value={name} disabled={Boolean(submission)} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 120 }} size="small" />
-    <Alert severity="info">This creates a draft with exactly {inventory.targets.length} targets. Each repository still needs a local plan and explicit authorization before a PR can be created.</Alert>
+    <Alert severity="info">This creates a draft with exactly {inventory.targets.length} {inventory.targets.length === 1 ? 'target' : 'targets'}. Each repository still needs a local plan and explicit authorization before a PR can be created.</Alert>
     <Stack spacing={1} sx={{ maxHeight: 320, overflow: 'auto' }}>{inventory.targets.map((target) => <Stack key={target.bindingId} direction="row" spacing={1} alignItems="center"><Typography variant="s3">v{target.version}</Typography><IdentityChip label="Target ID" kind="id" value={target.bindingId} /></Stack>)}</Stack>
     {create.isError && <Alert severity="error">Creation was not confirmed. Retry this original submission to recover its receipt; do not create a new rollout with a fresh key.</Alert>}
   </ModalWrapper>;

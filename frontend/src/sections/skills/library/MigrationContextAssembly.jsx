@@ -51,7 +51,7 @@ export default function MigrationContextAssembly({ published, proposal, onBusyCh
     {!prepared && <Box><Button variant="contained" color="primary" disabled={!canPrepare} onClick={() => run(prepare, { name, description, agents, links, keys: keys.current }, setPrepared)}>Preview agent context</Button></Box>}
     {error && <Alert severity="error">{error}</Alert>}
     {prepared && <>
-      <Typography variant="s1">{`Compiled candidate ${prepared.preview.candidateDigest} · ${lock.length} pinned links · private draft of ${prepared.name}`}</Typography>
+      <Typography variant="s1">{`Compiled candidate ${prepared.preview.candidateDigest} · ${lock.length} pinned ${lock.length === 1 ? 'link' : 'links'} · private draft of ${prepared.name}`}</Typography>
       <TableContainer sx={{ maxWidth: "100%" }}>
         <Table size="small" aria-label="Pinned links">
           <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Mount</TableCell><TableCell>Version</TableCell><TableCell>Identity</TableCell></TableRow></TableHead>

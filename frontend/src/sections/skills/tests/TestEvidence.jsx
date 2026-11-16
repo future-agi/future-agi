@@ -121,7 +121,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
                   <StatusBadge status={row.status} />
                   <Typography variant="s1">
                     {row.currentness.content
-                      ? `Checked this exact content · ${row.suiteCases === null ? `${row.selectedCases} ad hoc test cases` : `${row.selectedCases} of ${row.suiteCases} saved test cases`}`
+                      ? `Checked this exact content · ${row.suiteCases === null ? `${row.selectedCases} ad hoc ${row.selectedCases === 1 ? 'test case' : 'test cases'}` : `${row.selectedCases} of ${row.suiteCases} saved ${row.suiteCases === 1 ? 'test case' : 'test cases'}`}`
                       : "The draft changed after this check."}
                   </Typography>
                 </Stack>

@@ -227,7 +227,8 @@ it('does not infer a verified repair or release readiness from a passing answer'
 it('makes the open setup the one primary in the empty preview, with no empty-state button', async () => {
   renderPanel({ state: 'empty' });
   expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
-  expect(screen.getByText('No tests yet')).toBeVisible();
+  expect(screen.getByText('No test runs yet')).toBeVisible();
+  expect(screen.queryByText('No tests yet')).not.toBeInTheDocument();
   const run = await screen.findByRole('button', { name: 'Run application test' });
   expect(run).toHaveClass('MuiButton-contained');
   expect(run).not.toHaveClass('MuiButton-sizeSmall');
@@ -671,4 +672,14 @@ describe('iteration 5: one release label, verdicts and plain words', () => {
     expect(record).toHaveAccessibleDescription('Waiting for the current evidence revision.');
     expect(screen.queryByRole('button', { name: 'Record review' })).not.toBeInTheDocument();
   });
+});
+
+it('says "No tests yet" only when the context has neither test cases nor runs', () => {
+  const view = renderPanel({ state: 'empty', cases: [] });
+  expect(screen.getByText('No tests yet')).toBeVisible();
+  expect(screen.queryByText('No test runs yet')).not.toBeInTheDocument();
+  view.unmount();
+  renderPanel({ state: 'empty' });
+  expect(within(screen.getByRole('region', { name: 'Latest result' })).getByRole('status')).toHaveTextContent('No test runs yetYour 3 saved test cases are listed under Test cases. Choose an answer check or an application test below. Neither changes production.');
+  expect(screen.queryByText('No tests yet')).not.toBeInTheDocument();
 });

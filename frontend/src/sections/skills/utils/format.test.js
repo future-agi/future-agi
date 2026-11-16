@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { paths } from 'src/routes/paths';
 import { allowanceInput, formatBytes, formatUsd, formatExpiry, formatExpiryShort, formatTokens, formatUtcFull, formatWhen, shortDigest } from './format';
-import { answerConclusion, impactSentence, publishSentence } from './conclusions';
+import { answerConclusion, impactSentence, nativeConclusion, publishSentence } from './conclusions';
+import { coverageText, evidenceCoverage } from './review-display';
 
 it.each([[0, '0 B'], [1023, '1023 B'], [1024, '1 KiB'], [1536, '1.5 KiB'], [2097152, '2 MiB']])('formats %s UTF-8 bytes', (bytes, expected) => expect(formatBytes(bytes)).toBe(expected));
 it('marks token counts as estimates and abbreviates only the digest prefix', () => {
@@ -97,15 +98,51 @@ describe('conclusion sentences follow the job state and name what changes', () =
 });
 
 describe('release impact', () => {
+  const transition = { label: 'production', expectedVersion: 1, version: 2 };
   it.each([
     [{}, 'No connected apps move with this release.'],
-    [{ following: 1 }, '1 connected app moves with this release.'],
-    [{ following: 2, pinned: 1 }, '2 connected apps move with this release. 1 is pinned and stays put.'],
-    [{ following: 0, pinned: 3, unobserved: 1 }, "No connected apps move with this release. 3 are pinned and stay put. 1 app hasn't reported a version yet."],
-    [{ following: 4, unobserved: 2 }, "4 connected apps move with this release. 2 apps haven't reported a version yet."],
-  ])('states %j in short sentences, in app words', (impact, expected) => {
-    expect(impactSentence(impact)).toBe(expected);
-    expect(impactSentence(impact)).not.toMatch(/consumer|label/);
+    [{ following: 1 }, '1 connected app moves v1 → v2.'],
+    [{ following: 2, pinned: 1 }, "Of 3 connected apps: 2 move v1 → v2; 1 is pinned and doesn't move."],
+    [{ following: 0, pinned: 3, unobserved: 1 }, "Of 3 connected apps: none moves; 3 are pinned and don't move. 1 of the 3 hasn't reported a version yet."],
+    [{ following: 4, unobserved: 2 }, "4 connected apps move v1 → v2. 2 of the 4 haven't reported a version yet."],
+    [{ following: 1, pinned: 1, unobserved: 1 }, "Of 2 connected apps: 1 moves v1 → v2; 1 is pinned and doesn't move. 1 of the 2 hasn't reported a version yet."],
+    [{ following: 2, unobserved: 2 }, "2 connected apps move v1 → v2. None of the 2 has reported a version yet."],
+  ])('states %j in short sentences, in app words, counting each app once', (impact, expected) => {
+    expect(impactSentence(impact, transition)).toBe(expected);
+    expect(impactSentence(impact, transition)).not.toMatch(/consumer|label/);
+  });
+  it('keeps the plain wording when the transition is unknown', () => {
+    expect(impactSentence({ following: 1 })).toBe('1 connected app moves with this release.');
+    expect(impactSentence({ following: 2, pinned: 1 })).toBe("Of 3 connected apps: 2 move with this release; 1 is pinned and doesn't move.");
+  });
+  const follower = { id: 'b1', name: 'acme-support production agent', selector: { label: 'production' }, reported: true };
+  const pinnedApp = { id: 'b2', name: 'acme-support application', selector: { version: 2 }, reported: false };
+  it('names each app when three or fewer are affected, and says which one has not reported', () => {
+    // Bindings arrive in id order; the app that moves is named first.
+    expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [pinnedApp, follower] }, transition))
+      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet.");
+    expect(impactSentence({ following: 1, pinned: 0, unobserved: 0, apps: [follower] }, { ...transition, expectedVersion: null }))
+      .toBe('acme-support production agent follows production and moves to v2.');
+  });
+  it('never attributes a report status the app rows disagree with', () => {
+    expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [follower, { ...pinnedApp, reported: true }] }, transition))
+      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move. 1 of the 2 hasn't reported a version yet.");
+  });
+  it('falls back to counts when the names do not cover every affected app', () => {
+    expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [follower] }, transition))
+      .toBe("Of 2 connected apps: 1 moves v1 → v2; 1 is pinned and doesn't move. 1 of the 2 hasn't reported a version yet.");
+    const four = [1, 2, 3, 4].map((n) => ({ ...follower, id: `b${n}`, name: `app ${n}` }));
+    expect(impactSentence({ following: 4, apps: four }, transition)).toBe('4 connected apps move v1 → v2.');
+  });
+});
+
+describe('count words agree with their number', () => {
+  it('says "1 of 1 case" and "1 of 1 run", never "1 of 1 cases"', () => {
+    expect(nativeConclusion({ candidate: 2, passed: 1, total: 1, result: { reproduction: 'not_requested' } })).toBe('v2 passed 1 of 1 case.');
+    expect(nativeConclusion({ candidate: 2, passed: 0, total: 1, result: { reproduction: 'not_requested' } })).toBe('v2 passed 0 of 1 case.');
+    expect(nativeConclusion({ candidate: 2, passed: 2, total: 3, result: { reproduction: 'not_requested' } })).toBe('v2 passed 2 of 3 cases.');
+    expect(coverageText({ graded: 0, planned: 1, regressions: 0, disagreements: 0 })).toBe('0 of 1 run graded · 0 regressions · 0 human disagreements');
+    expect(evidenceCoverage({ graded: 0, planned: 1, regressed: 0, disagreements: 0 }, 1)).toBe('1 case tested · 0 of 1 run graded · 0 regressions');
   });
 });
 

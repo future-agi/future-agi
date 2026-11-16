@@ -30,7 +30,7 @@ CHAPTER_NOTES = {
     3: 'support-agent context: AGENTS.md, linked skills (four follow production, escalation-tone pinned to v1); refund-policy v2 available but not accepted.',
     4: 'refund-policy dependents (support-agent follows, returns-desk pinned); update preview refund-policy v1 to v2; accept into a draft; review the linked skills and publish context v2.',
     5: 'Whole-context answer check (candidate v2 vs reference v1, expected "$25"): v2 passes, v1 fails; application verification on the demo application: "v2 passed 3 of 3 cases.", Ready for release review; per-case grades show v1 failing answer and business tool on the damaged-mug refund.',
-    6: 'Observe trace of a refund that included shipping turned into a reviewed regression case (refund-policy, Issue a refund, answer must contain "$24"); reproduced on the application: "Repair verified: v2 passed 1 of 1 cases; the recorded failure reproduced on v1."',
+    6: 'Observe trace of a refund that included shipping turned into a reviewed regression case (refund-policy, Issue a refund, answer must contain "$24"); reproduced on the application: "Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1."',
     7: 'Release packet from the verified run, carried into the request; the evidence row shows the run\'s own outcomes (repair verified, per-case lines); reviewer chosen by name; "Signed in as Priya Shah" card; reviewer sees the same outcomes, approves, releases; release receipt.',
     8: 'Context v2 lock pins refund-policy v2 (digest highlighted); skill Use tab, Application > cURL command copied (public API origin, no keys); terminal frame: the copied command run during the take returns refund-policy v2 with the same digest.',
 }

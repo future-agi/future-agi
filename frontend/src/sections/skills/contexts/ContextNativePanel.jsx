@@ -342,7 +342,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography component="h2" variant="m3" data-execution-fingerprint={run.executionFingerprint}>{`Application test · v${candidate?.version}${comparedWith}`}</Typography>
       <StatusBadge status={status === 'preparing' ? 'running' : status} label={status === 'preparing' ? 'Preparing' : undefined} />
-      <Typography variant="s3" color="text.secondary" role="status">{received} of {run.planned} runs finished{active && received === run.planned ? ' · Finalizing result' : ''}</Typography>
+      <Typography variant="s3" color="text.secondary" role="status">{received} of {run.planned} {run.planned === 1 ? 'run' : 'runs'} finished{active && received === run.planned ? ' · Finalizing result' : ''}</Typography>
     </Stack>
     <Typography variant="s3" color="text.secondary">{coverageLine(runCases.length, Math.max(cases.length, runCases.length))} · <When value={run.createdAt} /></Typography>
     {active && <LinearProgress aria-label="Application run progress" variant={run.planned ? "determinate" : "indeterminate"} value={run.planned ? Math.min(100, received / run.planned * 100) : 0} />}
@@ -536,6 +536,16 @@ function HistoryRow({ contextId, run, selected, onInspect }) {
 }
 HistoryRow.propTypes = { contextId: PropTypes.string.isRequired, run: PropTypes.object.isRequired, selected: PropTypes.bool, onInspect: PropTypes.func.isRequired };
 
+// Saved test cases but no run yet: a status line, not an empty state, because the page does list
+// the cases below (UX iteration 6, R2). "No tests yet" is kept for a context with neither.
+function NoRunsYet({ count }) {
+  return <Stack spacing={0.5} role="status" sx={{ py: 1 }}>
+    <Typography variant="s1" sx={{ fontWeight: 600 }}>No test runs yet</Typography>
+    <Typography variant="s3" color="text.secondary">{`Your ${plural(count, 'saved test case')} ${count === 1 ? 'is' : 'are'} listed under Test cases. Choose an answer check or an application test below. Neither changes production.`}</Typography>
+  </Stack>;
+}
+NoRunsYet.propTypes = { count: PropTypes.number.isRequired };
+
 export default function ContextNativePanel({ contextId, versions, viewed, cases, canWrite, productionVersion, seed, children, reviewedCases, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff = false }) {
   const targets = useNativeTargets(contextId);
   const runs = useNativeRuns(contextId);
@@ -615,7 +625,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   return <Stack spacing={3}>
     <Box ref={resultRegion} tabIndex={-1} role="region" aria-label="Latest result">
       <Section>
-        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady, secondary: formPrimary, hasTarget: Boolean(target), applicationAvailable: Boolean(targets.data) && !runtimeOff }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} formPrimary={formPrimary} productionVersion={productionVersion} versions={versions} planCeiling={planCeiling} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or an application test below. Neither changes production." />}
+        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady, secondary: formPrimary, hasTarget: Boolean(target), applicationAvailable: Boolean(targets.data) && !runtimeOff }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} formPrimary={formPrimary} productionVersion={productionVersion} versions={versions} planCeiling={planCeiling} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : cases.length ? <NoRunsYet count={cases.length} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or an application test below. Neither changes production." />}
       </Section>
     </Box>
     {showHistoryFirst && historySection}

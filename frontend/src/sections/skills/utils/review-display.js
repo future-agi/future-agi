@@ -26,7 +26,7 @@ export function coverageText(counts) {
   if (!counts) return 'Not reported';
   const regressions = counts.regressed ?? counts.regressions;
   return [
-    `${reported(counts.graded)} of ${reported(counts.planned)} runs graded`,
+    `${reported(counts.graded)} of ${reported(counts.planned)} ${counts.planned === 1 ? 'run' : 'runs'} graded`,
     ...(counts.incomplete != null && counts.incomplete !== 0 ? [`${counts.incomplete} incomplete`] : []),
     counted(regressions, 'regression', 'regressions'),
     `${counted(counts.disagreements, 'human disagreement', 'human disagreements')}`,
@@ -77,7 +77,7 @@ export function evidenceCoverage(counts, cases = counts?.cases) {
   const graded = counts?.graded == null
     ? 'Runs graded not reported'
     : counts.planned != null && counts.planned !== counts.graded
-      ? `${counts.graded} of ${counts.planned} runs graded`
+      ? `${counts.graded} of ${counts.planned} ${counts.planned === 1 ? 'run' : 'runs'} graded`
       : `${counts.graded} ${counts.graded === 1 ? 'run' : 'runs'} graded`;
   return [
     `${cases} ${Number(cases) === 1 ? 'case' : 'cases'} tested`,

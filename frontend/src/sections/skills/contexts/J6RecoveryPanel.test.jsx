@@ -252,7 +252,7 @@ it('reports a production move without treating missing reports as confirmation',
   const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   recovery = { ...recovery, releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
   view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getByText('Production moved from v3 to v1 · 0 of 1 consumers confirmed')).toBeVisible();
+  expect(screen.getByText('Production moved from v3 to v1 · 0 of 1 consumer confirmed')).toBeVisible();
 });
 
 it('uses the observed previous production rather than an obsolete submitted request', () => {
@@ -266,7 +266,7 @@ it('uses the observed previous production rather than an obsolete submitted requ
   view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   recovery = { ...recovery, releaseRevision: 9, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
   view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getByText('Production moved from v2 to v1 · 0 of 1 consumers confirmed')).toBeVisible();
+  expect(screen.getByText('Production moved from v2 to v1 · 0 of 1 consumer confirmed')).toBeVisible();
 });
 
 it('reopens verification after a reload without inventing the previous production release', () => {
@@ -435,13 +435,13 @@ it('keeps incident facts visible but defers the warning and local actions until 
   recovery = { cohort: failedCohort, releaseRevision: 7, candidates: suggestedCandidates };
   const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByRole('table', { name: 'Recovery cohort' })).toBeVisible();
-  expect(screen.queryByText(/consumers still need delivery verification/)).toBeNull();
+  expect(screen.queryByText(/still needs? delivery verification/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Issue replacement credential' })).toBeNull();
   expect(screen.getByText(/2 · Await approval/)).toBeVisible();
   expect(screen.getByText(/3 · Confirm apps updated/)).toBeVisible();
   recovery = { ...recovery, releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
   view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getByText(/consumers still need delivery verification/)).toBeVisible();
+  expect(screen.getByText(/still needs? delivery verification/)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
 });
 

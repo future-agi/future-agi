@@ -68,8 +68,8 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const completed = rows.filter((row) => outcomes[row.key]?.done && !outcomes[row.key]?.kept);
   const done = started && !running && !pending.length && !held.length && completed.length > 0;
   const consequence = done ? `Imported ${completed.length} ${completed.length === 1 ? "skill" : "skills"}. Production labels did not change.` : !importCount && needsDecision ? `${needsDecision} ${needsDecision === 1 ? 'item needs' : 'items need'} your decision before anything can be imported.` : publish
-    ? `Imports ${importCount} items as new published versions. Production labels don't change.`
-    : `Imports ${importCount} items as unpublished drafts.`;
+    ? `Imports ${importCount} ${importCount === 1 ? 'item as a new published version' : 'items as new published versions'}. Production labels don't change.`
+    : `Imports ${importCount} ${importCount === 1 ? 'item as an unpublished draft' : 'items as unpublished drafts'}.`;
   useEffect(() => { onConsequenceChange?.(consequence); }, [consequence, onConsequenceChange]);
   const visibleRows = rows.filter((row) => filter === 'all' || row.kind === filter);
   const operationKey = (row, decision) => {
@@ -142,7 +142,7 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     </FormControl>}
     {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>Left out: {importBlockerSummary(row.item)}.</Typography>)}
     {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} ${excluded.length === 1 ? "skill" : "skills"} that can't be imported. The others import without ${excluded.length === 1 ? "it" : "them"}.`} />}
-    {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />}
+    {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} ${decided.length === 1 ? 'item' : 'items'}, including their licenses and retained notices.`} />}
     {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
     {!onConsequenceChange && <Typography variant="s1" role="status">{consequence}</Typography>}
     <Stack direction="row" justifyContent="flex-end" useFlexGap flexWrap="wrap" spacing={1} alignItems="center">{!ready && <Typography variant="s3" color="text.secondary" role="status">{disabledReason}</Typography>}{onClose && <Button variant="outlined" disabled={running} onClick={onClose}>Cancel</Button>}{pending.length > 0 && <Button variant="contained" color="primary" disabled={!ready || running} onClick={apply}>{label}</Button>}</Stack>

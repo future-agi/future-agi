@@ -466,6 +466,7 @@ function nativeBadge(summary) {
 export default function ReleaseReviewBody({
   packet,
   changes,
+  changesFrom,
   dependencyChanges,
   dependencyError = false,
   onRetryDependencies,
@@ -502,6 +503,12 @@ export default function ReleaseReviewBody({
     : availableEvidence > 0 ? (onEditEvidence ? <>No test results attached · <Button variant="text" size="small" onClick={onEditEvidence}>Attach</Button></> : `No test results attached (${availableEvidence} available).`)
       : availableEvidence === 0 ? 'No matching test evidence. Not tested is not a pass.'
         : 'No test results attached. Not tested is not a pass.';
+  // The diff columns say whose version each side is: the subject's own version under the label, never a
+  // bare "Production" that reads like a linked skill's production (UX iteration 6, R4).
+  const subjectVersion = (number) => `${isContext ? 'context ' : ''}v${number}`;
+  const labelName = packet.transition.label;
+  const fromTitle = changesFrom == null ? (packet.transition.expectedVersion == null ? 'No release yet' : `In ${labelName}`) : `In ${labelName} (${subjectVersion(changesFrom)})`;
+  const toTitle = `This release (${subjectVersion(packet.transition.version)})`;
   const filesFact = changedFiles == null ? 'File changes not loaded'
     : `${counted(changedFiles, 'file')} changed${isContext ? ` · ${dependencyChanges ? `${counted(dependencyChanges.length, 'linked skill')} changed` : 'Linked skills not loaded'}` : ''}`;
   return (
@@ -513,7 +520,7 @@ export default function ReleaseReviewBody({
         </Stack>
         <SummaryTable label="Release summary" rows={[
           { label: 'Evidence', value: evidenceFact },
-          { label: 'Who is affected', value: impact ? impactSentence(impact) : 'Application impact has not been measured.' },
+          { label: 'Who is affected', value: impact ? impactSentence(impact, packet.transition) : 'Application impact has not been measured.' },
           { label: 'Permissions', value: capabilities ? (capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.') : 'Comparison unavailable. Review the file changes before deciding.' },
           { label: 'Files', value: filesFact },
           // The full configuration digest is one hover or focus away, never primary text; Technical details holds the copyable value and the revision.
@@ -545,11 +552,11 @@ export default function ReleaseReviewBody({
                   Load complete diff
                 </Button>
               )}
-              <ReviewFileDiff file={file} />
+              <ReviewFileDiff file={file} fromTitle={fromTitle} toTitle={toTitle} />
             </TechnicalDetails>
           ))}
           {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Other files">
-            {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} /></Stack>)}
+            {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} fromTitle={fromTitle} toTitle={toTitle} /></Stack>)}
           </TechnicalDetails>}
           {moreChanges && (
             <Button
@@ -588,7 +595,7 @@ export default function ReleaseReviewBody({
           <Stack spacing={1}>
             <Typography variant="s3">
               {counted(impact.following, 'follower')} · {counted(impact.pinned, 'intentional pin')} ·{" "}
-              {impact.unobserved} applications without observations
+              {counted(impact.unobserved, 'application')} without observations
             </Typography>
             <Typography variant="s3">
               Only registered applications you can access are counted.{" "}
@@ -651,6 +658,7 @@ export default function ReleaseReviewBody({
 ReleaseReviewBody.propTypes = {
   packet: PropTypes.object.isRequired,
   changes: PropTypes.array,
+  changesFrom: PropTypes.number,
   dependencyChanges: PropTypes.array,
   dependencyError: PropTypes.bool,
   onRetryDependencies: PropTypes.func,
