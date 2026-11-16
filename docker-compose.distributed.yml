@@ -613,7 +613,6 @@ services:
   # (the backend and workers use the compose network).
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    environment:
     ports:
       - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true

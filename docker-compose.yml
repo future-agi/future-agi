@@ -442,7 +442,6 @@ services:
   # network access, as in the distributed stack.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    environment:
     profiles: ["sandbox"]
     privileged: true
     networks:
