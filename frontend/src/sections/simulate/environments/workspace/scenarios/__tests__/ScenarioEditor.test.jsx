@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { render } from "src/utils/test-utils";
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
 import ScenarioEditor from "../ScenarioEditor";
@@ -102,6 +108,31 @@ describe("ScenarioEditor and the builder chat", () => {
 
     focusBuilderChat("ask-1");
 
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks before dropping unsaved edits for the chat, and stays when the person keeps them", async () => {
+    const { onClose } = openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+
+    act(() => focusBuilderChat("ask-1"));
+
+    expect(await screen.findByText("Discard changes?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Discard changes?")).toBeNull(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => focusBuilderChat("ask-1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

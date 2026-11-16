@@ -25,7 +25,18 @@ const RIDER = {
   fields: { rider_id: "rdr_arjun", first_name: "Arjun", tags: ["vip"] },
   note: null,
   choices: [
-    { key: "rdr_priya", summary: "Priya's row, as the server words it" },
+    {
+      key: "rdr_priya",
+      summary: "Priya's row, as the server words it",
+      available: true,
+      unavailable_reason: null,
+    },
+    {
+      key: "rdr_meera",
+      summary: "Meera's row, as the server words it",
+      available: false,
+      unavailable_reason: "The server's reason Meera's row is taken.",
+    },
   ],
 };
 const MISSING = {
@@ -269,6 +280,26 @@ describe("StartingRecords", () => {
     );
     stop();
     expect(focused).toEqual(["reply-1"]);
+  });
+
+  it("offers a row another scenario starts from as not choosable, with the server's reason", () => {
+    reads(RECORDS);
+    sends();
+    open();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start from another record" }),
+    );
+    fireEvent.mouseDown(screen.getByLabelText("Record to start from"));
+
+    const meera = screen.getByRole("option", { name: /Meera's row/ });
+    expect(meera).toHaveAttribute("aria-disabled", "true");
+    expect(meera).toHaveTextContent(
+      "The server's reason Meera's row is taken.",
+    );
+    expect(
+      screen.getByRole("option", { name: /Priya's row/ }),
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows the server's problem with a choice under the picker", () => {

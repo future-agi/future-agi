@@ -31,6 +31,7 @@ from simulate.services.harness_starting_records import (
     scenario_records,
     scenario_token,
     seeded_row,
+    taken_by,
 )
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import PROOF_CLOCK_SKEW
@@ -445,6 +446,9 @@ def _chosen(
         raise rework_invalid(
             [problem("key", "The scenario already starts from this record.")]
         )
+    taken = taken_by(files, table=table, key=key)
+    if taken is not None:
+        raise rework_invalid([problem("key", taken)])
     row, _ = seeded_row(files, table=table, key_field=record["key_field"], key=key)
     if row is None:
         raise rework_invalid(

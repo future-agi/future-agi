@@ -47862,6 +47862,15 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
                   .describe(
                     "The row in one line: its key, then up to 2 of its other values.",
                   ),
+                available: zod
+                  .boolean()
+                  .describe(
+                    "False when another scenario of the suite already starts from this row.",
+                  ),
+                unavailable_reason: zod
+                  .string()
+                  .min(1)
+                  .describe("Why the row can't be chosen; null when it can."),
               })
               .describe(
                 "Other seeded rows of the table the scenario could start from instead, the first 50.",

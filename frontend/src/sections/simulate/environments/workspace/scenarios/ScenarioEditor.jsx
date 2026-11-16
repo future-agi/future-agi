@@ -12,6 +12,7 @@ import {
   ToggleButtonGroup,
 } from "@mui/material";
 
+import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
 import { subscribeBuilderChatFocus } from "../../buildEnvironment/console/builderChatFocusBus";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
@@ -47,12 +48,6 @@ export default function ScenarioEditor({
   levelLabels = {},
   env,
 }) {
-  // Asked to show a builder chat message, the editor steps aside so the chat can be used.
-  useEffect(
-    () =>
-      open && onClose ? subscribeBuilderChatFocus(() => onClose()) : undefined,
-    [open, onClose],
-  );
   const [saveError, setSaveError] = useState("");
   // The server's problems with the test conditions, each naming the fault (`index`) and its field.
   const [faultProblems, setFaultProblems] = useState([]);
@@ -201,6 +196,19 @@ export default function ScenarioEditor({
       rework: changedFields.some((f) => reworkFields.includes(f)),
     };
   }, [draft, base, canEdit, canEditPersona, reworkFields]);
+
+  // Asked to show a builder chat message, the editor steps aside so the chat can be used; unsaved edits ask first.
+  const [leaving, setLeaving] = useState(false);
+  const unsaved = changes.length > 0;
+  useEffect(
+    () =>
+      open && onClose
+        ? subscribeBuilderChatFocus(() =>
+            unsaved ? setLeaving(true) : onClose(),
+          )
+        : undefined,
+    [open, onClose, unsaved],
+  );
 
   if (!row) return null;
 
@@ -496,6 +504,25 @@ export default function ScenarioEditor({
           </Button>
         </Stack>
       </Stack>
+      <ConfirmDialog
+        open={leaving}
+        onClose={() => setLeaving(false)}
+        title={EDITOR_COPY.discardTitle}
+        content={EDITOR_COPY.discardBody}
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setLeaving(false);
+              onClose();
+            }}
+          >
+            {EDITOR_COPY.discard}
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }

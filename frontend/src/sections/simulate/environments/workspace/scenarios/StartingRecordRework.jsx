@@ -62,8 +62,15 @@ export default function StartingRecordRework({
         }
       >
         {record.choices.map((row) => (
-          <MenuItem key={row.key} value={row.key}>
-            <Typography sx={{ typography: "s1" }}>{row.summary}</Typography>
+          <MenuItem key={row.key} value={row.key} disabled={!row.available}>
+            <Stack>
+              <Typography sx={{ typography: "s1" }}>{row.summary}</Typography>
+              {row.unavailable_reason && (
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {row.unavailable_reason}
+                </Typography>
+              )}
+            </Stack>
           </MenuItem>
         ))}
       </TextField>

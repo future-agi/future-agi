@@ -22032,6 +22032,13 @@ export interface HarnessSeededRowChoiceApi {
    * @minLength 1
    */
   summary: string;
+  /** False when another scenario of the suite already starts from this row. */
+  available: boolean;
+  /**
+   * Why the row can't be chosen; null when it can.
+   * @minLength 1
+   */
+  unavailable_reason: string;
 }
 
 /**
