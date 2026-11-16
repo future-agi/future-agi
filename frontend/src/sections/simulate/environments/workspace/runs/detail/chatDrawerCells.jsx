@@ -12,12 +12,8 @@ export function Meta({ label, value }) {
       spacing={0.5}
       sx={{ px: 1, py: 0.5, borderRadius: "4px", bgcolor: "action.selected" }}
     >
-      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {label} :
-      </Typography>
-      <Typography
-        sx={{ typography: "s3", color: "text.primary", fontWeight: 500 }}
-      >
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>{label} :</Typography>
+      <Typography sx={{ typography: "s3", color: "text.primary", fontWeight: 500 }}>
         {value}
       </Typography>
     </Stack>
@@ -54,14 +50,7 @@ OutcomeReason.propTypes = { reason: PropTypes.string };
 
 export function Cell({ label, value }) {
   return (
-    <Box
-      sx={{
-        p: 1.75,
-        borderBottom: "1px solid",
-        borderRight: "1px solid",
-        borderColor: "divider",
-      }}
-    >
+    <Box sx={{ p: 1.75, borderBottom: "1px solid", borderRight: "1px solid", borderColor: "divider" }}>
       <Typography
         noWrap
         sx={{
@@ -73,11 +62,7 @@ export function Cell({ label, value }) {
         {label}
       </Typography>
       <Typography
-        sx={{
-          typography: "m3",
-          fontWeight: 500,
-          fontVariantNumeric: "tabular-nums",
-        }}
+        sx={{ typography: "m3", fontWeight: 500, fontVariantNumeric: "tabular-nums" }}
       >
         {value}
       </Typography>
@@ -88,16 +73,7 @@ Cell.propTypes = { label: PropTypes.string, value: PropTypes.node };
 
 export function Attr({ label, value }) {
   return (
-    <Stack
-      direction="row"
-      spacing={2}
-      sx={{
-        px: 2,
-        py: 1.25,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-      }}
-    >
+    <Stack direction="row" spacing={2} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
       <Typography
         sx={{
           width: 96,
@@ -109,9 +85,7 @@ export function Attr({ label, value }) {
       >
         {label}
       </Typography>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-        {value || "-"}
-      </Typography>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{value || "-"}</Typography>
     </Stack>
   );
 }
