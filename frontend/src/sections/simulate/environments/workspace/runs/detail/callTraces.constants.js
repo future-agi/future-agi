@@ -98,6 +98,13 @@ export const CALL_WORKERS_COPY = {
   },
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
+  // Why a call has no record to show, by the state the API serves.
+  states: {
+    unreadable:
+      "This call's participants couldn't be read. Its record may have hand-offs that aren't shown.",
+    not_kept:
+      "This attempt ran before attempts kept their participants, so its record wasn't kept.",
+  },
   workersNotObserved: (names) => `Not observed: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
 };

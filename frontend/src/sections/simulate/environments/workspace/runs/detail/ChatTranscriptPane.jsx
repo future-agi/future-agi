@@ -26,10 +26,6 @@ const ROLE_LABEL = {
   tool: "Tool call",
 };
 const TOOL_SERIES = 1;
-const isHandOffRow = (turn) =>
-  turn.role === "tool" &&
-  Array.isArray(turn.toolCalls) &&
-  turn.toolCalls.some((call) => call?.delegated_to);
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -197,8 +193,9 @@ export default function ChatTranscriptPane({
               }}
             >
               {turnStamp(s, i)} ·{" "}
-              {isHandOffRow(s) ? (
-                "Hand-off"
+              {/* A row of tool calls is named by the server, by what its calls recorded. */}
+              {s.role === "tool" && s.toolLabel ? (
+                s.toolLabel
               ) : isOtherRole(s.role) ? (
                 <OtherPartyName party={s} color="text.subtitle" />
               ) : (
@@ -255,6 +252,7 @@ ChatTranscriptPane.propTypes = {
       channel: PropTypes.string,
       text: PropTypes.string,
       toolCalls: PropTypes.any,
+      toolLabel: PropTypes.string,
     }),
   ).isRequired,
 };

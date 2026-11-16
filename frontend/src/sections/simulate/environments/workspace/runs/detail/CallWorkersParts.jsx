@@ -5,7 +5,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Chip, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
-import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
+import ChatMarkdown from "src/sections/simulate/environments/buildEnvironment/console/ChatMarkdown";
 import { MONO_FONT as MONO } from "src/sections/simulate/environments/workspace/contract/contract.constants";
 import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 import {
@@ -17,8 +17,6 @@ import { asMarkdown, isLong, seconds } from "./utils/callWorkersUtils";
 
 // Past this a heading may hit its three-line clamp, so the whole of it shows on hover.
 const LONG_TITLE = 80;
-const NO_IMAGES = ["img"];
-
 // Time into the call ("0:05"), as the transcript shows it, with the exact clock time on hover.
 export function Stamp({ at, start }) {
   const moment = seconds(at);
@@ -191,8 +189,8 @@ export function Answer({ shown, empty }) {
         },
       }}
     >
-      {/* Worker text isn't ours: an image in it would load from any host. */}
-      <Markdown text={text} dim variant="s1" disallowedElements={NO_IMAGES} />
+      {/* Worker text isn't ours: ChatMarkdown shows raw HTML as text and never loads an image. */}
+      <ChatMarkdown text={text} dim sx={{ typography: "s1" }} />
     </Box>
   );
   return (

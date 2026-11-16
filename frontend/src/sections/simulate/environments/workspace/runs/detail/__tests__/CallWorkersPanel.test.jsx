@@ -32,6 +32,8 @@ const handOffStep = (
     children = [],
     parallel = false,
     relationship = "observed",
+    did_not_finish = end === "failed" || end === "no_return",
+    first_of_worker = true,
   },
 ) => ({
   kind: "handoff",
@@ -43,6 +45,8 @@ const handOffStep = (
   handoff,
   returned,
   end,
+  did_not_finish,
+  first_of_worker,
   children,
   parallel,
   turn: 1,
@@ -61,8 +65,25 @@ const callStep = (call, { parent = null, depth = 0 } = {}) => ({
   relationship: "observed",
 });
 const oneTurn = (request, response, children, callsOutside = 0) => [
-  { turn: 1, request, response, children, calls_outside: callsOutside },
+  {
+    turn: 1,
+    request,
+    response,
+    children,
+    calls_outside: callsOutside,
+    expects_messages: true,
+  },
 ];
+// Each turn's hand-offs as the API lists them: every hand-off step of that turn, in step order.
+const withHandOffs = (record) => ({
+  ...record,
+  turns: record.turns.map((round) => ({
+    handoffs: record.steps
+      .filter((step) => step.kind === "handoff" && step.turn === round.turn)
+      .map((step) => step.key),
+    ...round,
+  })),
+});
 // A text as the API sends it, marked as prose or data.
 const prose = (text) => ({ format: "text", text });
 const counts = (finished, didNotFinish, extra) => ({
@@ -153,30 +174,32 @@ const timeline = ({
   request = REQUEST,
   response = RESPONSE,
   ...rest
-} = {}) => ({
-  collected_at: "2026-10-31T12:00:00Z",
-  started_at: "2026-10-31T11:59:50+00:00",
-  coordinator: { name: "Returns coordinator" },
-  workers: WORKERS,
-  events: [DELEGATED, LOOKUP, returned, REPLY_CALL].filter(Boolean),
-  steps: [
-    handOffStep(1, {
-      worker_id: "r/order_lookup",
-      handoff: DELEGATED,
-      returned,
-      end,
-      children: [LOOKUP.seq],
-    }),
-    callStep(LOOKUP, { parent: 1, depth: 1 }),
-    callStep(REPLY_CALL),
-  ],
-  turns: oneTurn(request, response, [1, REPLY_CALL.seq], 1),
-  counts: counts(end === "finished" ? 1 : 0, end === "finished" ? 0 : 1),
-  cut_off: false,
-  beyond_boundary: false,
-  pending: false,
-  ...rest,
-});
+} = {}) =>
+  withHandOffs({
+    collected_at: "2026-10-31T12:00:00Z",
+    started_at: "2026-10-31T11:59:50+00:00",
+    coordinator: { name: "Returns coordinator" },
+    workers: WORKERS,
+    events: [DELEGATED, LOOKUP, returned, REPLY_CALL].filter(Boolean),
+    steps: [
+      handOffStep(1, {
+        worker_id: "r/order_lookup",
+        handoff: DELEGATED,
+        returned,
+        end,
+        children: [LOOKUP.seq],
+      }),
+      callStep(LOOKUP, { parent: 1, depth: 1 }),
+      callStep(REPLY_CALL),
+    ],
+    turns: oneTurn(request, response, [1, REPLY_CALL.seq], 1),
+    counts: counts(end === "finished" ? 1 : 0, end === "finished" ? 0 : 1),
+    cut_off: false,
+    beyond_boundary: false,
+    pending: false,
+    state: "recorded",
+    ...rest,
+  });
 const TIMELINE = timeline();
 
 describe("CallWorkersPanel", () => {
@@ -377,6 +400,37 @@ describe("CallWorkersPanel", () => {
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("shows a worker's text in angle brackets as words, not as markup to drop", () => {
+    result = {
+      data: timeline({
+        returned: {
+          ...RETURNED,
+          result: "Passed to <front desk>",
+          result_shown: prose("Passed to <front desk>"),
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    const [cell] = screen.getAllByTestId("worker-row");
+    expect(cell).toHaveTextContent("Passed to <front desk>");
+  });
+
+  it("says why there is no record when the read failed or the attempt was kept before records were", () => {
+    for (const state of ["unreadable", "not_kept"]) {
+      result = {
+        data: { ...timeline({ steps: [], turns: [] }), state },
+        isLoading: false,
+        isError: false,
+      };
+      const view = render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByText(C.states[state])).toBeInTheDocument();
+      expect(screen.queryByTestId("worker-row")).toBeNull();
+      view.unmount();
+    }
   });
 
   it("says a call no agent can be named for is unknown, not the coordinator's", () => {
@@ -671,6 +725,8 @@ describe("CallWorkersPanel", () => {
       },
       returned: { ...reply, seq: key + 100 },
       end: "finished",
+      did_not_finish: false,
+      first_of_worker: key === 1,
       children: [],
       parallel: false,
       turn,
@@ -692,6 +748,8 @@ describe("CallWorkersPanel", () => {
           },
           children: [1],
           calls_outside: 0,
+          handoffs: [1],
+          expects_messages: true,
         },
         {
           turn: 2,
@@ -703,6 +761,8 @@ describe("CallWorkersPanel", () => {
           },
           children: [2],
           calls_outside: 0,
+          handoffs: [2],
+          expects_messages: true,
         },
       ],
       counts: counts(2, 0),
@@ -930,6 +990,7 @@ describe("CallWorkersPanel", () => {
       by,
       delegation_id: `d${seq}`,
       task,
+      task_shown: task ? prose(task) : null,
       at: "2026-10-31T11:59:56",
       attribution: "reported",
     });
@@ -939,6 +1000,7 @@ describe("CallWorkersPanel", () => {
       worker_id: workerId,
       delegation_id: delegation,
       result: text,
+      result_shown: text ? prose(text) : null,
       status,
       at: "2026-10-31T11:59:58",
       attribution: "reported",
@@ -1013,6 +1075,60 @@ describe("CallWorkersPanel", () => {
           name: `${C.showRow("Refund")}, ${C.failed}`,
         }),
       ).toBeInTheDocument();
+    });
+
+    it("marks a row failed by the API's did_not_finish, whatever its end", () => {
+      result = {
+        data: {
+          ...TABLE,
+          steps: TABLE.steps.map((step) =>
+            step.kind === "handoff"
+              ? { ...step, did_not_finish: step.key === 1 }
+              : step,
+          ),
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(
+        screen.getByRole("button", {
+          name: `${C.showRow("Lookup")}, ${C.failed}`,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: C.showRow("Refund") }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows an answer the API marks as data as code in its table cell and in the raw events", () => {
+      const json = '{\n  "refund_id": "RF-8"\n}';
+      const data = {
+        ...TABLE,
+        steps: TABLE.steps.map((step) =>
+          step.key === 1
+            ? {
+                ...step,
+                returned: {
+                  ...step.returned,
+                  result_shown: { format: "code", text: json },
+                },
+              }
+            : step,
+        ),
+      };
+      result = { data, isLoading: false, isError: false };
+      const view = render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(row("Lookup").querySelector("code")).toHaveTextContent(
+        '"refund_id": "RF-8"',
+      );
+      view.unmount();
+      result = { data, isLoading: false, isError: false };
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+      const [answer] = screen
+        .getAllByTestId("answer")
+        .filter((one) => one.textContent.includes("RF-8"));
+      expect(answer.querySelector("pre")).toHaveTextContent('"refund_id"');
     });
 
     it("leaves a row as it is when the click ends a text selection, but not for a keyboard press", () => {

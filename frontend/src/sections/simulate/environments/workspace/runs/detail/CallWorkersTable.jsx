@@ -11,7 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
+import ChatMarkdown from "src/sections/simulate/environments/buildEnvironment/console/ChatMarkdown";
 import {
   CALL_WORKERS_COPY as C,
   MAX_ROW_INDENT,
@@ -20,9 +20,10 @@ import {
 } from "./callTraces.constants";
 import { EventList } from "./CallWorkersEventList";
 import { Reveal, UnknownParent } from "./CallWorkersParts";
-import { handOffEvents } from "./utils/callWorkersUtils";
+import { asMarkdown, handOffEvents } from "./utils/callWorkersUtils";
 
-const NO_IMAGES = ["img"];
+// A cell's text takes the cell's size and colour, so a failed answer reads in red.
+const CELL_TEXT_SX = { typography: "s1", color: "inherit" };
 
 // Answers come as markdown; in a cell they run on as one clamped passage, with the whole of it in the row's raw data.
 const CLAMPED_CELL_SX = {
@@ -50,13 +51,13 @@ function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
   // The worker's own model and the tokens its model calls spent, when the app sent traces. They are its total, so
   // they show once, on its first hand-off.
   const usage =
-    names.firstOf(step) && (worker?.model || worker?.tokens)
+    step.first_of_worker && (worker?.model || worker?.tokens)
       ? C.modelTokens(worker.model, worker.tokens)
       : "";
   const end = step.end;
-  const failed = end === "failed" || end === "no_return";
-  const task = step.handoff?.task;
-  const answer = step.returned?.result;
+  const failed = step.did_not_finish;
+  const task = step.handoff?.task_shown;
+  const answer = step.returned?.result_shown;
   const emptyResult = {
     passed: "—",
     finished: C.noResult,
@@ -150,7 +151,13 @@ function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
         </TableCell>
         <TableCell>
           <Box sx={{ ...CLAMPED_CELL_SX, color: "text.secondary" }}>
-            {step.transfer ? C.transferred(name) : task || "—"}
+            {step.transfer ? (
+              C.transferred(name)
+            ) : task ? (
+              <ChatMarkdown text={asMarkdown(task)} sx={CELL_TEXT_SX} />
+            ) : (
+              "—"
+            )}
           </Box>
         </TableCell>
         <TableCell>
@@ -161,11 +168,7 @@ function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
             }}
           >
             {answer ? (
-              <Markdown
-                text={answer}
-                variant="s1"
-                disallowedElements={NO_IMAGES}
-              />
+              <ChatMarkdown text={asMarkdown(answer)} sx={CELL_TEXT_SX} />
             ) : (
               emptyResult
             )}

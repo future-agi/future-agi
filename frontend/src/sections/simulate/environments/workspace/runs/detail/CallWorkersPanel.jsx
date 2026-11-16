@@ -12,13 +12,7 @@ import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { EventList } from "./CallWorkersEventList";
 import { Turn } from "./CallWorkersParts";
 import { WorkersTable } from "./CallWorkersTable";
-import {
-  callEvents,
-  handOffsOf,
-  noMessages,
-  stepsByKey,
-  turnLabel,
-} from "./utils/callWorkersUtils";
+import { callEvents, stepsByKey, turnLabel } from "./utils/callWorkersUtils";
 
 // A call with more tool calls than this opens with their JSON closed, so a long record stays quick to draw.
 const MAX_OPEN_CALLS = 20;
@@ -41,6 +35,13 @@ export default function CallWorkersPanel({
     ) : (
       <CircularProgress size={20} sx={{ m: 2 }} />
     );
+  // The server says why there is no record: the read failed, or an earlier attempt was kept before records were.
+  if (data.state !== "recorded")
+    return (
+      <Typography sx={{ p: 2, typography: "s1", color: "text.secondary" }}>
+        {C.states[data.state]}
+      </Typography>
+    );
 
   const workers = Object.fromEntries(
     data.workers.map((one) => [one.worker_id, one]),
@@ -49,17 +50,14 @@ export default function CallWorkersPanel({
   const names = {
     coordinator,
     ofStep: (step) => workers[step.worker_id]?.name || C.unknown,
-    ofWorker: (id) => (id ? workers[id]?.name || id : coordinator),
+    ofWorker: (id) => (id ? workers[id]?.name || C.unknown : coordinator),
     workerOf: (id) => workers[id],
-    firstOf: (step) => firstRow[step.worker_id] === step.key,
   };
   const start = data.started_at;
   const byKey = stepsByKey(data);
-  const rows = data.steps.filter((step) => step.kind === "handoff");
-  const firstRow = {};
-  for (const row of rows) firstRow[row.worker_id] ??= row.key;
+  const handOffs = data.counts.hand_offs;
   // With no hand-off there is nothing to tabulate, so the steps are the whole story.
-  const showSteps = rawEvents || !rows.length;
+  const showSteps = rawEvents || !handOffs;
   const events = showSteps ? callEvents(data, byKey, names) : [];
   const openAll =
     data.steps.filter((one) => one.kind === "tool_call").length <=
@@ -74,7 +72,7 @@ export default function CallWorkersPanel({
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
-      {rows.length ? (
+      {handOffs ? (
         <Stack direction="row" spacing={1} alignItems="flex-start">
           <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>
             {C.handOffSummary(data.counts)}
@@ -122,10 +120,10 @@ export default function CallWorkersPanel({
       ) : (
         data.turns.map((round) => {
           const label = turnLabel(round, data.turns);
-          const roundRows = handOffsOf(data, round.turn);
+          const roundRows = round.handoffs.map((key) => byKey[key]);
           return (
             <Stack key={round.turn} spacing={1.25} data-testid="turn">
-              {noMessages(round, data.turns) && !round.request ? null : (
+              {!round.expects_messages && !round.request ? null : (
                 <Turn
                   title={`${label}${C.request}`}
                   turn={round.request}
@@ -148,7 +146,7 @@ export default function CallWorkersPanel({
                   {C.callsOutsideTable(round.calls_outside)}
                 </Typography>
               ) : null}
-              {noMessages(round, data.turns) && !round.response ? null : (
+              {!round.expects_messages && !round.response ? null : (
                 <Turn
                   title={`${label}${C.response}`}
                   turn={round.response}

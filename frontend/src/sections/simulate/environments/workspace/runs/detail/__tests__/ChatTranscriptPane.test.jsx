@@ -172,7 +172,7 @@ describe("ChatTranscriptPane", () => {
     expect(screen.getByText(/args:/)).toBeInTheDocument();
   });
 
-  it("marks a tool row apart from the customer, and a hand-off as a hand-off", () => {
+  it("marks a tool row apart from the customer, under the label the server gives it", () => {
     render(
       <ChatTranscriptPane
         turns={[
@@ -186,12 +186,14 @@ describe("ChatTranscriptPane", () => {
             role: "tool",
             text: "Billing",
             toolCalls: [{ name: "Billing", delegated_to: "Billing" }],
+            toolLabel: "Served label",
           },
         ]}
       />,
     );
 
-    expect(screen.getByText(/· Hand-off$/)).toBeInTheDocument();
+    // The row's kind is the server's to say; the pane never reads it from the calls.
+    expect(screen.getByText(/· Served label$/)).toBeInTheDocument();
     const tool = screen.getByText(/· Tool call$/).parentElement;
     const customer = screen.getByText(/· Customer$/).parentElement;
     expect(getComputedStyle(tool).borderLeftColor).not.toBe(
