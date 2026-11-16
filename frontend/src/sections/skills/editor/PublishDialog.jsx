@@ -148,7 +148,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         setFailure('Release policy or labels changed. Reload and review the current targets. Your note and evidence selection are preserved.');
         currentSkill.refetch();
       } else if (['candidate_changed', 'evidence_mismatch', 'evidence_expired', 'evidence_share_required'].includes(code)) {
-        setFailure('The selected content or evidence cannot be released as reviewed. Review the evidence below, run tests again, or explicitly continue without the attachment.');
+        setFailure('The selected content or evidence cannot be released as reviewed. Review the evidence below, run tests again, or remove the attachment and continue without it.');
         currentDraft.refetch();
       } else if (code === "stale_base") {
         setStale(true);

@@ -26,16 +26,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
 import { fDateTime } from "src/utils/format-time";
 import { TestExecutionConfiguration } from "./TestRunResults";
-
-// Only shared, current, inspectable and finished evidence can be attached.
-const canAttachRun = (run) =>
-  Boolean(
-    run?.canAttach &&
-      run.visibility === "workspace" &&
-      run.currentness.content &&
-      run.currentness.payloadAvailable &&
-      !isActiveSkillJob(run.status),
-  );
+import { canAttachRun } from "../utils/evidence";
 
 function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recordedWith = "It is saved when you confirm." }) {
   const evidence = useSkillTestEvidence(skillId, candidate);

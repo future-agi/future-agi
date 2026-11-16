@@ -22,6 +22,7 @@ import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { LABEL_PATTERN, LIMITS } from "src/sections/skills/constants";
 import TestEvidence from '../tests/TestEvidence';
 import ActionReason from "../components/ActionReason";
+import { canAttachRun } from "../utils/evidence";
 import CompareSummary from "../compare/CompareSummary";
 
 function MoveLabelForm({ onClose, skill, label, version }) {
@@ -79,6 +80,8 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   const evidenceQuery = useSkillTestEvidence(validTarget ? skill.id : undefined, evidenceCandidate);
   // A previously chosen run keeps TestEvidence mounted so its mismatch warning still shows.
   const noEvidence = validTarget && !evidenceRunId && Boolean(evidenceQuery.data) && !(evidenceQuery.data.runs?.length);
+  // The footer promises the attachment only while TestEvidence shows it as attached.
+  const evidenceAttached = Boolean(evidenceRunId) && canAttachRun(evidenceQuery.data?.runs?.find((run) => run.runId === evidenceRunId));
   const movesProduction = name === "production" && validTarget && current !== target;
   const summaryReady =
     current === null ||
@@ -276,10 +279,10 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         />
       </Stack>
       {/* The consequence and the missing-evidence warning sit right above the action, not up in the form. */}
-      {(noEvidence || movesProduction || evidenceRunId) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
+      {(noEvidence || movesProduction || evidenceAttached) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
         {noEvidence && <Alert severity="warning" action={<Button color="inherit" size="small" component={RouterLink} to={`${paths.dashboard.skills.edit(skill.id)}?tab=tests`}>Run tests</Button>}>No tests run for these files. Not tested is not a pass.</Alert>}
         {movesProduction && <Typography variant="s1">Apps that follow production pick up v{target} the next time they fetch. Pinned versions don&apos;t change.</Typography>}
-        {evidenceRunId && <Typography variant="s1">Moving saves the attached test evidence with this label change.</Typography>}
+        {evidenceAttached && <Typography variant="s1">Moving saves the attached test evidence with this label change.</Typography>}
       </Stack>}
     </ModalWrapper>
   );

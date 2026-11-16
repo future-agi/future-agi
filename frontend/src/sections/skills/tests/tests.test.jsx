@@ -1217,6 +1217,10 @@ describe("truthful result evidence", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/known estimate: Unknown/)).toBeInTheDocument();
+    expect(screen.getByText("$0.20")).toHaveAttribute("title", "Exact: USD 0.20");
+    expect(screen.queryByText(/recorded-fixture/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
+    expect(screen.getByText("Price source: recorded-fixture")).toBeInTheDocument();
   });
   it("opens a receipt in the editor while retaining immutable snapshot identity in file reads", () => {
     const onOpenFile = vi.fn();
