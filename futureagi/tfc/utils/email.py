@@ -162,9 +162,9 @@ def email_helper(
                 },
             )
             delivered += 1
-        except Exception as exc:
+        except Exception as exc:  # mail backend: best-effort per recipient
             last_error = exc
-            logger.warning(
+            logger.exception(
                 "notification_email_send_failed",
                 category=notification_category,
                 template=template_name,

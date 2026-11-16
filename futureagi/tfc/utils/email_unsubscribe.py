@@ -75,7 +75,7 @@ def read_token(token: str) -> tuple[str, str, str | None] | None:
     return email, category, payload.get("s")
 
 
-def make_undo_token(email: str, scope: str) -> str:
+def make_undo_token(email: str, scope: str | None) -> str:
     """Short-lived token for a monitor's Resubscribe (undo) button."""
     return signing.dumps({"e": email, "s": str(scope)}, salt=_UNDO_SALT)
 
@@ -87,7 +87,7 @@ def undo_token_matches(token: str, email: str, scope: str | None) -> bool:
         )
     except signing.BadSignature:  # includes SignatureExpired
         return False
-    return payload == {"e": email, "s": str(scope)}
+    return bool(payload == {"e": email, "s": str(scope)})
 
 
 def monitor_has_room(scope: str | None) -> bool:
@@ -186,11 +186,12 @@ def set_subscribed(
 def _set_monitor_recipient(email: str, scope: str | None, subscribed: bool) -> bool:
     from tracer.models.monitor import UserAlertMonitor
 
-    if _monitor(scope) is None:
+    found = _monitor(scope)
+    if found is None:
         return False
     with transaction.atomic():
         monitor = UserAlertMonitor.no_workspace_objects.select_for_update().get(
-            id=scope
+            pk=found.pk
         )
         recipients = [
             e for e in (monitor.notification_emails or []) if e.lower() != email
