@@ -1137,6 +1137,10 @@ def _project_event(
         conversation.active_invocation_id = event["invocation_id"]
     if kind == "turn_started":
         conversation.state = HostedHarnessConversation.State.RESPONDING
+        if not payload.get("resumed"):
+            # A fresh turn means the turn that asked has ended, so its question can no longer be answered; a resumed
+            # turn asks it again itself.
+            conversation.blocking_input = None
         command_id = payload.get("command_message_id")
         if command_id:
             conversation.messages.filter(

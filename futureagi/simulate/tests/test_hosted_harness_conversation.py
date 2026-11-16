@@ -2524,3 +2524,119 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
         one["payload"]["reply_to"] for one in served if one["payload"]["reply_to"]
     ] == [again]
     assert answer.id in {uuid.UUID(one["message_id"]) for one in served}
+
+
+@pytest.mark.django_db
+def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-question-outlived"
+    )
+    conversation, rework, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    sent = iter(range(1, 20))
+
+    def emit(kind, *, acknowledged_through, message_id=None, payload=None):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-outlived-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "builder",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload or {},
+        }
+        event["digest"] = canonical_digest(event)
+        response = APIClient().post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": acknowledged_through,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    question = str(uuid.uuid4())
+    emit(
+        "turn_started",
+        acknowledged_through=1,
+        payload={"resumed": False, "command_message_id": str(rework.id)},
+    )
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change"},
+    )
+    # The turn that asked ends unanswered (stopped), so the question stays open for now.
+    emit(
+        "turn_completed",
+        acknowledged_through=1,
+        payload={"command_message_id": str(rework.id)},
+    )
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input["message_id"]) == (
+        "waiting_for_user",
+        question,
+    )
+
+    # The person writes in the chat instead of answering; that message runs a turn of its own.
+    _c, typed, _ = enqueue_message(
+        job, content="No, not this one", client_request_id="typed"
+    )
+    emit(
+        "turn_started",
+        acknowledged_through=2,
+        payload={"resumed": False, "command_message_id": str(typed.id)},
+    )
+    emit(
+        "turn_completed",
+        acknowledged_through=2,
+        payload={"command_message_id": str(typed.id)},
+    )
+
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
+
+
+@pytest.mark.django_db
+def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-question-resumed"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    conversation.state = "waiting_for_user"
+    conversation.blocking_input = {
+        "message_id": str(uuid.uuid4()),
+        "kind": "question_requested",
+    }
+    conversation.save(update_fields=["state", "blocking_input"])
+    from simulate.services.hosted_harness_conversation import _project_event
+
+    _project_event(
+        conversation,
+        {
+            "kind": "turn_started",
+            "payload": {"resumed": True, "command_message_id": str(command.id)},
+        },
+    )
+
+    assert conversation.blocking_input is not None
