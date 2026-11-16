@@ -567,7 +567,7 @@ ActivateButton.propTypes = { jobId: PropTypes.string.isRequired };
 // A drafted case is validated with the rest of the unsaved changes, as the draft bar validates them; Validate on
 // the saved versions would prove a suite that does not hold it.
 function ValidateDraftsButton({ jobId }) {
-  const { drafts, validate, validating, startValidation } =
+  const { drafts, validate, validating, startValidation, canSaveValidated } =
     useDraftsValidation(jobId);
   const note = validate.error
     ? refusalText(validate.error, DRAFTS_COPY.validateError)
@@ -589,6 +589,8 @@ function ValidateDraftsButton({ jobId }) {
           {note}
         </Typography>
       )}
+      {/* Once validated, the case is named and saved from here, as from the draft bar. */}
+      {canSaveValidated && <ActivateButton jobId={jobId} />}
     </Stack>
   );
 }

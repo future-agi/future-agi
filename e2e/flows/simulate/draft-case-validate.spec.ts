@@ -31,7 +31,7 @@ test('SIM-E2E-012: a case the builder adds is validated with the unsaved changes
             'click Validate in the case drawer',
             'stand in for the validation sandbox: record every case proved on the candidate pairing as the gateway '
               + 'records a proofs file, and certify it (e2e/lib/harness_review_seed.py prove_candidates)',
-            'name the version in the draft bar and Save',
+            'close the case drawer, name the version in the draft bar and Save',
             'read the Scenarios list and the run readiness for the added case'],
     backendChecks: ['the drawer Validate posts drafts/validate (202) and never scenarios/validate',
                     'the drafts read reports the candidate validation ready',
@@ -89,6 +89,8 @@ test('SIM-E2E-012: a case the builder adds is validated with the unsaved changes
 
   const name = `Partial refunds ${environment.environmentId.slice(0, 8)}`;
   await test.step('ui: the draft bar saves the validated versions under a name', async () => {
+    // The case drawer covers the bar's name field and Save: the user closes it first.
+    await page.keyboard.press('Escape');
     const bar = page.getByTestId('draft-bar');
     await expect(bar.getByRole('status')).toHaveText(READY_NOTE, { timeout: UI_READY });
     await bar.getByRole('textbox', { name: VERSION_NAME }).fill(name);

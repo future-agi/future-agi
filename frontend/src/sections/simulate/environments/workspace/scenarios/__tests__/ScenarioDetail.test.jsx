@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 const amendMutate = vi.hoisted(() => vi.fn());
@@ -208,6 +208,31 @@ describe("ScenarioDetail unsaved case", () => {
     render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
     expect(screen.getByTestId("lifecycle-validate-drafts")).toHaveTextContent("Validation failed. 1 scenario needs a change");
     draftsData.validation = null;
+  });
+});
+
+describe("ScenarioDetail Activate after validating an unsaved case", () => {
+  it("names and saves the validated candidates from the drawer", async () => {
+    const user = userEvent.setup();
+    saveDrafts.mockClear();
+    saveCandidates.mockClear();
+    draftsData.validation = { state: "ready", affectedScenarios: [] };
+    draftsData.candidates = { environmentVersionId: "e2", suiteVersionId: "s2" };
+    const lifecycle = { state: "draft", reason: "in_draft", sources: [], proof: null };
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
+
+    const drawer = within(screen.getByTestId("lifecycle-validate-drafts"));
+    await user.type(drawer.getByRole("textbox", { name: "Name this version" }), "with refunds");
+    await user.click(drawer.getByRole("button", { name: "Activate" }));
+
+    expect(saveCandidates).toHaveBeenCalledWith({
+      candidates: { environmentVersionId: "e2", suiteVersionId: "s2" },
+      expectedReviewDigest: "digest-1",
+      name: "with refunds",
+    });
+    expect(saveDrafts).not.toHaveBeenCalled();
+    draftsData.validation = null;
+    draftsData.candidates = null;
   });
 });
 
