@@ -785,7 +785,7 @@ class HarnessJobActionSerializer(serializers.Serializer):
 _SEED_DIGITS = len(str(MAX_SEED))
 
 
-class RunSeedField(serializers.CharField):
+class RunSeedField(serializers.Field[int, Any, str, Any]):
     """A run seed, published as decimal text: seeds go up to 2^63 - 1, past what a JSON number keeps exactly."""
 
     default_error_messages = {
@@ -793,14 +793,26 @@ class RunSeedField(serializers.CharField):
     }
 
     def to_internal_value(self, data: Any) -> int:
-        text = super().to_internal_value(data)
+        text = (
+            str(data).strip()
+            if isinstance(data, (str, int)) and not isinstance(data, bool)
+            else ""
+        )
         digits = text.isascii() and text.isdigit() and len(text) <= _SEED_DIGITS
         if not digits or int(text) > MAX_SEED:
             self.fail("invalid_seed")
         return int(text)
 
+    def to_representation(self, value: int) -> str:
+        return str(value)
+
     class Meta:
-        swagger_schema_fields = {"pattern": "^[0-9]+$", "maxLength": _SEED_DIGITS}
+        swagger_schema_fields = {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[0-9]+$",
+            "maxLength": _SEED_DIGITS,
+        }
 
 
 class HarnessRunCreateSerializer(serializers.Serializer):
