@@ -3074,7 +3074,7 @@ def test_a_call_s_tool_calls_are_counted_once_without_hand_offs_or_world_actor_a
 
 
 def test_a_transcript_row_of_tool_calls_says_which_of_them_hand_work_on():
-    from simulate.selectors.call_detail import transcript_turns
+    from simulate.selectors.call_detail import tagged_function_calls, transcript_turns
 
     rows = [
         {"role": "tool", "tool_calls": [{"name": "lookup"}]},
@@ -3095,6 +3095,14 @@ def test_a_transcript_row_of_tool_calls_says_which_of_them_hand_work_on():
     assert [one["handoffs"] for one in turns] == [0, 1, 1, 1]
     # Each kind of row is labelled apart, and a mixed row is never labelled as only one kind.
     assert len({one["tool_label"] for one in turns}) == 4
+    # A function call carries the same label as a transcript row of only that call; an actor's action carries none.
+    calls = tagged_function_calls(
+        [*(row["tool_calls"][0] for row in rows[:3]), {"name": "x", "actor_id": "boss"}]
+    )
+    assert [one.get("label") for one in calls] == [
+        *(one["tool_label"] for one in turns[:3]),
+        None,
+    ]
 
 
 def test_a_call_sealed_with_worker_events_is_read_from_them_and_an_older_one_from_its_spans():

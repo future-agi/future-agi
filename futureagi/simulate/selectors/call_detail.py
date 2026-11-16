@@ -280,6 +280,8 @@ def tagged_function_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         actor = call.get("actor_id")
         acted = bool(actor) and actor != AGENT
         one = {**call, "kind": "world_actor_action" if acted else "agent_call"}
+        if not acted:
+            one["label"] = _TOOL_ROW_LABELS[_call_kind(call)]
         if acted:
             one["actor_name"] = call.get("actor_name") or actor
             if not one.get("outcome"):
@@ -353,19 +355,17 @@ _TOOL_ROW_LABELS = {
 _MIXED_TOOL_ROW = "Tool calls and hand-offs"
 
 
+def _call_kind(call: Mapping[str, Any]) -> str:
+    """What an agent's call recorded it did: passed control, handed work to another agent, or called a tool."""
+    if call.get("kind") == "transferred":
+        return "transferred"
+    return "handoff" if call.get("delegated_to") else "tool_call"
+
+
 def _tool_row(listed: Sequence[object]) -> dict[str, object]:
     """A row's tool calls as the transcript shows them: how many hand work to another agent, and the row's label."""
     calls = [one for one in listed if isinstance(one, Mapping)]
-    kinds = {
-        (
-            "transferred"
-            if one.get("kind") == "transferred"
-            else "handoff"
-            if one.get("delegated_to")
-            else "tool_call"
-        )
-        for one in calls
-    }
+    kinds = {_call_kind(one) for one in calls}
     return {
         "handoffs": sum(1 for one in calls if one.get("delegated_to")),
         "tool_label": _TOOL_ROW_LABELS[next(iter(kinds))]
