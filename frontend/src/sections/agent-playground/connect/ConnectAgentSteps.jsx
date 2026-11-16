@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import Field from "src/sections/simulate/environments/components/Field";
 import { TextLink } from "./connectBits";
@@ -44,6 +45,8 @@ export function FoundAgents({
   onManual,
   manualLabel = "Not in the list? Name its folder",
   failedManualLabel = "Name the agent's folder yourself",
+  loadError = null,
+  onRetry,
 }) {
   const [query, setQuery] = useState("");
   const agents = useMemo(() => scan?.agents || [], [scan?.agents]);
@@ -55,6 +58,17 @@ export function FoundAgents({
         : agents,
     [agents, needle],
   );
+  if (!scan && loadError) {
+    return (
+      <ErrorState
+        title="Couldn't check on the scan"
+        detail={loadError.message || "The request failed."}
+        onRetry={onRetry}
+        sx={{ py: 2 }}
+        data-testid="scan-load-error"
+      />
+    );
+  }
   if (!scan || scan.status === "pending" || scan.status === "running") {
     return (
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ py: 1 }}>
@@ -181,6 +195,8 @@ FoundAgents.propTypes = {
   onManual: PropTypes.func.isRequired,
   manualLabel: PropTypes.string,
   failedManualLabel: PropTypes.string,
+  loadError: PropTypes.object,
+  onRetry: PropTypes.func,
 };
 
 /** A folder the scan missed, named by hand. */

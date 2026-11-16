@@ -216,6 +216,35 @@ describe("mapVersionDetail", () => {
     });
   });
 
+  it("reads a linked version's check the way the list does", () => {
+    const failed = {
+      ...CODE_VERSION_DETAIL,
+      status: "draft",
+      preflight_status: "failed",
+      check_step: null,
+      check_failure: {
+        code: "agent_reading_unavailable",
+        message: "Reading the agent couldn't finish. Try again.",
+        retryable: true,
+      },
+      environments_count: 2,
+    };
+
+    const v = mapVersionDetail(failed);
+
+    expect(v).toMatchObject({
+      check: "failed",
+      isDraft: true,
+      environmentsCount: 2,
+      checkFailure: {
+        code: "agent_reading_unavailable",
+        message: "Reading the agent couldn't finish. Try again.",
+        retryable: true,
+      },
+    });
+    expect(v).toMatchObject({ ...toVersion(failed), agentKind: "source" });
+  });
+
   it("keeps a hosted version's snapshot and masked key", () => {
     const v = mapVersionDetail(HOSTED_VERSION_DETAIL);
     expect(v.apiKey).toBe("sk-a...9f2c");

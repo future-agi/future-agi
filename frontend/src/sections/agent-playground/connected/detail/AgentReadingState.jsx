@@ -43,6 +43,12 @@ export default function AgentReadingState({ agent }) {
       queryClient.invalidateQueries({
         queryKey: agentDetailQueryKey(agent.id),
       });
+      queryClient.invalidateQueries({
+        queryKey: ["agents", "version", agent.id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["agents", "stored-agent", agent.id],
+      });
     }
     wasPending.current = check === "pending";
   }, [check, agent.id, queryClient]);

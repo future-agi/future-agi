@@ -3,7 +3,12 @@ import { fireEvent, renderWithRouter, screen } from "src/utils/test-utils";
 import UploadConnectFlow from "../UploadConnectFlow";
 
 const mockConnect = vi.fn();
-const scanState = vi.hoisted(() => ({ data: null }));
+const scanState = vi.hoisted(() => ({
+  data: null,
+  isError: false,
+  error: null,
+  refetch: () => {},
+}));
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -12,7 +17,7 @@ vi.mock("react-router-dom", async () => {
 
 vi.mock("src/api/agents/agentConnect", () => ({
   useStartScan: () => ({ mutate: vi.fn(), isPending: false }),
-  useAgentScan: () => ({ data: scanState.data, isError: false }),
+  useAgentScan: () => ({ ...scanState }),
   useConnectAgent: () => ({ mutate: mockConnect, isPending: false }),
 }));
 
@@ -41,6 +46,9 @@ const connectBody = () => {
 beforeEach(() => {
   sessionStorage.clear();
   mockConnect.mockReset();
+  scanState.isError = false;
+  scanState.error = null;
+  scanState.refetch = () => {};
 });
 
 describe("UploadConnectFlow", () => {
@@ -99,5 +107,18 @@ describe("UploadConnectFlow", () => {
     fireEvent.click(screen.getByRole("radio"));
 
     expect(connectBody()).not.toHaveProperty("subfolder");
+  });
+
+  it("says the scan couldn't be checked and retries, instead of spinning", () => {
+    scanState.isError = true;
+    scanState.error = { message: "Network Error" };
+    scanState.refetch = vi.fn();
+    startAt(undefined);
+
+    expect(screen.queryByText(/Reading the upload/)).toBeNull();
+    expect(screen.getByText("Couldn't check on the scan")).toBeInTheDocument();
+    expect(screen.getByText("Network Error")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(scanState.refetch).toHaveBeenCalledTimes(1);
   });
 });

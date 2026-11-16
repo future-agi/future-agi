@@ -6,6 +6,7 @@ const mockNavigate = vi.fn();
 const mockSnackbar = vi.fn();
 const mockCreateJob = vi.fn();
 const preflight = { current: {} };
+const versionsPage = { hasNextPage: false, fetchNextPage: vi.fn() };
 
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -35,6 +36,9 @@ vi.mock("src/api/agent-definition/agent-definition-version", () => ({
         },
       ],
     },
+    hasNextPage: versionsPage.hasNextPage,
+    isFetchingNextPage: false,
+    fetchNextPage: versionsPage.fetchNextPage,
   }),
 }));
 
@@ -60,6 +64,8 @@ const buildButton = () =>
   screen.getByRole("button", { name: "Build environment" });
 
 beforeEach(() => {
+  versionsPage.hasNextPage = false;
+  versionsPage.fetchNextPage = vi.fn();
   mockNavigate.mockReset();
   mockSnackbar.mockReset();
   mockCreateJob.mockReset();
@@ -134,5 +140,17 @@ describe("BuildEnvironmentDialog", () => {
     );
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("loads older versions from the menu without picking one", () => {
+    preflight.current = { data: { ok: true, checks: [] } };
+    versionsPage.hasNextPage = true;
+    renderDialog();
+
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("option", { name: "Load older versions" }));
+
+    expect(versionsPage.fetchNextPage).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("build-env-version")).toHaveValue("v1");
   });
 });

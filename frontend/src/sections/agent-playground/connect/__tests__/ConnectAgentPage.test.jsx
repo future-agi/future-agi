@@ -35,7 +35,12 @@ vi.mock("src/auth/hooks", async (importOriginal) => ({
   useAuthContext: () => ({ role: auth.role }),
 }));
 
-const CONNECTION = { id: "connection-1", status: "active", display_name: "acme" };
+const CONNECTION = {
+  id: "connection-1",
+  status: "active",
+  display_name: "acme",
+  external_project_name: "4242",
+};
 const REPOSITORY = {
   id: 7,
   full_name: "acme/support-agent",
@@ -170,6 +175,7 @@ describe("ConnectAgentPage", () => {
         repository: "acme/support-agent",
         ref: "trunk",
         visibility: "private",
+        installation_id: "4242",
         repository_id: 7,
       },
       expect.any(Object),

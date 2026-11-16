@@ -190,6 +190,8 @@ export default function UploadConnectFlow() {
         ) : (
           <FoundAgents
             scan={scan.data}
+            loadError={scan.isError ? scan.error : null}
+            onRetry={() => scan.refetch()}
             picked={picked}
             onPick={setPicked}
             onManual={() => {

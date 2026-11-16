@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 describe("AgentReadingState", () => {
-  it("refreshes the agent once its reading finishes", () => {
+  it("refreshes the agent and its Definition tab once its reading finishes", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const view = show(client);
@@ -57,6 +57,12 @@ describe("AgentReadingState", () => {
 
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: agentDetailQueryKey("agent-1"),
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["agents", "version", "agent-1"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["agents", "stored-agent", "agent-1"],
     });
   });
 

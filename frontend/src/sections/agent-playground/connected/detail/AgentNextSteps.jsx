@@ -389,7 +389,8 @@ const CONFIRM = {
  * Observe project (production) and build an environment (simulation), side
  * by side. A code agent links the project its production traces land in; a
  * hosted agent's calls are pulled into a project made when observability is
- * turned on. Building an environment from here is coming soon.
+ * turned on. A code agent can be built into an environment from here by
+ * someone who can edit it; a hosted agent's Build environment stays disabled.
  */
 export default function AgentNextSteps({ agent }) {
   const navigate = useNavigate();

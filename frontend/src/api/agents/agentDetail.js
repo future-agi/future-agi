@@ -124,13 +124,8 @@ const toStoredAgent = (d) => ({
 });
 
 export const mapVersionDetail = (raw) => ({
-  id: raw.id,
-  label: raw.version_name_display || `v${raw.version_number}`,
-  number: raw.version_number,
-  isActive: !!raw.is_active,
-  isLatest: !!raw.is_latest,
+  ...toVersion(raw),
   commitMessage: raw.commit_message || null,
-  createdAt: raw.created_at ?? null,
   agentKind: raw.agent_kind ?? null,
   apiKey: raw.api_key ?? null,
   source: raw.source ?? null,

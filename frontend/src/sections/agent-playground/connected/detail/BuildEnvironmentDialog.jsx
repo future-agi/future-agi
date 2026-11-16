@@ -69,6 +69,8 @@ Check.propTypes = { check: PropTypes.object.isRequired };
  * default), name it, choose how many scenarios, read the preflight, build.
  * The environment binds to the agent and stays on the version it was built from.
  */
+const LOAD_OLDER = "load-older-versions";
+
 export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -178,7 +180,11 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
               size="small"
               fullWidth
               value={chosen}
-              onChange={(e) => setVersionId(e.target.value)}
+              onChange={(e) =>
+                e.target.value === LOAD_OLDER
+                  ? list.fetchNextPage()
+                  : setVersionId(e.target.value)
+              }
               inputProps={{ "data-testid": "build-env-version" }}
             >
               {options.map((v) => (
@@ -187,6 +193,13 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
                   {v.isActive ? " · in production" : ""}
                 </MenuItem>
               ))}
+              {list.hasNextPage && (
+                <MenuItem value={LOAD_OLDER} disabled={list.isFetchingNextPage}>
+                  {list.isFetchingNextPage
+                    ? "Loading older versions…"
+                    : "Load older versions"}
+                </MenuItem>
+              )}
             </TextField>
           </LabeledField>
           <LabeledField

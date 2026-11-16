@@ -203,4 +203,29 @@ describe("CodeCard", () => {
       "No code is stored for this version.",
     );
   });
+
+  it("lists a file the version removed so its diff can be opened", () => {
+    state.changes = {
+      data: {
+        against: "v1",
+        files: [{ path: "agents/support/old_tools.py", status: "removed" }],
+      },
+    };
+    state.files["v1:agents/support/old_tools.py"] = {
+      data: {
+        path: "agents/support/old_tools.py",
+        kind: "text",
+        language: "python",
+        content: "TOOLS = []\n",
+      },
+      isLoading: false,
+    };
+    renderCard("?diff=1");
+
+    expect(screen.getByText("Files · 3 files · v2")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("file-agents/support/old_tools.py"));
+
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("TOOLS = []");
+    expect(screen.getByTestId("diff-modified")).toHaveTextContent("");
+  });
 });

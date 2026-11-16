@@ -175,15 +175,13 @@ describe("AgentNextSteps", () => {
     expect(screen.queryByText("Install dependencies")).toBeNull();
     expect(axios.get).not.toHaveBeenCalled();
     const drawer = await openDrawer();
-    expect(
-      await within(drawer).findByText("pip install fi-instrumentation-otel"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(drawer).toHaveTextContent("pip install fi-instrumentation-otel"),
+    );
     ["Install dependencies", "Load API keys", "Set up telemetry"].forEach(
       (title) => expect(within(drawer).getByText(title)).toBeInTheDocument(),
     );
-    expect(
-      within(drawer).getByText('register(project_name="FUTURE_AGI")'),
-    ).toBeInTheDocument();
+    expect(drawer).toHaveTextContent('register(project_name="FUTURE_AGI")');
     expect(axios.get).toHaveBeenCalledWith(
       "/tracer/project/project_sdk_code/",
       { params: { project_type: "observe" } },
@@ -197,17 +195,15 @@ describe("AgentNextSteps", () => {
   it("switches every snippet with one language picker", async () => {
     renderCard(codeAgent());
     const drawer = await openDrawer();
-    await within(drawer).findByText("pip install fi-instrumentation-otel");
+    await waitFor(() =>
+      expect(drawer).toHaveTextContent("pip install fi-instrumentation-otel"),
+    );
     expect(
       within(drawer).getAllByRole("button", { name: "TypeScript" }),
     ).toHaveLength(1);
     fireEvent.click(within(drawer).getByRole("button", { name: "TypeScript" }));
-    expect(
-      within(drawer).getByText("npm install @futureagi/instrumentation"),
-    ).toBeInTheDocument();
-    expect(
-      within(drawer).getByText('register({ projectName: "FUTURE_AGI" })'),
-    ).toBeInTheDocument();
+    expect(drawer).toHaveTextContent("npm install @futureagi/instrumentation");
+    expect(drawer).toHaveTextContent('register({ projectName: "FUTURE_AGI" })');
   });
 
   it("links the project the user picks, under a label above the field", async () => {

@@ -38,6 +38,16 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
       ),
     [changes.data],
   );
+  const treeFiles = useMemo(() => {
+    const files = tree.data?.files ?? [];
+    const present = new Set(files.map((one) => one.path));
+    const removed = (changes.data?.files ?? [])
+      .filter((one) => one.status === "removed" && !present.has(one.path))
+      .map((one) => ({ path: one.path, size: 0, kind: "text" }));
+    return removed.length
+      ? [...files, ...removed].sort((a, b) => a.path.localeCompare(b.path))
+      : files;
+  }, [tree.data, changes.data]);
 
   const set = (next) => {
     const copy = new URLSearchParams(params);
@@ -128,7 +138,7 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
         >
           <Box sx={{ position: "absolute", inset: 0, overflowY: "auto", p: 1 }}>
             <FileTree
-              files={tree.data.files}
+              files={treeFiles}
               subfolder={tree.data.subfolder}
               selected={selected}
               changes={changedBy}
