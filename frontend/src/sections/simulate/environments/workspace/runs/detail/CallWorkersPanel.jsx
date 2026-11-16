@@ -19,25 +19,20 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
-import {
-  isHandOff,
-  useCallWorkers,
-} from "src/api/simulate-environments/runDetail";
+import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
 import { MONO_FONT as MONO } from "src/sections/simulate/environments/workspace/contract/contract.constants";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import {
-  asShown,
+  asMarkdown,
   callEvents,
-  handOffCounts,
-  handOffEnd,
   handOffEvents,
-  handOffRows,
+  handOffsOf,
   isLong,
-  nest,
-  turnLabel,
   noMessages,
   seconds,
+  stepsByKey,
+  turnLabel,
 } from "./utils/callWorkersUtils";
 import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
@@ -217,16 +212,16 @@ Payload.propTypes = {
   omitted: PropTypes.bool,
 };
 
-function Answer({ text, empty }) {
+function Answer({ shown, empty }) {
   const [whole, setWhole] = useState(false);
-  if (!text)
+  if (!shown)
     return (
       <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {empty}
       </Typography>
     );
-  const shown = asShown(text);
-  const long = isLong(shown);
+  const text = asMarkdown(shown);
+  const long = isLong(text);
   const body = (
     <Box
       data-testid="answer"
@@ -243,7 +238,7 @@ function Answer({ text, empty }) {
       }}
     >
       {/* Worker text isn't ours: an image in it would load from any host. */}
-      <Markdown text={shown} dim variant="s1" disallowedElements={NO_IMAGES} />
+      <Markdown text={text} dim variant="s1" disallowedElements={NO_IMAGES} />
     </Box>
   );
   return (
@@ -274,7 +269,10 @@ function Answer({ text, empty }) {
     </Box>
   );
 }
-Answer.propTypes = { text: PropTypes.string, empty: PropTypes.string };
+Answer.propTypes = {
+  shown: PropTypes.shape({ format: PropTypes.string, text: PropTypes.string }),
+  empty: PropTypes.string,
+};
 
 // A turn of the caller or the coordinator, styled as the transcript styles it.
 function Turn({ title, turn, agent, start, empty }) {
@@ -296,7 +294,7 @@ function Turn({ title, turn, agent, start, empty }) {
       }}
     >
       <Line title={title} at={turn?.at} start={start} />
-      <Answer text={turn?.text} empty={empty} />
+      <Answer shown={turn?.shown} empty={empty} />
     </Box>
   );
 }
@@ -442,12 +440,12 @@ function EventRow({ event, start, openJson, onOpenTrace, traceIds }) {
               </Stack>
             </Reveal>
           </Stack>
-        ) : event.text || event.empty ? (
+        ) : event.shown || event.empty ? (
           <Box
             sx={{ p: 1, borderRadius: "6px", bgcolor: "background.neutral" }}
           >
             {/* Worker text keeps the tab's folding and its block on images. */}
-            <Answer text={event.text} empty={event.empty} />
+            <Answer shown={event.shown} empty={event.empty} />
           </Box>
         ) : event.note ? (
           <Typography
@@ -534,20 +532,20 @@ const CLAMPED_CELL_SX = {
 };
 
 // One hand-off as a table row. Its raw data opens below it, as wide as the table, since JSON won't fit in a cell.
-function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
+function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
   const [open, setOpen] = useState(false);
-  const name = names.ofBlock(block);
-  const worker = names.workerOf(block.worker_id);
+  const name = names.ofStep(step);
+  const worker = names.workerOf(step.worker_id);
   // The worker's own model and the tokens its model calls spent, when the app sent traces. They are its total, so
   // they show once, on its first hand-off.
   const usage =
-    names.firstOf(block) && (worker?.model || worker?.tokens)
+    names.firstOf(step) && (worker?.model || worker?.tokens)
       ? C.modelTokens(worker.model, worker.tokens)
       : "";
-  const end = handOffEnd(block, cutOff);
+  const end = step.end;
   const failed = end === "failed" || end === "no_return";
-  const task = block.delegated?.task;
-  const answer = block.returned?.result;
+  const task = step.handoff?.task;
+  const answer = step.returned?.result;
   const emptyResult = {
     passed: "—",
     finished: C.noResult,
@@ -575,7 +573,7 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
         <TableCell>
           <Box
             sx={{
-              pl: Math.min(Math.max(block.depth - 1, 0), MAX_ROW_INDENT) * 1.5,
+              pl: Math.min(Math.max(step.depth - 1, 0), MAX_ROW_INDENT) * 1.5,
             }}
           >
             {/* A click here bubbles to the row, so the keyboard and the mouse share one toggle. */}
@@ -626,7 +624,7 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
                 {usage}
               </Typography>
             ) : null}
-            {block.parallel ? (
+            {step.parallel ? (
               <Chip
                 size="small"
                 variant="outlined"
@@ -634,11 +632,11 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
                 sx={{ mt: 0.5, ml: 2.25 }}
               />
             ) : null}
-            {block.relationship === "unknown" ? (
+            {step.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
             {/* Only a hand-off that did not come back takes the worker's end; one that returned ended by its return. */}
-            {!block.returned && !block.transfer && C.cutShort[worker?.state] ? (
+            {!step.returned && !step.transfer && C.cutShort[worker?.state] ? (
               <Chip
                 size="small"
                 variant="outlined"
@@ -652,7 +650,7 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
         </TableCell>
         <TableCell>
           <Box sx={{ ...CLAMPED_CELL_SX, color: "text.secondary" }}>
-            {block.transfer ? C.transferred(name) : task || "—"}
+            {step.transfer ? C.transferred(name) : task || "—"}
           </Box>
         </TableCell>
         <TableCell>
@@ -682,7 +680,7 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
           <Reveal open={open}>
             <Box data-testid="worker-row-raw" sx={{ pb: 1 }}>
               <EventList
-                events={handOffEvents(block, names, cutOff)}
+                events={handOffEvents(step, byKey, names)}
                 start={start}
                 openJson={(event) => event.call?.status === "error"}
                 onOpenTrace={onOpenTrace}
@@ -696,15 +694,15 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
   );
 }
 WorkerRow.propTypes = {
-  block: PropTypes.object.isRequired,
+  step: PropTypes.object.isRequired,
+  byKey: PropTypes.object.isRequired,
   names: PropTypes.object.isRequired,
   start: PropTypes.string,
-  cutOff: PropTypes.bool,
   onOpenTrace: PropTypes.func,
   traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
-function WorkersTable({ rows, names, start, cutOff, onOpenTrace, traceIds }) {
+function WorkersTable({ rows, byKey, names, start, onOpenTrace, traceIds }) {
   return (
     <Box
       sx={{
@@ -723,13 +721,13 @@ function WorkersTable({ rows, names, start, cutOff, onOpenTrace, traceIds }) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {rows.map((block) => (
+          {rows.map((step) => (
             <WorkerRow
-              key={block.key}
-              block={block}
+              key={step.key}
+              step={step}
+              byKey={byKey}
               names={names}
               start={start}
-              cutOff={cutOff}
               onOpenTrace={onOpenTrace}
               traceIds={traceIds}
             />
@@ -741,9 +739,9 @@ function WorkersTable({ rows, names, start, cutOff, onOpenTrace, traceIds }) {
 }
 WorkersTable.propTypes = {
   rows: PropTypes.array.isRequired,
+  byKey: PropTypes.object.isRequired,
   names: PropTypes.object.isRequired,
   start: PropTypes.string,
-  cutOff: PropTypes.bool,
   onOpenTrace: PropTypes.func,
   traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
@@ -751,10 +749,11 @@ WorkersTable.propTypes = {
 /** One call of a multi-agent app: a table of its hand-offs first, every step in order on request. */
 export default function CallWorkersPanel({
   callExecutionId,
+  callStatus = null,
   onOpenTrace,
   traceIds = NO_TRACES,
 }) {
-  const { data, isError } = useCallWorkers(callExecutionId);
+  const { data, isError } = useCallWorkers(callExecutionId, callStatus);
   const [rawEvents, setRawEvents] = useState(false);
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
   if (!data)
@@ -772,29 +771,19 @@ export default function CallWorkersPanel({
   const coordinator = data.coordinator?.name || C.coordinator;
   const names = {
     coordinator,
-    ofBlock: (block) => workers[block.worker_id]?.name || C.unknown,
+    ofStep: (step) => workers[step.worker_id]?.name || C.unknown,
     ofWorker: (id) => (id ? workers[id]?.name || id : coordinator),
     workerOf: (id) => workers[id],
-    firstOf: (block) => firstRow[block.worker_id] === block.key,
+    firstOf: (step) => firstRow[step.worker_id] === step.key,
   };
   const start = data.started_at;
-  const hasHandOffs = data.events.some(isHandOff);
-  const tree = nest(data);
-  // A record cut at its limit, or read only in part, can't say a missing return never came.
-  const cutOff =
-    data.events_omitted > 0 ||
-    data.collection === "partial" ||
-    data.collection === "unavailable";
-  const rows = handOffRows(tree.items);
+  const byKey = stepsByKey(data);
+  const rows = data.steps.filter((step) => step.kind === "handoff");
   const firstRow = {};
   for (const row of rows) firstRow[row.worker_id] ??= row.key;
   // With no hand-off there is nothing to tabulate, so the steps are the whole story.
   const showSteps = rawEvents || !rows.length;
-  const outside = (items) =>
-    items.filter((item) => item.kind === "call").length;
-  const events = showSteps
-    ? callEvents(data, tree, names, cutOff, hasHandOffs)
-    : [];
+  const events = showSteps ? callEvents(data, byKey, names) : [];
   const openAll =
     data.steps.filter((one) => one.kind === "tool_call").length <=
     MAX_OPEN_CALLS;
@@ -817,7 +806,7 @@ export default function CallWorkersPanel({
       {rows.length ? (
         <Stack direction="row" spacing={1} alignItems="flex-start">
           <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>
-            {C.handOffSummary(handOffCounts(rows, cutOff))}
+            {C.handOffSummary(data.counts)}
           </Typography>
           <FormControlLabel
             control={
@@ -854,7 +843,7 @@ export default function CallWorkersPanel({
           sx={{ typography: "s3", color: "text.subtitle" }}
         >
           {C.supportedBoundary}
-          {data.depth > 1 || data.parallel > 0 ? (
+          {data.beyond_boundary ? (
             <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
           ) : null}
         </Typography>
@@ -871,13 +860,12 @@ export default function CallWorkersPanel({
           />
         ) : null
       ) : (
-        tree.rounds.map((round) => {
-          const label = turnLabel(round, tree.rounds);
-          const roundRows = handOffRows(round.items);
-          const callsOutside = outside(round.items);
+        data.turns.map((round) => {
+          const label = turnLabel(round, data.turns);
+          const roundRows = handOffsOf(data, round.turn);
           return (
             <Stack key={round.turn} spacing={1.25} data-testid="turn">
-              {noMessages(round, tree.rounds) && !round.request ? null : (
+              {noMessages(round, data.turns) && !round.request ? null : (
                 <Turn
                   title={`${label}${C.request}`}
                   turn={round.request}
@@ -888,19 +876,19 @@ export default function CallWorkersPanel({
               {roundRows.length ? (
                 <WorkersTable
                   rows={roundRows}
+                  byKey={byKey}
                   names={names}
                   start={start}
-                  cutOff={cutOff}
                   onOpenTrace={onOpenTrace}
                   traceIds={traceIds}
                 />
               ) : null}
-              {callsOutside ? (
+              {round.calls_outside ? (
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {C.callsOutsideTable(callsOutside)}
+                  {C.callsOutsideTable(round.calls_outside)}
                 </Typography>
               ) : null}
-              {noMessages(round, tree.rounds) && !round.response ? null : (
+              {noMessages(round, data.turns) && !round.response ? null : (
                 <Turn
                   title={`${label}${C.response}`}
                   turn={round.response}
@@ -944,6 +932,8 @@ export default function CallWorkersPanel({
 
 CallWorkersPanel.propTypes = {
   callExecutionId: PropTypes.string,
+  // The call's status, so a call that ends while open is read again.
+  callStatus: PropTypes.string,
   // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
   // The traces that tab lists: a step offers to open only one of these.

@@ -13,17 +13,25 @@ identical CSAT rule prompt, so scores are consistent across paths.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from datetime import timedelta
+
 import structlog
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import CallExecution
+from simulate.services.harness_workers import SECOND_READ, attempt_reset
+from simulate.services.harness_workers import (
+    record_call_workers as record_worker_timeline,
+)
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
     REASON_CSAT_NO_EVIDENCE,
     settle_run,
 )
+from simulate.types import CallWorkersRead
 from tfc.logging.temporal import try_activity_info
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.storage_client import server_reachable_url
@@ -40,39 +48,23 @@ _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 
 @temporal_activity(time_limit=120, max_retries=2, queue="tasks_s")
-def record_call_workers(
-    call_execution_id: str, second_read: bool = False, attempt: str | None = None
-) -> None:
-    """Keep which worker did what in one call; read once more later when a declared worker was not seen yet or the
-    read was not whole. `attempt` is the call's last reset when the read was scheduled: a call rerun since then is
-    the new attempt's to read."""
-    from datetime import timedelta
-
-    from simulate.services.harness_workers import SECOND_READ, attempt_reset
-    from simulate.services.harness_workers import record_call_workers as record
-
-    reset = attempt_reset(call_execution_id)
+def record_call_workers(payload: dict[str, object]) -> None:
+    """Keep which worker did what in one call, and schedule the later read the record says is due."""
+    read = CallWorkersRead.parse(payload)
+    reset = attempt_reset(read.call_execution_id)
     current = reset.isoformat() if reset is not None else ""
-    if attempt is not None and attempt != current:
+    # A call rerun since this read was scheduled is the new attempt's to read.
+    if read.attempt is not None and read.attempt != current:
         return
-    timeline = record(call_execution_id)
-    # Read again when a declared worker was not seen yet, when this read was not whole (spans still arriving, the
-    # span read failed or hit its bound), or when no span had arrived at all, so a record built from the sandbox's rows
-    # alone still meets the spans that come later: the later read then replaces what an incomplete tree got wrong.
-    if (
-        timeline
-        and not second_read
-        and (
-            any(not one["observed"] for one in timeline["workers"])
-            or not timeline.get("tree_complete", True)
-            or timeline.get("collection") in ("partial", "unavailable")
-            or not timeline.get("spans_received", True)
+    timeline = record_worker_timeline(
+        read.call_execution_id, second_read=read.second_read
+    )
+    if timeline and timeline.get("next_read_at"):
+        later = CallWorkersRead(
+            read.call_execution_id, second_read=True, attempt=current
         )
-    ):
         record_call_workers.apply_async(
-            args=(call_execution_id,),
-            kwargs={"second_read": True, "attempt": current},
-            start_delay=timedelta(seconds=SECOND_READ),
+            args=(asdict(later),), start_delay=timedelta(seconds=SECOND_READ)
         )
 
 

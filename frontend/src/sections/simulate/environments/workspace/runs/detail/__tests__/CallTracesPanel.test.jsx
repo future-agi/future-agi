@@ -79,8 +79,11 @@ describe("CallTracesPanel", () => {
     });
   });
 
-  it("opens the trace a Participants step asked for, once the call lists it", () => {
-    renderPanel({ testExecutionId: "run-1", openTraceId: "trace-1" });
+  it("opens the trace a Participants step asked for", () => {
+    renderPanel({
+      testExecutionId: "run-1",
+      openTrace: { traceId: "trace-1" },
+    });
     expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
       traceId: "trace-1",
       projectId: "hidden-project",
@@ -91,8 +94,7 @@ describe("CallTracesPanel", () => {
   it("opens the asked-for trace at the step's span when it has one", () => {
     renderPanel({
       testExecutionId: "run-1",
-      openTraceId: "trace-1",
-      openSpanId: "span-7",
+      openTrace: { traceId: "trace-1", spanId: "span-7" },
     });
     expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
       traceId: "trace-1",
@@ -105,21 +107,21 @@ describe("CallTracesPanel", () => {
   it("does not reopen the asked-for trace when the call's traces refresh", () => {
     const { rerender } = renderPanel({
       testExecutionId: "run-1",
-      openTraceId: "trace-1",
+      openTrace: { traceId: "trace-1" },
     });
     rerender(
       <CallTracesPanel
         traces={[...TRACES]}
         projectId="hidden-project"
         testExecutionId="run-1"
-        openTraceId="trace-1"
+        openTrace={{ traceId: "trace-1" }}
       />,
     );
     expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("opens nothing for a trace the call does not list", () => {
-    renderPanel({ testExecutionId: "run-1", openTraceId: "trace-9" });
+  it("opens nothing when no trace was asked for", () => {
+    renderPanel({ testExecutionId: "run-1" });
     expect(mocks.store.setTraceDetailDrawerOpen).not.toHaveBeenCalled();
   });
 

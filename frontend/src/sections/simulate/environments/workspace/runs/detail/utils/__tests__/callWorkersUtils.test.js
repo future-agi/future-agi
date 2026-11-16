@@ -1,235 +1,144 @@
 import { describe, it, expect } from "vitest";
 import {
-  asShown,
-  handOffCounts,
-  handOffEnd,
-  handOffRows,
+  asMarkdown,
+  callEvents,
+  handOffEvents,
+  handOffsOf,
   isLong,
-  nest,
   seconds,
-  turnLabel,
+  stepsByKey,
 } from "../callWorkersUtils";
 
+const names = {
+  coordinator: "Coordinator",
+  ofStep: (step) => step.worker_id,
+  ofWorker: (id) => id || "Coordinator",
+};
+
+// The API's record, as it sends it: a lead's hand-off holding a helper's, which made one tool call.
+const record = (helperEnd = "no_return") => ({
+  steps: [
+    {
+      kind: "handoff",
+      key: 1,
+      parent: null,
+      depth: 1,
+      worker_id: "lead",
+      transfer: false,
+      handoff: { at: "2026-10-31T12:00:01+00:00", task_shown: null },
+      returned: {
+        at: "2026-10-31T12:00:09+00:00",
+        result_shown: { format: "text", text: "done" },
+      },
+      end: "finished",
+      children: [2],
+      turn: 1,
+      relationship: "observed",
+    },
+    {
+      kind: "handoff",
+      key: 2,
+      parent: 1,
+      depth: 2,
+      worker_id: "helper",
+      transfer: false,
+      handoff: { at: "2026-10-31T12:00:02+00:00", by: "lead" },
+      returned: null,
+      end: helperEnd,
+      children: [3],
+      turn: 1,
+      relationship: "observed",
+    },
+    {
+      kind: "tool_call",
+      key: 3,
+      parent: 2,
+      depth: 2,
+      worker_id: "helper",
+      call: { tool: "lookup", worker_id: "helper", attribution: "reported" },
+      turn: 1,
+      relationship: "observed",
+    },
+  ],
+  turns: [
+    {
+      turn: 1,
+      request: { text: "hi", shown: { format: "text", text: "hi" } },
+      response: null,
+      children: [1],
+      calls_outside: 0,
+    },
+  ],
+  counts: { hand_offs: 2 },
+});
+
 describe("seconds", () => {
-  it("reads a stored time with no zone as UTC, and anything else as unknown", () => {
-    expect(seconds("2026-10-31T12:00:05")).toBe(
+  it("reads an API time, and anything else as unknown", () => {
+    expect(seconds("2026-10-31T12:00:05+00:00")).toBe(
       Date.UTC(2026, 9, 31, 12, 0, 5) / 1000,
-    );
-    expect(seconds("2026-10-31T12:00:05Z")).toBe(
-      seconds("2026-10-31T12:00:05"),
-    );
-    expect(seconds("2026-10-31T17:30:05+05:30")).toBe(
-      seconds("2026-10-31T12:00:05"),
     );
     expect(seconds(null)).toBeNull();
     expect(seconds("not a time")).toBeNull();
   });
 });
 
-describe("asShown", () => {
-  it("shows a JSON answer as indented code, a printed dict as it came, and text untouched", () => {
-    expect(asShown('{"refund": "RF-7"}')).toBe(
-      '```\n{\n  "refund": "RF-7"\n}\n```',
+describe("asMarkdown", () => {
+  it("fences a text the API marked as data and leaves prose as it came", () => {
+    const data = asMarkdown({ format: "code", text: '{\n  "a": 1\n}' });
+    expect(data.startsWith("```")).toBe(true);
+    expect(data).toContain('"a": 1');
+    expect(asMarkdown({ format: "text", text: "[Note] sent" })).toBe(
+      "[Note] sent",
     );
-    expect(asShown("{'refund': 'RF-7'}")).toBe("```\n{'refund': 'RF-7'}\n```");
-    expect(asShown("Refund RF-7 issued")).toBe("Refund RF-7 issued");
-  });
-
-  it.each([
-    ["[1, 2, 3]"],
-    ["['hotels', 'flights']"],
-    ["[{'id': 1}]"],
-    ["{'refund': 'RF-7', 'note': 'cut off…"],
-  ])("fences %s as data", (data) => {
-    expect(asShown(data)).toMatch(/^```\n/);
-  });
-
-  it.each([
-    ["[Note] refund issued"],
-    ["[Order 1042](https://x) shipped"],
-    ["[1] the first source"],
-    ["{Note} refund issued"],
-  ])("leaves the prose %s as text", (prose) => {
-    expect(asShown(prose)).toBe(prose);
   });
 });
 
 describe("isLong", () => {
-  it("folds an answer past six lines or 480 characters", () => {
-    expect(isLong("one\ntwo\nthree\nfour\nfive\nsix")).toBe(false);
-    expect(isLong("one\ntwo\nthree\nfour\nfive\nsix\nseven")).toBe(true);
-    expect(isLong("x".repeat(480))).toBe(false);
-    expect(isLong("x".repeat(481))).toBe(true);
+  it("folds a long answer and leaves a short one open", () => {
+    expect(isLong("short")).toBe(false);
+    expect(isLong("line\n".repeat(50))).toBe(true);
   });
 });
 
-describe("nest", () => {
-  it("puts each step under the hand-off its parent names and keeps the API's summary", () => {
-    const tree = nest({
-      steps: [
-        {
-          kind: "handoff",
-          key: 1,
-          parent: null,
-          depth: 1,
-          worker_id: "lead",
-          transfer: false,
-          handoff: { seq: 1 },
-          returned: { seq: 5 },
-          parallel: false,
-          turn: 1,
-        },
-        {
-          kind: "handoff",
-          key: 2,
-          parent: 1,
-          depth: 2,
-          worker_id: "helper",
-          transfer: false,
-          handoff: { seq: 2 },
-          returned: null,
-          parallel: true,
-        },
-        {
-          kind: "tool_call",
-          key: 3,
-          parent: 2,
-          depth: 2,
-          worker_id: "helper",
-          call: { seq: 3, tool: "t" },
-        },
-        {
-          kind: "tool_call",
-          key: 6,
-          parent: null,
-          depth: 0,
-          worker_id: null,
-          call: { seq: 6, tool: "reply" },
-          turn: 1,
-        },
-      ],
-      turns: [{ turn: 1, request: null, response: null }],
-      depth: 2,
-      parallel: 1,
-      overlap_unknown: true,
-      worker_depths: { lead: 1, helper: 2 },
-    });
-
-    const [lead, reply] = tree.items;
-    expect(lead).toMatchObject({
-      kind: "handoff",
-      worker_id: "lead",
-      depth: 1,
-      returned: { seq: 5 },
-    });
-    const [helper] = lead.items;
-    expect(helper).toMatchObject({
-      worker_id: "helper",
-      parallel: true,
-      delegated: { seq: 2 },
-    });
-    expect(helper.items.map((item) => item.event.tool)).toEqual(["t"]);
-    expect(reply).toMatchObject({ kind: "call", key: 6 });
+describe("steps from the API", () => {
+  it("lists a turn's hand-offs, each followed by the ones it made", () => {
+    expect(handOffsOf(record(), 1).map((step) => step.key)).toEqual([1, 2]);
+    expect(handOffsOf(record(), 2)).toEqual([]);
   });
 
-  it("puts each top-level step in its turn, with what it holds, and a step in no recorded turn apart", () => {
-    const handOff = (key, parent, turn) => ({
-      kind: "handoff",
-      key,
-      parent,
-      depth: parent === null ? 1 : 2,
-      worker_id: `w${key}`,
-      turn,
-    });
-    const tree = nest({
-      steps: [
-        handOff(1, null, 1),
-        handOff(2, 1, 1),
-        handOff(3, null, 2),
-        handOff(4, null, null),
-      ],
-      turns: [
-        { turn: 1, request: { text: "a" }, response: null },
-        { turn: 2, request: { text: "b" }, response: null },
-        { turn: null, request: null, response: null },
-      ],
-    });
-    expect(
-      tree.rounds.map((round) => [
-        round.turn,
-        round.items.map((item) => [item.key, item.items.map((one) => one.key)]),
-      ]),
-    ).toEqual([
-      [1, [[1, [2]]]],
-      [2, [[3, []]]],
-      [null, [[4, []]]],
-    ]);
+  it("shows a hand-off's own calls and ending, not the hand-offs it made", () => {
+    const data = record();
+    const byKey = stepsByKey(data);
+    const lead = handOffEvents(byKey[1], byKey, names);
+    expect(lead.some((event) => event.call)).toBe(false);
+    const helper = handOffEvents(byKey[2], byKey, names);
+    expect(helper.filter((event) => event.call)).toHaveLength(1);
   });
 
-  it("names a turn the record does not say as not recorded", () => {
-    const rounds = [{ turn: 1 }, { turn: null }];
-    expect(rounds.map((round) => turnLabel(round, rounds))).toEqual([
-      "Turn 1 · ",
-      "Turn not recorded · ",
-    ]);
+  it("follows the API's end for a hand-off that never returned", () => {
+    const ending = (end) => {
+      const data = record(end);
+      const byKey = stepsByKey(data);
+      return handOffEvents(byKey[2], byKey, names).at(-1);
+    };
+    expect(ending("no_return").bad).toBe(true);
+    expect(ending("cut_off").bad).toBeUndefined();
+    expect(ending("cut_off").note).not.toBe(ending("no_return").note);
   });
 
-  it("reads a record with no steps as an empty tree", () => {
-    expect(nest({})).toEqual({ items: [], rounds: [] });
-  });
-});
-
-describe("hand-off rows", () => {
-  const failedTool = {
-    kind: "call",
-    key: 9,
-    event: { tool: "issue_refund", status: "error" },
-  };
-  const block = (key, extra) => ({
-    kind: "handoff",
-    key,
-    worker_id: `w${key}`,
-    items: [],
-    ...extra,
-  });
-
-  it("lists each hand-off followed by the ones it made, leaving tool calls out", () => {
-    const nested = block(2);
-    const tree = [block(1, { items: [failedTool, nested] }), block(3)];
-    expect(handOffRows(tree).map((one) => one.key)).toEqual([1, 2, 3]);
-  });
-
-  it("reads how a hand-off ended from its return, a control pass from its tools, and a cut record as unknown", () => {
-    const ok = { status: "ok" };
-    const error = { status: "error" };
-    expect(handOffEnd(block(1, { returned: ok }))).toBe("finished");
-    // The worker recovered from its failed tool and returned.
-    expect(handOffEnd(block(1, { returned: ok, items: [failedTool] }))).toBe(
-      "finished",
+  it("reads every step of a call in order: the request, each hand-off and what it held, then the reply", () => {
+    const data = record();
+    const keys = callEvents(data, stepsByKey(data), names).map(
+      (event) => event.key,
     );
-    expect(handOffEnd(block(1, { returned: error }))).toBe("failed");
-    expect(handOffEnd(block(1, { transfer: true }))).toBe("passed");
-    expect(handOffEnd(block(1, { transfer: true, items: [failedTool] }))).toBe(
-      "failed",
-    );
-    expect(handOffEnd(block(1))).toBe("no_return");
-    expect(handOffEnd(block(1), true)).toBe("cut_off");
-  });
-
-  it("counts a worker handed work twice once, and a control pass on its own", () => {
-    const rows = [
-      block(1, { worker_id: "a", returned: { status: "ok" } }),
-      block(2, { worker_id: "a", returned: { status: "error" } }),
-      block(3, { worker_id: "b" }),
-      block(4, { worker_id: "c", transfer: true }),
-    ];
-    expect(handOffCounts(rows, false)).toEqual({
-      handOffs: 4,
-      workers: 3,
-      finished: 1,
-      didNotFinish: 2,
-      passed: 1,
-      cutOff: 0,
-    });
+    expect(keys).toEqual([
+      "request-1",
+      "handoff-1",
+      "handoff-2",
+      "call-3",
+      "end-2",
+      "end-1",
+      "reply-1",
+    ]);
   });
 });

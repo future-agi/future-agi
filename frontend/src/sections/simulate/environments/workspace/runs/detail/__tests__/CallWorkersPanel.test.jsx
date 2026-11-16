@@ -8,17 +8,18 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
 }));
 
 const { default: CallWorkersPanel } = await import("../CallWorkersPanel");
+const { CALL_WORKERS_COPY: C } = await import("../callTraces.constants");
 
 // A call with no hand-off shows its steps with no toggle.
 const renderSteps = (ui) => {
   const view = render(ui);
-  const toggle = screen.queryByRole("checkbox", { name: "Raw events" });
+  const toggle = screen.queryByRole("checkbox", { name: C.rawEvents });
   if (toggle) fireEvent.click(toggle);
   return view;
 };
 
 // The API's rows, written as it sends them: simulate/services/harness_worker_steps.py arranges a call's events
-// into these, and is tested there.
+// into these, decides each hand-off's end and counts, and is tested there.
 const handOffStep = (
   key,
   {
@@ -27,6 +28,8 @@ const handOffStep = (
     worker_id,
     handoff = null,
     returned = null,
+    end,
+    children = [],
     parallel = false,
     relationship = "observed",
   },
@@ -39,6 +42,8 @@ const handOffStep = (
   transfer: handoff?.type === "transferred",
   handoff,
   returned,
+  end,
+  children,
   parallel,
   turn: 1,
   order: key,
@@ -55,7 +60,20 @@ const callStep = (call, { parent = null, depth = 0 } = {}) => ({
   order: call.seq,
   relationship: "observed",
 });
-const oneTurn = (request, response) => [{ turn: 1, request, response }];
+const oneTurn = (request, response, children, callsOutside = 0) => [
+  { turn: 1, request, response, children, calls_outside: callsOutside },
+];
+// A text as the API sends it, marked as prose or data.
+const prose = (text) => ({ format: "text", text });
+const counts = (finished, didNotFinish, extra) => ({
+  hand_offs: finished + didNotFinish,
+  workers: 1,
+  finished,
+  did_not_finish: didNotFinish,
+  passed: 0,
+  cut_off: 0,
+  ...extra,
+});
 
 const WORKERS = [
   {
@@ -75,10 +93,15 @@ const WORKERS = [
     instance_ids: [],
   },
 ];
-const REQUEST = { text: "Please refund order 1042", at: "2026-10-31T11:59:54" };
+const REQUEST = {
+  text: "Please refund order 1042",
+  at: "2026-10-31T11:59:54+00:00",
+  shown: prose("Please refund order 1042"),
+};
 const RESPONSE = {
   text: "Your refund is on its way",
-  at: "2026-10-31T12:00:10",
+  at: "2026-10-31T12:00:10+00:00",
+  shown: prose("Your refund is on its way"),
 };
 const DELEGATED = {
   seq: 1,
@@ -86,7 +109,8 @@ const DELEGATED = {
   worker_id: "r/order_lookup",
   delegation_id: "d1",
   task: "inspect order 1042",
-  at: "2026-10-31T11:59:55.900",
+  task_shown: prose("inspect order 1042"),
+  at: "2026-10-31T11:59:55.900+00:00",
   attribution: "reported",
 };
 const LOOKUP = {
@@ -98,7 +122,7 @@ const LOOKUP = {
   status: "error",
   input: { order_id: "1042" },
   output: "store unavailable",
-  at: "2026-10-31T11:59:57",
+  at: "2026-10-31T11:59:57+00:00",
   attribution: "reported",
 };
 const RETURNED = {
@@ -107,7 +131,9 @@ const RETURNED = {
   worker_id: "r/order_lookup",
   delegation_id: "d1",
   result: "eligible",
-  at: "2026-10-31T11:59:59",
+  result_shown: prose("eligible"),
+  status: "ok",
+  at: "2026-10-31T11:59:59+00:00",
   attribution: "reported",
 };
 const REPLY_CALL = {
@@ -116,19 +142,20 @@ const REPLY_CALL = {
   worker_id: null,
   tool: "send_reply",
   status: "ok",
-  at: "2026-10-31T12:00:09",
+  at: "2026-10-31T12:00:09+00:00",
   attribution: "reported",
 };
 
 // One hand-off with a failed tool call and its return, then a call of the coordinator's own.
 const timeline = ({
   returned = RETURNED,
+  end = "finished",
   request = REQUEST,
   response = RESPONSE,
   ...rest
 } = {}) => ({
   collected_at: "2026-10-31T12:00:00Z",
-  started_at: "2026-10-31T11:59:50",
+  started_at: "2026-10-31T11:59:50+00:00",
   coordinator: { name: "Returns coordinator" },
   workers: WORKERS,
   events: [DELEGATED, LOOKUP, returned, REPLY_CALL].filter(Boolean),
@@ -137,11 +164,17 @@ const timeline = ({
       worker_id: "r/order_lookup",
       handoff: DELEGATED,
       returned,
+      end,
+      children: [LOOKUP.seq],
     }),
     callStep(LOOKUP, { parent: 1, depth: 1 }),
     callStep(REPLY_CALL),
   ],
-  turns: oneTurn(request, response),
+  turns: oneTurn(request, response, [1, REPLY_CALL.seq], 1),
+  counts: counts(end === "finished" ? 1 : 0, end === "finished" ? 0 : 1),
+  cut_off: false,
+  beyond_boundary: false,
+  pending: false,
   ...rest,
 });
 const TIMELINE = timeline();
@@ -171,12 +204,12 @@ describe("CallWorkersPanel", () => {
   it("lists every step in order, from the request through each hand-off and its calls to the reply", () => {
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(steps()).toEqual([
-      "Message",
-      "Hand-off",
-      "Tool call",
-      "Answer",
-      "Tool call",
-      "Reply",
+      C.messageStep,
+      C.handOffStep,
+      C.toolCallStep,
+      C.answerStep,
+      C.toolCallStep,
+      C.replyStep,
     ]);
     const [, handOff, tool] = screen.getAllByTestId("raw-event");
     expect(handOff).toHaveTextContent("Returns coordinator");
@@ -184,11 +217,11 @@ describe("CallWorkersPanel", () => {
     expect(handOff).toHaveTextContent("inspect order 1042");
     expect(tool).toHaveTextContent("Order-lookup worker");
     expect(tool).toHaveTextContent("get_order");
-    expect(tool).toHaveTextContent("error");
+    expect(tool).toHaveTextContent(C.failed);
   });
 
   it("says when the record was built without the app's traces, and not otherwise", () => {
-    const note = /the app sent no traces, so the Traces tab is empty/;
+    const note = C.sandboxOnly;
     result = {
       data: { ...TIMELINE, spans_received: false },
       isLoading: false,
@@ -206,12 +239,14 @@ describe("CallWorkersPanel", () => {
     expect(screen.queryByText(note)).toBeNull();
   });
 
-  it("shows an answer returned as data as code, kept as it came", () => {
+  it("shows an answer the API marks as data as code, kept as it came", () => {
+    const printed = "{'valid': False, 'feedback': 'Too_short'}";
     result = {
       data: timeline({
         returned: {
           ...RETURNED,
-          result: "{'valid': False, 'feedback': 'Too_short'}",
+          result: printed,
+          result_shown: { format: "code", text: printed },
         },
       }),
       isLoading: false,
@@ -232,7 +267,9 @@ describe("CallWorkersPanel", () => {
       (_, index) => `line ${index + 1}`,
     ).join("\n\n");
     result = {
-      data: timeline({ returned: { ...RETURNED, result: answer } }),
+      data: timeline({
+        returned: { ...RETURNED, result: answer, result_shown: prose(answer) },
+      }),
       isLoading: false,
       isError: false,
     };
@@ -242,10 +279,10 @@ describe("CallWorkersPanel", () => {
       .filter((one) => one.textContent.includes("line 12"));
     expect(returned).toHaveAttribute("data-clamped", "true");
     // The short request and reply are shown whole, with nothing to open.
-    expect(screen.getAllByText("Show more")).toHaveLength(1);
-    fireEvent.click(screen.getByText("Show more"));
+    expect(screen.getAllByText(C.showMore)).toHaveLength(1);
+    fireEvent.click(screen.getByText(C.showMore));
     expect(returned).toHaveAttribute("data-clamped", "false");
-    fireEvent.click(screen.getByText("Show less"));
+    fireEvent.click(screen.getByText(C.showLess));
     expect(returned).toHaveAttribute("data-clamped", "true");
   });
 
@@ -255,13 +292,17 @@ describe("CallWorkersPanel", () => {
         workers: WORKERS.slice(1),
         events: [REPLY_CALL],
         steps: [callStep(REPLY_CALL)],
+        turns: oneTurn(REQUEST, RESPONSE, [REPLY_CALL.seq], 1),
+        counts: counts(0, 0),
       }),
       isLoading: false,
       isError: false,
     };
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Not observed: Audit worker")).toBeInTheDocument();
-    expect(steps()).toEqual(["Tool call"]);
+    expect(
+      screen.getByText(C.workersNotObserved("Audit worker")),
+    ).toBeInTheDocument();
+    expect(steps()).toEqual([C.toolCallStep]);
   });
 
   it("times each step from the call's start", () => {
@@ -275,7 +316,7 @@ describe("CallWorkersPanel", () => {
   it("shows a tool call's input and output until its JSON is hidden", () => {
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("store unavailable")).toBeInTheDocument();
-    const [button] = screen.getAllByRole("button", { name: "Hide JSON" });
+    const [button] = screen.getAllByRole("button", { name: C.hideJson });
     fireEvent.click(button);
     expect(screen.getByText("store unavailable")).not.toBeVisible();
     expect(button).toHaveAttribute("aria-expanded", "false");
@@ -288,27 +329,28 @@ describe("CallWorkersPanel", () => {
         request: null,
         response: null,
         returned: null,
+        end: "no_return",
       }),
       isLoading: false,
       isError: false,
     };
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getAllByText("Coordinator").length).toBeGreaterThan(0);
-    expect(screen.getByText("No request recorded")).toBeInTheDocument();
-    expect(screen.getByText("No reply recorded")).toBeInTheDocument();
+    expect(screen.getAllByText(C.coordinator).length).toBeGreaterThan(0);
+    expect(screen.getByText(C.noRequest)).toBeInTheDocument();
+    expect(screen.getByText(C.noReply)).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "No return from Order-lookup worker before the call ended",
-      ),
+      screen.getByText(C.noReturn("Order-lookup worker")),
     ).toBeInTheDocument();
   });
 
   it("shows what a worker returned as formatted text, not raw markdown", () => {
     // A return whose hand-off the record never saw stands alone, its place unknown.
+    const text = "**Order 1042**\n- Delivered\n- Inside the window";
     const orphan = {
       ...RETURNED,
       seq: 1,
-      result: "**Order 1042**\n- Delivered\n- Inside the window",
+      result: text,
+      result_shown: prose(text),
     };
     result = {
       data: timeline({
@@ -317,9 +359,11 @@ describe("CallWorkersPanel", () => {
           handOffStep(1, {
             worker_id: "r/order_lookup",
             returned: orphan,
+            end: "finished",
             relationship: "unknown",
           }),
         ],
+        turns: oneTurn(REQUEST, RESPONSE, [1]),
       }),
       isLoading: false,
       isError: false,
@@ -335,7 +379,11 @@ describe("CallWorkersPanel", () => {
   it("doesn't load an image a worker's text points at", () => {
     result = {
       data: timeline({
-        returned: { ...RETURNED, result: "Done ![](https://host/x?d=secret)" },
+        returned: {
+          ...RETURNED,
+          result: "Done ![](https://host/x?d=secret)",
+          result_shown: prose("Done ![](https://host/x?d=secret)"),
+        },
       }),
       isLoading: false,
       isError: false,
@@ -359,14 +407,16 @@ describe("CallWorkersPanel", () => {
       data: timeline({
         events: [unattributed],
         steps: [callStep(unattributed)],
+        turns: oneTurn(REQUEST, RESPONSE, [1], 1),
+        counts: counts(0, 0),
       }),
       isLoading: false,
       isError: false,
     };
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByTestId("raw-event")).toHaveTextContent("Unknown");
+    expect(screen.getByTestId("raw-event")).toHaveTextContent(C.unknown);
     expect(screen.getByTestId("raw-event")).not.toHaveTextContent(
-      "Coordinator",
+      C.coordinator,
     );
   });
 
@@ -377,17 +427,13 @@ describe("CallWorkersPanel", () => {
     unmount();
     result = { data: undefined, isLoading: false, isError: true };
     const failed = renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.getByText("Couldn't load this call's participants."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(C.error)).toBeInTheDocument();
     failed.unmount();
     // A failed refetch leaves what's already on screen.
     result = { data: TIMELINE, isLoading: false, isError: true };
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByTestId("raw-events")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Couldn't load this call's participants."),
-    ).toBeNull();
+    expect(screen.queryByText(C.error)).toBeNull();
   });
 
   describe("steps", () => {
@@ -400,7 +446,7 @@ describe("CallWorkersPanel", () => {
       instance_ids: [],
     });
     const at = (second) =>
-      `2026-10-31T12:00:${String(second).padStart(2, "0")}`;
+      `2026-10-31T12:00:${String(second).padStart(2, "0")}+00:00`;
     const event = (seq, type, id, extra) => ({
       seq,
       type,
@@ -408,8 +454,18 @@ describe("CallWorkersPanel", () => {
       attribution: "reported",
       ...extra,
     });
-    const record = (workers, events, steps) => ({
-      data: timeline({ workers, events, steps }),
+    const record = (workers, events, steps, extra) => ({
+      data: timeline({
+        workers,
+        events,
+        steps,
+        turns: oneTurn(
+          REQUEST,
+          RESPONSE,
+          steps.filter((one) => one.parent === null).map((one) => one.key),
+        ),
+        ...extra,
+      }),
       isLoading: false,
       isError: false,
     });
@@ -436,23 +492,30 @@ describe("CallWorkersPanel", () => {
         [worker("inspiration"), worker("place")],
         [pass, handOff, back],
         [
-          handOffStep(1, { worker_id: "r/inspiration", handoff: pass }),
+          handOffStep(1, {
+            worker_id: "r/inspiration",
+            handoff: pass,
+            end: "passed",
+            children: [2],
+          }),
           handOffStep(2, {
             parent: 1,
             depth: 2,
             worker_id: "r/place",
             handoff: handOff,
             returned: back,
+            end: "finished",
           }),
         ],
+        { counts: counts(1, 0, { hand_offs: 2, passed: 1 }) },
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
       expect(steps()).toEqual([
-        "Message",
-        "Control pass",
-        "Hand-off",
-        "Answer",
-        "Reply",
+        C.messageStep,
+        C.controlPassStep,
+        C.handOffStep,
+        C.answerStep,
+        C.replyStep,
       ]);
       const [, passRow, handOffRow] = screen.getAllByTestId("raw-event");
       expect(passRow).toHaveTextContent("→ inspiration worker");
@@ -489,23 +552,26 @@ describe("CallWorkersPanel", () => {
             worker_id: "r/research",
             handoff: events[0],
             returned: events[2],
+            end: "finished",
             parallel: true,
           }),
           handOffStep(2, {
             worker_id: "r/code",
             handoff: events[1],
             returned: events[3],
+            end: "finished",
             parallel: true,
           }),
           handOffStep(5, {
             worker_id: "r/review",
             handoff: events[4],
             returned: events[5],
+            end: "finished",
           }),
         ],
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.getAllByText("in parallel")).toHaveLength(2);
+      expect(screen.getAllByText(C.inParallel)).toHaveLength(2);
     });
 
     it("says why a step's payload, later steps or a return are missing when the record reached its limit", () => {
@@ -534,38 +600,34 @@ describe("CallWorkersPanel", () => {
         result: "x",
         at: at(3),
       });
-      result = record(
-        [worker("a"), worker("b")],
-        [toB, toA, lookup, fromA],
-        [
-          handOffStep(1, { worker_id: "r/b", handoff: toB }),
-          handOffStep(2, { worker_id: "r/a", handoff: toA, returned: fromA }),
-          callStep(lookup, { parent: 2, depth: 1 }),
-        ],
-      );
-      const uncut = result;
+      // The API's end for b: no return in a whole record, not shown in a cut one.
+      const read = (end, extra) =>
+        record(
+          [worker("a"), worker("b")],
+          [toB, toA, lookup, fromA],
+          [
+            handOffStep(1, { worker_id: "r/b", handoff: toB, end }),
+            handOffStep(2, {
+              worker_id: "r/a",
+              handoff: toA,
+              returned: fromA,
+              end: "finished",
+              children: [3],
+            }),
+            callStep(lookup, { parent: 2, depth: 1 }),
+          ],
+          extra,
+        );
+      result = read("no_return");
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.getByText(/^No return from b worker/)).toBeInTheDocument();
+      expect(screen.getByText(C.noReturn("b worker"))).toBeInTheDocument();
       cleanup();
-      result = {
-        ...uncut,
-        data: { ...uncut.data, events_omitted: 12 },
-      };
+      result = read("cut_off", { events_omitted: 12, cut_off: true });
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-      expect(
-        screen.getByText(/^Return from b worker not shown/),
-      ).toBeInTheDocument();
-      expect(screen.queryByText(/^No return from/)).toBeNull();
-      expect(
-        screen.getAllByText(
-          "Not kept: this call's record reached its size limit",
-        ),
-      ).toHaveLength(2);
-      expect(
-        screen.getByText(
-          "12 more steps not shown: this call's record reached its size limit",
-        ),
-      ).toBeInTheDocument();
+      expect(screen.getByText(C.returnCutOff("b worker"))).toBeInTheDocument();
+      expect(screen.queryByText(C.noReturn("b worker"))).toBeNull();
+      expect(screen.getAllByText(C.payloadOmitted)).toHaveLength(2);
+      expect(screen.getByText(C.eventsOmitted(12))).toBeInTheDocument();
     });
 
     it("keeps a long record's JSON closed, so it stays quick to draw", () => {
@@ -587,13 +649,18 @@ describe("CallWorkersPanel", () => {
         [worker("a")],
         [handOff, ...calls],
         [
-          handOffStep(1, { worker_id: "r/a", handoff: handOff }),
+          handOffStep(1, {
+            worker_id: "r/a",
+            handoff: handOff,
+            end: "no_return",
+            children: calls.map((one) => one.seq),
+          }),
           ...calls.map((one) => callStep(one, { parent: 1, depth: 1 })),
         ],
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.queryByRole("button", { name: "Hide JSON" })).toBeNull();
-      expect(screen.getAllByRole("button", { name: "Show JSON" })).toHaveLength(
+      expect(screen.queryByRole("button", { name: C.hideJson })).toBeNull();
+      expect(screen.getAllByRole("button", { name: C.showJson })).toHaveLength(
         21,
       );
     });
@@ -610,8 +677,15 @@ describe("CallWorkersPanel", () => {
       depth: 1,
       worker_id: handoff.worker_id,
       transfer: false,
-      handoff: { ...handoff, seq: key, task: `task ${key}` },
+      handoff: {
+        ...handoff,
+        seq: key,
+        task: `task ${key}`,
+        task_shown: prose(`task ${key}`),
+      },
       returned: { ...reply, seq: key + 100 },
+      end: "finished",
+      children: [],
       parallel: false,
       turn,
       order,
@@ -624,15 +698,28 @@ describe("CallWorkersPanel", () => {
       turns: [
         {
           turn: 1,
-          request: { text: "first ask", at: "t1" },
-          response: { text: "first reply", at: "t2" },
+          request: { text: "first ask", at: "t1", shown: prose("first ask") },
+          response: {
+            text: "first reply",
+            at: "t2",
+            shown: prose("first reply"),
+          },
+          children: [1],
+          calls_outside: 0,
         },
         {
           turn: 2,
-          request: { text: "second ask", at: "t3" },
-          response: { text: "second reply", at: "t4" },
+          request: { text: "second ask", at: "t3", shown: prose("second ask") },
+          response: {
+            text: "second reply",
+            at: "t4",
+            shown: prose("second reply"),
+          },
+          children: [2],
+          calls_outside: 0,
         },
       ],
+      counts: counts(2, 0),
     });
 
     it("gives each turn its own request, hand-off table and reply", () => {
@@ -640,7 +727,7 @@ describe("CallWorkersPanel", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       const turns = screen.getAllByTestId("turn");
       expect(turns).toHaveLength(2);
-      expect(turns[0]).toHaveTextContent("Turn 1 · Caller's request");
+      expect(turns[0]).toHaveTextContent(`${C.turn(1)} · ${C.request}`);
       expect(turns[0]).toHaveTextContent("first ask");
       expect(turns[0]).toHaveTextContent("task 1");
       expect(turns[0]).not.toHaveTextContent("task 2");
@@ -701,7 +788,8 @@ describe("CallWorkersPanel", () => {
             relationship: "observed",
           },
         ],
-        turns: [{ turn: 1, request: REQUEST, response: RESPONSE }],
+        turns: oneTurn(REQUEST, RESPONSE, [9], 1),
+        counts: counts(0, 0),
       },
       isLoading: false,
       isError: false,
@@ -717,7 +805,7 @@ describe("CallWorkersPanel", () => {
           traceIds={["tr-1"]}
         />,
       );
-      fireEvent.click(screen.getByRole("button", { name: "Open in Traces" }));
+      fireEvent.click(screen.getByRole("button", { name: C.openInTraces }));
       expect(onOpenTrace).toHaveBeenCalledWith("tr-1", "sp-1");
     });
 
@@ -728,8 +816,13 @@ describe("CallWorkersPanel", () => {
         data: timeline({
           events: [traced],
           steps: [
-            handOffStep(1, { worker_id: traced.worker_id, handoff: traced }),
+            handOffStep(1, {
+              worker_id: traced.worker_id,
+              handoff: traced,
+              end: "finished",
+            }),
           ],
+          turns: oneTurn(REQUEST, RESPONSE, [1]),
         }),
         isLoading: false,
         isError: false,
@@ -742,11 +835,9 @@ describe("CallWorkersPanel", () => {
         />,
       );
       fireEvent.click(
-        screen.getByRole("button", {
-          name: /^Show raw data for Order-lookup worker/,
-        }),
+        screen.getByRole("button", { name: C.showRow("Order-lookup worker") }),
       );
-      fireEvent.click(screen.getByRole("button", { name: "Open in Traces" }));
+      fireEvent.click(screen.getByRole("button", { name: C.openInTraces }));
       expect(onOpenTrace).toHaveBeenCalledWith("tr-1", "sp-handoff");
     });
 
@@ -759,9 +850,7 @@ describe("CallWorkersPanel", () => {
           traceIds={["tr-other"]}
         />,
       );
-      expect(
-        screen.queryByRole("button", { name: "Open in Traces" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: C.openInTraces })).toBeNull();
     });
 
     it("marks only the hand-off a worker never came back from, keeping its steps so far", () => {
@@ -800,39 +889,38 @@ describe("CallWorkersPanel", () => {
           turns: [],
           collection: "no_evidence",
           workers: WORKERS.map((one) => ({ ...one, observed: false })),
+          counts: counts(0, 0),
         },
         isLoading: false,
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(
-        screen.getByText(/Nothing was recorded for this call's participants/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(C.noEvidence)).toBeInTheDocument();
       // No empty step list under the note.
       expect(screen.queryByTestId("raw-events")).toBeNull();
     });
 
-    it.each(["partial", "unavailable"])(
-      "does not call a return missing after a %s read a failure",
-      (collection) => {
-        result = {
-          data: timeline({ returned: null, collection }),
-          isLoading: false,
-          isError: false,
-        };
-        render(<CallWorkersPanel callExecutionId="c1" />);
-        expect(screen.getByTestId("worker-row")).toHaveAttribute(
-          "data-end",
-          "cut_off",
-        );
-        expect(
-          screen.getByText(
-            "Return from Order-lookup worker not shown: this call's record is incomplete",
-          ),
-        ).toBeInTheDocument();
-        expect(screen.queryByText(/^No return from/)).toBeNull();
-      },
-    );
+    it("does not call a return missing when the API says the record was cut", () => {
+      result = {
+        data: timeline({
+          returned: null,
+          end: "cut_off",
+          collection: "partial",
+          cut_off: true,
+        }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("worker-row")).toHaveAttribute(
+        "data-end",
+        "cut_off",
+      );
+      expect(
+        screen.getByText(C.returnCutOff("Order-lookup worker")),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(C.noReturn("Order-lookup worker"))).toBeNull();
+    });
 
     it("says when only part of the call's traces could be read", () => {
       result = {
@@ -841,9 +929,7 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(
-        screen.getByText(/Only part of this call's traces could be read/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(C.partialCollection)).toBeInTheDocument();
     });
 
     it("says when the call's traces could not be read", () => {
@@ -853,9 +939,7 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(
-        screen.getByText(/This call's traces could not be read/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(C.unavailableCollection)).toBeInTheDocument();
     });
   });
 
@@ -924,15 +1008,21 @@ describe("CallWorkersPanel", () => {
           worker_id: "r/lookup",
           handoff: EVENTS[0],
           returned: EVENTS[2],
+          end: "finished",
+          children: [2],
         }),
         callStep(EVENTS[1], { parent: 1, depth: 1 }),
         handOffStep(4, {
           worker_id: "r/refund",
           handoff: EVENTS[3],
           returned: EVENTS[5],
+          end: "failed",
+          children: [5],
         }),
         callStep(EVENTS[4], { parent: 4, depth: 1 }),
       ],
+      turns: oneTurn(REQUEST, RESPONSE, [1, 4]),
+      counts: counts(1, 1, { workers: 2 }),
     });
     const row = (name) =>
       screen
@@ -943,19 +1033,25 @@ describe("CallWorkersPanel", () => {
       result = { data: TABLE, isLoading: false, isError: false };
     });
 
-    it("opens the table with a count of how hand-offs ended and marks the failed one", () => {
-      render(<CallWorkersPanel callExecutionId="c1" />);
-
-      expect(
-        screen.getByText("2 hand-offs to 2 workers. 1 finished, 1 didn't."),
-      ).toBeInTheDocument();
+    it("opens the table with the API's count of how hand-offs ended and marks the failed one", () => {
+      const view = render(<CallWorkersPanel callExecutionId="c1" />);
+      const summary = C.handOffSummary(TABLE.counts);
+      expect(screen.getByText(summary)).toBeInTheDocument();
       expect(screen.queryByTestId("raw-events")).toBeNull();
+      // The headline follows the counts the API sends.
+      result = {
+        data: { ...TABLE, counts: counts(2, 0, { workers: 2 }) },
+        isLoading: false,
+        isError: false,
+      };
+      view.rerender(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.queryByText(summary)).toBeNull();
       expect(row("Lookup")).toHaveAttribute("data-end", "finished");
       expect(row("Refund")).toHaveAttribute("data-end", "failed");
       // The icon alone can't say so: the button's own label decides what a screen reader hears.
       expect(
         screen.getByRole("button", {
-          name: "Show raw data for Refund, error",
+          name: `${C.showRow("Refund")}, ${C.failed}`,
         }),
       ).toBeInTheDocument();
     });
@@ -985,15 +1081,15 @@ describe("CallWorkersPanel", () => {
     it("opens only the clicked row's raw data, and the toggle swaps the table for every step", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       fireEvent.click(
-        screen.getByRole("button", { name: "Show raw data for Lookup" }),
+        screen.getByRole("button", { name: C.showRow("Lookup") }),
       );
 
       const raw = screen.getByTestId("worker-row-raw");
       expect(raw).toHaveTextContent("get_order");
       expect(raw).not.toHaveTextContent("issue_refund");
 
-      fireEvent.click(screen.getByRole("checkbox", { name: "Raw events" }));
-      expect(steps()).toContain("Reply");
+      fireEvent.click(screen.getByRole("checkbox", { name: C.rawEvents }));
+      expect(steps()).toContain(C.replyStep);
       expect(screen.queryByTestId("worker-row")).toBeNull();
     });
   });

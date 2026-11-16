@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
@@ -14,33 +13,42 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
 
 vi.mock("../CallWorkersPanel", async () => {
   const { useState } = await import("react");
-  return {
-    default: function WorkersStub({ onOpenTrace }) {
-      // Stands for what the reader opened in the panel: expanded rows, the Raw events toggle.
-      const [expanded, setExpanded] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => onOpenTrace("tr-1")}>
-            open step trace
-          </button>
-          <button
-            type="button"
-            aria-pressed={expanded}
-            onClick={() => setExpanded(true)}
-          >
-            expand row
-          </button>
-        </>
-      );
-    },
-  };
+  const { default: PropTypes } = await import("prop-types");
+  function WorkersStub({ onOpenTrace }) {
+    // Stands for what the reader opened in the panel: expanded rows, the Raw events toggle.
+    const [expanded, setExpanded] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => onOpenTrace("tr-1")}>
+          open step trace
+        </button>
+        <button
+          type="button"
+          aria-pressed={expanded}
+          onClick={() => setExpanded(true)}
+        >
+          expand row
+        </button>
+      </>
+    );
+  }
+  WorkersStub.propTypes = { onOpenTrace: PropTypes.func };
+  return { default: WorkersStub };
 });
 
-vi.mock("../CallTracesPanel", () => ({
-  default: ({ openTraceId }) => (
-    <div data-testid="traces-panel" data-open-trace={String(openTraceId)} />
-  ),
-}));
+vi.mock("../CallTracesPanel", async () => {
+  const { default: PropTypes } = await import("prop-types");
+  function TracesStub({ openTrace }) {
+    return (
+      <div
+        data-testid="traces-panel"
+        data-open-trace={String(openTrace?.traceId ?? null)}
+      />
+    );
+  }
+  TracesStub.propTypes = { openTrace: PropTypes.object };
+  return { default: TracesStub };
+});
 
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
 

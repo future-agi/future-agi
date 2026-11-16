@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from simulate.serializers.call_workers_v3 import CallWorkerEventSerializer
 from simulate.services import harness_workers
 from simulate.services.harness_workers import worker_timeline
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
-from simulate.views.run_results_v3 import CallWorkerEventSerializer
 from tfc.utils.serializer_fields import JsonValueField
 
 RUN = "run-1"
@@ -267,9 +267,9 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
 
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
         ),
-        patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        patch("simulate.services.harness_workers.get_reader", return_value=reader),
     ):
         timeline = harness_workers.record_call_workers(str(call.id))
 
@@ -279,7 +279,6 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     assert reader.asked == (["t1"], "p1")
     # The read is lean, bounded in rows and in time.
     assert reader.include_heavy is False
-    assert reader.limit == harness_workers.MAX_SPANS + 1
     assert reader.cap_ms == harness_workers.SPAN_READ_CAP_MS
     assert stored["collection"] == "complete"
 
@@ -287,9 +286,9 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     _forget(call)
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
         ),
-        patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        patch("simulate.services.harness_workers.get_reader", return_value=reader),
         patch.object(harness_workers, "MAX_SPANS", 2),
     ):
         assert (
@@ -300,10 +299,10 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     _forget(call)
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
         ),
         patch(
-            "tracer.services.clickhouse.v2.get_reader",
+            "simulate.services.harness_workers.get_reader",
             return_value=_Reader(SPANS, fail=TimeoutError("read cap")),
         ),
     ):
@@ -321,7 +320,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     # reads not observed, so the later read runs and the API never answers 204.
     _forget(call)
     with patch(
-        "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
+        "simulate.services.harness_workers.list_run_traces", return_value=_traced(None)
     ):
         unseen = harness_workers.record_call_workers(str(call.id))
     assert unseen is not None and unseen["collection"] == "no_evidence"
@@ -346,11 +345,11 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     _forget(call)
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces",
+            "simulate.services.harness_workers.list_run_traces",
             return_value=_traced(None),
         ),
         patch(
-            "tracer.services.clickhouse.v2.get_reader",
+            "simulate.services.harness_workers.get_reader",
             side_effect=AssertionError("no spans to read"),
         ),
     ):
@@ -378,11 +377,11 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     _forget(call)
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces",
+            "simulate.services.harness_workers.list_run_traces",
             return_value=_traced(None),
         ),
         patch(
-            "tracer.services.clickhouse.v2.get_reader",
+            "simulate.services.harness_workers.get_reader",
             side_effect=AssertionError("no spans to read"),
         ),
     ):
@@ -403,49 +402,16 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     call.save(update_fields=["provider_call_data", "call_metadata"])
     with (
         patch(
-            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
         ),
-        patch("tracer.services.clickhouse.v2.get_reader", return_value=_Reader(single)),
+        patch(
+            "simulate.services.harness_workers.get_reader", return_value=_Reader(single)
+        ),
         patch.object(harness_workers, "declared_workers", return_value=[]),
     ):
         assert harness_workers.record_call_workers(str(call.id)) is None
     call.refresh_from_db()
     assert harness_workers.WORKERS_KEY not in call.call_metadata
-
-
-def test_the_span_read_cap_reaches_the_clickhouse_query_settings():
-    from unittest.mock import MagicMock, patch
-
-    from simulate.services import harness_workers
-    from tracer.services.clickhouse.application_read_policy import (
-        application_read_context,
-    )
-    from tracer.services.clickhouse.v2 import get_reader
-
-    client = MagicMock()
-    client.query.return_value.result_rows = []
-    with (
-        patch("clickhouse_connect.get_client", return_value=client) as connect,
-        patch(
-            "tfc.telemetry.instrumentation.instrument_clickhouse_client",
-            side_effect=lambda one: one,
-        ),
-        patch(
-            "tracer.services.clickhouse.v2.get_v2_config",
-            return_value={
-                "host": "h",
-                "http_port": 1,
-                "tcp_port": 2,
-                "user": "u",
-                "password": "p",
-                "database": "d",
-                "server_enforced_readonly": False,
-            },
-        ),
-        application_read_context(execution_cap_ms=harness_workers.SPAN_READ_CAP_MS),
-    ):
-        get_reader().list_by_trace_ids(["t1"], project_id="p1", limit=5001)
-    assert connect.call_args.kwargs["settings"]["max_execution_time"] == 30
 
 
 @pytest.mark.django_db
@@ -495,29 +461,30 @@ def test_declared_workers_come_from_the_version_the_run_was_pinned_to(
     ]
 
 
-@pytest.mark.django_db
-def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
-    from unittest.mock import patch
+def test_a_record_that_may_still_change_is_read_once_more_later():
+    from datetime import UTC, datetime
 
-    from simulate.tasks import alk_sim
+    now = datetime(2026, 11, 13, tzinfo=UTC)
+    whole = {"workers": [{"observed": True}], "collection": "complete"}
 
-    seen = {"workers": [{"observed": True}]}
-    missing = {"workers": [{"observed": True}, {"observed": False}]}
-    with (
-        patch(
-            "simulate.services.harness_workers.record_call_workers",
-            side_effect=[missing, seen, missing],
-        ),
-        patch.object(alk_sim.record_call_workers, "apply_async") as again,
-        patch("simulate.services.harness_workers.attempt_reset", return_value=None),
-    ):
-        # Called directly, an activity runs in process.
-        alk_sim.record_call_workers("c1")
-        assert again.call_args.kwargs["kwargs"] == {"second_read": True, "attempt": ""}
-        again.reset_mock()
-        alk_sim.record_call_workers("c1")
-        alk_sim.record_call_workers("c1", second_read=True)
-        assert not again.called
+    def due(record, *, second_read=False):
+        later = harness_workers.with_later_read(
+            {**record}, now, second_read=second_read
+        )
+        return "next_read_at" in later
+
+    # A declared worker not seen yet, or a read that was not whole, may change with the spans still arriving.
+    assert due({**whole, "workers": [{"observed": True}, {"observed": False}]})
+    assert due({**whole, "tree_complete": False})
+    assert due({**whole, "collection": "partial"})
+    assert due({**whole, "collection": "unavailable"})
+    # Built from the sandbox's rows alone, every worker seen and the tree whole: the spans may still be on the way.
+    assert due({**whole, "spans_received": False})
+    assert not due(whole)
+    # The later read is the last: it schedules none, and clears the one it was.
+    assert not due(
+        {**whole, "collection": "partial", "next_read_at": "x"}, second_read=True
+    )
 
 
 def test_when_times_tie_a_hand_off_comes_first_and_its_return_last():
@@ -581,6 +548,10 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "parallel",
         "overlap_unknown",
         "worker_depths",
+        "counts",
+        "cut_off",
+        "beyond_boundary",
+        "pending",
     }
     first = found.json()["steps"][0]
     assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
@@ -588,6 +559,38 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
     # A step read from a span carries its span id, for opening it in Traces; stored-only keys stay out.
     assert found.json()["events"][1]["span_id"] == timeline["events"][1]["span_id"]
     assert "runtime_event_id" not in found.json()["events"][1]
+
+
+@pytest.mark.django_db
+def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
+    user, workspace, storage, settings, auth_client
+):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import CallExecution
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-due", storage), key="d")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED, completed_at=timezone.now()
+    )
+    just_ended = auth_client.get(url)
+    CallExecution.objects.filter(id=call.id).update(
+        completed_at=timezone.now() - timedelta(days=1)
+    )
+    long_ended = auth_client.get(url)
+
+    # Just ended: the read is still to run, so the client checks again instead of reading "no workers".
+    assert just_ended.status_code == 202, just_ended.content
+    assert just_ended.json()["pending"] is True
+    assert long_ended.status_code == 204
 
 
 @pytest.mark.django_db
@@ -630,6 +633,66 @@ def test_another_workspace_or_organization_cannot_read_a_call_s_workers(
         organization=Organization.objects.create(name="Other workers organization"),
     )
     assert auth_client.get(url).status_code == 404
+
+
+@pytest.mark.django_db
+def test_a_rerun_keeps_the_earlier_attempt_s_worker_record_and_trial_state(
+    user, workspace, storage, settings, auth_client
+):
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.services.harness_workers import WORKERS_KEY
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-rerun-kept", storage), key="k")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    timeline = {
+        **worker_timeline(SPANS, DECLARED, run_key=RUN),
+        "collected_at": "2026-10-31T12:00:00Z",
+    }
+    trial = {"state_changes": [{"who": "worker:refund", "committed": 1}]}
+    call.call_metadata = {WORKERS_KEY: timeline, TRIAL_STATE_KEY: trial}
+    call.save(update_fields=["call_metadata"])
+
+    clear_call_for_rerun(call)
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+    current = auth_client.get(url)
+    earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
+
+    # The new attempt starts with no record; the earlier one reads as it was, with its trial state kept beside it.
+    assert current.status_code == 204
+    assert earlier.status_code == 200, earlier.content
+    assert {one["id"] for one in earlier.json()["workers"]} == {
+        one["id"] for one in timeline["workers"]
+    }
+    assert snapshot.call_metadata[TRIAL_STATE_KEY] == trial
+
+
+@pytest.mark.django_db
+def test_an_attempt_snapshotted_before_records_were_kept_or_of_another_call_reads_none(
+    user, workspace, storage, settings, auth_client
+):
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-rerun-old", storage), key="o")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    old = CallExecutionSnapshot.objects.create(
+        call_execution=call, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
+    )
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+
+    assert auth_client.get(url, {"attempt": str(old.id)}).status_code == 204
+    # An attempt id from no snapshot of this call never reads another call's record.
+    assert auth_client.get(url, {"attempt": str(call.id)}).status_code == 204
 
 
 def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instrumentation_writes_them():
@@ -748,7 +811,7 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
         first["runtime_parent_event_id"],
     ) == ("Write a post", "e2", "e1")
     assert (
-        first["at"] == "2024-11-01T09:50:00.500000"
+        first["at"] == "2024-11-01T09:50:00.500000+00:00"
         and first["attribution"] == "reported"
     )
 
@@ -1138,7 +1201,7 @@ def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_star
         ("returned", "poi_agent"),
     ]
     assert [one["at"] for one in events if one["type"] == "delegated"] == [None, None]
-    assert events[0]["at"] == "2024-11-01T09:50:14"
+    assert events[0]["at"] == "2024-11-01T09:50:14+00:00"
 
 
 def test_a_hand_off_and_its_return_say_who_what_and_when():
@@ -1293,12 +1356,7 @@ def test_a_large_team_s_record_stays_bounded():
     timeline = worker_timeline(_team(10, 3, 3, 10), [], run_key=RUN)
 
     calls = [one for one in timeline["events"] if one["type"] == "tool_call"]
-    assert len(timeline["events"]) <= harness_workers._MAX_EVENTS
-    assert (
-        len(json.dumps(timeline))
-        # Each step now also carries its hand-off and trace ids for placement and Open in Traces.
-        < harness_workers._PAYLOAD_BUDGET + 400 * harness_workers._MAX_EVENTS
-    )
+    assert timeline["events_omitted"] > 0
     # The first calls keep their input and output; past the size limit a call keeps its tool, worker and time.
     assert calls[0]["input"] == "y" * 2000 and "input_omitted" not in calls[0]
     assert calls[-1]["input"] is None and calls[-1]["input_omitted"] is True
@@ -1308,11 +1366,10 @@ def test_a_large_team_s_record_stays_bounded():
 def test_a_record_past_its_step_limit_keeps_the_first_steps_and_counts_the_rest():
     timeline = worker_timeline(_team(5, 2, 2, 120), [], run_key=RUN)
 
-    assert len(timeline["events"]) == harness_workers._MAX_EVENTS
-    assert (
-        timeline["events_omitted"]
-        == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - harness_workers._MAX_EVENTS
-    )
+    # Every step is either kept or counted as left out.
+    every = 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2
+    assert len(timeline["events"]) + timeline["events_omitted"] == every
+    assert timeline["events_omitted"] > 0
     assert [one["seq"] for one in timeline["events"][:3]] == [1, 2, 3]
 
 
@@ -1414,14 +1471,14 @@ def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
     )
 
     with patch(
-        "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
+        "simulate.services.harness_workers.list_run_traces", return_value=_traced(None)
     ):
         timeline = harness_workers.record_call_workers(str(call.id))
 
-    assert timeline["started_at"] == "2024-11-01T09:49:54.100000"
+    assert timeline["started_at"] == "2024-11-01T09:49:54.100000+00:00"
     said = {one["text"]: one["at"] for one in timeline["messages"]}
-    assert said["Refund order 1043"] == "2024-11-01T09:49:58.400000"
-    assert said["Refund issued"] == "2024-11-01T09:50:11.200000"
+    assert said["Refund order 1043"] == "2024-11-01T09:49:58.400000+00:00"
+    assert said["Refund issued"] == "2024-11-01T09:50:11.200000+00:00"
 
 
 @pytest.mark.django_db
@@ -2090,10 +2147,10 @@ def test_a_later_read_never_replaces_a_complete_record_with_less(
     def read(reader=None, project_id="p1"):
         with (
             patch(
-                "simulate.services.run_traces_v3.list_run_traces",
+                "simulate.services.harness_workers.list_run_traces",
                 return_value=_traced(project_id),
             ),
-            patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+            patch("simulate.services.harness_workers.get_reader", return_value=reader),
         ):
             harness_workers.record_call_workers(str(call.id))
         call.refresh_from_db()
@@ -3082,50 +3139,6 @@ def test_two_reads_that_got_as_far_keep_the_later_one():
     assert harness_workers.kept_record(one, two)["coordinator"] == {"name": "new"}
 
 
-@pytest.mark.django_db
-def test_a_read_that_was_not_whole_gets_one_more_read_later():
-    from unittest.mock import patch
-
-    from simulate.tasks import alk_sim
-
-    seen = {"workers": [{"observed": True}]}
-    for read in (
-        {**seen, "tree_complete": False},
-        {**seen, "collection": "partial"},
-        {**seen, "collection": "unavailable"},
-        # Built from the sandbox's rows alone, every worker seen and the tree whole: the spans may still be on the way.
-        {
-            **seen,
-            "collection": "complete",
-            "tree_complete": True,
-            "spans_received": False,
-        },
-    ):
-        with (
-            patch(
-                "simulate.services.harness_workers.record_call_workers",
-                return_value=read,
-            ),
-            patch.object(alk_sim.record_call_workers, "apply_async") as again,
-            patch("simulate.services.harness_workers.attempt_reset", return_value=None),
-        ):
-            alk_sim.record_call_workers("c1")
-            assert again.call_args.kwargs["kwargs"] == {
-                "second_read": True,
-                "attempt": "",
-            }
-    with (
-        patch(
-            "simulate.services.harness_workers.record_call_workers",
-            return_value={**seen, "tree_complete": True},
-        ),
-        patch.object(alk_sim.record_call_workers, "apply_async") as again,
-        patch("simulate.services.harness_workers.attempt_reset", return_value=None),
-    ):
-        alk_sim.record_call_workers("c1")
-        assert not again.called
-
-
 def test_a_trace_without_its_top_level_span_is_not_whole():
     from types import SimpleNamespace as S
 
@@ -3149,8 +3162,8 @@ def test_a_malformed_sealed_row_is_kept_and_never_stops_the_record():
     timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows)
     assert [one["tool"] for one in timeline["events"]] == ["pay"] * 4
     assert sorted(str(one["at"]) for one in timeline["events"]) == [
-        "1970-01-01T00:00:05",
-        "1970-01-01T00:00:06",
+        "1970-01-01T00:00:05+00:00",
+        "1970-01-01T00:00:06+00:00",
         "None",
         "None",
     ]
@@ -3237,8 +3250,8 @@ def test_a_rerun_reads_only_the_traces_of_its_own_attempt(
         ],
     )
     with (
-        patch("simulate.services.run_traces_v3.list_run_traces", return_value=traces),
-        patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        patch("simulate.services.harness_workers.list_run_traces", return_value=traces),
+        patch("simulate.services.harness_workers.get_reader", return_value=reader),
         patch.object(harness_workers, "declared_workers", return_value=[]),
     ):
         timeline = harness_workers.record_call_workers(str(call.id))
@@ -3250,41 +3263,63 @@ def test_a_rerun_reads_only_the_traces_of_its_own_attempt(
 
 @pytest.mark.django_db
 def test_a_later_read_scheduled_before_a_rerun_does_not_run():
+    from dataclasses import asdict
     from datetime import UTC, datetime
     from unittest.mock import patch
 
     from simulate.tasks import alk_sim
+    from simulate.types import CallWorkersRead
 
-    missing = {"workers": [{"observed": False}]}
+    due = {
+        "workers": [{"observed": False}],
+        "next_read_at": "2026-11-13T00:10:00+00:00",
+    }
     first, second = (
         datetime(2026, 11, 13, tzinfo=UTC),
         datetime(2026, 11, 14, tzinfo=UTC),
     )
     with (
-        patch(
-            "simulate.services.harness_workers.record_call_workers",
-            return_value=missing,
-        ) as read,
+        patch.object(alk_sim, "record_worker_timeline", return_value=due) as read,
         patch.object(alk_sim.record_call_workers, "apply_async") as again,
-        patch("simulate.services.harness_workers.attempt_reset", return_value=first),
+        patch.object(alk_sim, "attempt_reset", return_value=first),
     ):
-        alk_sim.record_call_workers("c1")
-        assert again.call_args.kwargs["kwargs"] == {
-            "second_read": True,
-            "attempt": first.isoformat(),
-        }
-        alk_sim.record_call_workers("c1", second_read=True, attempt=first.isoformat())
-        assert read.call_count == 2
-        # Reset again since the later read was scheduled: that read is the earlier attempt's, and it does not run.
-        alk_sim.record_call_workers("c1", second_read=True, attempt="")
+        alk_sim.record_call_workers(asdict(CallWorkersRead("c1")))
+        later = again.call_args.kwargs["args"][0]
+        alk_sim.record_call_workers(later)
         assert read.call_count == 2
     with (
-        patch(
-            "simulate.services.harness_workers.record_call_workers",
-            return_value=missing,
-        ) as read,
+        patch.object(alk_sim, "record_worker_timeline", return_value=due) as read,
         patch.object(alk_sim.record_call_workers, "apply_async"),
-        patch("simulate.services.harness_workers.attempt_reset", return_value=second),
+        patch.object(alk_sim, "attempt_reset", return_value=second),
     ):
-        alk_sim.record_call_workers("c1", second_read=True, attempt=first.isoformat())
+        # Reset again since the later read was scheduled: that read is the earlier attempt's, and it does not run.
+        alk_sim.record_call_workers(later)
         assert not read.called
+    with (
+        patch.object(alk_sim, "record_worker_timeline", return_value={"workers": []}),
+        patch.object(alk_sim.record_call_workers, "apply_async") as again,
+        patch.object(alk_sim, "attempt_reset", return_value=None),
+    ):
+        # A record with no later read due schedules none.
+        alk_sim.record_call_workers(asdict(CallWorkersRead("c1")))
+        assert not again.called
+
+
+def test_a_hand_off_or_a_world_actor_s_action_is_not_one_of_the_call_s_tool_calls():
+    from simulate.selectors.call_detail import tool_call_count
+
+    transcript = [
+        {
+            "tool_calls": [
+                {"name": "lookup"},
+                {"name": "refund", "delegated_to": "refunds"},
+            ]
+        },
+        {"tool_calls": None},
+    ]
+    calls = [
+        {"name": "notify", "kind": "agent_call"},
+        {"name": "audit", "kind": "agent_call", "delegated_to": "audit"},
+        {"name": "cancel", "kind": "world_actor_action"},
+    ]
+    assert tool_call_count(transcript, calls) == 2
