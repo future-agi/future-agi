@@ -53,6 +53,16 @@ const normalizeFrontendPath = (file) => {
   ) {
     return null;
   }
+  // Written by `yarn tokens:build` (design-system/tools/build_tokens.py):
+  // reformatting them would turn every rebuild into a whole-file diff.
+  if (
+    relativeToFrontend === path.join("src", "theme", "ds-tokens.js") ||
+    relativeToFrontend.startsWith(
+      path.join("design-system", "tokens") + path.sep,
+    )
+  ) {
+    return null;
+  }
 
   return relativeToFrontend;
 };

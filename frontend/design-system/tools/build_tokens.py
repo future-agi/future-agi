@@ -106,8 +106,11 @@ def rgba(value):
 def over(top, bottom):
     r1, g1, b1, a = rgba(top)
     r2, g2, b2, _ = rgba(bottom)
-    mix = lambda x, y: round(x * a + y * (1 - a))
-    return "#%02X%02X%02X" % (mix(r1, r2), mix(g1, g2), mix(b1, b2))
+
+    def mix(x, y):
+        return round(x * a + y * (1 - a))
+
+    return f"#{mix(r1, r2):02X}{mix(g1, g2):02X}{mix(b1, b2):02X}"
 
 
 def luminance(hex_value):
@@ -280,7 +283,7 @@ def write_mui(tokens, semantic, shadows):
             },
             "success": status("success"), "warning": status("warning"),
             "error": status("danger"), "info": status("info"),
-            "grey": {k: v for k, v in tokens["primitive"]["gray"].items()},
+            "grey": dict(tokens["primitive"]["gray"]),
             "text": {
                 "primary": s["fg.default"], "secondary": s["fg.secondary"],
                 "tertiary": s["fg.tertiary"], "subtitle": s["fg.tertiary"],
