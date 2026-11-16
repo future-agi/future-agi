@@ -28,7 +28,7 @@ test('SIM-E2E-021: a worker whose limits nothing holds keeps back the cases rely
   }),
 }, async ({ actor }, testInfo) => {
   // One seed through the backend container (Django start-up) and two API calls.
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   const scope = { organizationId: actor.organizationId, workspaceId: actor.workspaceId };
   const seed = seedHarnessEnvironment({ ...scope, refunds: REFUNDS, lookups: LOOKUPS, workers: 'old_seal', refundWorkerBudget: true });
   await testInfo.attach('seeded', { contentType: 'application/json', body: JSON.stringify({ ...scope, ...seed }) });
