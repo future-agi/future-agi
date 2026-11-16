@@ -51,49 +51,86 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 			for _, scheme := range []string{"Bearer", "bearer", "BEARER", "bEaReR", "Token", "token"} {
 				t.Run(fmt.Sprintf("selected=%v/%s/%s", selected, path, scheme), func(t *testing.T) {
 					status, body := inspectionR3HTTP(t, gateway, "GET", path, "", map[string]string{"Authorization": scheme + " sk-agentcc-runtime-a"})
-					if status != http.StatusOK || !strings.Contains(body, "gpt-5.5") || up.served() != 0 {
-						t.Fatalf("status=%d provider_calls=%d body=%s", status, up.served(), body)
+					visible := scheme == "Bearer"
+					want := http.StatusOK
+					if path == "/v1/models/gpt-5.5" && !visible {
+						want = http.StatusNotFound
 					}
+					if status != want || up.served() != 0 {
+						t.Fatalf("status=%d want=%d provider_calls=%d body=%s", status, want, up.served(), body)
+					}
+					runtimeR5AssertModelCatalogue(t, path, []byte(body), visible)
 				})
 			}
 			for _, tc := range []struct {
-				name    string
-				headers map[string]string
-				status  int
+				name           string
+				headers        map[string]string
+				status         int
+				catalogVisible bool
 			}{
-				{"missing", nil, 401},
-				{"invalid", map[string]string{"Authorization": "bearer invalid"}, 401},
-				// Catalog has no second rejecting auth gate on dev: KeyAuth tries
-				// every candidate. R5 restores that acceptance, not a strict override.
-				{"invalid-priority-fallback", map[string]string{"Authorization": "bearer invalid", "x-api-key": "sk-agentcc-runtime-a"}, 200},
-				{"valid-priority", map[string]string{"Authorization": "bearer sk-agentcc-runtime-a", "x-api-key": "invalid"}, 200},
-				{"api-key", map[string]string{"x-api-key": "sk-agentcc-runtime-a"}, 200},
-				{"caller-metadata", map[string]string{"x-agentcc-metadata": `{"auth_key_id":"key_1","org_id":"org-runtime"}`}, 401},
+				{"missing", nil, 401, false},
+				{"invalid", map[string]string{"Authorization": "bearer invalid"}, 401, false},
+				// Admission tries every candidate. Catalogue visibility separately
+				// uses dev's exact Bearer lookup, otherwise x-api-key.
+				{"invalid-priority-fallback", map[string]string{"Authorization": "bearer invalid", "x-api-key": "sk-agentcc-runtime-a"}, 200, true},
+				{"valid-priority", map[string]string{"Authorization": "bearer sk-agentcc-runtime-a", "x-api-key": "invalid"}, 200, false},
+				{"exact-invalid-priority", map[string]string{"Authorization": "Bearer invalid", "x-api-key": "sk-agentcc-runtime-a"}, 200, false},
+				{"exact-valid-priority", map[string]string{"Authorization": "Bearer sk-agentcc-runtime-a", "x-api-key": "invalid"}, 200, true},
+				{"api-key", map[string]string{"x-api-key": "sk-agentcc-runtime-a"}, 200, true},
+				{"caller-metadata", map[string]string{"x-agentcc-metadata": `{"auth_key_id":"key_1","org_id":"org-runtime"}`}, 401, false},
 			} {
 				t.Run(fmt.Sprintf("selected=%v/%s/%s", selected, path, tc.name), func(t *testing.T) {
 					status, body := inspectionR3HTTP(t, gateway, "GET", path, "", tc.headers)
-					if status != tc.status {
-						t.Fatalf("status=%d want=%d body=%s", status, tc.status, body)
+					want := tc.status
+					if want == http.StatusOK && path == "/v1/models/gpt-5.5" && !tc.catalogVisible {
+						want = http.StatusNotFound
+					}
+					if status != want {
+						t.Fatalf("status=%d want=%d body=%s", status, want, body)
+					}
+					if tc.status == http.StatusOK {
+						runtimeR5AssertModelCatalogue(t, path, []byte(body), tc.catalogVisible)
 					}
 				})
 			}
 		}
-		// A conflicting internal key must not make the winning BYOK key see
-		// global models. Both admission and catalog filtering use that winner.
+		// Exact Bearer keeps the BYOK catalogue despite an internal x-api-key.
+		// Non-exact/Token headers instead select that x-api-key for visibility,
+		// as dev does; the middleware principal above remains independently bound.
 		srv.handlers.keyStore.Get("key_1").KeyType = "byok"
 		srv.TenantStore.Set("org-runtime", &tenant.OrgConfig{Guardrails: cfg, Providers: map[string]*tenant.ProviderConfig{
 			"synthetic-org": {Enabled: true, APIKey: "synthetic", Models: []string{"org-only-model"}},
 		}})
 		for _, scheme := range []string{"Bearer", "bearer", "bEaReR", "Token"} {
 			headers := map[string]string{"Authorization": scheme + " sk-agentcc-runtime-a", "x-api-key": "sk-agentcc-runtime-b"}
+			globalVisible := scheme != "Bearer"
+			status, body := inspectionR3HTTP(t, gateway, "GET", "/v1/models", "", headers)
+			if status != 200 || !strings.Contains(body, "org-only-model") || strings.Contains(body, "gpt-5.5") != globalVisible {
+				t.Fatalf("scheme=%s global_visible=%t status=%d body=%s", scheme, globalVisible, status, body)
+			}
+			status, body = inspectionR3HTTP(t, gateway, "GET", "/v1/models/gpt-5.5", "", headers)
+			want := http.StatusNotFound
+			if globalVisible {
+				want = http.StatusOK
+			}
+			if status != want {
+				t.Fatalf("scheme=%s global model detail status=%d want=%d", scheme, status, want)
+			}
+			runtimeR5AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), globalVisible)
+		}
+		for _, headers := range []map[string]string{
+			{"Authorization": "Bearer sk-agentcc-runtime-a"},
+			{"x-api-key": "sk-agentcc-runtime-a"},
+		} {
 			status, body := inspectionR3HTTP(t, gateway, "GET", "/v1/models", "", headers)
 			if status != 200 || !strings.Contains(body, "org-only-model") || strings.Contains(body, "gpt-5.5") {
-				t.Fatalf("BYOK visibility status=%d body=%s", status, body)
+				t.Fatalf("BYOK-only visibility status=%d body=%s", status, body)
 			}
-			status, _ = inspectionR3HTTP(t, gateway, "GET", "/v1/models/gpt-5.5", "", headers)
-			if status != 404 {
-				t.Fatalf("BYOK global model detail status=%d", status)
+			status, body = inspectionR3HTTP(t, gateway, "GET", "/v1/models/gpt-5.5", "", headers)
+			if status != http.StatusNotFound {
+				t.Fatalf("BYOK-only global model detail status=%d", status)
 			}
+			runtimeR5AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), false)
 		}
 		expired := time.Now().Add(-time.Hour)
 		srv.handlers.keyStore.Get("key_1").ExpiresAt = &expired

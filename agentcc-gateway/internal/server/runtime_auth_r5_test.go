@@ -38,12 +38,16 @@ func TestRuntimeR5MiddlewareAuthHTTP(t *testing.T) {
 					want := route.status
 					if scheme == "Basic" {
 						want = 401
+					} else if route.path == "/v1/models/gpt-5.5" && scheme != "Bearer" {
+						// Middleware admits the key, but dev's catalogue handler
+						// uses only exact Bearer or the x-api-key fallback.
+						want = 404
 					}
 					if status != want || len(calls) != 0 {
 						t.Fatalf("status=%d want=%d calls=%d body=%s", status, want, len(calls), body)
 					}
 					if scheme != "Basic" {
-						runtimeR5AssertModelCatalogue(t, route.path, body, true)
+						runtimeR5AssertModelCatalogue(t, route.path, body, scheme == "Bearer")
 					}
 				})
 			}
