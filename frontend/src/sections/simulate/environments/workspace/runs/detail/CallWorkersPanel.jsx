@@ -746,6 +746,36 @@ WorkersTable.propTypes = {
 };
 
 /** One call of a multi-agent app: a table of its hand-offs first, every step in order on request. */
+/** Each worker's own checks, as served: beside the call's verdict, a failed one shown failed. */
+function WorkerChecks({ workers }) {
+  return (
+    <Stack spacing={0.5} data-testid="worker-checks">
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {C.workerChecks}
+      </Typography>
+      {workers.flatMap((worker) =>
+        worker.checks.map((check) => (
+          <Typography
+            key={`${worker.worker_id}-${check.name}`}
+            data-testid="worker-check"
+            data-passed={String(check.passed)}
+            sx={{
+              typography: "s3",
+              color: check.passed === false ? "error.main" : "text.secondary",
+            }}
+          >
+            {worker.name} · {check.name} ·{" "}
+            {C.workerCheckResult(check.passed, check.result)}
+          </Typography>
+        )),
+      )}
+    </Stack>
+  );
+}
+WorkerChecks.propTypes = {
+  workers: PropTypes.arrayOf(PropTypes.object).isRequired,
+};
+
 function PlacedChecks({ placements, names }) {
   return (
     <Stack spacing={0.5} data-testid="placed-checks">
@@ -932,6 +962,9 @@ export default function CallWorkersPanel({
           );
         })
       )}
+      {data.workers.some((one) => one.checks.length) ? (
+        <WorkerChecks workers={data.workers} />
+      ) : null}
       {data.placements.length ? (
         <PlacedChecks placements={data.placements} names={names} />
       ) : null}

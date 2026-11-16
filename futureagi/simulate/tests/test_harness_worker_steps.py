@@ -1037,3 +1037,40 @@ class TestFailurePlacements:
             }
         )
         assert (placed["worker_id"], placed["step"]) == ("searcher", None)
+
+
+def test_a_failed_worker_check_is_served_failed_on_its_worker_beside_a_passing_task_check():
+    record = {
+        "workers": [
+            {"worker_id": "r/order_lookup", "id": "order_lookup", "name": "Lookup"},
+            {"worker_id": "r/refund", "id": "refund", "name": "Refund"},
+        ],
+        "events": [],
+        "events_omitted": 0,
+        "coordinator": None,
+        "spans_received": True,
+        "started_at": None,
+    }
+    served = served_record(
+        record,
+        datetime(2026, 11, 2, tzinfo=UTC),
+        [
+            {"name": "refund_issued", "passed": True, "subject_kind": "task"},
+            {
+                "name": "read_only",
+                "passed": False,
+                "subject_kind": "worker",
+                "worker_id": "order_lookup",
+            },
+        ],
+    )
+    lookup, refund = served["workers"]
+    # The call's own check passed; the worker's failure is still served, failed and named by its worker.
+    assert lookup["checks"] == [{"name": "read_only", "passed": False}]
+    assert refund["checks"] == []
+    [placed] = served["placements"]
+    assert (placed["name"], placed["status"], placed["worker_id"]) == (
+        "read_only",
+        "failed",
+        "order_lookup",
+    )

@@ -114,6 +114,16 @@ export const CALL_WORKERS_COPY = {
     infrastructure: "infrastructure fault",
   },
   workersCutShort: (list) => `Cut short: ${list}`,
+  // A worker's own checks: beside the call's verdict, never deciding it.
+  workerChecks: "Worker checks",
+  workerCheckResult: (passed, result) =>
+    passed === true
+      ? "Passed"
+      : passed === false
+        ? "Failed"
+        : { not_applicable: "Not applicable", inconclusive: "Unsure" }[
+            result
+          ] || "Not measured",
   // Each failed or unsure check on the step its evidence points to, or why it is on none.
   placedChecks: "Failed and unsure checks",
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },

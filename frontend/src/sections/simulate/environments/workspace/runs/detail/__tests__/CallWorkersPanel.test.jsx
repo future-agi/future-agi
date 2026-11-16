@@ -83,6 +83,8 @@ const WORKERS = [
     observed: true,
     undeclared: false,
     instance_ids: ["s3"],
+    cut_short: false,
+    checks: [],
   },
   {
     worker_id: "r/audit",
@@ -91,6 +93,8 @@ const WORKERS = [
     observed: false,
     undeclared: false,
     instance_ids: [],
+    cut_short: false,
+    checks: [],
   },
 ];
 const REQUEST = {
@@ -445,6 +449,8 @@ describe("CallWorkersPanel", () => {
       observed,
       undeclared: false,
       instance_ids: [],
+      cut_short: false,
+      checks: [],
     });
     const at = (second) =>
       `2026-10-31T12:00:${String(second).padStart(2, "0")}+00:00`;
@@ -915,6 +921,25 @@ describe("CallWorkersPanel", () => {
       expect(untied).toHaveTextContent(C.untied.no_moment());
     });
 
+    it("shows a worker's failed check failed and named by its worker, beside the call's passing verdict", () => {
+      result = {
+        data: timeline({
+          workers: WORKERS.map((one) =>
+            one.id === "order_lookup"
+              ? { ...one, checks: [{ name: "read_only", passed: false }] }
+              : one,
+          ),
+        }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const [check] = screen.getAllByTestId("worker-check");
+      expect(check.dataset.passed).toBe("false");
+      expect(check).toHaveTextContent("Order-lookup worker");
+      expect(check).toHaveTextContent(C.workerCheckResult(false));
+    });
+
     it("says when nothing was recorded for the participants", () => {
       result = {
         data: {
@@ -986,6 +1011,8 @@ describe("CallWorkersPanel", () => {
       observed,
       undeclared: false,
       instance_ids: [],
+      cut_short: false,
+      checks: [],
     });
     const tool = (seq, workerId, name, extra) => ({
       seq,

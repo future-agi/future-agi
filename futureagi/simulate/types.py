@@ -144,6 +144,14 @@ class SubGoalEntry(TypedDict):
     worker_id: NotRequired[str]
 
 
+class WorkerCheck(TypedDict):
+    """One of a worker's own checks in a call: beside the call's verdict, never deciding it."""
+
+    name: str
+    passed: bool | None
+    result: NotRequired[SubGoalUnscored]
+
+
 class HarnessWorker(TypedDict):
     worker_id: str
     id: str
@@ -157,6 +165,8 @@ class HarnessWorker(TypedDict):
     state: NotRequired[WorkerState]
     # Served only: the trial's end stopped it before it returned (past its deadline is told apart).
     cut_short: NotRequired[bool]
+    # Served only: its own checks in this call.
+    checks: NotRequired[list[WorkerCheck]]
 
 
 class WorkerEvent(TypedDict, total=False):
