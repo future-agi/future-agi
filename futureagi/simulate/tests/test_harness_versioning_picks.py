@@ -1453,7 +1453,13 @@ class TestProductionOnly:
             **(version.documents or {}),
             "contract": {
                 "dependencies": [
-                    {"name": "payments", "kind": "service", "used_by": ["issue_refund"]}
+                    {
+                        "name": "payments",
+                        "kind": "service",
+                        "engine": "http",
+                        "reached": {"dsn_env": "PAYMENTS_API_URL"},
+                        "used_by": ["issue_refund"],
+                    }
                 ],
             },
             "scenarios": [

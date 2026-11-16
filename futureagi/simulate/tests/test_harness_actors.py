@@ -2434,6 +2434,17 @@ def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupport
         ],
     }
 
+    # The agent's own in-memory store is inside the agent, never production.
+    contract["dependencies"].append(
+        {
+            "name": "in_memory_store",
+            "kind": "datastore",
+            "engine": "in_process",
+            "reached": {"host": "", "dsn_env": ""},
+            "used_by": ["get_order"],
+        }
+    )
+
     assert production_only(contract) == ["charge_card", "issue_card_refund"]
     assert production_only({}) == [] and production_only(None) == []
 

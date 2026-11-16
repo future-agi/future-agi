@@ -207,46 +207,38 @@ def door_reach(contract: Any) -> dict[str, bool]:
     return reach
 
 
-# Engines that are an API, not a store: the environment stands one up only when it runs beside the agent (a local
-# host or a port of its own), never an API someone else runs.
+# Engines that are an API, not a store.
 _API_ENGINES = frozenset(
     {"http", "https", "rest", "grpc", "graphql", "websocket", "soap"}
 )
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})
-_SEAMS = ("dsn_env", "config_key", "host", "port", "database", "loader_module")
 
 
-def _stood_up(dependency: dict[str, Any], served_tools: set[str]) -> bool:
-    """Whether the environment stands up its own copy of this dependency, by the rule the build uses: a store it
-    seeds, or an API that runs beside the agent (a local or internal host, a port of its own, or behind the tools
-    service the environment serves)."""
-    reached = dependency.get("reached") or {}
+def _reaches_someone_elses_api(
+    dependency: dict[str, Any], served_tools: set[str]
+) -> bool:
+    """Whether a dependency is an API someone else runs: a public host or URL, or an API whose address comes only
+    from configuration. A store, an internal host, a port of its own or the tools the environment serves never are,
+    and neither is a dependency we cannot tell (the sandbox's firewall still stops it)."""
     engine = str(dependency.get("engine") or "").strip().lower()
-    if not engine or not any(reached.get(name) for name in _SEAMS):
-        return False
-    if engine not in _API_ENGINES:
-        return True
+    reached = dependency.get("reached") or {}
     host = str(reached.get("host") or "").strip().lower()
     used_by = {str(tool) for tool in dependency.get("used_by") or []}
-    return (
-        host in _LOCAL_HOSTS
-        or (bool(host) and "." not in host)
-        or (not host and bool(reached.get("port")))
-        or (bool(used_by) and used_by <= served_tools)
-    )
+    if used_by and used_by <= served_tools:
+        return False
+    if reached.get("url") or (host and "." in host and host not in _LOCAL_HOSTS):
+        return True
+    return engine in _API_ENGINES and not host and not reached.get("port")
 
 
 def production_only(contract: Any) -> list[str]:
-    """The contract tools that reach a system the environment cannot stand up a copy of: an API someone else runs, or
-    a dependency with no engine and seam the build recognises, other than the agent's own tools service. A test never
+    """The contract tools that reach an API someone else runs, other than the agent's own tools service. A test never
     calls those; they read Unsupported for this controlled test."""
     contract = contract if isinstance(contract, dict) else {}
     served = {
         str(entry.get("service"))
         for entry in contract.get("tool_entrypoints") or []
-        if isinstance(entry, dict)
-        and entry.get("mode") == "service"
-        and entry.get("service")
+        if isinstance(entry, dict) and entry.get("service")
     }
     served_tools = {
         str(entry.get("tool"))
@@ -260,7 +252,7 @@ def production_only(contract: Any) -> list[str]:
             str(tool)
             for dependency in contract.get("dependencies") or []
             if isinstance(dependency, dict)
-            and not _stood_up(dependency, served_tools)
+            and _reaches_someone_elses_api(dependency, served_tools)
             and str(dependency.get("name") or "") not in served
             for tool in dependency.get("used_by") or []
         }
