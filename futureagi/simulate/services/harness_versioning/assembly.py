@@ -519,6 +519,29 @@ def _cached_files(bundle: HarnessAssembledBundle) -> dict[str, bytes] | None:
     return kept
 
 
+def _predates_cast(
+    bundle: HarnessAssembledBundle, environment_version: HarnessEnvironmentVersion
+) -> bool:
+    """Whether a cached bundle was sealed without the actors its environment version lists: replayed, its world has no
+    actor list, door or roster, so no actor ever comes in. Found once per row and kept on it."""
+    cast = (environment_version.documents or {}).get("actor_digests") or {}
+    certificate = bundle.certificate or {}
+    if not any(not str(key).startswith("#") for key in cast) or certificate.get(
+        "sealed_cast"
+    ):
+        return False
+    files = _cached_files(bundle)
+    if files is None:
+        return False
+    if BUNDLE_ROOT + "actors.json" not in files:
+        return True
+    bundle.certificate = {**certificate, "sealed_cast": True}
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, object_key=bundle.object_key
+    ).update(certificate=bundle.certificate, updated_at=timezone.now())
+    return False
+
+
 def is_transient(exc: BaseException) -> bool:
     """A storage outage, which a later launch may not meet; anything else will recur."""
     if isinstance(exc, S3Error):
@@ -721,6 +744,10 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         id=job.environment_version_id
     )
     suite_version = HarnessSuiteVersion._base_manager.get(id=job.suite_version_id)
+    # Sealed before its environment's actors: certified again once, so later runs replay a bundle that has them.
+    if hit and certify_enabled() and _predates_cast(bundle, environment_version):
+        _reset_missing(bundle, "predates_cast")
+        hit, certifies = False, True
 
     def key_for(cached_bundle: HarnessAssembledBundle | None) -> str:
         return assembled_key(

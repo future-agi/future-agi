@@ -6,7 +6,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -1029,7 +1029,7 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
-def _json_number(value: object) -> bool:
+def _json_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 

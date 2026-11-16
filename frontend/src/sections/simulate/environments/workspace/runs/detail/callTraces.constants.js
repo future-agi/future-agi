@@ -104,6 +104,13 @@ export const CALL_WORKERS_COPY = {
   },
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
+  // Why a call has no record to show, by the state the API serves.
+  states: {
+    unreadable:
+      "This call's participants couldn't be read. Its record may have hand-offs that aren't shown.",
+    not_kept:
+      "This attempt ran before attempts kept their participants, so its record wasn't kept.",
+  },
   workersNotObserved: (names) => `Not observed: ${names}`,
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
@@ -136,4 +143,28 @@ export const CALL_WORKERS_COPY = {
   // Past its action deadline: the world refused its later calls; its execution was not stopped.
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
+};
+
+// The Participants tab's layout: how deep a row indents, how fast a fold opens, the JSON button's size.
+// Indent levels in the table's narrow Worker column; deeper rows stay at the last one.
+export const MAX_ROW_INDENT = 3;
+
+export const MOTION_MS = 180;
+export const NO_MOTION_SX = {
+  "@media (prefers-reduced-motion: reduce)": { transition: "none !important" },
+};
+
+export const JSON_BUTTON_SX = {
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 500,
+  height: 20,
+  minHeight: 20,
+  minWidth: 0,
+  px: 0.75,
+  py: 0,
+  borderRadius: "5px",
+  borderColor: "divider",
+  color: "text.secondary",
+  "& .MuiButton-startIcon": { mr: 0.5, ml: 0 },
 };

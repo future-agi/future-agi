@@ -21,7 +21,11 @@ _Z = 1.96
 # Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would drop it as NULL.
 NOT_COMPARABLE = Q(
     Exact(
-        Coalesce(KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"), Value(""), output_field=TextField()),
+        Coalesce(
+            KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"),
+            Value(""),
+            output_field=TextField(),
+        ),
         "differs",
     )
 )

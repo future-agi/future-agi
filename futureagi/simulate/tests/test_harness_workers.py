@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from simulate.serializers.call_workers_v3 import CallWorkerEventSerializer
-from simulate.services import harness_workers
-from simulate.services.harness_workers import worker_timeline
+from simulate.services import harness_worker_timeline, harness_workers
+from simulate.services.harness_worker_timeline import worker_timeline
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -553,6 +553,7 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "beyond_boundary",
         "pending",
         "placements",
+        "state",
     }
     first = found.json()["steps"][0]
     assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
@@ -665,17 +666,22 @@ def test_a_rerun_keeps_the_earlier_attempt_s_worker_record_and_trial_state(
     current = auth_client.get(url)
     earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
 
-    # The new attempt starts with no record; the earlier one reads as it was, with its trial state kept beside it.
+    detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/").json()
+    [attempt] = detail.get("result", detail)["earlier_attempts"]
+
+    # The new attempt starts with no record; the earlier one reads as it was, with its trial state served beside it.
     assert current.status_code == 204
     assert earlier.status_code == 200, earlier.content
+    assert earlier.json()["state"] == "recorded"
     assert {one["id"] for one in earlier.json()["workers"]} == {
         one["id"] for one in timeline["workers"]
     }
-    assert snapshot.call_metadata[TRIAL_STATE_KEY] == trial
+    assert (attempt["attempt"], attempt["kept"]) == (str(snapshot.id), True)
+    assert attempt["trial_state"]["state_changes"][0]["who"] == "worker:refund"
 
 
 @pytest.mark.django_db
-def test_an_attempt_snapshotted_before_records_were_kept_or_of_another_call_reads_none(
+def test_an_attempt_kept_before_records_reads_not_kept_and_another_call_s_attempt_is_not_found(
     user, workspace, storage, settings, auth_client
 ):
     from simulate.models import CallExecution
@@ -684,16 +690,104 @@ def test_an_attempt_snapshotted_before_records_were_kept_or_of_another_call_read
 
     settings.HARNESS_VERSIONING_ENABLED = True
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
-    run = _create(_environment(user, workspace, "workers-rerun-old", storage), key="o")
-    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    environment = _environment(user, workspace, "workers-rerun-old", storage)
+    call, other = (
+        CallExecution.objects.get(
+            test_execution_id=_create(environment, key=key).test_execution_id
+        )
+        for key in ("o1", "o2")
+    )
     old = CallExecutionSnapshot.objects.create(
         call_execution=call, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
     )
+    others = CallExecutionSnapshot.objects.create(
+        call_execution=other,
+        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        call_metadata={},
+    )
     url = f"/simulate/v3/call-executions/{call.id}/workers/"
 
-    assert auth_client.get(url, {"attempt": str(old.id)}).status_code == 204
-    # An attempt id from no snapshot of this call never reads another call's record.
-    assert auth_client.get(url, {"attempt": str(call.id)}).status_code == 204
+    not_kept = auth_client.get(url, {"attempt": str(old.id)})
+    # Snapshotted before attempts kept their record: said so, never read as "no other agents".
+    assert not_kept.status_code == 200, not_kept.content
+    assert (not_kept.json()["state"], not_kept.json()["workers"]) == ("not_kept", [])
+    # Another call's attempt, in the same workspace, is not this call's to read.
+    assert auth_client.get(url, {"attempt": str(others.id)}).status_code == 404
+    assert auth_client.get(url, {"attempt": str(call.id)}).status_code == 404
+
+
+@pytest.mark.django_db
+def test_a_read_that_fails_says_so_and_a_read_that_found_no_hand_off_ends_the_wait(
+    user, workspace, storage, settings, auth_client
+):
+    from django.utils import timezone
+
+    from simulate.models import CallExecution
+    from simulate.services.harness_workers import mark_read
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    environment = _environment(user, workspace, "workers-read", storage)
+    failed, single = (
+        CallExecution.objects.get(
+            test_execution_id=_create(environment, key=key).test_execution_id
+        )
+        for key in ("r1", "r2")
+    )
+    # Both just ended, so without a read each would still answer that its record is coming.
+    CallExecution.objects.filter(id__in=[failed.id, single.id]).update(
+        status=CallExecution.CallStatus.COMPLETED, completed_at=timezone.now()
+    )
+
+    mark_read(failed.id, failed=True)
+    mark_read(single.id, failed=False)
+    unread = auth_client.get(f"/simulate/v3/call-executions/{failed.id}/workers/")
+    alone = auth_client.get(f"/simulate/v3/call-executions/{single.id}/workers/")
+
+    assert unread.status_code == 200, unread.content
+    assert unread.json()["state"] == "unreadable"
+    assert alone.status_code == 204
+
+
+def test_a_worker_read_out_of_retries_marks_the_call_unreadable(monkeypatch):
+    from dataclasses import asdict
+
+    from simulate.tasks import alk_sim
+    from simulate.types import CallWorkersRead
+
+    marked = []
+    monkeypatch.setattr(alk_sim, "attempt_reset", lambda _call: None)
+    monkeypatch.setattr(alk_sim, "record_worker_timeline", lambda *_a, **_k: 1 / 0)
+    monkeypatch.setattr(
+        alk_sim, "mark_read", lambda call, failed: marked.append((call, failed))
+    )
+
+    with pytest.raises(ZeroDivisionError):
+        alk_sim.record_call_workers(asdict(CallWorkersRead("c1")))
+
+    assert marked == [("c1", True)]
+
+
+def test_the_first_read_is_tied_to_the_attempt_it_was_scheduled_for(monkeypatch):
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from simulate.tasks import alk_sim
+
+    scheduled = []
+    reset = datetime(2026, 11, 17, 9, tzinfo=UTC)
+    monkeypatch.setattr(alk_sim, "attempt_reset", lambda _call: reset)
+    monkeypatch.setattr(
+        alk_sim.record_call_workers,
+        "apply_async",
+        lambda args, **_k: scheduled.append(args[0]),
+    )
+
+    alk_sim.dispatch_worker_read(uuid4())
+
+    # A rerun before this read runs moves the reset on, and the activity then leaves the new attempt alone.
+    assert [one["attempt"] for one in scheduled] == [reset.isoformat()]
 
 
 def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instrumentation_writes_them():
@@ -1536,7 +1630,7 @@ def test_a_voice_call_s_messages_come_from_its_transcript_when_it_has_no_chat_me
 
 
 def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_message():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
     returned = json.dumps(
         {
@@ -1549,12 +1643,12 @@ def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_mes
         }
     )
 
-    assert _summary(returned) == "Done: limiter.py with tests"
-    assert _summary("Refund RF-8 issued") == "Refund RF-8 issued"
+    assert summary(returned) == "Done: limiter.py with tests"
+    assert summary("Refund RF-8 issued") == "Refund RF-8 issued"
 
 
 def test_a_finished_job_is_one_hand_off_and_one_still_running_has_no_return():
-    from simulate.services.harness_workers import worker_timeline
+    from simulate.services.harness_worker_timeline import worker_timeline
 
     finished = {
         "name": "start_async_task",
@@ -1593,20 +1687,19 @@ def test_a_finished_job_is_one_hand_off_and_one_still_running_has_no_return():
 
 
 def test_a_falsy_answer_is_kept_and_only_a_missing_one_is_unknown():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
-    assert [_summary(one) for one in (0, False, None, "")] == ["0", "False", None, None]
+    assert [summary(one) for one in (0, False, None, "")] == ["0", "False", None, None]
 
 
 def test_escaped_line_breaks_in_an_answer_read_as_line_breaks():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
     assert (
-        _summary("# Plan\\n\\nStep one\\nIt\\'s done")
-        == "# Plan\n\nStep one\nIt's done"
+        summary("# Plan\\n\\nStep one\\nIt\\'s done") == "# Plan\n\nStep one\nIt's done"
     )
     assert (
-        _summary("Line one\nLine two with a literal \\n kept")
+        summary("Line one\nLine two with a literal \\n kept")
         == "Line one\nLine two with a literal \\n kept"
     )
 
@@ -2230,7 +2323,6 @@ def test_a_later_read_keeps_every_event_either_read_found():
 
 
 def test_a_merged_record_keeps_the_payload_bound_of_one_read():
-    from simulate.services import harness_workers
     from simulate.services.harness_workers import kept_record
 
     big = "y" * 1500
@@ -2248,7 +2340,7 @@ def test_a_merged_record_keeps_the_payload_bound_of_one_read():
         for one in kept["events"]
         if one["input"] is not None
     )
-    assert spent <= harness_workers._PAYLOAD_BUDGET
+    assert spent <= harness_worker_timeline.PAYLOAD_BUDGET
     assert any(one.get("input_omitted") for one in kept["events"])
 
 
@@ -3304,9 +3396,10 @@ def test_a_later_read_scheduled_before_a_rerun_does_not_run():
         assert not again.called
 
 
-def test_a_hand_off_or_a_world_actor_s_action_is_not_one_of_the_call_s_tool_calls():
+def test_a_call_s_tool_calls_are_counted_once_without_hand_offs_or_world_actor_actions():
     from simulate.selectors.call_detail import tool_call_count
 
+    # A hosted chat call keeps the same calls in its transcript and its tool trace.
     transcript = [
         {
             "tool_calls": [
@@ -3317,8 +3410,91 @@ def test_a_hand_off_or_a_world_actor_s_action_is_not_one_of_the_call_s_tool_call
         {"tool_calls": None},
     ]
     calls = [
-        {"name": "notify", "kind": "agent_call"},
-        {"name": "audit", "kind": "agent_call", "delegated_to": "audit"},
+        {"name": "lookup", "kind": "agent_call"},
+        {"name": "refund", "kind": "agent_call", "delegated_to": "refunds"},
         {"name": "cancel", "kind": "world_actor_action"},
     ]
-    assert tool_call_count(transcript, calls) == 2
+    assert tool_call_count(transcript, calls) == 1
+    # A call with no tool trace counts its transcript's calls.
+    assert tool_call_count(transcript, calls[2:]) == 1
+
+
+def test_a_transcript_row_of_tool_calls_says_which_of_them_hand_work_on():
+    from simulate.selectors.call_detail import tagged_function_calls, transcript_turns
+
+    rows = [
+        {"role": "tool", "tool_calls": [{"name": "lookup"}]},
+        {"role": "tool", "tool_calls": [{"name": "refund", "delegated_to": "refunds"}]},
+        {
+            "role": "tool",
+            "tool_calls": [
+                {"name": "to_billing", "delegated_to": "billing", "kind": "transferred"}
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_calls": [{"name": "lookup"}, {"name": "refund", "delegated_to": "r"}],
+        },
+    ]
+    turns = transcript_turns(rows, [], chat=True)
+
+    assert [one["handoffs"] for one in turns] == [0, 1, 1, 1]
+    # Each kind of row is labelled apart, and a mixed row is never labelled as only one kind.
+    assert len({one["tool_label"] for one in turns}) == 4
+    # A function call carries the same label as a transcript row of only that call; an actor's action carries none.
+    calls = tagged_function_calls(
+        [*(row["tool_calls"][0] for row in rows[:3]), {"name": "x", "actor_id": "boss"}]
+    )
+    assert [one.get("tool_label") for one in calls] == [
+        *(one["tool_label"] for one in turns[:3]),
+        None,
+    ]
+
+
+def test_a_call_sealed_with_worker_events_is_read_from_them_and_an_older_one_from_its_spans():
+    from simulate.services.harness_worker_events import recorded_timeline
+
+    row = {
+        "name": "refund",
+        "arguments": {"input": "refund order 1042"},
+        "result": "RF-8",
+        "ok": True,
+        "at": 1_763_000_000.0,
+        "ended_at": 1_763_000_004.0,
+        "worker_id": "Returns coordinator",
+        "delegated_to": "refund",
+    }
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "parent_id": "",
+        "relationship": "observed",
+        "tool": "refund",
+        "at": 1_763_000_000.0,
+    }
+    events = [
+        handed,
+        {**handed, "type": "returned", "at": 1_763_000_004.0, "status": "ok"},
+    ]
+
+    sealed = recorded_timeline(
+        SPANS, DECLARED, run_key=RUN, traced_calls=[{**row, "worker_events": events}]
+    )
+    older = recorded_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[row])
+
+    # The sealed events are the record: the spans' hand-offs and calls are not placed beside them.
+    assert [
+        (one["type"], one["worker_id"], one.get("delegation_id"))
+        for one in sealed["events"]
+    ] == [("delegated", "run-1/refund", "ev-1"), ("returned", "run-1/refund", "ev-1")]
+    assert sealed["coordinator"] == {"name": "Returns coordinator"}
+    observed = {one["id"] for one in sealed["workers"] if one["observed"]}
+    assert observed == {"refund"}
+    # A row sealed before worker events is still read with the call's spans.
+    assert {one["id"] for one in older["workers"] if one["observed"]} >= {
+        "order_lookup",
+        "refund",
+    }
+    assert any(one.get("tool") == "get_order" for one in older["events"])

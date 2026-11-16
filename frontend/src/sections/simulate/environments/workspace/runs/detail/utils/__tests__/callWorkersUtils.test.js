@@ -3,7 +3,6 @@ import {
   asMarkdown,
   callEvents,
   handOffEvents,
-  handOffsOf,
   isLong,
   seconds,
   stepsByKey,
@@ -31,6 +30,7 @@ const record = (helperEnd = "no_return") => ({
         result_shown: { format: "text", text: "done" },
       },
       end: "finished",
+      did_not_finish: false,
       children: [2],
       turn: 1,
       relationship: "observed",
@@ -45,6 +45,7 @@ const record = (helperEnd = "no_return") => ({
       handoff: { at: "2026-10-31T12:00:02+00:00", by: "lead" },
       returned: null,
       end: helperEnd,
+      did_not_finish: helperEnd === "no_return",
       children: [3],
       turn: 1,
       relationship: "observed",
@@ -67,6 +68,8 @@ const record = (helperEnd = "no_return") => ({
       response: null,
       children: [1],
       calls_outside: 0,
+      handoffs: [1, 2],
+      expects_messages: true,
     },
   ],
   counts: { hand_offs: 2 },
@@ -91,6 +94,14 @@ describe("asMarkdown", () => {
       "[Note] sent",
     );
   });
+
+  it("keeps code that holds a fence of its own inside one block", () => {
+    const text = "```\nnested\n```";
+    const shown = asMarkdown({ format: "code", text });
+    const fence = shown.split("\n")[0];
+    expect(fence.length).toBeGreaterThan(3);
+    expect(shown.endsWith(fence)).toBe(true);
+  });
 });
 
 describe("isLong", () => {
@@ -101,11 +112,6 @@ describe("isLong", () => {
 });
 
 describe("steps from the API", () => {
-  it("lists a turn's hand-offs, each followed by the ones it made", () => {
-    expect(handOffsOf(record(), 1).map((step) => step.key)).toEqual([1, 2]);
-    expect(handOffsOf(record(), 2)).toEqual([]);
-  });
-
   it("shows a hand-off's own calls and ending, not the hand-offs it made", () => {
     const data = record();
     const byKey = stepsByKey(data);
@@ -122,7 +128,7 @@ describe("steps from the API", () => {
       return handOffEvents(byKey[2], byKey, names).at(-1);
     };
     expect(ending("no_return").bad).toBe(true);
-    expect(ending("cut_off").bad).toBeUndefined();
+    expect(ending("cut_off").bad).toBeFalsy();
     expect(ending("cut_off").note).not.toBe(ending("no_return").note);
   });
 
