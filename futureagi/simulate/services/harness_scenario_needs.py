@@ -19,6 +19,7 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteVersion,
 )
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_check_reading import CheckReading, read_check
 from simulate.services.hosted_harness import grades_nothing
 
@@ -101,8 +102,10 @@ def case_needs(
     *,
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
+    worker_limits: Mapping[str, Any] | None = None,
 ) -> list[CaseNeeds]:
-    """The suite version's scenarios in number order, each with what it needs.
+    """The suite version's scenarios in number order, each with what it needs; `worker_limits` is the bundle's sealed
+    `worker-limits.json`, which names the workers each scenario relies on.
 
     A suite without members numbers its scenarios in document order. Cached per
     version pair and connect-only reading (the environment's, not the version's).
@@ -113,12 +116,13 @@ def case_needs(
     connect_only = _provider_agent(environment_version.job.payload or {})
     cache_key = (
         f"harness-scenario-needs:{NEEDS_VERSION}:"
-        f"{environment_version.id}:{suite_version.id}:{int(connect_only)}"
+        f"{environment_version.id}:{suite_version.id}:{int(connect_only)}:"
+        f"{canonical_digest(worker_limits) if worker_limits is not None else 'none'}"
     )
     cached: list[CaseNeeds] | None = cache.get(cache_key)
     if cached is not None:
         return cached
-    found = _compute(environment_version, suite_version, connect_only)
+    found = _compute(environment_version, suite_version, connect_only, worker_limits)
     cache.set(cache_key, found, timeout=_CACHE_SECONDS)
     return found
 
@@ -127,6 +131,7 @@ def _compute(
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
     connect_only: bool,
+    worker_limits: Mapping[str, Any] | None,
 ) -> list[CaseNeeds]:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
@@ -137,6 +142,20 @@ def _compute(
     ]
     catalogue = _catalogue(environment_version)
     declared = _declared_workers(environment_version)
+    sealed = (worker_limits or {}).get("scenarios")
+    relied = (
+        {
+            _scenario_token(key): frozenset(
+                str(one) for one in entry.get("workers") or []
+            )
+            if entry.get("relies_on_worker_limits")
+            else frozenset()
+            for key, entry in sealed.items()
+            if isinstance(entry, Mapping)
+        }
+        if isinstance(sealed, Mapping)
+        else None
+    )
     members = list(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version)
         .order_by("number", "scenario_key")
@@ -152,6 +171,9 @@ def _compute(
                 catalogue,
                 connect_only,
                 declared,
+                None
+                if relied is None
+                else relied.get(_scenario_token(_document_key(document)), frozenset()),
             )
             for index, document in enumerate(documents, start=1)
         ]
@@ -168,7 +190,18 @@ def _compute(
             _scenario_token(content.get("name"))
         )
         found.append(
-            _needs(key, number, matched, content, catalogue, connect_only, declared)
+            _needs(
+                key,
+                number,
+                matched,
+                content,
+                catalogue,
+                connect_only,
+                declared,
+                None
+                if relied is None
+                else relied.get(_scenario_token(key), frozenset()),
+            )
         )
     unmatched = sum(1 for one in found if not one.recorded)
     if unmatched:
@@ -204,6 +237,7 @@ def _needs(
     catalogue: Mapping[str, Mapping[str, Any]],
     connect_only: bool,
     declared: frozenset[str] = frozenset(),
+    relied: frozenset[str] | None = None,
 ) -> CaseNeeds:
     rows = {"start", "message"}
     ungradable = grades_nothing(shown.get("sub_goals"), catalogue)
@@ -253,7 +287,12 @@ def _needs(
         grading_gap=gap,
         ungradable=ungradable,
         judged=any(one.judged for one in readings),
-        workers=_relied_workers(document, catalogue, declared),
+        # The bundle's own list when it has one; a bundle sealed before it is read from the scenario.
+        workers=(
+            relied
+            if relied is not None
+            else _relied_workers(document, catalogue, declared)
+        ),
     )
 
 

@@ -1,19 +1,17 @@
-"""Run readiness, per declared worker: which of its tools the world's door holds it to, read from the sealed
-`door.json` and `permissions.json`, the contract's wiring and the agent's own runs.
-
-The best a worker reads is Partial: workers share the app's one process, so the limit is held at the world on the
-worker's own channel only, and a call made through another address is not held (each such call is flagged).
-"""
+"""Run readiness, per declared worker: which of its tools the world's door holds it to, read from what ALK sealed
+(`door.json`, `worker-limits.json`, the tool proxy's `actions.json` and `permissions.json`) and the agent's own runs.
+The best a worker reads is Partial: a call made through another worker's address is not held, only flagged."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from simulate.models import CallExecution, HostedHarnessJob
 from simulate.services.harness_readiness.catalogue import (
     Fix,
     Pairing,
+    Status,
     WorkerBoundaryView,
     WorkerBypass,
     WorkerToolView,
@@ -25,33 +23,24 @@ _BYPASSES_SHOWN = 5
 _CALLS_READ = 50
 
 
-def _world_action(route: str) -> str:
-    """ALK's `world_door.world_action`: the path without its query, `/` read as `.`."""
-    return str(route or "").split("?", 1)[0].strip("/").replace("/", ".")
-
-
-def _method_action(method: str, action: str) -> str:
-    """ALK's `world_door.method_action`: a missing method is POST."""
-    return f"{(method or 'POST').upper()} {action}"
-
-
 def _contract(pairing: Pairing) -> Mapping[str, Any]:
     contract = (pairing.environment_version.documents or {}).get("contract")
     return contract if isinstance(contract, Mapping) else {}
 
 
-def _routes(contract: Mapping[str, Any]) -> dict[str, str]:
-    """Each routed tool's sealed world action, as ALK seals it."""
+def _routes(evidence: Evidence) -> dict[str, str]:
+    """Each routed tool's sealed world action, from the tool proxy's sealed `actions.json` (action to tool)."""
     routes: dict[str, str] = {}
-    for entry in contract.get("tool_entrypoints") or []:
-        if not isinstance(entry, Mapping):
-            continue
-        tool, endpoint = str(entry.get("tool") or ""), str(entry.get("endpoint") or "")
-        if tool and endpoint.strip():
-            routes[tool] = _method_action(
-                str(entry.get("method") or ""), _world_action(endpoint)
-            )
+    for action, tool in sorted((evidence.actions_to_tools or {}).items()):
+        if isinstance(tool, str) and tool:
+            routes.setdefault(tool, str(action))
     return routes
+
+
+def _limits(evidence: Evidence) -> Mapping[str, Any] | None:
+    """Each worker's sealed limits from `worker-limits.json`, by id; None for a bundle sealed before it."""
+    sealed = (evidence.worker_limits or {}).get("workers")
+    return sealed if isinstance(sealed, Mapping) else None
 
 
 def _bypasses(pairing: Pairing, runs: list[Any]) -> dict[str, list[WorkerBypass]]:
@@ -95,28 +84,12 @@ def _rebuild(
     }
 
 
-# ALK puts the world's door in front of the agent's tool service only when it runs as this service.
-_DOOR_SERVICE = "tools-api"
-
-
-def _behind_door_service(contract: Mapping[str, Any]) -> bool:
-    """Whether the contract reaches its tools on the service the door fronts: a seal without a door then predates
-    worker limits; otherwise the build never had a door."""
-    return any(
-        isinstance(entry, Mapping)
-        and entry.get("mode") == "service"
-        and entry.get("service") == _DOOR_SERVICE
-        for entry in contract.get("tool_entrypoints") or []
-    )
-
-
-def _compose_build(contract: Mapping[str, Any]) -> bool:
-    """Whether the agent runs from a Docker Compose file: ALK seals no world door for such a build yet."""
-    agent = contract.get("agent")
-    runtime = contract.get("runtime")
-    return (isinstance(agent, Mapping) and agent.get("execution") == "compose") or bool(
-        isinstance(runtime, Mapping) and runtime.get("compose_file")
-    )
+# Why ALK sealed no door for this build, as the reason code a worker row reads.
+_NO_DOOR = {
+    "tool_service_not_fronted": "no_world_door",
+    "in_process_unbound": "in_process_tools",
+    "no_tool_service": "in_process_tools",
+}
 
 
 def worker_boundaries(
@@ -131,7 +104,9 @@ def worker_boundaries(
     ]
     if not declared:
         return []
-    routes = _routes(contract)
+    routes = _routes(evidence)
+    limits = _limits(evidence)
+    outcome = evidence.door_outcome
     bypasses = _bypasses(pairing, runs)
     door = evidence.door
     permissions = evidence.worker_permissions or {}
@@ -139,7 +114,9 @@ def worker_boundaries(
     for worker in declared:
         worker_id = str(worker["id"])
         name = str(worker.get("name") or worker_id)
-        binding = "separate" if worker.get("binding") == "separate" else "shared"
+        binding: Literal["separate", "shared"] = (
+            "separate" if worker.get("binding") == "separate" else "shared"
+        )
         tools = [str(one) for one in worker.get("tools") or [] if one]
         sealed = permissions.get(f"worker:{worker_id}")
         allow = (
@@ -167,14 +144,16 @@ def worker_boundaries(
         held_on_channel = binding == "separate" and isinstance(sealed, Mapping)
         # A worker held to its own tools, or wired apart so a case can give it a deadline: the harness leaves a case
         # that checks such a worker ungraded where nothing holds its limits, so that case is held back here.
-        limited = bool(worker.get("allowed_tools")) or binding == "separate"
-        status, code, reason, fix, held = (
-            "blocked",
-            "worker_not_sealed",
-            "",
-            None,
-            False,
+        sealed_limits = (limits or {}).get(worker_id)
+        limited = (
+            bool(sealed_limits.get("limited"))
+            if isinstance(sealed_limits, Mapping)
+            # Old-bundle fallback only: a bundle sealed before ALK wrote its limits.
+            else bool(worker.get("allowed_tools")) or binding == "separate"
         )
+        status: Status = "blocked"
+        code, reason, held = "worker_not_sealed", "", False
+        fix: Fix | None = None
         if evidence.unreadable:
             status, code = "untested", "evidence_unreadable"
             reason = "This pairing's sealed files could not be read, so this worker's limits are not known."
@@ -189,42 +168,26 @@ def worker_boundaries(
                 "would": "Its calls are held to its own tools again",
                 "recheck": None,
             }
-        elif not routes:
+        elif outcome is None:
+            # Sealed before ALK wrote its door decision: it reads as sealed before worker limits.
             status = "blocked" if limited else "unavailable"
-            code = "in_process_tools"
+            code = "sealed_before_worker_limits"
+            reason = "This environment was sealed before worker limits, so none are held. Rebuild the environment to hold them."
+            fix = _rebuild(name) if status == "blocked" else None
+        elif not outcome.get("present"):
+            status = "blocked" if limited else "unavailable"
+            code = _NO_DOOR.get(str(outcome.get("reason") or ""), "no_world_door")
             reason = (
-                "This agent's tools run inside its own process, not through the world's door, so no worker's limits "
-                "are held."
+                "This build has no world door in front of its tools, so no worker's limits are held. Rebuild with the "
+                "tools behind the door to hold them."
             )
             fix = (
                 _rebuild(
                     name,
-                    "Serve the agent's tools as a service behind the world's door, then rebuild",
+                    "Rebuild the environment with its tools behind the world's door",
                 )
                 if status == "blocked"
                 else None
-            )
-        elif door is None and not _behind_door_service(contract):
-            status = "blocked" if limited else "unavailable"
-            code = "no_world_door"
-            reason = (
-                "This build has no world door: its tools reach their service directly, so no worker's limits are "
-                "held. Rebuild with the tool service behind the door to hold them."
-            )
-            fix = (
-                _rebuild(
-                    name,
-                    "Rebuild the environment with its tool service behind the world's door",
-                )
-                if status == "blocked"
-                else None
-            )
-        elif door is None and _compose_build(contract):
-            status = "blocked" if limited else "unavailable"
-            code = "compose_no_door"
-            reason = (
-                f"{name}'s limits need the world's door, which a build from a Docker Compose file does not have "
-                "yet, so none are held."
             )
         elif door is None or door.get("worker_deadlines") != "per_worker":
             status = "blocked" if limited else "unavailable"

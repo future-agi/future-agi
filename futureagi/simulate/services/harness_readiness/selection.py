@@ -511,12 +511,13 @@ def _place_all(
 ) -> _Placement:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
+    bundle = pair_bundle(pairing)
     cases = case_needs(
         environment_version=pairing.environment_version,
         suite_version=pairing.suite_version,
+        worker_limits=read_evidence(pairing, bundle).worker_limits,
     )
     selected = _selected(cases, keys)
-    bundle = pair_bundle(pairing)
     dropped_tokens = _dropped_tokens(bundle)
     kept: list[CaseNeeds] = []
     dropped: list[DroppedCase] = []
