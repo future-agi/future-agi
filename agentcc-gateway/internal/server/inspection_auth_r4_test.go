@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 					if status != want || up.served() != 0 {
 						t.Fatalf("status=%d want=%d provider_calls=%d body=%s", status, want, up.served(), body)
 					}
-					runtimeR5AssertModelCatalogue(t, path, []byte(body), visible)
+					inspectionR4AssertModelCatalogue(t, path, []byte(body), visible, selected)
 				})
 			}
 			for _, tc := range []struct {
@@ -89,7 +90,7 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 						t.Fatalf("status=%d want=%d body=%s", status, want, body)
 					}
 					if tc.status == http.StatusOK {
-						runtimeR5AssertModelCatalogue(t, path, []byte(body), tc.catalogVisible)
+						inspectionR4AssertModelCatalogue(t, path, []byte(body), tc.catalogVisible, selected)
 					}
 				})
 			}
@@ -116,7 +117,7 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 			if status != want {
 				t.Fatalf("scheme=%s global model detail status=%d want=%d", scheme, status, want)
 			}
-			runtimeR5AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), globalVisible)
+			inspectionR4AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), globalVisible, selected)
 		}
 		for _, headers := range []map[string]string{
 			{"Authorization": "Bearer sk-agentcc-runtime-a"},
@@ -130,7 +131,7 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 			if status != http.StatusNotFound {
 				t.Fatalf("BYOK-only global model detail status=%d", status)
 			}
-			runtimeR5AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), false)
+			inspectionR4AssertModelCatalogue(t, "/v1/models/gpt-5.5", []byte(body), false, selected)
 		}
 		expired := time.Now().Add(-time.Hour)
 		srv.handlers.keyStore.Get("key_1").ExpiresAt = &expired
@@ -141,5 +142,30 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 		gateway.Close()
 		srv.asyncWorker.Stop()
 		upstream.Close()
+	}
+}
+
+func inspectionR4AssertModelCatalogue(t *testing.T, path string, body []byte, visible, selected bool) {
+	t.Helper()
+	if !selected || visible || path != "/v1/models/gpt-5.5" {
+		runtimeR5AssertModelCatalogue(t, path, body, visible)
+		return
+	}
+	// Selected inspection retains the handler's 404 but sanitizes its error.
+	// The callers assert status separately; do not require the legacy body here.
+	var detail struct {
+		ID    string `json:"id"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ID != "" || detail.Error.Code != "request_failed" ||
+		detail.Error.Message != "Request failed before inspected content could be released" ||
+		strings.Contains(string(body), "gpt-5.5") {
+		t.Fatalf("selected hidden catalog model did not retain sanitized error: %s", body)
 	}
 }
