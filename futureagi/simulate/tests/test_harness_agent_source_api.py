@@ -11,7 +11,9 @@ from accounts.models import Workspace
 from simulate.models import AgentVersion, HarnessAgentVersionRuntime, HostedHarnessJob
 from simulate.services.harness_agent_changes import change_agent_source
 from simulate.services.harness_agent_versions import (
+    _outstanding_request,
     apply_agent_version,
+    require_agent_pick,
     resnapshot_version,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
@@ -154,6 +156,234 @@ class TestUpload:
                 change_agent_source(environment, archive_artifact_id=uuid.uuid4())
 
 
+def _uploaded(storage, user):
+    new = uuid.uuid4()
+    storage.objects[_source_object_key(user.organization.id, new)] = b"tar"
+    return new
+
+
+def _candidate(auth_client, environment, artifact, on_commit):
+    with on_commit(execute=True):
+        return _made(
+            _post(
+                auth_client,
+                environment,
+                {"archive_artifact_id": str(artifact), "make_default": False},
+            )
+        )
+
+
+class TestCandidate:
+    """``make_default: false``: checked for a run to pick, never made the default."""
+
+    def test_a_candidate_is_checked_picked_and_shipped_by_hand(
+        self,
+        auth_client,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _environment(user, workspace, "src-cand", storage, edit=_archive)
+        a1 = _a1(environment)
+
+        item, version = _candidate(
+            auth_client,
+            environment,
+            _uploaded(storage, user),
+            django_capture_on_commit_callbacks,
+        )
+
+        assert (item["is_default"], item["preflight_status"]) == (False, "pending")
+        assert item["requested_here"] is True
+        assert item["check_started_at"] is not None
+        assert scheduled.call_count == 1
+        assert _side(version).agent_payload["requested_by_environments"] == []
+        # The check as the background task runs it: a pass moves nothing.
+        assert _preflight(version).status == "passed"
+        assert _defaults(environment) == [a1.id]
+        assert _outcomes(version) == {str(environment.id): "rerun_only"}
+        require_agent_pick(environment, version.id, refusal="not pickable")
+        listed = next(
+            one
+            for one in _listed(auth_client, environment)["agent"]
+            if one["id"] == str(version.id)
+        )
+        assert (listed["pickable"], listed["is_default"]) == (True, False)
+
+        shipped = auth_client.post(
+            f"{BASE}/{environment.id}/versions/agent/{version.id}/default/",
+            {"expected_default_id": str(a1.id)},
+            format="json",
+        )
+        assert shipped.status_code == 200, shipped.content
+        assert _defaults(environment) == [version.id]
+
+    def test_a_repeated_candidate_checks_its_pending_twin(
+        self,
+        auth_client,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _environment(user, workspace, "src-twin", storage, edit=_archive)
+        artifact = _uploaded(storage, user)
+        _, first = _candidate(
+            auth_client, environment, artifact, django_capture_on_commit_callbacks
+        )
+        started = _side(first).check_started_at
+
+        _, again = _candidate(
+            auth_client, environment, artifact, django_capture_on_commit_callbacks
+        )
+
+        assert again.id == first.id
+        assert scheduled.call_count == 2
+        assert _side(first).check_started_at > started
+        assert _defaults(environment) == [_a1(environment).id]
+
+    def test_a_change_after_a_candidate_still_becomes_the_default(
+        self,
+        auth_client,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _environment(user, workspace, "src-after", storage, edit=_archive)
+        a1 = _a1(environment)
+        _, candidate = _candidate(
+            auth_client,
+            environment,
+            _uploaded(storage, user),
+            django_capture_on_commit_callbacks,
+        )
+        # A credential change builds on the default, not on the candidate.
+        assert _outstanding_request(environment, a1) is None
+
+        with django_capture_on_commit_callbacks(execute=True):
+            _, change = _made(
+                _post(
+                    auth_client,
+                    environment,
+                    {"archive_artifact_id": str(_uploaded(storage, user))},
+                )
+            )
+        assert _side(change).parent.agent_version_id == a1.id
+        assert _preflight(change).status == "passed"
+        assert _preflight(candidate).status == "passed"
+
+        assert _defaults(environment) == [change.id]
+        assert _outcomes(change) == {str(environment.id): "activated"}
+        assert _outcomes(candidate) == {str(environment.id): "rerun_only"}
+
+
+class TestCodingAgentPush:
+    """A coding agent's push is always a candidate: shipping stays with people."""
+
+    def _push(self, api_client, key, environment, body):
+        return api_client.post(
+            f"{BASE}/{environment.id}/versions/agent/",
+            body,
+            format="json",
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+        )
+
+    def _coder(self, user, workspace, environment):
+        from accounts.models import OrgApiKey
+
+        return OrgApiKey.no_workspace_objects.create(
+            name="coding agent",
+            organization=user.organization,
+            workspace=workspace,
+            type="coding_agent",
+            minted_by=user,
+            simulation_environment_id=environment.id,
+        )
+
+    def test_without_make_default_it_stays_a_candidate(
+        self,
+        api_client,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _environment(user, workspace, "src-coder", storage, edit=_archive)
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            item, version = _made(
+                self._push(
+                    api_client,
+                    coder,
+                    environment,
+                    {"archive_artifact_id": str(_uploaded(storage, user))},
+                )
+            )
+
+        assert item["is_default"] is False
+        assert _preflight(version).status == "passed"
+        assert _defaults(environment) == [a1.id]
+        assert _outcomes(version) == {str(environment.id): "rerun_only"}
+
+    def test_make_default_true_is_refused(
+        self, api_client, user, workspace, storage, scheduled
+    ):
+        environment = _environment(user, workspace, "src-ship", storage, edit=_archive)
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+        before = AgentVersion._base_manager.count()
+
+        response = self._push(
+            api_client,
+            coder,
+            environment,
+            {
+                "archive_artifact_id": str(_uploaded(storage, user)),
+                "make_default": True,
+            },
+        )
+
+        assert response.status_code == 403, response.content
+        assert response.json()["code"] == "coding_agent_cannot_ship"
+        assert AgentVersion._base_manager.count() == before
+        assert _defaults(environment) == [a1.id]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"prompt": "Answer every question in one sentence."},
+            {"agent_payload": {"config": {"target_speaks_first": True}}},
+        ],
+    )
+    def test_only_an_uploaded_folder_is_pushed(
+        self, api_client, auth_client, user, workspace, storage, scheduled, body
+    ):
+        environment = _environment(
+            user, workspace, "src-coder-phone", storage, edit=_phone
+        )
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+        before = AgentVersion._base_manager.count()
+
+        response = self._push(api_client, coder, environment, body)
+
+        assert response.status_code == 403, response.content
+        assert response.json()["code"] == "coding_agent_candidate_unsupported"
+        assert AgentVersion._base_manager.count() == before
+        assert _defaults(environment) == [a1.id]
+        # A person's push of the same change is unaffected.
+        _made(_post(auth_client, environment, body))
+
+
 class TestPrompt:
     def test_a_phone_prompt_reaches_the_run(
         self, auth_client, user, workspace, storage, scheduled
@@ -284,6 +514,7 @@ class TestSettings:
             {"agent_payload": {"config": {"phone_number": "4155550100"}}},
             {"agent_payload": {"config": {}}},
             {},
+            {"make_default": False},
             {"archive_artifact_id": str(UPLOADED), "prompt": "x"},
             {"prompt": "x", "secret_refs": {}},
         ],

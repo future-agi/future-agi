@@ -112,6 +112,10 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "relay_state",
     "fai_saml_b",
     "candidate",
+    # The AgentCC gateway header that carries an org's own provider key, such
+    # as its TypeSafe key on a Jev eval (ee/jev/client.py). The scrubber below
+    # matches whole names only, so it is listed in full.
+    "x-agentcc-provider-key",
     # A rerun's changed credential values, and an agent version check's.
     "environment_values",
     "credential_values",
@@ -201,6 +205,21 @@ def _scrub_event(event: dict) -> None:
             for frame in stacktrace.get("frames") or []:
                 if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
                     frame["vars"] = _scrub(frame["vars"])
+
+
+def _event_scrubber() -> Any:
+    """The denylist scrubber installed by init_sentry.
+
+    It redacts values under denylisted names in the request, extras,
+    breadcrumbs, spans and stack-frame local variables, but it matches whole
+    names only (case-insensitively), not the substrings `_scrub` matches.
+    """
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+    denylist = list(DEFAULT_DENYLIST) + [
+        k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
+    ]
+    return EventScrubber(denylist=denylist, recursive=True)
 
 
 def _event_message(event: dict) -> str:
@@ -396,14 +415,6 @@ def init_sentry(
             ignore_logger,
         )
 
-        # Keep a generous-but-bounded string length so stack frames and request
-        # bodies stay readable without bloating every event (the old 10MB cap
-        # multiplied payload size across millions of events).
-        try:
-            sentry_sdk.utils.MAX_STRING_LENGTH = 8192
-        except AttributeError:
-            pass  # Newer SDK versions may not have this
-
         # Suppress pure-infrastructure loggers at the source. This is the
         # single most important noise lever: it stops the OTel exporter's
         # transient "failed to reach collector" ERRORs from becoming issues.
@@ -466,11 +477,7 @@ def init_sentry(
 
         # Defence-in-depth scrubbing: even with send_default_pii on, redact a
         # broad denylist of secret-bearing keys recursively before send.
-        from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
-
-        scrubber_denylist = list(DEFAULT_DENYLIST) + [
-            k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
-        ]
+        event_scrubber = _event_scrubber()
 
         sentry_sdk.init(
             dsn=SENTRY_DSN,
@@ -486,7 +493,9 @@ def init_sentry(
             # Error capture configuration. PII is captured for debugging but
             # passed through the scrubber + before_send redaction below.
             send_default_pii=True,
-            event_scrubber=EventScrubber(denylist=scrubber_denylist, recursive=True),
+            event_scrubber=event_scrubber,
+            # Keep stack frames and request values readable without bloating events.
+            max_value_length=8192,
             # "medium" caps bodies at ~10KB: enough to debug, small enough that
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",

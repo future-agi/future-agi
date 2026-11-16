@@ -1,6 +1,7 @@
 import { Navigate, matchRoutes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
+import CapabilityGate from "src/components/capability-gate";
 import HarnessToEnvironment from "../../components/harness-to-environment";
 import { dashboardRoutes } from "../dashboard";
 
@@ -28,6 +29,19 @@ describe("dashboard route registry", () => {
     expect(findChildRoute(datasetsRoute, ":dataset")).toBeTruthy();
     expect(optimizeRoute?.children.some((child) => child.index)).toBe(true);
     expect(findChildRoute(optimizeRoute, ":optimizeId")).toBeTruthy();
+  });
+
+  // Enterprise, as Error Feed: without the capability the route shows the
+  // upgrade gate instead of the page.
+  it.each([
+    ["ask", "instant_eval"],
+    ["insights", "insights"],
+  ])("gates the observe %s route on %s", (path, feature) => {
+    const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: false });
+    const observeRoute = findChildRoute(dashboardRoute, "observe/:observeId");
+    const element = findChildRoute(observeRoute, path)?.element;
+    expect(element?.type).toBe(CapabilityGate);
+    expect(element.props.feature).toBe(feature);
   });
 });
 

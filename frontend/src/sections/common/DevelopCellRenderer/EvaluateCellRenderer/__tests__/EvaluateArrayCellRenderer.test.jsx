@@ -17,11 +17,20 @@ vi.mock("src/sections/develop-detail/DataTab/common", () => ({
 }));
 afterEach(cleanup);
 
+// Each choice renders as a plain-text span (MuiTypography-root); items after
+// the first carry a decorative "·" separator in a nested plain span, so read
+// only the span's own text nodes to get the exact label.
+const collectLabels = (container) =>
+  [...container.querySelectorAll(".MuiTypography-root")].map((node) =>
+    [...node.childNodes]
+      .filter((child) => child.nodeType === Node.TEXT_NODE)
+      .map((child) => child.textContent)
+      .join(""),
+  );
+
 const labels = (props) => {
   const { container } = render(<EvaluateArrayCellRenderer {...props} />);
-  return [...container.querySelectorAll(".MuiChip-label")].map(
-    (node) => node.textContent,
-  );
+  return collectLabels(container);
 };
 
 describe("producer blank semantics and Unicode scalar safety", () => {
@@ -64,11 +73,7 @@ describe("producer blank semantics and Unicode scalar safety", () => {
         cellData={{ value_infos: { output: "choices", data: { result } } }}
       />,
     );
-    expect(
-      [...container.querySelectorAll(".MuiChip-label")].map(
-        (n) => n.textContent,
-      ),
-    ).toEqual(result);
+    expect(collectLabels(container)).toEqual(result);
   });
 
   it("rejects malformed Unicode even when metadata matches it exactly", () => {
@@ -233,11 +238,7 @@ describe("actual parent metadata wiring", () => {
           }}
         />,
       );
-      expect(
-        [...container.querySelectorAll(".MuiChip-label")].map(
-          (n) => n.textContent,
-        ),
-      ).toEqual([value]);
+      expect(collectLabels(container)).toEqual([value]);
       // Real parent memo plumbing must update when cell metadata changes.
       rerender(
         <EvaluateCellRendererWrapper
@@ -250,7 +251,7 @@ describe("actual parent metadata wiring", () => {
           }}
         />,
       );
-      expect(container.querySelectorAll(".MuiChip-label")).toHaveLength(0);
+      expect(collectLabels(container)).toHaveLength(0);
     },
   );
 });

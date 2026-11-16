@@ -232,6 +232,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		deployment := resolveDeployment(req.Model)
 		reqCopy := *req
 		reqCopy.Stream = true
+		// An OpenAI-format stream reports usage only when asked; see the
+		// OpenAI provider.
+		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -294,6 +297,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				slog.Warn("failed to parse stream chunk",
 					"error", err, "data", data, "provider", p.id)
 				continue
+			}
+			if raw, ok := chunk.Extra["error"]; ok && string(raw) != "null" {
+				// The upstream failed mid-stream; see the OpenAI provider.
+				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
+				return
 			}
 
 			select {

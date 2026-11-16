@@ -59,7 +59,7 @@ const AnnotationActions = ({ ...columnDataRest }) => {
           }}
         >
           <Iconify
-            icon="mdi:eye-outline"
+            icon="solar:eye-linear"
             color="text.secondary"
             sx={{ width: "20px", height: "16px" }}
           />
@@ -75,7 +75,7 @@ const AnnotationActions = ({ ...columnDataRest }) => {
           disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
         >
           <Iconify
-            icon="mdi:cog-outline"
+            icon="solar:settings-linear"
             color="text.secondary"
             sx={{ width: "20px", height: "16px" }}
           />
@@ -89,7 +89,7 @@ const AnnotationActions = ({ ...columnDataRest }) => {
           }}
         >
           <Iconify
-            icon="mdi:link-variant"
+            icon="solar:link-linear"
             color="text.secondary"
             sx={{ width: "20px", height: "16px" }}
           />

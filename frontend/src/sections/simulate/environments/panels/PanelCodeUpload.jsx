@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useReducer, useRef } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fData } from "src/utils/format-number";
@@ -192,22 +191,22 @@ export default function PanelCodeUpload() {
   };
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       {!chosen ? (
         <Box
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); if (e.dataTransfer?.files) onDrop(e.dataTransfer.files); }}
           sx={{
             border: "1px dashed",
-            borderColor: (th) => th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.25) : th.palette.divider,
-            borderRadius: 1.5,
-            bgcolor: (th) => alpha(th.palette.text.primary, 0.02),
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
             p: 3,
             textAlign: "center",
           }}
         >
           <Iconify icon="solar:cloud-upload-linear" width={28} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mt: 1 }}>
+          <Typography sx={{ typography: "s1_2", fontWeight: 500, mt: 1 }}>
             {CODE_UPLOAD_COPY.title}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
@@ -217,7 +216,7 @@ export default function PanelCodeUpload() {
             component="label"
             size="small"
             variant="outlined"
-            sx={{ mt: 1.5, typography: "s2", fontWeight: "fontWeightBold" }}
+            sx={{ mt: 1.5 }}
           >
             {CODE_UPLOAD_COPY.choose}
             <FolderInput onPick={onDrop} />
@@ -230,15 +229,15 @@ export default function PanelCodeUpload() {
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1.5,
-            bgcolor: (th) => alpha(th.palette.text.primary, 0.02),
-            p: 1.75,
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
+            p: 1.5,
           }}
         >
           <Stack direction="row" alignItems="center" spacing={1.5}>
             <Iconify icon="solar:folder-with-files-bold" width={24} sx={{ color: "text.subtitle", flexShrink: 0 }} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }} noWrap>
+              <Typography sx={{ typography: "s1_2", fontWeight: 500 }} noWrap>
                 {summary?.name || folderName || CODE_UPLOAD_COPY.title}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }} noWrap>
@@ -250,7 +249,7 @@ export default function PanelCodeUpload() {
               size="small"
               color="inherit"
               disabled={uploading}
-              sx={{ flexShrink: 0, typography: "s2", fontWeight: "fontWeightBold" }}
+              sx={{ flexShrink: 0 }}
             >
               {CODE_UPLOAD_COPY.replace}
               <FolderInput onPick={onDrop} />
@@ -267,7 +266,7 @@ export default function PanelCodeUpload() {
       )}
 
       {error && (
-        <Typography sx={{ typography: "s3" }} color="error.main">
+        <Typography sx={{ typography: "s3", color: "status.danger.fg" }}>
           {error}
         </Typography>
       )}

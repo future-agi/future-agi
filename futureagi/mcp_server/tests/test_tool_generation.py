@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 107
+    assert manifest["tool_count"] == 111
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -298,6 +298,15 @@ def test_catalog_exposes_actual_pagination_and_typed_dataset_rows():
     # The API has always treated a row without cells as an empty row, so the
     # contract must keep accepting it; cells themselves stay typed.
     assert rows.is_valid({"dataset_id": tool_id, "rows": [{}]})
+    assert not rows.is_valid(
+        {"dataset_id": tool_id, "rows": [{"input": "must not be discarded"}]}
+    )
+    assert not rows.is_valid(
+        {
+            "dataset_id": tool_id,
+            "rows": [{"cells": [{"column_name": "input", "values": "typo"}]}],
+        }
+    )
     assert not rows.is_valid(
         {"dataset_id": tool_id, "rows": [{"cells": [{"value": "hello"}]}]}
     )

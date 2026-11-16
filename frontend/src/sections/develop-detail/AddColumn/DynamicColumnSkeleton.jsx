@@ -24,21 +24,21 @@ const DynamicColumnSkeleton = () => {
         <Skeleton variant="circular" width={16} height={16} />
       </Box>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-        <Skeleton variant="rounded" sx={{ borderRadius: 0.5 }} height={32} />
-        <Skeleton variant="rounded" sx={{ borderRadius: 0.5 }} height={32} />
-        <Skeleton variant="rounded" sx={{ borderRadius: 0.5 }} height={70} />
-        <Skeleton variant="rounded" sx={{ borderRadius: 0.5 }} height={32} />
+        <Skeleton variant="rounded" sx={{ borderRadius: "4px" }} height={32} />
+        <Skeleton variant="rounded" sx={{ borderRadius: "4px" }} height={32} />
+        <Skeleton variant="rounded" sx={{ borderRadius: "4px" }} height={70} />
+        <Skeleton variant="rounded" sx={{ borderRadius: "4px" }} height={32} />
       </Box>
       <Box sx={{ display: "flex", gap: 1 }}>
         <Skeleton
           variant="rounded"
-          sx={{ borderRadius: 0.5 }}
+          sx={{ borderRadius: "4px" }}
           height={28}
           width="100%"
         />
         <Skeleton
           variant="rounded"
-          sx={{ borderRadius: 0.5 }}
+          sx={{ borderRadius: "4px" }}
           height={28}
           width="100%"
         />

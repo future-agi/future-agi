@@ -26,7 +26,7 @@ const BackLabel = () => (
     gap={0.5}
     sx={{ pointerEvents: "none" }}
   >
-    <Iconify icon="octicon:chevron-left-24" width={18} />
+    <Iconify icon="solar:alt-arrow-left-linear" width={18} />
     Back
   </Box>
 );
@@ -39,10 +39,12 @@ const NextLabel = () => (
     sx={{ pointerEvents: "none" }}
   >
     Next
-    <Iconify icon="octicon:chevron-right-24" width={18} />
+    <Iconify icon="solar:alt-arrow-right-linear" width={18} />
   </Box>
 );
 
+// Cursor-paged grids know a page count but not an exact total: a windowed,
+// numbered pager ("Go to page N", with an ellipsis past the furthest page reached).
 export default function CursorGridPagination({
   disabled = false,
   // "Is the end of the list still unknown?" — distinct from `hasMore`, which
@@ -74,16 +76,18 @@ export default function CursorGridPagination({
       alignItems="center"
       justifyContent="space-between"
       sx={{
-        minHeight: 56,
-        p: 1,
-        borderTop: "1px solid var(--border-default)",
+        minHeight: 44,
+        py: 1,
+        px: 2,
+        borderTop: "1px solid",
+        borderColor: "divider",
         flexShrink: 0,
       }}
     >
       <Stack gap={1} direction="row" alignItems="center">
         <Typography
           typography="s2"
-          color="text.primary"
+          color="text.secondary"
           fontWeight="fontWeightRegular"
         >
           Results per page
@@ -94,7 +98,7 @@ export default function CursorGridPagination({
           value={pageSize}
           disabled={disabled}
           onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          sx={{ height: 36, bgcolor: "background.paper" }}
+          sx={{ bgcolor: "background.paper" }}
         >
           {OBSERVE_LIST_PAGE_SIZE_OPTIONS.map((size) => (
             <MenuItem key={size} value={size}>

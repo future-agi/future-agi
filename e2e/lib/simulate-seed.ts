@@ -28,9 +28,9 @@ import { E2E } from './env';
  *
  * Scoped per-call: every row belongs to the caller's own `organizationId` /
  * `workspaceId`, so parallel workers each seeding their own actor never share
- * state. Requires the Docker CLI and a reachable `futureagi-backend-1`
- * container (the attach-mode dev stack) — set `SIMULATE_SEED_CONTAINER` to
- * override the container name.
+ * state. Requires the Docker CLI and the selected stack's running Django
+ * service (`backend` on Distributed, `app` on Standalone). Set
+ * `SIMULATE_SEED_CONTAINER` to explicitly override the container name.
  */
 export interface CallExecutionSeed {
   agentDefinitionId: string;
@@ -119,47 +119,54 @@ def main():
 main()
 `;
 
-type DockerRow = [name: string, ports: string];
+type DockerRow = [name: string, ports: string, project: string, service: string];
+
+const CONTAINER_FORMAT = '{{.Names}}\t{{.Ports}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}';
+
+function runningContainers(): string {
+  return execFileSync('docker', ['ps', '--format', CONTAINER_FORMAT], { encoding: 'utf-8' });
+}
 
 /**
  * Names the backend container to seed through.
  *
- * The suite runs either against the managed stack (compose project
- * `futureagi-e2e`, what CI and `bin/e2e up` boot) or, in attach mode, against
- * the dev stack (`futureagi`) — and both can be up at once on a developer
- * machine, so a hardcoded name silently seeds the wrong database or, in CI,
- * finds no container at all. A backend container shares its compose project
- * with the Postgres it reads, so the stack the suite is pointed at is the one
- * whose Postgres publishes `E2E_PG_URL`'s port: the same setting every other
- * storage-lane assertion is steered by.
+ * Distributed, Standalone and attached stacks can coexist, so a guessed
+ * container name can seed the wrong database or name a service that does not
+ * exist. Resolve the Postgres publishing E2E_PG_URL's port, then require one
+ * running backend/app service with that exact compose-project label. Docker
+ * names (including custom names and replica suffixes) are not scope evidence.
  */
-function resolveBackendContainer(): string {
-  const override = process.env.SIMULATE_SEED_CONTAINER;
+export function resolveBackendContainer(
+  pgUrl = E2E.pgUrl,
+  override = process.env.SIMULATE_SEED_CONTAINER,
+  listContainers: () => string = runningContainers,
+): string {
   if (override) return override;
 
-  const pgPort = new URL(E2E.pgUrl).port || '5432';
-  const rows = execFileSync('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}'], { encoding: 'utf-8' })
-    .trim().split('\n').filter(Boolean)
+  const pgPort = new URL(pgUrl).port || '5432';
+  const rows = listContainers().trim().split('\n').filter(Boolean)
     .map((line) => line.split('\t') as DockerRow);
-
-  const postgres = rows.find(([name, ports]) => /-postgres-\d+$/.test(name) && (ports ?? '').includes(`:${pgPort}->`));
-  if (!postgres) {
+  const postgres = rows.filter(([, ports, , service]) =>
+    service === 'postgres' && (ports ?? '').includes(`:${pgPort}->`));
+  if (postgres.length !== 1 || !postgres[0][2]) {
     throw new Error(
-      `simulate seed: no running Postgres container publishes port ${pgPort} (from E2E_PG_URL), `
-      + 'so the stack to seed cannot be identified. Bring the stack up, or set '
+      `simulate seed: expected exactly one running compose Postgres on port ${pgPort} `
+      + '(from E2E_PG_URL) with a project label. Bring the stack up, or set '
       + 'SIMULATE_SEED_CONTAINER to the backend container to seed through.',
     );
   }
 
-  const project = postgres[0].replace(/-postgres-\d+$/, '');
-  const backend = `${project}-backend-1`;
-  if (!rows.some(([name]) => name === backend)) {
+  const project = postgres[0][2];
+  const runtimes = rows.filter(([name, , candidateProject, service]) =>
+    name && candidateProject === project && (service === 'backend' || service === 'app'));
+  if (runtimes.length !== 1) {
     throw new Error(
       `simulate seed: Postgres on port ${pgPort} belongs to compose project "${project}", but `
-      + `${backend} is not running. Set SIMULATE_SEED_CONTAINER to override.`,
+      + `expected exactly one running backend/app service, found ${runtimes.length}. `
+      + 'Set SIMULATE_SEED_CONTAINER to override.',
     );
   }
-  return backend;
+  return runtimes[0][0];
 }
 
 export function seedCallExecutions(opts: {

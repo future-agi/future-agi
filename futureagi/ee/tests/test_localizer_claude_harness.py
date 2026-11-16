@@ -404,9 +404,22 @@ async def test_real_sdk_cli_transports_native_audio_and_calls_tools():
     assert result.cost["token_usage"]["completion_tokens"] >= 30
 
 
-@pytest.mark.parametrize("case", ["no_findings", "api_error", "max_turns", "timeout"])
+@pytest.mark.parametrize(
+    "case, code",
+    [
+        ("no_terminal", "missing_terminal"),
+        ("no_findings", "missing_findings"),
+        ("api_error", "api_error"),
+        ("max_turns", "max_turns"),
+        ("budget", "budget_exhausted"),
+        ("terminal_error", "terminal_error"),
+        ("unknown_subtype", "unexpected_subtype"),
+        ("unknown_reason", "unexpected_terminal_reason"),
+        ("timeout", "timeout"),
+    ],
+)
 async def test_incomplete_sdk_runs_fail_instead_of_synthesizing_findings(
-    case, monkeypatch
+    case, code, monkeypatch
 ):
     import asyncio
     from types import SimpleNamespace
@@ -429,10 +442,20 @@ async def test_incomplete_sdk_runs_fail_instead_of_synthesizing_findings(
         async def receive_response(self):
             if case == "timeout":
                 await asyncio.sleep(10)
+            if case == "no_terminal":
+                return
             yield SimpleNamespace(
-                is_error=case == "api_error",
-                subtype="error_max_turns" if case == "max_turns" else "success",
-                terminal_reason="api_error" if case == "api_error" else "completed",
+                is_error=case in ("api_error", "terminal_error"),
+                subtype={
+                    "max_turns": "error_max_turns",
+                    "budget": "error_max_budget_usd",
+                    "unknown_subtype": "private case data",
+                }.get(case, "success"),
+                terminal_reason={
+                    "api_error": "api_error",
+                    "unknown_reason": "private provider body",
+                }.get(case, "completed"),
+                result="private prompt and token",
             )
 
     @asynccontextmanager
@@ -443,10 +466,14 @@ async def test_incomplete_sdk_runs_fail_instead_of_synthesizing_findings(
     monkeypatch.setattr(claude_agent_sdk, "ResultMessage", SimpleNamespace)
     monkeypatch.setattr(AgentCCTransport, "serve", no_network)
     el = localizer()
-    with pytest.raises(
-        RuntimeError, match="time limit|without submitting|did not finish"
-    ):
+    from model_hub.services.localization_errors import LocalizationFailure
+
+    with pytest.raises(RuntimeError) as raised:
         await el._run(GatewayConfig("http://unused.invalid", "fake", timeout=0.05))
+    assert isinstance(raised.value, LocalizationFailure)
+    assert raised.value.code.value == code
+    assert str(raised.value) == f"Error localization failed ({code})."
+    assert "private" not in str(raised.value)
     assert el.cost["total_cost"] == 0
 
 

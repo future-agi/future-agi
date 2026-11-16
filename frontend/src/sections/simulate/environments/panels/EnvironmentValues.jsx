@@ -54,7 +54,7 @@ export default function EnvironmentValues({
           size="small"
           onClick={() => setOpen((o) => !o)}
           startIcon={<Iconify icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
-          sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5 }}
+          color="inherit"
         >
           {open ? "Hide environment values" : "Environment values (optional)"}
         </Button>
@@ -63,7 +63,8 @@ export default function EnvironmentValues({
           disabled={upload.isPending}
           onClick={() => fileRef.current?.click()}
           startIcon={<Iconify icon="solar:upload-linear" width={12} />}
-          sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5, flexShrink: 0 }}
+          color="inherit"
+          sx={{ flexShrink: 0 }}
         >
           Upload credential file
         </Button>
@@ -136,7 +137,7 @@ export default function EnvironmentValues({
               value={envText}
               onChange={(e) => onEnvText?.(e.target.value)}
               placeholder={"OPENAI_API_KEY=…\nDATABASE_URL=…"}
-              sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+              sx={{ "& .MuiInputBase-input": { fontFamily: "ui-monospace, Menlo, monospace" } }}
             />
           </Box>
           <Field

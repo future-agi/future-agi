@@ -340,6 +340,28 @@ class TestPush:
         assert _outcomes(version) == {str(environment.id): "activated"}
         assert _hand_move(environment) is None
 
+    def test_a_version_from_a_push_keeps_the_app_installation(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-app", storage)
+        a1 = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=_a1(environment).id
+        )
+        a1.agent_payload = {
+            **a1.agent_payload,
+            "source_access": {
+                **a1.agent_payload["source_access"],
+                "installation_id": "42",
+            },
+        }
+        a1.save(update_fields=["agent_payload"])
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        assert _observe(environment) == {str(environment.id): "created"}
+
+        [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["installation_id"] == "42"
+
     def test_one_version_for_environments_with_the_same_facts(
         self, user, workspace, storage, gh, scheduled
     ):
@@ -840,8 +862,9 @@ class TestPush:
         [shared] = _push_versions(a1.agent_definition_id)
         with patch(
             "simulate.services.hosted_harness.agent_version_pickable",
-            side_effect=lambda job, version_id: job.id != second.id
-            and agent_version_pickable(job, version_id),
+            side_effect=lambda job, version_id: (
+                job.id != second.id and agent_version_pickable(job, version_id)
+            ),
         ):
             assert _preflight(shared.agent_version).status == "passed"
         assert _outcomes(shared.agent_version) == {
@@ -879,8 +902,9 @@ class TestPush:
         [shared] = _push_versions(a1.agent_definition_id)
         with patch(
             "simulate.services.hosted_harness.agent_version_pickable",
-            side_effect=lambda job, version_id: job.id != second.id
-            and agent_version_pickable(job, version_id),
+            side_effect=lambda job, version_id: (
+                job.id != second.id and agent_version_pickable(job, version_id)
+            ),
         ):
             assert _preflight(shared.agent_version).status == "passed"
         assert _outcomes(shared.agent_version) == {

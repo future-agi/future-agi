@@ -45,12 +45,13 @@ export const paths = {
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
-      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
       pricing: `${ROOTS.DASHBOARD}/settings/pricing`,
       eeLicenses: `${ROOTS.DASHBOARD}/settings/ee-licenses`,
+      updates: `${ROOTS.DASHBOARD}/settings/updates`,
     },
     performance: `${ROOTS.DASHBOARD}/performance`,
     data: `${ROOTS.DASHBOARD}/data`,
@@ -103,6 +104,8 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        improvement: (envId, fixId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

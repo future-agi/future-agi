@@ -342,25 +342,27 @@ describe("RunAnalytics", () => {
     useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
     render(<RunAnalytics executionId="execution-1" />);
   };
-  const tile = (label) => screen.getByText(label).parentElement;
+  // A tile's label is a <p>; a widget of the same name is an <h3>.
+  const tile = (label) =>
+    screen.getAllByText(label).find((el) => el.tagName === "P").parentElement;
 
   it("shows call and voice metric tiles", () => {
     renderWithMetrics([...callMetrics, ...voiceMetrics]);
 
-    expect(within(tile("Total Calls")).getByText("4")).toBeInTheDocument();
+    expect(within(tile("Total calls")).getByText("4")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("3")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("of 4")).toBeInTheDocument();
     expect(
-      within(tile("Calls Connected (%)")).getByText("75%"),
+      within(tile("Calls connected (%)")).getByText("75%"),
     ).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("462ms"),
+      within(tile("Agent latency")).getByText("462ms"),
     ).toBeInTheDocument();
     expect(within(tile("Agent WPM")).getByText("167")).toBeInTheDocument();
     expect(
-      within(tile("Agent Stop Latency")).getByText("289ms"),
+      within(tile("Agent stop latency")).getByText("289ms"),
     ).toBeInTheDocument();
-    expect(within(tile("Talk Ratio")).getByText("48/52")).toBeInTheDocument();
+    expect(within(tile("Talk ratio")).getByText("48/52")).toBeInTheDocument();
     expect(within(tile("Avg duration")).getByText("11.9s")).toBeInTheDocument();
     expect(within(tile("Avg turns")).getByText("9.1")).toBeInTheDocument();
   });
@@ -371,12 +373,12 @@ describe("RunAnalytics", () => {
       callMetric("agent_latency", null, "ms"),
     ]);
 
-    for (const label of ["Agent WPM", "Agent Stop Latency", "Talk Ratio"]) {
+    for (const label of ["Agent WPM", "Agent stop latency", "Talk ratio"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
-    expect(within(tile("Agent Latency")).getByText("-")).toBeInTheDocument();
+    expect(within(tile("Agent latency")).getByText("-")).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("Not reported"),
+      within(tile("Agent latency")).getByText("Not reported"),
     ).toBeInTheDocument();
   });
 

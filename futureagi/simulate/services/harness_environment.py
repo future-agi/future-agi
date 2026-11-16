@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -87,13 +88,13 @@ def annotate_for_list(
             ),
             simulation_run_count=Count(
                 "simulation_runs",
-                filter=Q(simulation_runs__deleted=False),
+                filter=Q(simulation_runs__deleted=False)
+                & user_runs("simulation_runs__"),
                 distinct=True,
             ),
             last_execution_id=Subquery(
-                TestExecution.no_workspace_objects.filter(
-                    run_test=OuterRef("run_test"), deleted=False
-                )
+                user_executions()
+                .filter(run_test=OuterRef("run_test"))
                 .order_by("-created_at")
                 .values("id")[:1]
             ),
@@ -116,7 +117,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     contract = _contract_data(job)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
-        runs_count = job.simulation_runs.filter(deleted=False).count()
+        runs_count = user_environment_runs(job).count()
     return {
         "id": str(job.id),
         "name": environment_name(job),
@@ -167,9 +168,9 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
         TestExecution.no_workspace_objects.filter(id__in=ids)
         .annotate(
             run_number=Subquery(
-                TestExecution.no_workspace_objects.filter(
+                user_executions()
+                .filter(
                     run_test=OuterRef("run_test"),
-                    deleted=False,
                     created_at__lte=OuterRef("created_at"),
                 )
                 .values("run_test")
@@ -967,9 +968,7 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
 
 
 def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
-    latest_run = (
-        job.simulation_runs.filter(deleted=False).order_by("-created_at", "-id").first()
-    )
+    latest_run = user_environment_runs(job).order_by("-created_at", "-id").first()
     run_test_id = str(job.run_test_id) if job.run_test_id else None
     test_execution_id = (
         str(latest_run.test_execution_id)

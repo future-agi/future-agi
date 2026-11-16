@@ -14,14 +14,15 @@ import {
 import { useCompareRuns } from "src/api/simulate-environments/compareRuns";
 import SideDrawer from "../../../components/SideDrawer";
 import { COMPARE_COPY as COPY } from "../../workspace.constants";
-import { COLORS, format, number } from "../detail/analytics/DashboardCharts";
+import { format, number } from "../detail/analytics/DashboardCharts";
 
-// On a dot beside the verdict only: as text these fail contrast.
-const VERDICT_COLORS = {
-  improved: COLORS[1],
-  regressed: COLORS[2],
-  no_meaningful_change: COLORS[5],
-  inconclusive: COLORS[3],
+// The status role each verdict takes, shown on a dot beside the verdict only:
+// as text these fail contrast.
+const VERDICT_ROLES = {
+  improved: "success",
+  regressed: "danger",
+  no_meaningful_change: "neutral",
+  inconclusive: "warning",
 };
 // What needs a look first: changes, then the unsure, then what can't be judged.
 const ORDER = {
@@ -34,8 +35,8 @@ const ORDER = {
   not_applicable: 6,
 };
 const tableSx = {
-  "& th": { fontSize: 10, textTransform: "uppercase", color: "text.secondary" },
-  "& td": { fontSize: 12, verticalAlign: "top" },
+  "& th": { typography: "s3", fontWeight: 500, color: "text.secondary" },
+  "& td": { typography: "s1", verticalAlign: "top" },
   "& tr:last-child td": { borderBottom: 0 },
 };
 
@@ -58,7 +59,7 @@ function Side({ side }) {
   return (
     <>
       {format(side.pass_rate, "percent")}
-      <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
         {COPY.passed(side.passed, side.trials, side.undecided)}
       </Typography>
     </>
@@ -77,10 +78,10 @@ function Verdict({ pair }) {
           height: 8,
           borderRadius: "50%",
           flexShrink: 0,
-          bgcolor: VERDICT_COLORS[pair.verdict],
+          bgcolor: (t) => t.palette.status[VERDICT_ROLES[pair.verdict]].solid,
         }}
       />
-      <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
+      <Typography sx={{ typography: "s1", fontWeight: 600 }}>
         {COPY.verdicts[pair.verdict]}
       </Typography>
     </Stack>
@@ -104,7 +105,7 @@ function Verdict({ pair }) {
       )}
       {verdict}
       {[interval, hint].filter(Boolean).map((text) => (
-        <Typography key={text} sx={{ fontSize: 10, color: "text.secondary" }}>
+        <Typography key={text} sx={{ typography: "s3", color: "text.secondary" }}>
           {text}
         </Typography>
       ))}
@@ -135,27 +136,27 @@ export default function RunCompare({ open, onClose, env, current, against }) {
     body = (
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
         <CircularProgress size={14} />
-        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {COPY.loading}
         </Typography>
       </Stack>
     );
   } else if (isError) {
     body = (
-      <Typography sx={{ mt: 0.75, fontSize: 12, color: "text.secondary" }}>
+      <Typography sx={{ mt: 0.75, typography: "s1", color: "text.secondary" }}>
         {COPY.error}
       </Typography>
     );
   } else {
     body = (
       <>
-        <Typography sx={{ mt: 0.75, fontSize: 11, color: "text.secondary" }}>
+        <Typography sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}>
           {COPY.versions(current?.label, versionLine(data.versions?.current))}
           {" · "}
           {COPY.versions(against?.label, versionLine(data.versions?.against))}
         </Typography>
         {counts.length > 0 && (
-          <Typography sx={{ mt: 0.5, fontSize: 12 }}>
+          <Typography sx={{ mt: 0.5, typography: "s1" }}>
             {counts.join(" · ")}
           </Typography>
         )}
@@ -211,11 +212,11 @@ export default function RunCompare({ open, onClose, env, current, against }) {
       <Box component="section" aria-label={COPY.heading} sx={{ p: 3 }}>
         <Typography
           component="h2"
-          sx={{ typography: "m2", fontWeight: "fontWeightSemiBold", pr: 4 }}
+          sx={{ typography: "m2", fontWeight: 500, pr: 4 }}
         >
           {COPY.heading}
         </Typography>
-        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {COPY.subtitle(summary?.margin ?? 10)}
         </Typography>
         {body}

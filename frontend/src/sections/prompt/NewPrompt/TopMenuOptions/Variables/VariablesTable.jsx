@@ -12,6 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { LoadingButton } from "@mui/lab";
 import { useForm } from "react-hook-form";
@@ -51,7 +52,6 @@ const VARIABLES_TABLE_THEME_PARAMS = {
   checkboxBorderWidth: 1.5,
   rowBorder: true,
   headerFontSize: "13px",
-  borderColor: "#E6E6E6",
   headerColumnBorder: { width: "1px" },
   headerRowBorder: { width: "1px" },
   wrapperBorderRadius: 1,
@@ -412,7 +412,6 @@ const VariablesTable = ({
         />
         <IconButton
           sx={{
-            height: "26px",
             width: "26px",
             padding: "0",
             border: "1px solid",
@@ -422,18 +421,16 @@ const VariablesTable = ({
             left: "54px",
             zIndex: 1,
             backgroundColor: "background.paper",
-            boxShadow: "0px 1px 6px rgba(0, 0, 0, 0.15)",
             "&:hover": {
               backgroundColor: "action.hover",
             },
           }}
           onClick={handleAddRow}
         >
-          <Iconify icon="mingcute:add-line" color="primary.main" width={18} />
+          <Iconify icon="solar:add-linear" color="primary.main" width={20} />
         </IconButton>
         <IconButton
           sx={{
-            height: "26px",
             width: "26px",
             padding: "0",
             backgroundColor: "background.paper",
@@ -444,7 +441,6 @@ const VariablesTable = ({
             borderColor: "divider",
             position: "absolute",
             zIndex: "10",
-            boxShadow: "0px 1px 6px rgba(0, 0, 0, 0.15)",
             "&:hover": {
               backgroundColor: "action.hover",
             },
@@ -453,7 +449,7 @@ const VariablesTable = ({
             isPending ? setOpenReload(true) : setOpenNewVariableModal(true)
           }
         >
-          <Iconify icon="mingcute:add-line" color="primary.main" width={18} />
+          <Iconify icon="solar:add-linear" color="primary.main" width={20} />
         </IconButton>
       </Box>
       <Box
@@ -490,7 +486,8 @@ const VariablesTable = ({
       <Dialog
         open={openNewVariableModal}
         onClose={handleClose}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle
@@ -508,11 +505,11 @@ const VariablesTable = ({
               justifyContent: "space-between",
             }}
           >
-            <Typography fontWeight={700} fontSize="18px">
+            <Typography fontWeight={600} fontSize="16px">
               New Variable
             </Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </DialogTitle>

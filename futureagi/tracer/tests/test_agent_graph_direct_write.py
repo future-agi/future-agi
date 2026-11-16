@@ -113,7 +113,7 @@ def test_agent_graph_cache_identity_invalidates_retired_path_payloads(monkeypatc
     assert identity == {
         "project_id": PROJECT_ID,
         "filters": [FINAL_STATUS_FILTER],
-        "payload_version": 5,
+        "payload_version": 6,
     }
 
 
@@ -140,9 +140,12 @@ def test_agent_graph_is_one_latest_state_v2_statement():
     assert "'hierarchy'" in query
     assert "'path'" not in query
     assert "arrayFirst(" not in query
-    assert "arrayExists(" not in query
+    assert "arrayExists(c -> c.2 = s.1" in query  # Pydantic usage proof only
     assert "indexOfAssumeSorted(" in query
-    assert "arrayFold(" not in query
+    # GenAI usage ancestry is bounded to branch spans; never restore the old
+    # chronological fold over every leaf or infer execution order from times.
+    assert "range(length(usage_branches))" in query
+    assert "range(length(usage_spans))" not in query
     assert "graph_execution_groups" not in query
     # Timestamp order must never invent a transition between siblings. Agent
     # Path stays unavailable until producers record chronological transitions;
@@ -219,8 +222,13 @@ def test_agent_graph_membership_is_global_but_unfiltered_scan_stays_bounded():
     unfiltered_prewhere = unfiltered_query.split("PREWHERE", 1)[1].split("GROUP BY", 1)[
         0
     ]
-    assert "start_time >= %(start_date)s" in unfiltered_prewhere
-    assert "start_time < %(end_date)s" in unfiltered_prewhere
+    assert (
+        "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s"
+        in unfiltered_prewhere
+    )
+    assert (
+        "toStartOfHour(start_time) < toDateTime64(%(end_date)s" in unfiltered_prewhere
+    )
 
 
 @pytest.mark.unit

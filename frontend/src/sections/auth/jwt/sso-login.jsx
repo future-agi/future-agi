@@ -72,7 +72,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -83,7 +83,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           lineHeight: "36px",
           color: "text.secondary",
           maxWidth: "480px",
@@ -107,11 +107,11 @@ export default function SSOLogin() {
       />
 
       <LoadingButton
+        size="large"
         fullWidth
         type="submit"
         variant="contained"
         loading={isLoading}
-        sx={{ borderRadius: 0.5 }}
         color="primary"
       >
         Sign in
@@ -167,7 +167,7 @@ export default function SSOLogin() {
           },
         }}
       >
-        <Iconify icon="eva:arrow-ios-back-fill" />
+        <Iconify icon="solar:alt-arrow-left-linear" />
       </IconButton> */}
 
       {/* Left Side - Form */}

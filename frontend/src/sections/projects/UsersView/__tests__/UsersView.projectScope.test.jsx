@@ -277,7 +277,11 @@ describe("Users rows are labelled with their project (TH-5037)", () => {
       </HelmetProvider>,
       { route: "/dashboard/users" },
     );
-    expect(screen.getByText("One row per user per project")).toBeVisible();
+    expect(
+      screen.getByText(
+        "See each user's sessions, cost and eval pass rate, one row per user per project.",
+      ),
+    ).toBeVisible();
     expect(
       screen.queryByText("All users across your projects"),
     ).not.toBeInTheDocument();

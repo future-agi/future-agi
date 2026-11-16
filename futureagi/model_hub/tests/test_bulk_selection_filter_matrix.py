@@ -89,8 +89,7 @@ def test_filter_helpers_read_canonical_snake_filter_payloads_only():
 def test_rule_field_mapping_uses_canonical_snake_case_ids_only():
     for source_mapping in annotation_queue_helpers.FIELD_MAPPING.values():
         assert not any(
-            any(char.isupper() for char in field_id)
-            for field_id in source_mapping
+            any(char.isupper() for char in field_id) for field_id in source_mapping
         )
 
 

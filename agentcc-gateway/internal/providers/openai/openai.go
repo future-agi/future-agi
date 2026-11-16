@@ -22,12 +22,13 @@ import (
 
 // Provider implements the Provider interface for OpenAI-compatible APIs.
 type Provider struct {
-	id         string
-	baseURL    string
-	pathPrefix string
-	apiKey     string
-	httpClient *http.Client
-	semaphore  chan struct{}
+	id                 string
+	baseURL            string
+	pathPrefix         string
+	apiKey             string
+	httpClient         *http.Client
+	decisionHTTPClient *http.Client
+	semaphore          chan struct{}
 	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
@@ -70,23 +71,35 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
 		DialContext:         cfg.DialContext,
+		Proxy:               cfg.Proxy,
 	}
 	if cfg.SkipTLS {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // user-opted skip
 		slog.Warn("TLS verification disabled for provider", "provider", id)
 	}
 
+	client := &http.Client{Transport: transport, Timeout: timeout}
+	decisionClient := client
+	if cfg.DecisionProxy != nil || cfg.DecisionDialContext != nil {
+		decisionTransport := transport.Clone()
+		if cfg.DecisionProxy != nil {
+			decisionTransport.Proxy = cfg.DecisionProxy
+		}
+		if cfg.DecisionDialContext != nil {
+			decisionTransport.DialContext = cfg.DecisionDialContext
+		}
+		decisionClient = &http.Client{Transport: decisionTransport, Timeout: timeout}
+	}
+
 	return &Provider{
-		id:         id,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		pathPrefix: cfg.EffectiveAPIPathPrefix(),
-		apiKey:     cfg.APIKey,
-		httpClient: &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
-		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		openAIAPI: isOfficialAPI(cfg.BaseURL),
+		id:                 id,
+		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix:         cfg.EffectiveAPIPathPrefix(),
+		apiKey:             cfg.APIKey,
+		httpClient:         client,
+		decisionHTTPClient: decisionClient,
+		semaphore:          make(chan struct{}, maxConcurrent),
+		openAIAPI:          isOfficialAPI(cfg.BaseURL),
 	}, nil
 }
 
@@ -240,6 +253,13 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	// Decided here, so every caller gets it: the chat handlers, failover and
+	// model fallbacks, async jobs, scheduled completions, batches, the traffic
+	// mirror and the routes that translate their own dialect into a chat
+	// request. See ChatNeedsResponses.
+	if p.ChatNeedsResponses(req) {
+		return p.ChatCompletionViaResponses(ctx, req)
+	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
 	}
@@ -297,6 +317,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming chat completion request.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// As in ChatCompletion: every streaming caller gets the Responses route.
+	if p.ChatNeedsResponses(req) {
+		return p.StreamChatCompletionViaResponses(ctx, req)
+	}
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -314,6 +338,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		// An OpenAI-format stream reports usage only when asked. Asked here,
+		// every route that streams through this provider can be priced, not
+		// only the one that remembered to set it.
+		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -384,6 +412,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					"provider", p.id,
 				)
 				continue
+			}
+			if streamErrorChunk(chunk) {
+				// The upstream failed mid-stream. Relayed as a chunk, the
+				// error reached the client but the stream ended as a success.
+				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
+				return
 			}
 
 			select {
@@ -1018,6 +1052,9 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 // Close releases resources.
 func (p *Provider) Close() error {
 	p.httpClient.CloseIdleConnections()
+	if p.decisionHTTPClient != p.httpClient {
+		p.decisionHTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -1039,6 +1076,14 @@ func parseProviderError(status int, body []byte) *models.APIError {
 		msg = msg[:500] + "..."
 	}
 	return models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+}
+
+// streamErrorChunk reports whether a stream chunk is an upstream's error
+// object, which an OpenAI-compatible server sends in place of a chunk when it
+// fails mid-stream.
+func streamErrorChunk(chunk models.StreamChunk) bool {
+	raw, ok := chunk.Extra["error"]
+	return ok && string(raw) != "null"
 }
 
 // resolveModelName returns the model ID as-is. Historically this stripped

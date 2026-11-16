@@ -42,6 +42,7 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.storage_client import server_reachable_url
@@ -1037,7 +1038,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             kb_id=eval_config.kb_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
+            source=eval_source(call_execution.test_execution_id),
             call_context=_call_context,
         )
 
@@ -1808,7 +1809,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     organization=organization,
                     api_call_type=api_call_type,
                     config=source_config,
-                    source="simulate_tool_evaluation",
+                    source=eval_source(test_execution.id, "simulate_tool_evaluation"),
                     source_id=str(test_execution.id),
                     workspace=workspace,
                 )

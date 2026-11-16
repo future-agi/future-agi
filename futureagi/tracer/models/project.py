@@ -73,8 +73,15 @@ class Project(BaseModel):
         max_length=20, choices=PROJECT_TYPES, null=False, blank=False
     )
     metadata = models.JSONField(null=True, blank=True)
+    # Server-owned fence for materialization racing source deletion.
+    analysis_source_generation = models.PositiveBigIntegerField(
+        default=0, db_default=0, editable=False
+    )
     config = models.JSONField(default=list, null=True, blank=True)
     session_config = models.JSONField(default=list, null=True, blank=True)
+    sampling_contact_attribute = models.CharField(
+        max_length=200, default="", db_default="", blank=True
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,

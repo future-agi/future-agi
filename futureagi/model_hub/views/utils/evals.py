@@ -5,26 +5,35 @@ import uuid
 from decimal import Decimal
 
 import structlog
-from accounts.models.organization import Organization
 from django.db import close_old_connections
 
-logger = structlog.get_logger(__name__)
+from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
-from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
     process_mapping,
 )
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -283,7 +292,7 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model)
+            else _get_api_call_type(model, template=template, runtime_config=config)
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -453,7 +462,9 @@ def run_eval_func(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:
@@ -523,12 +534,18 @@ def run_eval_func(
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
+                and not _emit_jev_usage(
+                    eval_instance,
+                    org_id=str(org.id),
+                    run_id=str(api_call_log_row.log_id),
+                )
             ):
-
                 emit(
                     UsageEvent(
                         org_id=str(org.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type, model, evaluator=eval_instance
+                        ),
                         amount=credits,
                         properties={
                             "source": source,
@@ -572,11 +589,16 @@ def run_eval_func(
     except Exception as e:
         try:
             if api_call_log_row:
+                from tfc.ee_gates import jev_error_message
+
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
                 current_config.update(
                     {
-                        "output": {"output": None, "reason": str(e)},
+                        "output": {
+                            "output": None,
+                            "reason": jev_error_message(e) or str(e),
+                        },
                         "mappings": mappings,
                         "required_keys": list(mappings.keys()),
                     }
@@ -626,8 +648,10 @@ def process_eval_for_single_row(
                 if base_col_id:
                     mapping_uids.append(base_col_id)
 
-        cols = Column.objects.filter(id__in=mapping_uids).values("id", "data_type")
-        col_map = {str(col["id"]): col["data_type"] for col in cols}
+        col_map = read_evaluation_column_types(mapping_uids)
+        # process_mapping reads the row's dataset and workspace. Load them
+        # inside the retry boundary first so those checks use the cache.
+        read_evaluation_workspace(row)
         required_field, mapping = process_mapping(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
@@ -739,6 +763,13 @@ def process_eval_for_single_row(
         #     return response
         # else:
         return output
+    except EvaluationMetadataUnavailable as error:
+        logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+        return {
+            "reason": str(error),
+            "output_type": "reason",
+            "error_code": error.code,
+        }
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value

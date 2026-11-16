@@ -1,12 +1,19 @@
 package models
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 )
 
 // ChatCompletionRequest represents an OpenAI-compatible chat completion request.
 type ChatCompletionRequest struct {
+	// TranslatedFrom names the dialect a gateway route translated this
+	// request from ("anthropic" for /v1/messages, "google" for the GenAI
+	// routes); empty for a caller's own chat request. It is never sent.
+	TranslatedFrom string `json:"-"`
+
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
 	Temperature         *float64        `json:"temperature,omitempty"`
@@ -132,6 +139,14 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+}
+
+// NewToolCallID returns a random tool call id in the format call_{hex16}, for
+// providers whose function calls carry no id of their own.
+func NewToolCallID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "call_" + hex.EncodeToString(b)
 }
 
 type FunctionCall struct {

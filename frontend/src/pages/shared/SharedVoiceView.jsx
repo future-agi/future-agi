@@ -147,8 +147,8 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
                 fontSize: 11,
                 fontWeight: 600,
                 color: "text.secondary",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
+                textTransform: "none",
+                letterSpacing: 0,
                 mb: 0.75,
               }}
             >
@@ -157,7 +157,10 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
             <VoiceAudioBridge data={data} />
           </Box>
         ) : (
-          <Alert severity="info" icon={<Iconify icon="mdi:volume-off" />}>
+          <Alert
+            severity="info"
+            icon={<Iconify icon="solar:volume-cross-linear" />}
+          >
             Audio recording is not available in this shared view.
           </Alert>
         )}

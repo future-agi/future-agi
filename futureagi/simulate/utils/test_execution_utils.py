@@ -7,16 +7,27 @@ import uuid
 from datetime import datetime
 
 from django.db import connection, models
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
+from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.utils.persona_filtering import (
     UnsupportedPersonaFilter,
     apply_persona_filter,
     is_persona_filter_column,
 )
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+
+
+def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
+    """Where a call's evals are logged from: a fix's check runs have a source of their own."""
+    is_check_run = HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id=test_execution_id, fix_run__isnull=False
+    ).exists()
+    return FIX_CHECK_RUN_EVAL_SOURCE if is_check_run else default
 
 
 class TestExecutionUtils:
@@ -779,37 +790,37 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 avg_latency_ms=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__avg_latency_ms"),
                         models.IntegerField(),
                     )
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
                 csat_score=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__csat_score"),
                         models.FloatField(),
                     )
@@ -1391,9 +1402,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id)
-                .select_related("dataset")
-                .first()
+                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
                 for col_obj in Column.all_objects.filter(
@@ -1406,10 +1415,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     non_scenario_columns = [
         col
         for col in column_order
-        if not (
-            isinstance(col, dict)
-            and col.get("type") == "scenario_dataset_column"
-        )
+        if not (isinstance(col, dict) and col.get("type") == "scenario_dataset_column")
     ]
     if first_scenario_idx is None:
         # No scenario columns yet: place them before the first evaluation
@@ -1428,8 +1434,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
             1
             for col in column_order[:first_scenario_idx]
             if not (
-                isinstance(col, dict)
-                and col.get("type") == "scenario_dataset_column"
+                isinstance(col, dict) and col.get("type") == "scenario_dataset_column"
             )
         )
 
