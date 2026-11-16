@@ -105,6 +105,7 @@ const WORKERS = [
     undeclared: false,
     instance_ids: ["s3"],
     cut_short: false,
+    past_deadline: false,
     checks: [],
   },
   {
@@ -115,6 +116,7 @@ const WORKERS = [
     undeclared: false,
     instance_ids: [],
     cut_short: false,
+    past_deadline: false,
     checks: [],
   },
 ];
@@ -928,7 +930,12 @@ describe("CallWorkersPanel", () => {
           ...twoTurns({ returned: null, end_state: "deadline_passed" }),
           workers: TIMELINE.workers.map((one) =>
             one.worker_id === handoff.worker_id
-              ? { ...one, state: "deadline_passed", cut_short: false }
+              ? {
+                  ...one,
+                  state: "deadline_passed",
+                  cut_short: false,
+                  past_deadline: true,
+                }
               : { ...one, state: "not_observed", cut_short: false },
           ),
         },
@@ -948,16 +955,16 @@ describe("CallWorkersPanel", () => {
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });
 
-    it("shows each failed check with why it is on no step, and its worker only when it is that worker's own", () => {
+    it("shows a worker's failed check on its hand-off, and a task check named by no worker and on no step", () => {
       result = {
         data: timeline({
           placements: [
             {
               name: "read_only",
               status: "failed",
-              step: null,
+              step: 1,
               worker_id: "r/order_lookup",
-              untied: "no_moment",
+              untied: null,
             },
             {
               name: "explained_refusal",
@@ -974,7 +981,8 @@ describe("CallWorkersPanel", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       const [own, task] = screen.getAllByTestId("placed-check");
       expect(own).toHaveTextContent("Order-lookup worker");
-      expect(own).toHaveTextContent(C.untied.no_moment);
+      expect(own.dataset.step).toBe("1");
+      expect(own).not.toHaveTextContent(C.untied.no_moment);
       expect(task).not.toHaveTextContent("Order-lookup worker");
       expect(task.dataset.step).toBe("");
     });
@@ -1293,20 +1301,6 @@ describe("CallWorkersPanel", () => {
       const copy = C.cleanup[cleanup.status];
       expect(screen.getByTestId("worker-cleanup").textContent).toContain(
         typeof copy === "function" ? copy("").trim().replace(/,$/, "") : copy,
-      );
-    });
-
-    it("names a tool-calls-only worker as cut short", () => {
-      result = {
-        data: timeline({
-          workers: [{ ...cut(null), seen: "tool_calls_only" }],
-        }),
-        isLoading: false,
-        isError: false,
-      };
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.getByText(/^Cut short:/).textContent).toContain(
-        C.cutShortToolCallsOnly,
       );
     });
 

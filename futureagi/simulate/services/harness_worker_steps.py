@@ -7,8 +7,9 @@ import re
 from bisect import bisect_right
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import cast
 
+from simulate.services.harness_worker_states import CUT_SHORT_STATES
 from simulate.services.harness_workers import check_again_at, read_pending
 from simulate.types import (
     CallTurn,
@@ -17,6 +18,7 @@ from simulate.types import (
     HandOffCounts,
     HandOffEnd,
     HarnessWorker,
+    PlacementStatus,
     ShownText,
     SubGoalEntry,
     TurnSummary,
@@ -32,10 +34,6 @@ from simulate.types import (
 )
 
 _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
-# A worker's end when the trial stopped it before it returned; one that returned or never ran has none.
-_CUT_SHORT: frozenset[WorkerState] = frozenset(
-    {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
-)
 # The ends that count as a hand-off that did not finish, in the headline count and on its row alike.
 _NOT_FINISHED: frozenset[HandOffEnd] = frozenset({"failed", "no_return"})
 # A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
@@ -513,30 +511,51 @@ def _with_ends(
     states = {str(one.get("worker_id")): one.get("state") for one in workers}
     for step in steps:
         state = states.get(str(step["worker_id"]))
-        if step.get("end") in ("no_return", "cut_off") and state in _CUT_SHORT:
+        if step.get("end") in ("no_return", "cut_off") and state in CUT_SHORT_STATES:
             step["end_state"] = cast("WorkerState", state)
 
 
-def failure_placements(sub_goals: Iterable[SubGoalEntry]) -> list[FailurePlacement]:
-    """Each failed or unsure sub-goal, on its worker when it is that worker's own check. No step: neither the sub-goal
-    catalogue nor the receipt records which tool call a check is about, and a check's name is never read for one."""
+def failure_placements(
+    sub_goals: Iterable[SubGoalEntry],
+    steps: Iterable[WorkerStep],
+    workers: Iterable[HarnessWorker],
+) -> list[FailurePlacement]:
+    """Each failed or unsure sub-goal. A worker's own check sits on that worker's hand-off when it had exactly one;
+    a task check is on no step, as nothing records which moment it judged. A check's name is never read for one."""
+    record_id = {one["id"]: one["worker_id"] for one in workers}
+    hand_offs: dict[str | None, list[int]] = {}
+    for step in steps:
+        if step["kind"] == "handoff":
+            hand_offs.setdefault(step["worker_id"], []).append(step["key"])
     placements: list[FailurePlacement] = []
     for goal in sub_goals:
+        status: PlacementStatus
         if goal["passed"] is False:
-            status: Literal["failed", "inconclusive"] = "failed"
+            status = "failed"
         elif goal.get("result") == "inconclusive":
             status = "inconclusive"
         else:
             continue
-        placements.append(
-            {
-                "name": goal["name"],
-                "status": status,
-                "step": None,
-                "worker_id": goal.get("worker_id"),
-                "untied": "no_moment",
-            }
-        )
+        placement: FailurePlacement = {
+            "name": goal["name"],
+            "status": status,
+            "step": None,
+            "worker_id": None,
+            "untied": "no_moment",
+        }
+        if "worker_id" in goal:
+            worker = record_id.get(goal["worker_id"], goal["worker_id"])
+            keys = hand_offs.get(worker, [])
+            placement["worker_id"] = worker
+            placement["step"] = keys[0] if len(keys) == 1 else None
+            placement["untied"] = (
+                None
+                if len(keys) == 1
+                else "several_hand_offs"
+                if keys
+                else "no_hand_off"
+            )
+        placements.append(placement)
     return placements
 
 
@@ -567,16 +586,18 @@ def served_record(
     for goal in goals:
         if "worker_id" in goal:
             check: WorkerCheck = {"name": goal["name"], "passed": goal["passed"]}
-            if "result" in goal:
-                check["result"] = goal["result"]
+            if goal["passed"] is None:
+                # Neither passed nor failed: why, and unmeasured when the receipt gave no reason.
+                check["result"] = goal.get("result", "unmeasured")
             checks.setdefault(goal["worker_id"], []).append(check)
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
         shown = one.copy()
         shown["checks"] = checks.get(one["id"], [])
         # Past its deadline is told apart: the world refused its later calls, it was not stopped.
+        shown["past_deadline"] = one.get("state") == "deadline_passed"
         shown["cut_short"] = (
-            one.get("state") in _CUT_SHORT and one.get("state") != "deadline_passed"
+            one.get("state") in CUT_SHORT_STATES and not shown["past_deadline"]
         )
         workers.append(shown)
     due = timeline.get("next_read_at")
@@ -585,7 +606,7 @@ def served_record(
         **timeline,
         **steps,
         "workers": workers,
-        "placements": failure_placements(goals),
+        "placements": failure_placements(goals, steps["steps"], timeline["workers"]),
         "stopped_by_user": stopped_by_user,
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),

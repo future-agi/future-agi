@@ -12,6 +12,7 @@ from django.http import Http404
 from rest_framework import status
 
 from simulate.models import CallExecution
+from simulate.services.harness_worker_states import served_workers, stopped_by_user
 from simulate.services.harness_worker_steps import served_record
 from simulate.services.harness_workers import (
     READ_KEY,
@@ -19,8 +20,6 @@ from simulate.services.harness_workers import (
     check_again_at,
     first_read_due,
     read_pending,
-    served_workers,
-    stopped_by_user,
 )
 from simulate.services.run_results_v3 import receipt_sub_goals
 from simulate.types import CallWorkersRecord, WorkersState, WorkerTimeline

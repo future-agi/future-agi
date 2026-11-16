@@ -2064,7 +2064,9 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
 
                 cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    cancel_job, reason=DELETE_CANCEL_REASON
+                )
             except Exception:
                 logger.exception(
                     "hosted_harness_delete_direct_cancel_failed", job_id=job_id
@@ -3139,11 +3141,14 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
             CallExecution.CallStatus.ONGOING,
         )
     )
-    # Only a call that was under way has workers' evidence to keep; one that never started has none to read.
+    # A call under way, or one still reading pending whose start had not arrived, may have workers' evidence to keep.
     ended = list(
-        still_open.filter(status=CallExecution.CallStatus.ONGOING).values_list(
-            "id", flat=True
-        )
+        still_open.filter(
+            status__in=(
+                CallExecution.CallStatus.PENDING,
+                CallExecution.CallStatus.ONGOING,
+            )
+        ).values_list("id", flat=True)
     )
     still_open.update(
         status=(

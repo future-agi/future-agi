@@ -32,7 +32,7 @@ WorkerChecks.propTypes = {
   workers: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
 
-/** Each failed or unsure check, with its worker when it is that worker's own, and why it is on no step. */
+/** Each failed or unsure check, with its worker when it is that worker's own, on its hand-off or why it is on none. */
 export function PlacedChecks({ placements, names }) {
   return (
     <Stack spacing={0.5} data-testid="placed-checks">
@@ -49,7 +49,7 @@ export function PlacedChecks({ placements, names }) {
           {C.checkStatus[one.status]} · {one.name}
           {/* A worker's own check names its worker; any other names none rather than a guessed one. */}
           {one.worker_id ? ` · ${names.ofWorker(one.worker_id)}` : ""}
-          {one.untied ? ` · ${C.untied[one.untied]}` : ""}
+          {one.untied ? ` · ${C.untied[one.untied]}` : ` · ${C.onHandOff}`}
         </Typography>
       ))}
     </Stack>

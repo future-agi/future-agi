@@ -70,15 +70,10 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
-  const pastDeadline = named((one) => one.state === "deadline_passed");
+  const pastDeadline = named((one) => one.past_deadline);
   const cutShort = data.workers
     .filter((one) => one.cut_short)
-    .map(
-      (one) =>
-        `${one.name} (${C.cutShort[one.state]}${
-          one.seen === "tool_calls_only" ? `, ${C.cutShortToolCallsOnly}` : ""
-        })`,
-    )
+    .map((one) => `${one.name} (${C.cutShort[one.state]})`)
     .join(", ");
   const notDeclared = named((one) => one.undeclared);
   // A cut-short worker's cleanup, as the API computed it when served; an old record has none.

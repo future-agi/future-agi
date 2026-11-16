@@ -9,18 +9,23 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
+from simulate.constants.hosted_harness import (
+    SHARED_RECORD_ACTIONS_KEPT,
+    SHARED_RECORDS_KEPT,
+    TRIAL_STATE_KEY,
+)
 from simulate.models import CallExecution, HostedHarnessArtifact
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_actor_labels import FallbackView, fallback_of
-from simulate.services.harness_workers import stopped_workers_of
+from simulate.services.harness_worker_states import stopped_workers_of
 from simulate.services.hosted_harness_ingestion import (
-    TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
     get_object_url,
 )
 from simulate.services.run_results_v3 import recorded_calls
 from simulate.services.run_results_v3_queries import call_actor_delivery
 from simulate.types import (
+    RefusalCode,
     SharedRecord,
     SharedRecordAction,
     StoppedWorker,
@@ -96,7 +101,7 @@ APPROVAL_MISSING = "approval_missing"
 
 class RefusedAction(TypedDict):
     action: str
-    code: str
+    code: RefusalCode
     reason: str
 
 
@@ -262,6 +267,7 @@ class TrialState(TypedDict):
     end_state_url: NotRequired[str]
     # A multi-agent trial's records two or more participants named, and the workers the harness stopped.
     shared_records: NotRequired[list[SharedRecord]]
+    shared_records_truncated: NotRequired[bool]
     stopped_workers: NotRequired[list[StoppedWorker]]
 
 
@@ -986,9 +992,12 @@ def trial_state(
     if isinstance(state.get("limits"), dict):
         shown["limits"] = state["limits"]
     if isinstance(state.get("shared_records"), list):
-        shown["shared_records"] = [
-            _shared_record(one, names) for one in _entries(state["shared_records"])
-        ]
+        shared = _entries(state["shared_records"])
+        shown["shared_records"] = [_shared_record(one, names) for one in shared]
+        # More records were named than kept: the harness marks every kept record when it cut the list.
+        shown["shared_records_truncated"] = len(shared) >= SHARED_RECORDS_KEPT and all(
+            one.get("truncated") is True for one in shared
+        )
     if isinstance(state.get("stopped_workers"), list):
         shown["stopped_workers"] = stopped_workers_of(state)
     url = _end_state_url(call, metadata, state)
@@ -1006,7 +1015,12 @@ def _shared_record(record: Mapping[str, Any], names: Mapping[str, str]) -> Share
         )
         for one in _entries(record.get("actions"))
     ]
-    return cast(SharedRecord, {**record, "actions": actions})
+    shared = cast(SharedRecord, {**record, "actions": actions})
+    # This record's own actions were cut, not only the list of records.
+    shared["actions_truncated"] = (
+        record.get("truncated") is True and len(actions) >= SHARED_RECORD_ACTIONS_KEPT
+    )
+    return shared
 
 
 class EarlierAttempt(TypedDict):

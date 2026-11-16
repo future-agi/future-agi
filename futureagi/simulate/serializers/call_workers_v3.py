@@ -6,9 +6,11 @@ from rest_framework import serializers
 
 from simulate.types import (
     HandOffEnd,
+    PlacementStatus,
     RefusalCode,
     SubGoalUnscored,
     TextFormat,
+    Untied,
     WorkerAttribution,
     WorkerCleanupStatus,
     WorkerCollection,
@@ -47,8 +49,8 @@ class CallWorkerSerializer(serializers.Serializer):
     # Absent on a record read before end states were kept.
     state = serializers.ChoiceField(choices=get_args(WorkerState), required=False)
     cut_short = serializers.BooleanField()
-    # Seen only through its tool calls in a trial cut short: its hand-off was still open.
-    seen = serializers.ChoiceField(choices=("tool_calls_only",), required=False)
+    # The world refused its later calls past its action deadline; its execution was not stopped.
+    past_deadline = serializers.BooleanField()
     # When the harness ended this worker's own process past its deadline.
     stopped_at = serializers.FloatField(required=False)
     # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
@@ -169,14 +171,16 @@ class HandOffCountsSerializer(serializers.Serializer):
 
 
 class FailurePlacementSerializer(serializers.Serializer):
-    """A failed or unsure sub-goal on the step its evidence points to, or not tied to one, with why."""
+    """A failed or unsure sub-goal on its worker's one hand-off, or not tied to a step, with why."""
 
     name = serializers.CharField()
-    status = serializers.ChoiceField(choices=("failed", "inconclusive"))
+    status = serializers.ChoiceField(choices=get_args(PlacementStatus))
     step = serializers.IntegerField(allow_null=True)
-    # Null when the record does not say which worker: shown as Unknown.
+    # The worker whose own check it is, as the record's `worker_id`; null for a task check.
     worker_id = serializers.CharField(allow_null=True)
-    untied = serializers.ChoiceField(choices=("no_moment",), allow_null=True)
+    # `no_moment`: a task check, which nothing ties to a moment; `several_hand_offs` / `no_hand_off`: a worker's check
+    # whose worker was handed work more than once, or never.
+    untied = serializers.ChoiceField(choices=get_args(Untied), allow_null=True)
 
 
 class CallWorkersQuerySerializer(serializers.Serializer):

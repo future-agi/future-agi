@@ -16,6 +16,7 @@ from django.db import connections, router
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Cell
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
@@ -31,7 +32,6 @@ from simulate.services.harness_scenarios import (
     pinned_scenarios,
 )
 from simulate.services.hosted_harness_ingestion import (
-    SCENARIO_FAILURE_CODES,
     STARTED_BY_KEY,
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,
@@ -677,7 +677,7 @@ _ACTOR_MISSING_WHY = {
     "no_private_token": "could not act in the world",
 }
 _SCENARIO_FAILURE_PREFIX = "inconclusive: scenario problem, not the agent's: "
-# A call the run was stopped before it finished, counted with the errors.
+# A call the run was stopped before it finished, counted as cancelled.
 _STOPPED = "Stopped before it finished: the run was cancelled"
 
 

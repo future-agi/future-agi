@@ -128,20 +128,23 @@ export const CALL_WORKERS_COPY = {
       ? "Passed"
       : passed === false
         ? "Failed"
-        : { not_applicable: "Not applicable", inconclusive: "Unsure" }[
-            result
-          ] || "Not measured",
+        : {
+            not_applicable: "Not applicable",
+            inconclusive: "Unsure",
+            unmeasured: "Not measured",
+          }[result],
   // Each failed or unsure check on the step its evidence points to, or why it is on none.
   placedChecks: "Failed and unsure checks",
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
-  // Nothing the harness records ties a check to a step yet, so each says so rather than being guessed onto one.
+  // A worker's check sits on its worker's one hand-off; any other says why it is on no step.
+  onHandOff: "On its hand-off",
   untied: {
     no_moment:
       "Not tied to a step: nothing recorded ties this check to a moment in the call",
+    several_hand_offs:
+      "Not tied to a step: this worker was handed work more than once",
+    no_hand_off: "Not tied to a step: this worker was never handed work",
   },
-  // A cut-short worker seen only through its tool calls: its hand-off span had not ended.
-  cutShortToolCallsOnly:
-    "seen only through its tool calls; its hand-off was still open",
   // Past its action deadline: the world refused its later calls. Its execution is stopped only when the app serves it
   // as its own process (cleanup says "Stopped when its deadline passed").
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
@@ -157,7 +160,7 @@ export const CALL_WORKERS_COPY = {
   },
   workerCleanup: (name, cleanup) => `${name}: ${cleanup}`,
   stoppedByUser:
-    "Stopped by the user during this call. Turns up to the stop are shown; the agent's reply to the last message never arrived.",
+    "Stopped by the user during this call. What its participants did up to the stop is shown.",
   // Scoped to the participants: the transcript up to the stop is kept and shown on its own tab.
   stoppedByUserNoEvidence:
     "Stopped by the user before any participant's work was recorded.",

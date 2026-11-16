@@ -14,7 +14,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorFallbackSerializer,
     HarnessActorLimitsSerializer,
 )
-from simulate.types import CallActorDelivery
+from simulate.types import CallActorDelivery, RefusalCode
 
 FUNCTION_CALL_KINDS = ("agent_call", "world_actor_action")
 
@@ -114,7 +114,7 @@ class BlockedCallSerializer(serializers.Serializer):
 
 class TrialRefusedActionSerializer(serializers.Serializer):
     action = serializers.CharField()
-    code = serializers.CharField(allow_blank=True)
+    code = serializers.ChoiceField(choices=get_args(RefusalCode))
     reason = serializers.CharField(allow_blank=True)
 
 
@@ -409,6 +409,8 @@ class SharedRecordSerializer(serializers.Serializer):
     actions = SharedRecordActionSerializer(many=True)
     committed_writes = serializers.IntegerField()
     truncated = serializers.BooleanField()
+    # This record's own actions were cut at the harness's bound.
+    actions_truncated = serializers.BooleanField(default=False)
 
 
 class StoppedWorkerSerializer(serializers.Serializer):
@@ -480,6 +482,10 @@ class TrialStateSerializer(serializers.Serializer):
         many=True,
         required=False,
         help_text="Records two or more participants named in this trial, and what the world made of each call.",
+    )
+    shared_records_truncated = serializers.BooleanField(
+        required=False,
+        help_text="More records were touched by more than one participant than the trial kept.",
     )
     stopped_workers = StoppedWorkerSerializer(
         many=True,

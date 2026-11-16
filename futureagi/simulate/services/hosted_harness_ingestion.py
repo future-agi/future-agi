@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -85,9 +86,6 @@ _EVENT_TYPES = {
     "log",
     "terminal",
 }
-# Failure codes of a trial the harness held as the scenario's problem, not the agent's: its checks were never graded,
-# so no platform evaluation grades it either.
-SCENARIO_FAILURE_CODES = frozenset({"actor_missing", "worker_limits_not_enforced"})
 # Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
 # ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
 # (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
@@ -1517,8 +1515,6 @@ def _epoch_seconds(value: Any) -> float | None:
 
 # Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
-# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
-TRIAL_STATE_KEY = "harness_trial_state"
 # What started a call that no person began: the scenario's own task.
 STARTED_BY_KEY = "harness_started_by"
 STARTED_BY_TASK = "task"
