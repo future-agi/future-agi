@@ -4145,14 +4145,18 @@ class TestLiteralTTSScriptRoutes:
         from model_hub.views.run_prompt import RunPrompts
 
         speech, _ = speech_boundary
-        Cell.objects.create(dataset=dataset, column=input_column, row=row, value=cell_value)
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value=cell_value
+        )
         run_prompter, column, previous = self._saved_tts_column(
             dataset, organization, workspace, row
         )
         stored_messages = json.loads(json.dumps(run_prompter.messages))
 
         with (
-            patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None),
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
             patch("model_hub.views.run_prompt.close_old_connections"),
         ):
             runner = RunPrompts(run_prompter.id)
@@ -4189,7 +4193,9 @@ class TestLiteralTTSScriptRoutes:
         run_prompter.save()
 
         with (
-            patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None),
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
             patch("model_hub.views.run_prompt.close_old_connections"),
         ):
             runner = RunPrompts(run_prompter.id)
@@ -4211,7 +4217,9 @@ class TestLiteralTTSScriptRoutes:
     def test_preview_storage_failure_is_reported_not_returned_as_audio(
         self, auth_client, dataset, input_column, row, openai_provider_key
     ):
-        Cell.objects.create(dataset=dataset, column=input_column, row=row, value="welcome")
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value="welcome"
+        )
 
         with (
             patch("litellm.speech", return_value=MagicMock(content=TTS_WAV)) as speech,
@@ -4230,13 +4238,17 @@ class TestLiteralTTSScriptRoutes:
     ):
         from model_hub.views.run_prompt import RunPrompts
 
-        Cell.objects.create(dataset=dataset, column=input_column, row=row, value="welcome")
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value="welcome"
+        )
         run_prompter, column, previous = self._saved_tts_column(
             dataset, organization, workspace, row
         )
 
         with (
-            patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None),
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
             patch("model_hub.views.run_prompt.close_old_connections"),
             patch("litellm.speech", return_value=MagicMock(content=TTS_WAV)),
             patch(TTS_UPLOAD, side_effect=Exception("storage unavailable")),
@@ -4250,7 +4262,6 @@ class TestLiteralTTSScriptRoutes:
         assert "storage unavailable" in cell.value
         assert TTS_PREVIOUS_AUDIO_URL not in cell.value
         assert TTS_PREVIOUS_AUDIO_URL not in str(cell.value_infos)
-
 
 
 def _tts_member(organization, workspace):
@@ -4270,7 +4281,11 @@ def _tts_member(organization, workspace):
     org_membership, _ = OrganizationMembership.no_workspace_objects.update_or_create(
         user=member,
         organization=organization,
-        defaults={"role": OrganizationRoles.MEMBER, "level": Level.MEMBER, "is_active": True},
+        defaults={
+            "role": OrganizationRoles.MEMBER,
+            "level": Level.MEMBER,
+            "is_active": True,
+        },
     )
     WorkspaceMembership.no_workspace_objects.update_or_create(
         user=member,
@@ -4383,7 +4398,10 @@ class TestLiteralTTSRealAuth:
     ):
         speech, _ = speech_boundary
         ApiKey.no_workspace_objects.create(
-            provider="openai", organization=organization, workspace=None, key=TTS_ORG_KEY
+            provider="openai",
+            organization=organization,
+            workspace=None,
+            key=TTS_ORG_KEY,
         )
         if with_workspace_key:
             ApiKey.no_workspace_objects.create(
