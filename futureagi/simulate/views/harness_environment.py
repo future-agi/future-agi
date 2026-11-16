@@ -9,6 +9,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.selectors.evidence_import import (
+    environment_evidence_import,
+    evidence_project,
+    import_bundle,
+)
 from simulate.selectors.held_back import (
     coding_agent_key,
     detail_without,
@@ -17,6 +22,13 @@ from simulate.selectors.held_back import (
     verify_run,
 )
 from simulate.selectors.runs import user_executions
+from simulate.serializers.evidence_import import (
+    EvidenceImportAddResponseSerializer,
+    EvidenceImportAddSerializer,
+    EvidenceImportCreateSerializer,
+    EvidenceImportDraftSerializer,
+    EvidenceImportSerializer,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
@@ -55,6 +67,10 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateSerializer,
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
+from simulate.services.evidence_import import (
+    add_to_suite,
+    create_evidence_import,
+)
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
@@ -75,6 +91,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.utils.workspace_scope import project_queryset_for_request
 
 
 def _touch_content(job):
@@ -474,6 +491,138 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         discard_draft(job, piece, user=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=EvidenceImportCreateSerializer,
+        responses={201: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="evidence-imports")
+    def evidence_imports(self, request, pk=None):
+        """Freeze Observe sessions or calls as evidence for this environment's
+        tests; returns what each holds and lacks, and what redaction would
+        replace. Nothing is drafted or run."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        project = evidence_project(
+            project_queryset_for_request(request), job, body["project_id"]
+        )
+        if project is None:
+            raise NotFound("Project not found in this environment's workspace")
+        evidence_import, evidence = create_evidence_import(
+            environment=job,
+            project=project,
+            source_kind=body["source_kind"],
+            source_ids=[str(source_id) for source_id in body["ids"]],
+            user=request.user,
+        )
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(responses={200: EvidenceImportSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})",
+    )
+    def evidence_import(self, request, pk=None, import_id=None):
+        """One evidence import, read from Observe again: a source deleted since
+        reads as unavailable, and a changed one says so."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(EvidenceImportSerializer(import_bundle(evidence_import)).data)
+
+    @validated_request(
+        request_serializer=EvidenceImportDraftSerializer,
+        responses={202: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/draft",
+    )
+    def draft_evidence_cases(self, request, pk=None, import_id=None):
+        """Ask the environment's builder to draft a scenario for each of an import's
+        waiting cases. The turn runs in a chat of the import's own; nothing it does
+        reaches the environment until a person adds the drafted cases."""
+        from simulate.services.evidence_drafts import start_drafting
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        start_drafting(
+            evidence_import,
+            [str(case_id) for case_id in request.validated_data["case_ids"]],
+            endpoint_base_url=_public_base_url(request),
+            user=request.user,
+            shows=request.validated_data.get("shows") or {},
+        )
+        # start_drafting links the drafting job on its own locked copy; the answer
+        # must say drafting has started, or the review never asks again.
+        evidence_import.refresh_from_db()
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import)).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(
+        request_serializer=EvidenceImportAddSerializer,
+        responses={200: EvidenceImportAddResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/add",
+    )
+    def add_evidence_cases(self, request, pk=None, import_id=None):
+        """Add an import's drafted cases to the suite: saved with them when the
+        review saw no unsaved changes, else beside those changes in the draft."""
+        from simulate.services.harness_versioning.drafts import DraftRef
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        body = request.validated_data
+        saved = add_to_suite(
+            evidence_import,
+            [str(case_id) for case_id in body["case_ids"]],
+            expected={
+                piece: DraftRef(str(ref["id"]) if ref["id"] else None, ref["revision"])
+                for piece, ref in body["expected_drafts"].items()
+            },
+            idempotency_key=body["idempotency_key"],
+            user=request.user,
+        )
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(
+            EvidenceImportAddResponseSerializer(
+                {"saved": saved, "evidence_import": import_bundle(evidence_import)}
+            ).data
+        )
 
     @validated_request(
         query_serializer=HarnessNudgeListQuerySerializer,
