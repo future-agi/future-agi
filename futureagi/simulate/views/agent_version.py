@@ -415,7 +415,9 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(version)
+            serializer = AgentVersionResponseSerializer(
+                version, context=version_list_context([version])
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:

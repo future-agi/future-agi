@@ -56877,11 +56877,6 @@ export type simulateAgentDefinitionsDeleteResponse403 = {
   status: 403;
 };
 
-export type simulateAgentDefinitionsDeleteResponse409 = {
-  data: ApiErrorWithDetailsResponseApi;
-  status: 409;
-};
-
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56889,7 +56884,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56899,7 +56894,6 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
   | simulateAgentDefinitionsDeleteResponse403
-  | simulateAgentDefinitionsDeleteResponse409
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {
@@ -58199,6 +58193,69 @@ export const simulateAgentDefinitionsVersionsCompatibilityList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse410 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 410;
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204 | 404 | 410>;
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
+  simulateAgentDefinitionsVersionsDeleteDeleteResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponse404
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponse410
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse =
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponseError;
+
+export const getSimulateAgentDefinitionsVersionsDeleteDeleteUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/delete/`;
+};
+
+/**
+ * Versions are kept so environments can stay pinned to them; this answers 410
+for one release so a caller learns why, and is then removed.
+ * @deprecated
+ * @summary DELETE /agent-definitions/{id}/versions/{version_id}/delete/: removed.
+ */
+export const simulateAgentDefinitionsVersionsDeleteDelete = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsDeleteDeleteResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsDeleteDeleteResponse>(
+    getSimulateAgentDefinitionsVersionsDeleteDeleteUrl(agentId, versionId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };

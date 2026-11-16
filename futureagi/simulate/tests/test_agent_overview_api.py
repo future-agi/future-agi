@@ -881,7 +881,7 @@ def test_a_version_cannot_be_deleted_whether_or_not_an_environment_pins_it(
     environment.save(update_fields=["agent_version"])
 
     refused = auth_client.delete(f"{AGENTS}{agent.id}/versions/{pinned.id}/delete/")
-    assert refused.status_code == status.HTTP_404_NOT_FOUND, refused.content
+    assert refused.status_code == status.HTTP_410_GONE, refused.content
     pinned.refresh_from_db()
     assert pinned.deleted is False
 
@@ -1181,28 +1181,50 @@ def test_the_list_reads_observe_projects_without_a_query_per_agent(
         assert len(_rows(auth_client)) == 4
 
 
-def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
+def test_bulk_delete_skips_agents_still_used_in_an_environment(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "tested")
+    tested_version = tested.create_version(description="p", commit_message="v1")
+    _environment(tested, 1)
+    idle = _agent(organization, workspace, "idle")
+    idle_version = idle.create_version(description="p", commit_message="v1")
+
+    response = auth_client.delete(
+        "/simulate/agent-definitions/",
+        {"agent_ids": [str(tested.id), str(idle.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    assert (body["agents_updated"], body["versions_updated"]) == (1, 1)
+    assert body["skipped_agent_ids"] == [str(tested.id)]
+    for row in (idle, idle_version):
+        row.refresh_from_db()
+        assert row.deleted is True
+    for row in (tested, tested_version):
+        row.refresh_from_db()
+        assert row.deleted is False
+
+
+def test_bulk_delete_of_only_tested_agents_deletes_nothing(
     auth_client, organization, workspace
 ):
     tested = _agent(organization, workspace, "tested")
     _environment(tested, 1)
-    idle = _agent(organization, workspace, "idle")
 
     response = auth_client.delete(
         "/simulate/agent-definitions/",
-        {"agent_ids": [str(idle.id), str(tested.id)]},
+        {"agent_ids": [str(tested.id)]},
         format="json",
     )
 
-    assert response.status_code == status.HTTP_409_CONFLICT
-    assert response.json()["code"] == "agent_in_use"
-    assert "tested is tested by 1 environment" in response.json()["error"]
-    assert (
-        AgentDefinition.objects.filter(
-            id__in=[idle.id, tested.id], deleted=False
-        ).count()
-        == 2
-    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["agents_updated"] == 0
+    assert response.json()["skipped_agent_ids"] == [str(tested.id)]
+    tested.refresh_from_db()
+    assert tested.deleted is False
 
 
 def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
@@ -1213,8 +1235,15 @@ def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace
         f"/simulate/agent-definitions/{agent.id}/versions/{version.id}/delete/"
     )
 
-    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.status_code == status.HTTP_410_GONE, response.content
+    assert response.json()["code"] == "version_delete_removed"
+    assert response["Deprecation"] == "true"
     assert AgentVersion.objects.filter(id=version.id, deleted=False).exists()
+
+    missing = auth_client.delete(
+        f"/simulate/agent-definitions/{agent.id}/versions/{uuid.uuid4()}/delete/"
+    )
+    assert missing.status_code == status.HTTP_404_NOT_FOUND
 
 
 def test_overview_reports_the_environment_pin_not_the_latest_version(

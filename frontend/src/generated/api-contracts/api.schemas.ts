@@ -16679,6 +16679,7 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly message?: string;
   readonly agents_updated?: number;
   readonly versions_updated?: number;
+  readonly skipped_agent_ids?: readonly string[];
 }
 
 export type ViewerReadOnlyErrorApiType =
@@ -17447,6 +17448,18 @@ export const AgentVersionResponseApiStatus = {
 } as const;
 
 /**
+ * Where a pending check stands: storing the code, reading the agent, or checking its credentials.
+ */
+export type AgentVersionResponseApiCheckStep =
+  (typeof AgentVersionResponseApiCheckStep)[keyof typeof AgentVersionResponseApiCheckStep];
+
+export const AgentVersionResponseApiCheckStep = {
+  snapshot: "snapshot",
+  reading: "reading",
+  check: "check",
+} as const;
+
+/**
  * Snapshot of agent configuration at this version
  */
 export type AgentVersionResponseApiConfigurationSnapshot = {
@@ -17501,6 +17514,12 @@ export interface AgentVersionResponseApi {
   /** @minLength 1 */
   readonly api_key?: string;
   source?: AgentVersionSourceApi;
+  readonly origin?: string;
+  readonly preflight_status?: string;
+  /** Where a pending check stands: storing the code, reading the agent, or checking its credentials. */
+  readonly check_step?: AgentVersionResponseApiCheckStep;
+  check_failure?: AgentVersionCheckFailureApi;
+  readonly environments_count?: number;
   readonly created_at?: string;
   readonly updated_at?: string;
 }

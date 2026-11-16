@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1160,
+  endpointCount: 1161,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27375,9 +27375,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           403: {
             $ref: "#/definitions/ViewerReadOnlyError",
           },
-          409: {
-            $ref: "#/definitions/ApiErrorWithDetailsResponse",
-          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -27916,6 +27913,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": {
+      delete: {
+        operationId: "simulate_agent-definitions_versions_delete_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          410: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": {
       post: {
         operationId: "simulate_agent-definitions_versions_discard_create",
@@ -50914,6 +50931,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           readOnly: true,
         },
+        skipped_agent_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          readOnly: true,
+        },
       },
     },
     AgentDefinitionCreateRequest: {
@@ -53893,6 +53918,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         source: {
           $ref: "#/definitions/AgentVersionSource",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
         },
         created_at: {
           title: "Created at",

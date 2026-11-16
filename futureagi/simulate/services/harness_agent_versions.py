@@ -884,16 +884,12 @@ def create_agent_version(
         else:
             payload.setdefault("definition_owner", CONNECTED_OWNER)
         # A legacy parent's description may be another environment's prompt.
-        description = (
-            prompt
-            or (
-                configured_prompt(env.payload)
-                if legacy_parent and env is not None
-                else ""
-            )
-            or (parent.description if parent else "")
-            or ""
+        own_prompt = prompt or (
+            configured_prompt(env.payload) if legacy_parent and env is not None else ""
         )
+        description = own_prompt or (parent.description if parent else "") or ""
+        if description and not own_prompt:
+            payload["prompt_from_parent"] = True
         prompt_hash = (
             parent_runtime.prompt_hash
             if not prompt and parent_runtime is not None

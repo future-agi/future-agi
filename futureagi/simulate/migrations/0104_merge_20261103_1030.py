@@ -4,7 +4,6 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("simulate", "0100_agent_fix"),
         ("simulate", "0103_agentversionsetup_contract_object_key"),

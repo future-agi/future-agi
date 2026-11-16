@@ -42,6 +42,7 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
+    delete_agent,
     delete_agents,
     is_masked,
     resolve_api_key_for_version,
@@ -243,7 +244,6 @@ class AgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionBulkDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
-            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -255,7 +255,7 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            updated_agents, updated_versions = delete_agents(
+            updated_agents, updated_versions, skipped = delete_agents(
                 getattr(request, "organization", None) or request.user.organization,
                 agent_ids,
             )
@@ -264,13 +264,12 @@ class AgentDefinitionView(APIView):
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
+                "skipped_agent_ids": skipped,
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
-        except HostedHarnessError as exc:
-            return _conflict(exc)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to delete agents: {str(e)}"
@@ -610,7 +609,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         try:
-            delete_agents(instance.organization, [instance.id])
+            delete_agent(instance.organization, instance.id)
         except HostedHarnessError as exc:
             raise AgentInUse(exc.message, code=exc.code) from exc
 
@@ -935,7 +934,7 @@ class DeleteAgentDefinitionView(APIView):
                 deleted=False,
             )
 
-            delete_agents(agent.organization, [agent.id])
+            delete_agent(agent.organization, agent.id)
 
             response_data = {"message": "Agent definition deleted successfully"}
             return Response(

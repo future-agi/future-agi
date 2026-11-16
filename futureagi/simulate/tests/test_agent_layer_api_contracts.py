@@ -3,7 +3,12 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
-from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.tests.test_agent_overview_api import _environment
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_harness_agent_versions import _preflight
@@ -67,15 +72,12 @@ def test_agent_detail_versions_carry_their_check_and_environments(
 @pytest.mark.parametrize(
     "request_delete",
     [
-        lambda client, agent: client.delete(
-            AGENTS, {"agent_ids": [str(agent.id)]}, format="json"
-        ),
         lambda client, agent: client.delete(f"{AGENTS}{agent.id}/delete/"),
         lambda client, agent: client.delete(
             f"/simulate/api/agent-definition-operations/{agent.id}/"
         ),
     ],
-    ids=["bulk", "single", "viewset"],
+    ids=["single", "viewset"],
 )
 def test_an_agent_an_environment_tests_is_kept_with_a_conflict(
     auth_client, agent, tested, request_delete
@@ -84,6 +86,17 @@ def test_an_agent_an_environment_tests_is_kept_with_a_conflict(
 
     assert response.status_code == status.HTTP_409_CONFLICT, response.content
     assert response.json()["code"] == "agent_in_use"
+    agent.refresh_from_db()
+    assert agent.deleted is False
+    assert AgentVersion.objects.filter(agent_definition=agent).exists()
+
+
+def test_a_bulk_delete_skips_an_agent_an_environment_tests(auth_client, agent, tested):
+    response = auth_client.delete(AGENTS, {"agent_ids": [str(agent.id)]}, format="json")
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["skipped_agent_ids"] == [str(agent.id)]
+    assert response.json()["agents_updated"] == 0
     agent.refresh_from_db()
     assert agent.deleted is False
     assert AgentVersion.objects.filter(agent_definition=agent).exists()
@@ -137,3 +150,31 @@ def test_a_follow_policy_cannot_name_a_version(auth_client, production, tested):
     )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+
+
+def test_a_version_read_on_its_own_carries_the_check_the_list_shows(
+    auth_client, agent, production, tested
+):
+    failed = _connect(agent, parent=production, commit="b")
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=failed).update(
+        preflight_status="failed"
+    )
+
+    listed = {
+        row["id"]: row
+        for row in auth_client.get(f"{AGENTS}{agent.id}/versions/").json()["results"]
+    }
+    for version in (production, failed):
+        detail = auth_client.get(f"{AGENTS}{agent.id}/versions/{version.id}/")
+        assert detail.status_code == status.HTTP_200_OK, detail.content
+        for field in (
+            "origin",
+            "preflight_status",
+            "check_step",
+            "check_failure",
+            "environments_count",
+        ):
+            assert detail.json()[field] == listed[str(version.id)][field], field
+
+    assert listed[str(failed.id)]["preflight_status"] == "failed"
+    assert listed[str(production.id)]["environments_count"] == 1

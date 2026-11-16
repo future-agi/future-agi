@@ -1,6 +1,8 @@
 """Versions of a connected agent from the Agents page: one change endpoint by kind,
 production, retry and discard."""
 
+import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +30,8 @@ from tfc.utils.api_serializers import (
     EmptyRequestSerializer,
     StrictInputSerializer,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class EnvironmentQuerySerializer(StrictInputSerializer):
@@ -75,6 +79,41 @@ class _AgentVersionView(APIView):
                 "version_not_found", "Agent version not found", status_code=404
             )
         return version
+
+
+class RemovedAgentVersionDeleteView(_AgentVersionView):
+    """DELETE /agent-definitions/{id}/versions/{version_id}/delete/: removed.
+
+    Versions are kept so environments can stay pinned to them; this answers 410
+    for one release so a caller learns why, and is then removed."""
+
+    @swagger_auto_schema(
+        deprecated=True,
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            410: ApiErrorWithDetailsResponseSerializer,
+        },
+    )
+    def delete(self, request, agent_id, version_id, *args, **kwargs):
+        agent = self._agent(request, agent_id)
+        self._version(agent, version_id)
+        logger.warning(
+            "agent_version_delete_called",
+            agent_id=str(agent.id),
+            version_id=str(version_id),
+            user_id=str(getattr(request.user, "id", "")),
+        )
+        response = Response(
+            build_error_envelope(
+                "Agent versions can't be deleted any more; environments stay pinned"
+                " to them. Discard a version that hasn't passed its check instead.",
+                status_code=status.HTTP_410_GONE,
+                code="version_delete_removed",
+            ),
+            status=status.HTTP_410_GONE,
+        )
+        response["Deprecation"] = "true"
+        return response
 
 
 class AgentVersionChangeView(_AgentVersionView):

@@ -675,3 +675,42 @@ def test_a_promotion_overtaken_by_another_moves_no_follower(agent):
     assert following.agent_version_id == first.id
     third.refresh_from_db()
     assert third.status == "active"
+
+
+def _document(prompt):
+    document = source_agent()
+    document["behaviour"][0]["instructions"] = prompt
+    return document
+
+
+def test_a_new_commit_takes_the_prompt_its_own_code_has(agent):
+    first = _connect(agent, prompt="Old prompt.")
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC, prompt="")
+    assert second.description == "Old prompt."
+    assert _runtime(second).agent_payload["prompt_from_parent"] is True
+
+    assert store_agent(
+        agent_version_id=second.id, agent=_document("New prompt."), sdk_version="0.2.3"
+    )
+
+    second.refresh_from_db()
+    assert second.description == "New prompt."
+    assert second.configuration_snapshot["description"] == "New prompt."
+    assert "prompt_from_parent" not in _runtime(second).agent_payload
+    first.refresh_from_db()
+    assert first.description == "Old prompt."
+
+
+def test_a_prompt_someone_set_is_kept_over_the_codes(agent):
+    first = _connect(agent, prompt="Old prompt.")
+    second = _connect(
+        agent, parent=first, commit="b", trigger=Trigger.SYNC, prompt="Typed prompt."
+    )
+    assert "prompt_from_parent" not in _runtime(second).agent_payload
+
+    assert store_agent(
+        agent_version_id=second.id, agent=_document("Code prompt."), sdk_version="0.2.3"
+    )
+
+    second.refresh_from_db()
+    assert second.description == "Typed prompt."

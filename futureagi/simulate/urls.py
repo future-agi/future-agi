@@ -125,6 +125,7 @@ from .views.agent_versions import (
     AgentVersionDiscardView,
     AgentVersionProductionView,
     AgentVersionRetryView,
+    RemovedAgentVersionDeleteView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
@@ -337,6 +338,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/",
         AgentVersionDetailView.as_view(),
         name="agent-versions-detail",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/delete/",
+        RemovedAgentVersionDeleteView.as_view(),
+        name="agent-versions-delete",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/activate/",

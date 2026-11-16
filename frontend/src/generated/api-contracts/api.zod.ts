@@ -33545,6 +33545,7 @@ export const SimulateAgentDefinitionsDeleteResponse = zod.object({
   message: zod.string().min(1).optional(),
   agents_updated: zod.number().optional(),
   versions_updated: zod.number().optional(),
+  skipped_agent_ids: zod.array(zod.string().uuid()).optional(),
 });
 
 /**
@@ -34287,6 +34288,25 @@ export const SimulateAgentDefinitionsVersionsChangeCreateResponse = zod.object({
           archive_artifact_id: zod.string().min(1).optional(),
         })
         .optional(),
+      origin: zod.string().optional(),
+      preflight_status: zod.string().optional(),
+      check_step: zod
+        .enum(["snapshot", "reading", "check"])
+        .optional()
+        .describe(
+          "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+        ),
+      check_failure: zod
+        .object({
+          code: zod.string().min(1),
+          message: zod.string(),
+          retryable: zod.boolean(),
+        })
+        .optional()
+        .describe(
+          "Why a failed check failed, when the version carries a reason.",
+        ),
+      environments_count: zod.number().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     })
@@ -34443,6 +34463,23 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
       archive_artifact_id: zod.string().min(1).optional(),
     })
     .optional(),
+  origin: zod.string().optional(),
+  preflight_status: zod.string().optional(),
+  check_step: zod
+    .enum(["snapshot", "reading", "check"])
+    .optional()
+    .describe(
+      "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+    ),
+  check_failure: zod
+    .object({
+      code: zod.string().min(1),
+      message: zod.string(),
+      retryable: zod.boolean(),
+    })
+    .optional()
+    .describe("Why a failed check failed, when the version carries a reason."),
+  environments_count: zod.number().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -34536,6 +34573,25 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
             archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
+        origin: zod.string().optional(),
+        preflight_status: zod.string().optional(),
+        check_step: zod
+          .enum(["snapshot", "reading", "check"])
+          .optional()
+          .describe(
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          ),
+        check_failure: zod
+          .object({
+            code: zod.string().min(1),
+            message: zod.string(),
+            retryable: zod.boolean(),
+          })
+          .optional()
+          .describe(
+            "Why a failed check failed, when the version carries a reason.",
+          ),
+        environments_count: zod.number().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -35067,6 +35123,17 @@ export const SimulateAgentDefinitionsVersionsCompatibilityListResponse =
   });
 
 /**
+ * Versions are kept so environments can stay pinned to them; this answers 410
+for one release so a caller learns why, and is then removed.
+ * @deprecated
+ * @summary DELETE /agent-definitions/{id}/versions/{version_id}/delete/: removed.
+ */
+export const SimulateAgentDefinitionsVersionsDeleteDeleteParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+/**
  * POST /agent-definitions/{id}/versions/{vid}/discard/.
  */
 export const SimulateAgentDefinitionsVersionsDiscardCreateParams = zod.object({
@@ -35201,6 +35268,25 @@ export const SimulateAgentDefinitionsVersionsProductionCreateResponse =
             archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
+        origin: zod.string().optional(),
+        preflight_status: zod.string().optional(),
+        check_step: zod
+          .enum(["snapshot", "reading", "check"])
+          .optional()
+          .describe(
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          ),
+        check_failure: zod
+          .object({
+            code: zod.string().min(1),
+            message: zod.string(),
+            retryable: zod.boolean(),
+          })
+          .optional()
+          .describe(
+            "Why a failed check failed, when the version carries a reason.",
+          ),
+        environments_count: zod.number().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -35296,6 +35382,25 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
             archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
+        origin: zod.string().optional(),
+        preflight_status: zod.string().optional(),
+        check_step: zod
+          .enum(["snapshot", "reading", "check"])
+          .optional()
+          .describe(
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          ),
+        check_failure: zod
+          .object({
+            code: zod.string().min(1),
+            message: zod.string(),
+            retryable: zod.boolean(),
+          })
+          .optional()
+          .describe(
+            "Why a failed check failed, when the version carries a reason.",
+          ),
+        environments_count: zod.number().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })

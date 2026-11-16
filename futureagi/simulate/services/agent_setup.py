@@ -393,11 +393,22 @@ def store_agent(
 
 
 def _fill_version_prompt(version: AgentVersion, agent: dict) -> None:
-    """Give a version whose prompt is still blank the one its document found, so the
-    evals and simulations that read the version's prompt get it."""
+    """Give a version the prompt its document found when its own is still blank or
+    was only carried over from its parent, so the evals and simulations that read
+    the version's prompt get this code's prompt. A prompt someone set stays."""
+    from simulate.models import HarnessAgentVersionRuntime
+
     units = agent.get("behaviour") or []
     prompt = str((units[0] or {}).get("instructions") or "").strip() if units else ""
-    if not prompt or str(version.description or "").strip():
+    if not prompt:
+        return
+    runtime = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=version)
+        .only("id", "agent_payload")
+        .first()
+    )
+    carried = bool(runtime and (runtime.agent_payload or {}).get("prompt_from_parent"))
+    if str(version.description or "").strip() and not carried:
         return
     AgentVersion.no_workspace_objects.filter(id=version.id).update(
         description=prompt,
@@ -406,6 +417,12 @@ def _fill_version_prompt(version: AgentVersion, agent: dict) -> None:
             "description": prompt,
         },
     )
+    if carried:
+        payload = dict(runtime.agent_payload)
+        payload.pop("prompt_from_parent", None)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload=payload
+        )
 
 
 def store_setup_failure(
