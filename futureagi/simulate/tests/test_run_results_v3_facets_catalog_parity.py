@@ -29,6 +29,7 @@ from simulate.services.run_results_v3_page import (
     run_calls_page,
 )
 from simulate.services.run_results_v3_queries import (
+    _call_actor_facet,
     _result_sub_goals_expression,
     apply_run_call_query,
     run_call_facets,
@@ -62,6 +63,7 @@ def _reference_facets(queryset: QuerySet) -> dict[str, list[dict[str, Any]]]:
             sub_goals.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
+    facets["actor"] = _call_actor_facet(queryset)
     return facets
 
 
@@ -201,6 +203,7 @@ class TestFacetsFromRows:
             "goal": [],
             "status": [],
             "sub_goal": [],
+            "actor": [],
         }
 
     def test_missing_goal_sorts_after_a_tied_goal(self, execution):

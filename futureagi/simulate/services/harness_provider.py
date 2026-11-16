@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import transaction
@@ -31,6 +31,10 @@ from simulate.models import (
 from simulate.selectors.runs import user_runs
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
+
+if TYPE_CHECKING:
+    from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.scenario_faults import FaultTarget
 
 logger = logging.getLogger(__name__)
 
@@ -1601,6 +1605,7 @@ class HostedHarnessProvider:
                 scenario_keys=list(request.validated_data["scenario_ids"]),
                 trials=request.validated_data["trials"],
                 idempotency_key=idempotency_key,
+                seed=request.validated_data.get("seed"),
                 picks=VersionPicks(
                     agent_version_id=request.validated_data.get("agent_version_id"),
                     environment_version_id=request.validated_data.get(
@@ -1858,6 +1863,19 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
         data = request.validated_data
+        if job.state in terminal_states and data["kind"] == "user_message":
+            # After the build, a message starts a builder turn of its own, billed as authoring, so
+            # it is admitted like a build. A running build was admitted already; an answer feeds a
+            # turn already running, and a stop runs none.
+            from simulate.services.harness_usage import require_harness_authoring
+
+            try:
+                require_harness_authoring(str(job.organization_id))
+            except Exception as exc:
+                response = _usage_limit_response(exc)
+                if response is not None:
+                    return response
+                raise
         # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
             base_url = _public_base_url(request)
@@ -2035,7 +2053,10 @@ class HostedHarnessProvider:
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
     _DESCRIPTIVE_FIELDS = frozenset({"tests"})
-    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    # `faults` are the scenario's test conditions: what the world does to the agent's calls, so a re-proof.
+    _BEHAVIOURAL_FIELDS = frozenset(
+        {"max_turns", "background_noise", "keywords", "faults"}
+    )
     _PERSONA_FIELDS = frozenset(
         {
             "personality",
@@ -2145,17 +2166,29 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
-        rows = grouped(
-            [
-                (
-                    {**scenario_row(one), "draft_change": one.draft_change}
-                    if drafted is not None
-                    else scenario_row(one)
-                )
-                for one in page or []
-            ],
-            group_by,
+        from simulate.selectors.environment_documents import contract_data
+        from simulate.services.harness_actor_rules import actor_rules
+        from simulate.services.harness_environment import environment_actor_side
+        from simulate.services.harness_tool_reach import door_reach, fault_targets
+
+        page = list(page or [])
+        # The environment's files are read only for a page that has actors to resolve or faults to name.
+        actor_cast, rules = (
+            environment_actor_side(job)
+            if any(one.actors or one.faults for one in page)
+            else ([], actor_rules({}))
         )
+        contract = contract_data(job)
+        targets = fault_targets(contract, rules, actor_cast)
+        door = targets if door_reach(contract) else None
+
+        def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
+            row = scenario_row(
+                one, targets=door, fault_targets=targets, actor_cast=actor_cast
+            )
+            return row if drafted is None else {**row, "draft_change": one.draft_change}
+
+        rows = grouped([row_of(one) for one in page], group_by)
         response = paginator.get_paginated_response(rows)
         if drafted is not None:
             response.data["draft"] = drafted.draft
@@ -2164,7 +2197,11 @@ class HostedHarnessProvider:
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
         spoken = agent_type(job) == AGENT_TYPE_VOICE
-        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
+        from simulate.services.harness_environment import call_actor_labels
+
+        response.data["fields"] = field_catalogue(
+            offerable, spoken=spoken, call_actor_labels=lambda: call_actor_labels(job)
+        )
         response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
@@ -2208,7 +2245,17 @@ class HostedHarnessProvider:
         )
 
     def amend_scenarios(self, request, pk) -> Response:
-        """Edit an environment's authored suite, one receipt per requested change."""
+        """Edit an environment's authored suite, one receipt per requested change. Every receipt lists the test
+        conditions it refused (`problems`), empty unless it refused faults."""
+        response = self._amend_scenarios(request, pk)
+        receipts = (
+            response.data.get("receipts") if isinstance(response.data, dict) else None
+        )
+        for receipt in receipts or []:
+            receipt.setdefault("problems", [])
+        return response
+
+    def _amend_scenarios(self, request, pk) -> Response:
         from simulate.services.hosted_harness_gateway import (
             SCENARIO_EDIT_ON_RUN,
             AuthoringArchiveKept,
@@ -2322,10 +2369,16 @@ class HostedHarnessProvider:
                             "scenario": str(change.get("scenario") or ""),
                             "outcome": "refused",
                             "why": "nothing in this suite answers to that",
+                            "code": "scenario_unknown",
+                            "field": None,
                         }
                     )
                     continue
                 spread.extend({**change, "scenario": name} for name in meant)
+            # Read once, and only when a change sets a scenario's faults.
+            fault_targets: list[FaultTarget] | None = None
+            cast: list[ActorRecord] = []
+            targets_read = False
             for change in spread:
                 name = str(change.get("scenario") or "")
                 target = by_name.get(name)
@@ -2335,6 +2388,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "refused",
                             "why": "no scenario of that name in this suite",
+                            "code": "scenario_unknown",
+                            "field": None,
                         }
                     )
                     continue
@@ -2346,6 +2401,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                                "code": "needs_rework",
+                                "field": None,
                             }
                         )
                         continue
@@ -2353,7 +2410,13 @@ class HostedHarnessProvider:
                     by_name.pop(name, None)
                     touched = True
                     receipts.append(
-                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                        {
+                            "scenario": name,
+                            "outcome": "applied",
+                            "why": "dropped",
+                            "code": "applied",
+                            "field": None,
+                        }
                     )
                     continue
                 if op == "set_field":
@@ -2367,6 +2430,8 @@ class HostedHarnessProvider:
                                     "scenario": name,
                                     "outcome": "refused",
                                     "why": f"{field} changes what the run does, so it needs a re-proof",
+                                    "code": "needs_rework",
+                                    "field": field,
                                 }
                             )
                             continue
@@ -2376,9 +2441,49 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": f"{field} is not editable: it is proved, not described",
+                                "code": "not_editable",
+                                "field": field,
                             }
                         )
                         continue
+                    if field == "faults":
+                        from simulate.services.harness_environment import (
+                            edit_fault_side,
+                        )
+                        from simulate.services.scenario_faults import (
+                            faults_as_stored,
+                            faults_problems,
+                            scenario_approvers,
+                        )
+
+                        change = {
+                            **change,
+                            "value": faults_as_stored(change.get("value")),
+                        }
+                        if not targets_read:
+                            (fault_targets, cast), targets_read = (
+                                edit_fault_side(job),
+                                True,
+                            )
+                        problems = faults_problems(
+                            change.get("value"),
+                            fault_targets,
+                            approvers=scenario_approvers(target, cast),
+                        )
+                        if problems:
+                            said = "; ".join(one["message"] for one in problems)
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"the test world cannot apply this test condition: {said}",
+                                    "code": "fault_invalid",
+                                    "field": "faults",
+                                    # Each under its own fault: its place in the list, its field and why.
+                                    "problems": problems,
+                                }
+                            )
+                            continue
                     target[field] = change.get("value")
                     touched = True
                     changed.add(name)
@@ -2387,6 +2492,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "applied",
                             "why": f"{field} updated",
+                            "code": "applied",
+                            "field": field,
                         }
                     )
                     continue
@@ -2397,6 +2504,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": "the persona is what the agent hears, so it needs a re-proof",
+                                "code": "needs_rework",
+                                "field": "persona",
                             }
                         )
                         continue
@@ -2408,6 +2517,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": f"not editable on a persona: {', '.join(unknown)}",
+                                "code": "not_editable",
+                                "field": "persona",
                             }
                         )
                         continue
@@ -2427,6 +2538,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "applied",
                             "why": "persona updated",
+                            "code": "applied",
+                            "field": "persona",
                         }
                     )
                     continue
@@ -2435,6 +2548,8 @@ class HostedHarnessProvider:
                         "scenario": name,
                         "outcome": "refused",
                         "why": f"unknown change {op!r}",
+                        "code": "unknown_change",
+                        "field": None,
                     }
                 )
             # Only the scenarios this amend changed pass the gates again.
@@ -2467,6 +2582,8 @@ class HostedHarnessProvider:
                                     "scenario": name,
                                     "outcome": "refused",
                                     "why": "; ".join(problems),
+                                    "code": "edit_invalid",
+                                    "field": None,
                                 }
                                 for name, problems in rejected
                             ]
@@ -2503,6 +2620,7 @@ class HostedHarnessProvider:
                                     **one,
                                     "outcome": "refused",
                                     "why": f"nothing changed: {kept}",
+                                    "code": "not_saved",
                                 }
                                 if one.get("outcome") == "applied"
                                 else one
@@ -2549,7 +2667,7 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
 
-        def kept(why: str) -> Response:
+        def kept(why: str, code: str = "not_saved") -> Response:
             return Response(
                 {
                     "receipts": [
@@ -2558,6 +2676,7 @@ class HostedHarnessProvider:
                                 **one,
                                 "outcome": "refused",
                                 "why": f"nothing changed: {why}",
+                                "code": code,
                             }
                             if one.get("outcome") == "applied"
                             else one
@@ -2575,7 +2694,9 @@ class HostedHarnessProvider:
                     {"error": exc.code, "message": exc.message},
                     status=exc.status_code,
                 )
-            return kept(exc.message)
+            return kept(
+                exc.message, exc.code if exc.code == "fault_invalid" else "not_saved"
+            )
         except AuthoringArchiveKept as refused:
             return kept(str(refused))
         if write is None:

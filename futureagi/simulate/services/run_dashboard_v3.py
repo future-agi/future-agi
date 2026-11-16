@@ -45,7 +45,10 @@ GOAL_OUTCOMES = (
     "error",
     "escalated",
     "inconclusive",
+    "no_score",
 )
+# Any call with one of these outcomes keeps "passed" as the goal breakdown's headline.
+_OUTRANK_NO_SCORE = ("passed", "failed", "error", "queued", "in_progress")
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
 END_REASONS = [
@@ -167,12 +170,16 @@ def _breakdown(
         segments = [
             by_label.get(value, {"label": value, "count": 0, "share": 0})
             for value in order
+            if value != "no_score" or value in by_label
         ]
-    if key == "goal_outcome":
+    if key == "goal_outcome" and order:
         for segment in segments:
             if segment["label"] in order:
                 segment["statuses"] = [segment["label"]]
     preferred = {"goal_outcome": "passed"}.get(key)
+    if key == "goal_outcome" and _only_unscored(segments):
+        # "Passed 0%" misreads calls that ran with no pass or fail and nothing left to run.
+        preferred = "no_score"
     headline = next(
         (segment for segment in segments if segment["label"] == preferred), None
     )
@@ -184,6 +191,15 @@ def _breakdown(
         "segments": segments,
         "headline": headline,
     }
+
+
+def _only_unscored(segments: list[dict[str, Any]]) -> bool:
+    """Whether some calls have no score and none passed, failed, errored or is still to run: the run, as the
+    runs list reads it, has no score."""
+    counts = {segment["label"]: segment["count"] for segment in segments}
+    return bool(counts.get("no_score")) and not any(
+        counts.get(label) for label in _OUTRANK_NO_SCORE
+    )
 
 
 def _tool_verdict(tool: dict) -> bool | None:
@@ -482,7 +498,9 @@ def build_run_dashboard(
     )
     metrics = []
 
-    def metric(key, label, value, unit="number", measured=None, note=""):
+    def metric(
+        key, label, value, unit="number", measured=None, note="", no_score=False
+    ):
         metrics.append(
             {
                 "key": key,
@@ -492,6 +510,7 @@ def build_run_dashboard(
                 "measured": measured,
                 "total": total,
                 "note": note,
+                "no_score": no_score,
             }
         )
 
@@ -505,7 +524,14 @@ def build_run_dashboard(
         summary["measured"],
         # pass^1's range belongs to the run header: this rate pools trials, so
         # the range need not bracket it.
-        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
+        + (
+            f" {outcomes['no_score']} with no score are excluded too."
+            if outcomes["no_score"]
+            else ""
+        ),
+        # Nothing was scored and some calls ran with no pass or fail: no score, which is not missing data.
+        no_score=summary["pass_rate"] is None and bool(outcomes["no_score"]),
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
@@ -732,6 +758,7 @@ def build_run_dashboard(
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
                 "inconclusive": row["outcomes"]["inconclusive"],
+                "no_score": row["outcomes"]["no_score"],
             }
             for row in risk[:7]
         ],

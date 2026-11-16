@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "4381062283ef302fa1e5c748a7c2de320ec26827c3df512f5cb73b4462b0a943",
+  "source_contract_sha256": "17cfca83c469f0393ac0b8c938d5456b446f664b22863189d9acf7b1e0e03dcd",
   "tool_count": 111,
   "tools": [
     {

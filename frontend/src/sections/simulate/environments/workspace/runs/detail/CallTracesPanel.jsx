@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
@@ -23,8 +23,6 @@ export default function CallTracesPanel({
   testExecutionId,
   isError = false,
   onMountedChange,
-  openTraceId = null,
-  openSpanId = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -39,8 +37,7 @@ export default function CallTracesPanel({
     );
   }, [traces, projectId, setVisibleTraces]);
 
-  // Before the effects below can open a trace: an open trace with no panel mounted is cleared as stale.
-  useLayoutEffect(() => {
+  useEffect(() => {
     onMountedChange?.(true);
     return () => {
       onMountedChange?.(false);
@@ -49,36 +46,6 @@ export default function CallTracesPanel({
       resetStates();
     };
   }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
-
-  // Opened from another tab (a Participants step): show that trace once it is listed, once per request, so closing
-  // it is not undone when the list refreshes.
-  const opened = useRef(null);
-  useEffect(() => {
-    if (!openTraceId) {
-      opened.current = null;
-      return;
-    }
-    if (
-      opened.current !== openTraceId &&
-      traces.some((trace) => trace.traceId === openTraceId)
-    ) {
-      opened.current = openTraceId;
-      setTraceDetailDrawerOpen({
-        traceId: openTraceId,
-        projectId,
-        testExecutionId,
-        // The step's own span, so the trace opens on it rather than at its root.
-        ...(openSpanId ? { spanId: openSpanId } : {}),
-      });
-    }
-  }, [
-    openTraceId,
-    openSpanId,
-    traces,
-    projectId,
-    testExecutionId,
-    setTraceDetailDrawerOpen,
-  ]);
 
   if (isError && traces.length === 0) {
     return (
@@ -135,8 +102,6 @@ CallTracesPanel.propTypes = {
   testExecutionId: PropTypes.string,
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
-  openTraceId: PropTypes.string,
-  openSpanId: PropTypes.string,
 };
 
 function TraceRow({ trace, onOpen }) {

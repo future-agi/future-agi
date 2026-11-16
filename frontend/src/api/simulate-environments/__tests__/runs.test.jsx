@@ -36,6 +36,7 @@ const rawExecutions = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+      outcome_status: "passed",
     },
     {
       id: "ex-mid",
@@ -44,6 +45,7 @@ const rawExecutions = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 50,
+      outcome_status: "running",
     },
     {
       id: "ex-old",
@@ -52,6 +54,7 @@ const rawExecutions = () => ({
       agent_version: "v1",
       total_chats: 10,
       success_rate: 70,
+      outcome_status: "failed",
     },
   ],
   count: 3,
@@ -76,6 +79,37 @@ beforeEach(() => {
 });
 
 describe("executionToRun", () => {
+  it("reads the run's verdict, pass rate and rate base from the server, the rate null when nothing was scored", () => {
+    const run = executionToRun({
+      id: "ex-rate",
+      status: "Completed",
+      outcome_passed: 6,
+      outcome_failed: 2,
+      outcome_errored: 2,
+      outcome_skipped: 2,
+      outcome_status: "failed",
+      pass_rate: 75,
+      scored: 8,
+    });
+    expect([
+      run.passRate,
+      run.scored,
+      run.failed,
+      run.errored,
+      run.skipped,
+    ]).toEqual([75, 8, 2, 2, 2]);
+    const unscored = executionToRun({
+      id: "ex-unscored",
+      status: "Completed",
+      outcome_status: "no_score",
+      pass_rate: null,
+      scored: 0,
+    });
+    expect(run.status).toBe("failed");
+    expect(unscored.status).toBe("no_score");
+    expect(unscored.passRate).toBeNull();
+  });
+
   it("maps a completed, fully-passing execution to `passed`", () => {
     const run = executionToRun({
       id: "ex-1",
@@ -87,7 +121,6 @@ describe("executionToRun", () => {
     });
     expect(run.id).toBe("ex-1");
     expect(run.executionId).toBe("ex-1");
-    expect(run.status).toBe("passed");
     expect(run.total).toBe(12);
     expect(run.passed).toBe(12);
     expect(run.failed).toBe(0);
@@ -95,26 +128,15 @@ describe("executionToRun", () => {
     expect(run.startedAt).toBe("2026-01-14T09:12:00.000Z");
   });
 
-  it("maps a completed execution with failures to `failed`", () => {
+  it("reads the counts of a run without per-outcome counts from its success rate", () => {
     const run = executionToRun({
       id: "ex-2",
       status: "Completed",
       total_chats: 10,
       success_rate: 70,
     });
-    expect(run.status).toBe("failed");
     expect(run.passed).toBe(7);
     expect(run.failed).toBe(3);
-  });
-
-  it("maps a non-terminal execution to `running`", () => {
-    const run = executionToRun({ id: "ex-3", status: "Running", total_chats: 12, success_rate: 50 });
-    expect(run.status).toBe("running");
-  });
-
-  it("maps an explicitly failed execution to `failed`", () => {
-    const run = executionToRun({ id: "ex-4", status: "Failed", total_chats: 5, success_rate: 100 });
-    expect(run.status).toBe("failed");
   });
 
   it("falls back to `calls_attempted` for voice executions", () => {
@@ -188,11 +210,6 @@ describe("executionToRun", () => {
     }
   });
 
-  it("reads a stopped run as cancelled, not failed", () => {
-    const run = executionToRun({ id: "ex-c", status: "Cancelled", total_chats: 5, success_rate: 40 });
-    expect(run.status).toBe("cancelled");
-  });
-
   it("leaves durationS null when the execution row has no duration", () => {
     const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
     expect(run.durationS).toBeNull();
@@ -215,11 +232,9 @@ describe("executionToRun", () => {
       total: 6,
       passed: 2,
       failed: 1,
-      pending: 3,
       scenarioCount: 2,
       trials: 3,
       scenarioIds: ["scenario-a", "scenario-b"],
-      status: "running",
     });
   });
 
@@ -238,10 +253,8 @@ describe("executionToRun", () => {
     expect(run).toMatchObject({
       total: 6,
       passed: 3,
-      failed: 3,
+      failed: 2,
       skipped: 1,
-      pending: 0,
-      status: "failed",
     });
   });
 });

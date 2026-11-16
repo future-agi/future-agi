@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { simulateV3CallExecutionWorkers } from "src/generated/api-contracts/api";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
@@ -49,8 +48,7 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} completed    `kpis.completed_calls`, both modalities;
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
- * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/total`.
+ * @property {?number} passRate     0–100 from the run's row; null when unscored.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -101,11 +99,10 @@ export function buildRunIdentity(row, envName = null) {
  * summary payloads, falling back to the executions row for the call counts.
  * Pure.
  * @param {?Object} kpis The `test-executions/{id}/kpis/` payload.
- * @param {?Object} perf The `…/performance-summary/` payload.
  * @param {?Object} row  The mapped executions row (count fallback).
  * @returns {RunStats}
  */
-export function buildRunStats(kpis, perf, row) {
+export function buildRunStats(kpis, row) {
   const total = row?.hasOutcomes
     ? row.total
     : kpis?.total_calls ?? row?.total ?? 0;
@@ -113,14 +110,9 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
+  const measured = row?.hasOutcomes ? row.scored : total;
 
-  const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate =
-    row?.hasOutcomes || typeof perfRate !== "number"
-      ? total
-        ? Math.round((passed / total) * 100)
-        : 0
-      : Math.round(perfRate);
+  const passRate = row ? row.passRate : null;
 
   // `completed_calls` is its own KPI field for both modalities — not the chat
   // branch's `connected_calls` (voice's `connected_voice_calls` uses a
@@ -157,7 +149,7 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: row?.hasOutcomes ? passed + failed : total,
+    measured,
     unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
@@ -228,6 +220,7 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      seed: execution.seed ?? null,
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
@@ -291,7 +284,7 @@ export function useRunDetail(
  * @property {string} scenario     Scenario / task name.
  * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"|"no_score"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
@@ -306,7 +299,6 @@ export function useRunDetail(
  * @property {?number} aiInterruptions AI interruption count.
  * @property {?number} tokens      Token total.
  * @property {?number} durationMs  Call duration, ms.
- * @property {?string} completedAt When the call ended (ISO).
  * @property {?string} simulationCallType  "voice" | "text" — routes the call
  *                                 drawer to the voice vs chat branch.
  * @property {?string} provider    Call provider (vapi/retell/livekit/…).
@@ -405,25 +397,50 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+  duplicate: "Duplicate",
+  not_recorded: "Outcome not recorded",
+};
+// Null for the agent's own call.
+const worldAction = (call) =>
+  call.kind === "world_actor_action"
+    ? {
+        name: call.actor_name,
+        role: call.actor_role,
+        outcome: ACTOR_OUTCOMES[call.outcome] ?? ACTOR_OUTCOMES.not_recorded,
+      }
+    : null;
+
+/** @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    const actor = worldAction(call);
+    const heading = actor
+      ? [actor.outcome, name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor?.name,
+      actor_role: actor?.role,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }
@@ -574,7 +591,11 @@ export function mapCallDetail(raw) {
 
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
-    role: normalizeRole(t.speaker_role ?? t.role),
+    role: normalizeRole(t.speaker_role),
+    speakerName: t.speaker_name || "",
+    actorId: t.actor_id || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
@@ -585,13 +606,9 @@ export function mapCallDetail(raw) {
       a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
     0,
   );
-  // A hand-off to another agent is counted in the Participants tab, not as a tool call.
   const toolCalls = turns.reduce(
     (count, turn) =>
-      count +
-      (Array.isArray(turn.toolCalls)
-        ? turn.toolCalls.filter((call) => !call?.delegated_to).length
-        : 0),
+      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
     0,
   );
 
@@ -615,6 +632,12 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
+    // Absent without actors or faults.
+    trial_state: raw.trial_state ?? null,
+    // Who took part in the call, as the server says, and whether a customer did.
+    participants: raw.participants,
+    hasCustomer: raw.has_customer,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,
@@ -679,56 +702,6 @@ const traceRow = (raw) => ({
   status: raw.status ?? null,
   latencyMs: raw.latency_ms ?? null,
 });
-
-// The worker record is written about 35 s after a call's result, so a missing one is checked again
-// only while the call ended within this window.
-export const WORKERS_POLL_MS = 15000;
-export const WORKERS_ARRIVAL_WINDOW_MS = 5 * 60 * 1000;
-// A record that found nothing yet is read once more about 10 min after the result; checked every minute until then.
-export const WORKERS_LATE_POLL_MS = 60000;
-export const WORKERS_LATE_READ_WINDOW_MS = 11 * 60 * 1000;
-const LATE_READ = new Set(["no_evidence", "unavailable"]);
-
-/** Whether a worker event hands work to another agent. */
-export const isHandOff = (event) =>
-  event?.type === "delegated" || event?.type === "transferred";
-
-/**
- * Which of a multi-agent app's workers did what in one call; null when it has no record (204).
- * Passing `completedAt` checks again for a record still arriving after a recent call.
- */
-export function useCallWorkers(callExecutionId, { completedAt } = {}) {
-  const ended = completedAt ? Date.parse(completedAt) : NaN;
-  return useQuery({
-    queryKey: ["simulation-call-workers-v3", callExecutionId],
-    queryFn: async () =>
-      (await simulateV3CallExecutionWorkers(callExecutionId)).data || null,
-    enabled: !!callExecutionId,
-    retry: false,
-    // The panel says so inline; this tab must not toast about a call the user isn't looking at.
-    meta: { errorHandled: true },
-    refetchInterval: (query) => {
-      if (query.state.error) return false;
-      const since = Date.now() - ended;
-      if (query.state.data === null)
-        return since < WORKERS_ARRIVAL_WINDOW_MS ? WORKERS_POLL_MS : false;
-      return LATE_READ.has(query.state.data?.collection) &&
-        since < WORKERS_LATE_READ_WINDOW_MS
-        ? WORKERS_LATE_POLL_MS
-        : false;
-    },
-  });
-}
-
-/**
- * Whether a call has workers to show: false once it's known to have none (no Participants tab),
- * undefined while the record is unread or couldn't be read.
- */
-export function useHasWorkers(callExecutionId, completedAt) {
-  const { data } = useCallWorkers(callExecutionId, { completedAt });
-  if (data === undefined) return undefined;
-  return Boolean(data?.workers?.length || data?.events?.some(isHandOff));
-}
 
 export function useCallTraces(executionId, callExecutionId) {
   const query = useQuery({
