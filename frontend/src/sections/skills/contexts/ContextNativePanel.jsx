@@ -541,7 +541,7 @@ HistoryRow.propTypes = { contextId: PropTypes.string.isRequired, run: PropTypes.
 function NoRunsYet({ count }) {
   return <Stack spacing={0.5} role="status" sx={{ py: 1 }}>
     <Typography variant="s1" sx={{ fontWeight: 600 }}>No test runs yet</Typography>
-    <Typography variant="s3" color="text.secondary">{`Your ${plural(count, 'saved test case')} ${count === 1 ? 'is' : 'are'} listed below. Run ${count === 1 ? 'it' : 'them'} with an answer check or an application test. Neither changes production.`}</Typography>
+    <Typography variant="s3" color="text.secondary">{`Your ${plural(count, 'saved test case')} ${count === 1 ? 'is' : 'are'} listed under Test cases. Choose an answer check or an application test below. Neither changes production.`}</Typography>
   </Stack>;
 }
 NoRunsYet.propTypes = { count: PropTypes.number.isRequired };

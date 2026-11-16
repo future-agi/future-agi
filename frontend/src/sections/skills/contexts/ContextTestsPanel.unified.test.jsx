@@ -116,7 +116,7 @@ it('keeps a single first-run action and unticked acknowledgments while switching
   expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
   // The saved case is listed below, so the result area says no run yet instead of "No tests yet".
   expect(screen.getByText('No test runs yet')).toBeVisible();
-  expect(screen.getByText('Your 1 saved test case is listed below. Run it with an answer check or an application test. Neither changes production.')).toBeVisible();
+  expect(screen.getByText('Your 1 saved test case is listed under Test cases. Choose an answer check or an application test below. Neither changes production.')).toBeVisible();
   expect(screen.queryByText('No tests yet')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   const preview = screen.getByRole('button', { name: 'Preview answer check' });

@@ -680,6 +680,6 @@ it('says "No tests yet" only when the context has neither test cases nor runs', 
   expect(screen.queryByText('No test runs yet')).not.toBeInTheDocument();
   view.unmount();
   renderPanel({ state: 'empty' });
-  expect(within(screen.getByRole('region', { name: 'Latest result' })).getByRole('status')).toHaveTextContent('No test runs yetYour 3 saved test cases are listed below. Run them with an answer check or an application test. Neither changes production.');
+  expect(within(screen.getByRole('region', { name: 'Latest result' })).getByRole('status')).toHaveTextContent('No test runs yetYour 3 saved test cases are listed under Test cases. Choose an answer check or an application test below. Neither changes production.');
   expect(screen.queryByText('No tests yet')).not.toBeInTheDocument();
 });
