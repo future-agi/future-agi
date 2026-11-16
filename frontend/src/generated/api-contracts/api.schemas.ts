@@ -20443,51 +20443,23 @@ export const HarnessActorValidateApiOp = {
   delete: "delete",
 } as const;
 
-export type HarnessActorChangesCheckApiSide =
-  (typeof HarnessActorChangesCheckApiSide)[keyof typeof HarnessActorChangesCheckApiSide];
-
-export const HarnessActorChangesCheckApiSide = {
-  caller: "caller",
-  world: "world",
-} as const;
-
 export interface HarnessActorRecordSourceCheckApi {
   store: string;
   /** @minLength 1 */
   collection: string;
 }
 
-export type HarnessActorResponseTimingChangeCheckApiKind =
-  (typeof HarnessActorResponseTimingChangeCheckApiKind)[keyof typeof HarnessActorResponseTimingChangeCheckApiKind];
-
-export const HarnessActorResponseTimingChangeCheckApiKind = {
-  immediate: "immediate",
-  delayed: "delayed",
-} as const;
-
 export interface HarnessActorResponseTimingChangeCheckApi {
-  kind: HarnessActorResponseTimingChangeCheckApiKind;
+  /** @minLength 1 */
+  kind: string;
   seconds?: number;
 }
-
-export type HarnessActorTriggerCheckApiKind =
-  (typeof HarnessActorTriggerCheckApiKind)[keyof typeof HarnessActorTriggerCheckApiKind];
-
-export const HarnessActorTriggerCheckApiKind = {
-  always: "always",
-  after_seconds: "after_seconds",
-  on_tool: "on_tool",
-  contacted: "contacted",
-  probability: "probability",
-  mid_journey: "mid_journey",
-  on_keyword: "on_keyword",
-  conditional: "conditional",
-} as const;
 
 export type HarnessActorTriggerCheckApiWhere = { [key: string]: string };
 
 export interface HarnessActorTriggerCheckApi {
-  kind?: HarnessActorTriggerCheckApiKind;
+  /** @minLength 1 */
+  kind?: string;
   seconds?: number;
   tool?: string;
   on_call?: number;
@@ -20505,7 +20477,8 @@ export type HarnessActorChangesCheckApiFallbackArguments = {
 export interface HarnessActorChangesCheckApi {
   name?: string;
   role?: string;
-  side?: HarnessActorChangesCheckApiSide;
+  /** @minLength 1 */
+  side?: string;
   channel?: string;
   gender?: string;
   age_group?: string;

@@ -449,6 +449,16 @@ class HarnessActorDeleteQuerySerializer(serializers.Serializer):
 
 # The bounds a field holds a value to; a check takes any value of the field's type and says what is wrong with it.
 _BOUNDS = ("max_length", "min_length", "max_value", "min_value")
+# What a choice field keeps when it takes any word.
+_TEXT_KWARGS = (
+    "required",
+    "allow_null",
+    "allow_blank",
+    "default",
+    "help_text",
+    "label",
+    "source",
+)
 _relaxed: dict[type[serializers.Serializer], type[serializers.Serializer]] = {}
 
 
@@ -468,6 +478,11 @@ def _relaxed_field(field: serializers.Field) -> serializers.Field:
         return relaxed_serializer(type(field.child))(*args, **{**kwargs, "many": True})
     if isinstance(field, serializers.Serializer):
         return relaxed_serializer(type(field))(*args, **kwargs)
+    if isinstance(field, serializers.ChoiceField):
+        # Any word reaches the check, which says which ones the field takes.
+        return serializers.CharField(
+            **{key: value for key, value in kwargs.items() if key in _TEXT_KWARGS}
+        )
     child = kwargs.get("child")
     if isinstance(child, serializers.Field):
         kwargs["child"] = _relaxed_field(child)

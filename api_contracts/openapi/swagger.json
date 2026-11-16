@@ -144587,10 +144587,7 @@
                 "kind": {
                     "title": "Kind",
                     "type": "string",
-                    "enum": [
-                        "immediate",
-                        "delayed"
-                    ]
+                    "minLength": 1
                 },
                 "seconds": {
                     "title": "Seconds",
@@ -144605,16 +144602,7 @@
                 "kind": {
                     "title": "Kind",
                     "type": "string",
-                    "enum": [
-                        "always",
-                        "after_seconds",
-                        "on_tool",
-                        "contacted",
-                        "probability",
-                        "mid_journey",
-                        "on_keyword",
-                        "conditional"
-                    ]
+                    "minLength": 1
                 },
                 "seconds": {
                     "title": "Seconds",
@@ -144671,10 +144659,7 @@
                 "side": {
                     "title": "Side",
                     "type": "string",
-                    "enum": [
-                        "caller",
-                        "world"
-                    ]
+                    "minLength": 1
                 },
                 "channel": {
                     "title": "Channel",

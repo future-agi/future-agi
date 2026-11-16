@@ -41178,7 +41178,7 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
     .object({
       name: zod.string().optional(),
       role: zod.string().optional(),
-      side: zod.enum(["caller", "world"]).optional(),
+      side: zod.string().min(1).optional(),
       channel: zod.string().optional(),
       gender: zod.string().optional(),
       age_group: zod.string().optional(),
@@ -41204,7 +41204,7 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
       style: zod.string().optional(),
       response_timing: zod
         .object({
-          kind: zod.enum(["immediate", "delayed"]),
+          kind: zod.string().min(1),
           seconds: zod.number().optional(),
         })
         .optional(),
@@ -41212,18 +41212,7 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
       play: zod.string().min(1).optional(),
       trigger: zod
         .object({
-          kind: zod
-            .enum([
-              "always",
-              "after_seconds",
-              "on_tool",
-              "contacted",
-              "probability",
-              "mid_journey",
-              "on_keyword",
-              "conditional",
-            ])
-            .optional(),
+          kind: zod.string().min(1).optional(),
           seconds: zod.number().optional(),
           tool: zod.string().optional(),
           on_call: zod.number().optional(),

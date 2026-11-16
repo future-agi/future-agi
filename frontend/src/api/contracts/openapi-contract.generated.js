@@ -105754,7 +105754,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         side: {
           title: "Side",
           type: "string",
-          enum: ["caller", "world"],
+          minLength: 1,
         },
         channel: {
           title: "Channel",
@@ -128813,7 +128813,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         kind: {
           title: "Kind",
           type: "string",
-          enum: ["immediate", "delayed"],
+          minLength: 1,
         },
         seconds: {
           title: "Seconds",
@@ -128828,16 +128828,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         kind: {
           title: "Kind",
           type: "string",
-          enum: [
-            "always",
-            "after_seconds",
-            "on_tool",
-            "contacted",
-            "probability",
-            "mid_journey",
-            "on_keyword",
-            "conditional",
-          ],
+          minLength: 1,
         },
         seconds: {
           title: "Seconds",
