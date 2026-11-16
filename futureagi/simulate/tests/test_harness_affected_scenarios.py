@@ -144,6 +144,8 @@ class TestBuckets:
         )
         assert chosen["lists"]["blocked"] == {"keys": REFUND_KEYS, "truncated": False}
         assert chosen["lists"]["eligible"]["keys"] == LOOKUP_KEYS
+        # The run dialog names the area holding them back as the server picks it.
+        assert chosen["blocking_area"] == "tool_binding"
         routing = _rows(report)["tool_routing"]
         assert routing["needed_by"] == 10
         assert routing["affected"] == {
