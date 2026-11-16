@@ -49,12 +49,17 @@ class AgentVersionWorkflow:
 
     @workflow.run
     async def run(self, input: AgentVersionInput) -> AgentVersionOutput:
-        await self._activity(
-            "supersede_agent_versions",
-            input,
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_QUICK_RETRY,
-        )
+        try:
+            await self._activity(
+                "supersede_agent_versions",
+                input,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_QUICK_RETRY,
+            )
+        except ActivityError as exc:
+            return await self._gave_up(
+                input, "supersede_agent_versions", exc, "Starting this version"
+            )
         for name, timeout in (
             ("snapshot_agent_version", timedelta(minutes=15)),
             ("read_agent_version", _READ_TIMEOUT),
@@ -73,21 +78,7 @@ class AgentVersionWorkflow:
                     result_type=AgentVersionStep,
                 )
             except ActivityError as exc:
-                if isinstance(exc.cause, CancelledError):
-                    raise
-                workflow.logger.warning(
-                    "Agent version %s could not finish %s: %s",
-                    input.version_id,
-                    name,
-                    exc,
-                )
-                await self._fail(
-                    input,
-                    "agent_reading_unavailable",
-                    "Reading the agent couldn't finish. Try again.",
-                    retryable=True,
-                )
-                return AgentVersionOutput(version_id=input.version_id, status="failed")
+                return await self._gave_up(input, name, exc, "Reading the agent")
             if step.status == "failed":
                 await self._fail(
                     input, step.code, step.message, retryable=step.retryable
@@ -99,15 +90,36 @@ class AgentVersionWorkflow:
                 )
         if self.cancel_requested:
             return AgentVersionOutput(version_id=input.version_id, status="cancelled")
-        status = await self._activity(
-            "check_agent_version",
-            input,
-            start_to_close_timeout=timedelta(minutes=15),
-            heartbeat_timeout=timedelta(minutes=2),
-            retry_policy=_STEP_RETRY,
-            result_type=str,
-        )
+        try:
+            status = await self._activity(
+                "check_agent_version",
+                input,
+                start_to_close_timeout=timedelta(minutes=15),
+                heartbeat_timeout=timedelta(minutes=2),
+                retry_policy=_STEP_RETRY,
+                result_type=str,
+            )
+        except ActivityError as exc:
+            return await self._gave_up(
+                input, "check_agent_version", exc, "Checking this version"
+            )
         return AgentVersionOutput(version_id=input.version_id, status=str(status))
+
+    async def _gave_up(
+        self, input: AgentVersionInput, name: str, exc: ActivityError, doing: str
+    ) -> AgentVersionOutput:
+        if isinstance(exc.cause, CancelledError):
+            raise exc
+        workflow.logger.warning(
+            "Agent version %s could not finish %s: %s", input.version_id, name, exc
+        )
+        await self._fail(
+            input,
+            "agent_reading_unavailable",
+            f"{doing} couldn't finish. Try again.",
+            retryable=True,
+        )
+        return AgentVersionOutput(version_id=input.version_id, status="failed")
 
     async def _activity(self, name: str, input, **options):
         return await workflow.execute_activity(

@@ -213,7 +213,9 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
         try:
             provider.delete(sandbox, timeout=120, wait=True)
         except Exception:  # noqa: BLE001 - the lease deletes a sandbox left behind
-            logger.warning("reading_sandbox_not_deleted", sandbox=str(sandbox.id))
+            logger.warning(
+                "reading_sandbox_not_deleted", sandbox=str(sandbox.id), exc_info=True
+            )
 
 
 def run_reading(

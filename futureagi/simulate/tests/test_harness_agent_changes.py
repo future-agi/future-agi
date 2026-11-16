@@ -236,6 +236,7 @@ class TestWatchedSources:
             ref="main",
             commit_sha=None,
             organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
         )
         assert watched_sources(repository="ACME/Agent") == [found]
         assert watched_sources(repository="acme/other") == []
@@ -1903,9 +1904,15 @@ class TestConnectedAgentsWithNoEnvironment:
     ):
         self._production(agent, visibility="private", installation_id="42")
 
-        with patch(
-            "integrations.services.github_app.branch_head", return_value=HEAD_Y
-        ) as head:
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_Y
+            ) as head,
+        ):
             counts = receive_push("acme/agent", "refs/heads/main", "main")
 
         assert counts == {"created": 1}
@@ -1914,3 +1921,54 @@ class TestConnectedAgentsWithNoEnvironment:
         assert gh.calls == []
         [row] = _push_versions(agent.id)
         assert row.source["commit_sha"] == HEAD_Y
+
+
+class TestDisconnectedInstallation:
+    def _watched(self):
+        return changes.WatchedSource(
+            environment_id=None,
+            definition_id=uuid.uuid4(),
+            parent_version_id=uuid.uuid4(),
+            repository="acme/agent",
+            ref="main",
+            commit_sha=None,
+            organization_id=uuid.uuid4(),
+            repository_id=7,
+            connected=True,
+            installation_id="4242",
+            workspace_id=uuid.uuid4(),
+        )
+
+    def test_a_disconnected_installation_makes_no_github_call(self):
+        watched = self._watched()
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=False,
+            ) as connected,
+            patch("integrations.services.github_app.branch_head") as head,
+        ):
+            result = changes.read_head(watched, purpose="poll")
+
+        assert result == changes.HeadResult("error")
+        head.assert_not_called()
+        connected.assert_called_once_with(
+            organization_id=watched.organization_id,
+            workspace_id=watched.workspace_id,
+            installation_id="4242",
+        )
+
+    def test_a_connected_installation_still_reads_its_head(self):
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_X
+            ) as head,
+        ):
+            result = changes.read_head(self._watched(), purpose="webhook")
+
+        assert result == changes.HeadResult("ok", HEAD_X)
+        head.assert_called_once()

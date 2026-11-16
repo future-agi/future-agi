@@ -111,6 +111,7 @@ class WatchedSource:
     repository_id: int | None = None
     connected: bool = False
     installation_id: str | None = None
+    workspace_id: Any = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +209,7 @@ def watched_sources(
                     else None
                 ),
                 organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
                 repository_id=access.get("repository_id") or recorded.get("id"),
                 connected=connected,
                 installation_id=_private_installation(visibility, access, built),
@@ -270,6 +272,7 @@ def _connected_agents(
             ref=ref,
             commit_sha=source.get("commit_sha"),
             organization_id=row.organization_id,
+            workspace_id=row.workspace_id,
             repository_id=access.get("repository_id"),
             connected=True,
             installation_id=_private_installation(access.get("visibility"), access, {}),
@@ -294,7 +297,22 @@ def read_head(watched: WatchedSource, *, purpose: str, reserve: int = 0) -> Head
         )
     if not watched.installation_id:
         return HeadResult("error")
-    from integrations.services.github_app import GitHubAppError, branch_head
+    from integrations.services.github_app import (
+        GitHubAppError,
+        branch_head,
+        installation_connected,
+    )
+
+    if not installation_connected(
+        organization_id=watched.organization_id,
+        workspace_id=watched.workspace_id,
+        installation_id=watched.installation_id,
+    ):
+        logger.info(
+            "harness_agent_private_head_disconnected definition=%s",
+            watched.definition_id,
+        )
+        return HeadResult("error")
 
     try:
         sha = branch_head(
@@ -857,12 +875,17 @@ def receive_push(
 
 
 def validate_public_github_source(
-    payload: Mapping[str, Any], *, organization_id: Any = None, lookup: bool = True
+    payload: Mapping[str, Any],
+    *,
+    organization_id: Any = None,
+    lookup: bool = True,
+    required: bool = False,
 ) -> int | None:
     """Refuse a new environment on a private or unknown GitHub repository: only
-    public ones are watched. GitHub being unreachable never blocks a creation.
-    Without ``lookup`` only what the payload says is checked. Returns GitHub's id
-    for the repository when it was looked up."""
+    public ones are watched. GitHub being unreachable never blocks a creation,
+    unless ``required``: then an unchecked repository is refused too. Without
+    ``lookup`` only what the payload says is checked. Returns GitHub's id for the
+    repository when it was looked up."""
     source = payload.get("source") or {}
     if source.get("kind") != "github":
         return None
@@ -894,6 +917,13 @@ def validate_public_github_source(
             status_code=422,
         )
     if found.status != "ok":
+        if required:
+            raise HostedHarnessError(
+                "github_unavailable",
+                "Couldn't check that GitHub repository right now; try again in a"
+                " few minutes",
+                status_code=503,
+            )
         # TODO: creations past the hourly cap fail open without a repository_id,
         # and are identified by name on the first tick.
         logger.info("harness_github_check_skipped reason=%s", found.status)

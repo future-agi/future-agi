@@ -199,3 +199,88 @@ def test_the_compatibility_endpoint_reads_per_environment(
     assert body["tools_added"] == ["issue_refund"]
     assert body["base"] == str(first.id)
     assert body["environment_id"] == str(environment.id)
+
+
+def _with_parameters(document, properties):
+    document = copy.deepcopy(document)
+    document["tools"].append(
+        {
+            "name": "issue_refund",
+            "description": "refund it",
+            "kind": "builtin",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": ["amount"],
+            },
+            "endpoint": None,
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ({"amount": {"type": "number"}}, {"amount": {"type": "string"}}),
+        (
+            {"amount": {"type": "string", "enum": ["full"]}},
+            {"amount": {"type": "string", "enum": ["full", "partial"]}},
+        ),
+        (
+            {
+                "amount": {
+                    "type": "object",
+                    "properties": {"cents": {"type": "integer"}},
+                }
+            },
+            {"amount": {"type": "object", "properties": {"cents": {"type": "string"}}}},
+        ),
+    ],
+    ids=["type", "enum", "nested"],
+)
+def test_a_changed_argument_shape_is_a_changed_tool(before, after):
+    result = compare_documents(
+        _with_parameters(source_agent(), before),
+        _with_parameters(source_agent(), after),
+    )
+
+    assert result["status"] == TOOL_REMOVED_OR_CHANGED
+    assert [one["name"] for one in result["tools_changed"]] == ["issue_refund"]
+
+
+def test_reworded_argument_descriptions_are_clean():
+    before = {"amount": {"type": "number", "description": "How much"}}
+    after = {"amount": {"type": "number", "description": "How much to refund"}}
+
+    result = compare_documents(
+        _with_parameters(source_agent(), before),
+        _with_parameters(source_agent(), after),
+    )
+
+    assert result["status"] == CLEAN
+
+
+def test_followers_built_on_one_version_read_its_document_once(monkeypatch):
+    from types import SimpleNamespace
+
+    from simulate.services import agent_compatibility
+
+    base = SimpleNamespace(id="v3")
+    version = SimpleNamespace(id="v5")
+    reads = []
+
+    def stored(one):
+        reads.append(one.id)
+        return source_agent()
+
+    monkeypatch.setattr(agent_compatibility, "built_from", lambda _env: base)
+    monkeypatch.setattr(agent_compatibility, "stored_document", stored)
+    cache = {}
+
+    for _ in range(4):
+        agent_compatibility.environment_compatibility(
+            object(), version, document=source_agent(), base_documents=cache
+        )
+
+    assert reads == ["v3"]

@@ -633,3 +633,45 @@ def test_switching_to_follow_while_on_production_records_the_request(agent, user
 
     assert following.agent_version_id == first.id
     assert str(following.id) in _runtime(first).agent_payload["requested_at"]
+
+
+def test_a_promotion_overtaken_by_another_moves_no_follower(agent):
+    from simulate.services import harness_agent_versions as versions
+
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    third = _connect(agent, parent=first, commit="c", trigger=Trigger.SYNC)
+    for version in (second, third):
+        assert store_agent(
+            agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+        )
+    real = versions.make_production
+
+    def overtaken(version, **kwargs):
+        outcome = real(version, **kwargs)
+        real(third)
+        return outcome
+
+    with (
+        patch.object(versions, "make_production", side_effect=overtaken),
+        patch.object(versions, "_request_for") as requested,
+        patch(
+            "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+        ) as nudge,
+    ):
+        moved = versions.promote_to_production(second)
+
+    assert moved == []
+    requested.assert_not_called()
+    nudge.assert_not_called()
+    following.refresh_from_db()
+    assert following.agent_version_id == first.id
+    third.refresh_from_db()
+    assert third.status == "active"

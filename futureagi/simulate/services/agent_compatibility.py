@@ -24,14 +24,34 @@ def _tools(document: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     }
 
 
+_WORDING_KEYS = frozenset({"description", "title", "examples", "example"})
+
+
+def _shape(schema: Any) -> Any:
+    """A parameter schema without its wording: types, enums, formats, bounds and
+    nesting stay, so any of them changing counts as a changed tool."""
+    if isinstance(schema, Mapping):
+        return {
+            str(key): _shape(value)
+            for key, value in sorted(schema.items(), key=lambda item: str(item[0]))
+            if key not in _WORDING_KEYS
+        }
+    if isinstance(schema, list):
+        return [_shape(value) for value in schema]
+    return schema
+
+
 def _signature(tool: Mapping[str, Any]) -> dict[str, Any]:
     parameters = tool.get("parameters") or {}
-    properties = parameters.get("properties") if isinstance(parameters, Mapping) else {}
-    required = parameters.get("required") if isinstance(parameters, Mapping) else []
+    if not isinstance(parameters, Mapping):
+        parameters = {}
+    properties = parameters.get("properties") or {}
+    required = parameters.get("required") or []
     return {
-        "arguments": sorted(properties or {}),
-        "required": sorted(required or []),
+        "arguments": sorted(properties),
+        "required": sorted(required),
         "kind": tool.get("kind"),
+        "schema": _shape(parameters),
     }
 
 
@@ -138,16 +158,23 @@ def environment_compatibility(
     version: AgentVersion,
     *,
     document: Mapping[str, Any] | None = None,
+    base_documents: dict[Any, Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """``version`` against the version ``environment`` was built from; unmeasured
     when either has no stored document. A caller judging many environments passes
-    the version's ``document`` once."""
+    the version's ``document`` once, and a ``base_documents`` dict that keeps each
+    base version's document after its first read."""
     base = built_from(environment)
     if base is None:
         return {"status": UNMEASURED, "reason": "environment_not_built", "base": None}
     if base.id == version.id:
         return {"status": CLEAN, "base": str(base.id), "same_version": True}
-    previous = stored_document(base)
+    if base_documents is None:
+        previous = stored_document(base)
+    else:
+        if base.id not in base_documents:
+            base_documents[base.id] = stored_document(base)
+        previous = base_documents[base.id]
     current = document if document is not None else stored_document(version)
     if previous is None or current is None:
         return {

@@ -65,6 +65,8 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
             "Choosing a folder isn't supported yet; connect the repository root",
             status_code=422,
         )
+    if source.get("kind") == "github" and source.get("visibility") != "private":
+        _require_public_repository(organization_id, source)
     if source.get("kind") == "github" and source.get("visibility") == "private":
         from integrations.services.github_app import installation_connected
 
@@ -91,6 +93,26 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
                 "The upload expired; upload the folder again",
                 status_code=422,
             )
+
+
+def _require_public_repository(organization_id: Any, source: Mapping) -> None:
+    from simulate.services.harness_agent_changes import validate_public_github_source
+
+    try:
+        validate_public_github_source(
+            {"source": {**source, "visibility": "public"}},
+            organization_id=organization_id,
+            required=True,
+        )
+    except HostedHarnessError as exc:
+        if exc.code != "github_private_unsupported":
+            raise
+        raise HostedHarnessError(
+            "github_repository_private",
+            "That repository is private; connect GitHub in Settings > Integrations"
+            " and choose it from your repositories",
+            status_code=422,
+        ) from exc
 
 
 def _require_reading() -> None:

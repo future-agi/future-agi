@@ -208,9 +208,30 @@ def archive_index(code: VersionCode) -> dict[str, Entry]:
     cached = cache.get(key)
     if cached is not None:
         return {path: Entry(**entry) for path, entry in cached.items()}
+    from simulate.services.harness_versioning.archives import (
+        MAX_ARCHIVE_ENTRIES,
+        MAX_ARCHIVE_FILES,
+        MAX_ARCHIVE_INFLATED_BYTES,
+    )
+
     entries: dict[str, Entry] = {}
+    seen = files = inflated = 0
     with tarfile.open(fileobj=io.BytesIO(code.archive), mode="r:gz") as tar:
         for member in tar:
+            seen += 1
+            if member.isfile():
+                files += 1
+                inflated += member.size
+            if (
+                seen > MAX_ARCHIVE_ENTRIES
+                or files > MAX_ARCHIVE_FILES
+                or inflated > MAX_ARCHIVE_INFLATED_BYTES
+            ):
+                raise HostedHarnessError(
+                    "code_too_large",
+                    "This version's code is too large to show here",
+                    status_code=422,
+                )
             if not member.isfile() or not member.name.startswith(_ROOT):
                 continue
             path = member.name[len(_ROOT) :]
@@ -271,7 +292,16 @@ def read_file(version: AgentVersion, raw_path: str) -> dict[str, Any]:
         }
     with tarfile.open(fileobj=io.BytesIO(code.archive), mode="r:gz") as tar:
         handle = tar.extractfile(_ROOT + path)
-        content = handle.read().decode("utf-8") if handle is not None else ""
+        raw = handle.read() if handle is not None else b""
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "path": path,
+            "size": entry.size,
+            "kind": KIND_BINARY,
+            "language": language,
+        }
     return {
         "path": path,
         "size": entry.size,

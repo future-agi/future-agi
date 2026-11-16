@@ -25,6 +25,7 @@ from simulate.services.agent_reading_sandbox import (
     expire_stale_scan,
     fail_scan,
 )
+from simulate.services.harness_github import GitHubResponse
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tasks.agent_scans import SCAN_DEADLINE_SECONDS, scan_agent_source
 from simulate.temporal.activities import agent_version as activities
@@ -52,6 +53,13 @@ PRIVATE_UNCONNECTED = {
     "installation_id": "4242",
 }
 AVAILABILITY = "/simulate/agents/connect/availability/"
+PUBLIC = {
+    "kind": "github",
+    "repository": "acme/agent",
+    "ref": "main",
+    "commit_sha": COMMIT,
+}
+LOOKUP = "simulate.services.harness_agent_changes.github_repository"
 
 
 @pytest.fixture
@@ -180,6 +188,56 @@ class TestSourceChecks:
         assert refused.value.status_code == 422
         assert AgentDefinition.objects.count() == agents
         assert not AgentScan.objects.exists()
+
+    @pytest.mark.parametrize("start", [_connect, _scan], ids=["connect", "scan"])
+    @pytest.mark.parametrize(
+        ("answer", "code", "status_code"),
+        [
+            (
+                GitHubResponse("ok", {"id": 7, "private": True}),
+                "github_repository_private",
+                422,
+            ),
+            (GitHubResponse("not_found"), "github_repository_not_found", 422),
+            (GitHubResponse("rate_limited"), "github_unavailable", 503),
+            (GitHubResponse("budget"), "github_unavailable", 503),
+        ],
+        ids=["private", "missing", "rate-limited", "budget"],
+    )
+    def test_a_repository_said_to_be_public_is_checked_with_github_first(
+        self, organization, workspace, user, start, answer, code, status_code
+    ):
+        agents = AgentDefinition.objects.count()
+
+        with patch(LOOKUP, return_value=answer) as lookup:
+            with pytest.raises(HostedHarnessError) as refused:
+                start(organization, workspace, user, dict(PUBLIC))
+
+        assert lookup.call_args.args[0] == "acme/agent"
+        assert refused.value.code == code
+        assert refused.value.status_code == status_code
+        assert AgentDefinition.objects.count() == agents
+        assert not AgentScan.objects.exists()
+
+    def test_a_repository_github_says_is_public_is_scanned(
+        self, organization, workspace, user
+    ):
+        answer = GitHubResponse("ok", {"id": 7, "private": False})
+        with (
+            patch(LOOKUP, return_value=answer),
+            patch("simulate.tasks.agent_scans.schedule_agent_scan"),
+        ):
+            _scan(organization, workspace, user, dict(PUBLIC))
+
+        assert AgentScan.objects.count() == 1
+
+    def test_a_private_repository_skips_the_public_check(
+        self, organization, workspace, user
+    ):
+        with patch(LOOKUP) as lookup, pytest.raises(HostedHarnessError):
+            _scan(organization, workspace, user, dict(PRIVATE_UNCONNECTED))
+
+        lookup.assert_not_called()
 
     def test_the_connect_api_refuses_a_folder(self, auth_client):
         agents = AgentDefinition.objects.count()

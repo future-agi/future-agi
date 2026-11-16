@@ -28,15 +28,23 @@ from simulate.services.harness_environment import environment_name, run_summarie
 ENVIRONMENTS_PER_ROW = 5
 
 
-def _environments() -> QuerySet[HostedHarnessJob]:
+def _environment_jobs() -> QuerySet[HostedHarnessJob]:
     # An environment of a deleted test is gone from the page, so it is not
-    # counted, as recent runs leave its runs out.
+    # counted, as recent runs leave its runs out. One not yet given a test
+    # still holds the agent through the version it pins.
     return HostedHarnessJob.no_workspace_objects.filter(
-        run_test__agent_definition=OuterRef("pk"),
-        run_test__deleted=False,
-        environment__isnull=True,
-        deleted=False,
+        environment__isnull=True, deleted=False
+    ).annotate(
+        _owner=Case(
+            When(run_test__isnull=True, then=F("agent_version__agent_definition_id")),
+            When(run_test__deleted=False, then=F("run_test__agent_definition_id")),
+            default=None,
+        )
     )
+
+
+def _environments() -> QuerySet[HostedHarnessJob]:
+    return _environment_jobs().filter(_owner=OuterRef("pk"))
 
 
 def annotate_agent_rows(
@@ -79,7 +87,7 @@ def annotate_agent_rows(
         ),
         _environment_count=Coalesce(
             Subquery(
-                environments.values("run_test__agent_definition")
+                environments.values("_owner")
                 .annotate(total=Count("id"))
                 .values("total")
             ),
@@ -97,25 +105,20 @@ def annotate_agent_rows(
 def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:
     refs: dict[UUID, list[dict[str, str]]] = {}
     jobs = (
-        HostedHarnessJob.no_workspace_objects.filter(
-            run_test__agent_definition__in=[agent.id for agent in agents],
-            run_test__deleted=False,
-            environment__isnull=True,
-            deleted=False,
-        )
+        _environment_jobs()
+        .filter(_owner__in=[agent.id for agent in agents])
         .annotate(
             position=Window(
                 RowNumber(),
-                partition_by=F("run_test__agent_definition_id"),
+                partition_by=F("_owner"),
                 order_by=[F("created_at").asc(), F("id").asc()],
             )
         )
         .filter(position__lte=ENVIRONMENTS_PER_ROW)
-        .select_related("run_test")
         .order_by("created_at", "id")
     )
     for job in jobs:
-        refs.setdefault(job.run_test.agent_definition_id, []).append(
+        refs.setdefault(job._owner, []).append(
             {"id": str(job.id), "name": environment_name(job)}
         )
     return refs
@@ -146,16 +149,12 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
 def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
     """How many environments test each agent, keyed by agent id; absent when none."""
     rows = (
-        HostedHarnessJob.no_workspace_objects.filter(
-            run_test__agent_definition_id__in=agent_ids,
-            run_test__deleted=False,
-            environment__isnull=True,
-            deleted=False,
-        )
-        .values("run_test__agent_definition_id")
+        _environment_jobs()
+        .filter(_owner__in=agent_ids)
+        .values("_owner")
         .annotate(total=Count("id"))
     )
-    return {row["run_test__agent_definition_id"]: row["total"] for row in rows}
+    return {row["_owner"]: row["total"] for row in rows}
 
 
 def version_list_context(versions: list[AgentVersion]) -> dict[str, Any]:

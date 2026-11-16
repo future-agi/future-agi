@@ -2356,6 +2356,7 @@ def _activate_production(
     if outcome != "promoted":
         return outcome
     document = stored_document(version)
+    base_documents: dict[Any, Any] = {}
     following, pinned, offered = [], [], {}
     for environment in bound_environments(version.agent_definition_id):
         if environment.agent_version_id == version.id:
@@ -2363,7 +2364,9 @@ def _activate_production(
         if environment_policy(environment) != POLICY_FOLLOW:
             pinned.append(str(environment.id))
             continue
-        fit = environment_compatibility(environment, version, document=document)
+        fit = environment_compatibility(
+            environment, version, document=document, base_documents=base_documents
+        )
         # Only a change read as compatible moves a follower; a major change, and
         # one that can't be judged yet, is offered and never applied. A world
         # never built has nothing the move could break.
@@ -2375,9 +2378,22 @@ def _activate_production(
             offered[str(environment.id)] = (
                 "unmeasured" if fit["status"] == UNMEASURED else "major_change"
             )
-    if following:
-        _request_for(version.id, following)
-    _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
+    with transaction.atomic():
+        lock_agent_production(version.agent_definition_id)
+        if not AgentVersion._base_manager.filter(
+            id=version.id,
+            status=AgentVersion.StatusChoices.ACTIVE,
+            deleted=False,
+        ).exists():
+            logger.info(
+                "harness_agent_promotion_superseded version=%s definition=%s",
+                version.id,
+                version.agent_definition_id,
+            )
+            return []
+        if following:
+            _request_for(version.id, following)
+        _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
     for environment_id in [*pinned, *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, following)

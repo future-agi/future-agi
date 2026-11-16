@@ -1261,3 +1261,26 @@ def test_environment_rows_carry_their_policy(auth_client, organization, workspac
         str(pinned.id): "pinned",
         str(unchosen.id): "pinned",
     }
+
+
+@pytest.mark.django_db
+def test_a_queued_build_without_a_test_yet_still_holds_its_agent(
+    auth_client, organization, workspace
+):
+    queued = _agent(organization, workspace, "Queued")
+    version = queued.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    job = _environment(queued, 1)
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        run_test=None, agent_version=version
+    )
+
+    assert _rows(auth_client)["Queued"]["environment_count"] == 1
+    single = auth_client.delete(f"{AGENTS}{queued.id}/delete/")
+
+    assert single.status_code == status.HTTP_409_CONFLICT, single.content
+    assert single.json()["code"] == "agent_in_use"
+    for row in (queued, version):
+        row.refresh_from_db()
+        assert row.deleted is False

@@ -4,6 +4,7 @@ answer their kind and no content."""
 
 import io
 import tarfile
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -13,6 +14,7 @@ from simulate.models import AgentDefinition, HarnessAgentVersionRuntime
 from simulate.services.agent_code import MAX_FILE_BYTES
 from simulate.services.code_archives import store_commit_archive
 from simulate.services.harness_agent_versions import create_agent_version
+from simulate.services.harness_github import GitHubResponse
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_harness_connected_versions import _source
 
@@ -310,17 +312,22 @@ def test_another_workspace_connecting_the_same_commit_reads_none_of_its_code(
     )
     auth_client.set_workspace(other)
 
-    connected = auth_client.post(
-        "/simulate/agents/connect/",
-        {
-            "kind": "github",
-            "repository": "acme/agent",
-            "ref": "main",
-            "commit_sha": "a" * 40,
-            "name": "Mirror",
-        },
-        format="json",
-    )
+    public = GitHubResponse("ok", {"id": 7, "private": False})
+    with patch(
+        "simulate.services.harness_agent_changes.github_repository",
+        return_value=public,
+    ):
+        connected = auth_client.post(
+            "/simulate/agents/connect/",
+            {
+                "kind": "github",
+                "repository": "acme/agent",
+                "ref": "main",
+                "commit_sha": "a" * 40,
+                "name": "Mirror",
+            },
+            format="json",
+        )
     assert connected.status_code == status.HTTP_201_CREATED, connected.content
     body = connected.json()
     response = auth_client.get(
@@ -332,3 +339,46 @@ def test_another_workspace_connecting_the_same_commit_reads_none_of_its_code(
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert response.json()["code"] == "archive_unavailable"
     assert b"return 'hi'" not in response.content
+
+
+def test_a_file_with_a_bad_byte_past_its_start_reads_as_binary(
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
+):
+    late = b"a" * (70 * 1024) + b"\xff\xfe"
+    _stored(agent, "a", {**FIRST, "agents/support/late.txt": late})
+    version = _version(agent, commit="a")
+
+    response = auth_client.get(
+        _url(agent, version, "file"), {"path": "agents/support/late.txt"}
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["kind"] == "binary"
+    assert "content" not in response.json()
+
+
+@pytest.mark.parametrize(
+    "limit",
+    ["MAX_ARCHIVE_FILES", "MAX_ARCHIVE_ENTRIES", "MAX_ARCHIVE_INFLATED_BYTES"],
+)
+def test_an_archive_past_a_limit_is_refused_not_walked(
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
+    monkeypatch,
+    limit,
+):
+    from simulate.services.harness_versioning import archives
+
+    monkeypatch.setattr(archives, limit, 2)
+    _stored(agent, "a", FIRST)
+    version = _version(agent, commit="a")
+
+    response = auth_client.get(_url(agent, version, "tree"))
+
+    assert response.status_code == 422, response.content
+    assert response.json()["code"] == "code_too_large"
