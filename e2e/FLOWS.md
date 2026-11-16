@@ -3069,3 +3069,32 @@
 
 - the counts line reads "1 proved · 1 kept as written · 1 not proved"
 - the rows carry Active, Kept as written and Draft badges
+
+### SIM-E2E-012 — a case the builder adds is validated with the unsaved changes, saved Active, and runs
+
+**Goal:** A builder validates a case the chat just added from its own drawer, saves the validated versions under a name, and the case is Active and runs
+
+**Spec:** `flows/simulate/draft-case-validate.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a case the builder chat added to the suite draft in answer to a message (e2e/lib/simulate-seed.ts; no builder sandbox runs in this harness)
+2. open the Scenarios tab and the added case
+3. click Validate in the case drawer
+4. stand in for the validation sandbox: record every case proved on the candidate pairing as the gateway records a proofs file, and certify it (e2e/lib/harness_review_seed.py prove_candidates)
+5. name the version in the draft bar and Save
+6. read the Scenarios list and the run readiness for the added case
+
+**Backend state verified:**
+
+- the drawer Validate posts drafts/validate (202) and never scenarios/validate
+- the drafts read reports the candidate validation ready
+- the candidate pairing holds the added case proved
+- after Save the default suite is the candidate, its pairing holds the added case proved, the list reads it Active and a run of it holds nothing back
+
+**Browser observations:**
+
+- the added case reads as an unsaved change with a Validate that validates the unsaved changes
+- the draft bar reads "Validated. Name this version to save it." once the validation is ready

@@ -303,3 +303,29 @@ export function seedReviewDraft(opts: { environmentId: string; userEmail: string
 export function certifyCandidates(opts: { environmentId: string }): { bundleId: string } {
   return runReviewSeed<{ bundleId: string }>('certify_candidates', { SEED_ENVIRONMENT_ID: opts.environmentId });
 }
+
+/** The scenario `seedChatCase` adds to an Environment's suite draft. */
+export interface ChatCaseSeed {
+  messageId: string;
+  scenarioKey: string;
+  name: string;
+}
+
+/**
+ * Adds a scenario to the Environment's suite draft the way a builder-chat turn does (the stack runs no
+ * builder sandbox): the person's message, then `record_draft` citing it. See e2e/lib/harness_review_seed.py.
+ */
+export function seedChatCase(opts: { environmentId: string; userEmail: string }): ChatCaseSeed {
+  return runReviewSeed<ChatCaseSeed>('chat_case', {
+    SEED_ENVIRONMENT_ID: opts.environmentId,
+    SEED_USER_EMAIL: opts.userEmail,
+  });
+}
+
+/**
+ * Stands in for the validation job's sandbox on the Environment's live candidate set: every case's proof
+ * recorded as the gateway records a proofs file, then the pairing certified as `certifyCandidates` does.
+ */
+export function proveCandidates(opts: { environmentId: string }): { bundleId: string } {
+  return runReviewSeed<{ bundleId: string }>('prove_candidates', { SEED_ENVIRONMENT_ID: opts.environmentId });
+}
