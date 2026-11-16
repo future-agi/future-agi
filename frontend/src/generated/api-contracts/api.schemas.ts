@@ -28081,6 +28081,8 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  /** The transcript's tool calls; a hand-off to another agent is a Participants step, not one of them. */
+  tool_call_count: number;
   call_actors: CallCallActorApi[];
   /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */
   participants: CallParticipantApi[];
@@ -28134,6 +28136,20 @@ export const CallWorkerEventApiType = {
   returned: "returned",
 } as const;
 
+export type ShownTextApiFormat =
+  (typeof ShownTextApiFormat)[keyof typeof ShownTextApiFormat];
+
+export const ShownTextApiFormat = {
+  code: "code",
+  text: "text",
+} as const;
+
+export interface ShownTextApi {
+  format: ShownTextApiFormat;
+  /** @minLength 1 */
+  text: string;
+}
+
 export type CallWorkerEventApiStatus =
   (typeof CallWorkerEventApiStatus)[keyof typeof CallWorkerEventApiStatus];
 
@@ -28181,6 +28197,8 @@ export interface CallWorkerEventApi {
   task?: string;
   /** @minLength 1 */
   result?: string;
+  task_shown?: ShownTextApi;
+  result_shown?: ShownTextApi;
   /** @minLength 1 */
   tool?: string;
   status?: CallWorkerEventApiStatus;
@@ -28270,6 +28288,8 @@ export interface CallWorkerEventOrNullApi {
   task?: string;
   /** @minLength 1 */
   result?: string;
+  task_shown?: ShownTextApi;
+  result_shown?: ShownTextApi;
   /** @minLength 1 */
   tool?: string;
   status?: CallWorkerEventOrNullApiStatus;
@@ -28288,6 +28308,17 @@ export interface CallWorkerEventOrNullApi {
   at: string;
   attribution: CallWorkerEventOrNullApiAttribution;
 }
+
+export type CallWorkerStepApiEnd =
+  (typeof CallWorkerStepApiEnd)[keyof typeof CallWorkerStepApiEnd];
+
+export const CallWorkerStepApiEnd = {
+  finished: "finished",
+  failed: "failed",
+  passed: "passed",
+  no_return: "no_return",
+  cut_off: "cut_off",
+} as const;
 
 export type CallWorkerStepApiRelationship =
   (typeof CallWorkerStepApiRelationship)[keyof typeof CallWorkerStepApiRelationship];
@@ -28312,6 +28343,8 @@ export interface CallWorkerStepApi {
   /** @minLength 1 */
   ended_at?: string;
   parallel?: boolean;
+  end?: CallWorkerStepApiEnd;
+  children?: number[];
   call?: CallWorkerEventApi;
   turn: number;
   order: number;
@@ -28323,12 +28356,24 @@ export interface CallWorkerTurnApi {
   text: string;
   /** @minLength 1 */
   at: string;
+  shown?: ShownTextApi;
 }
 
 export interface CallWorkerRoundApi {
   turn: number;
   request: CallWorkerTurnApi;
   response: CallWorkerTurnApi;
+  children: number[];
+  calls_outside: number;
+}
+
+export interface HandOffCountsApi {
+  hand_offs: number;
+  workers: number;
+  finished: number;
+  did_not_finish: number;
+  passed: number;
+  cut_off: number;
 }
 
 export interface CallWorkersResponseApi {
@@ -28348,6 +28393,18 @@ export interface CallWorkersResponseApi {
   parallel: number;
   overlap_unknown: boolean;
   worker_depths: CallWorkersResponseApiWorkerDepths;
+  counts: HandOffCountsApi;
+  cut_off: boolean;
+  beyond_boundary: boolean;
+  pending: boolean;
+  /** @minLength 1 */
+  next_read_at?: string;
+}
+
+export interface CallWorkersPendingApi {
+  pending: boolean;
+  /** @minLength 1 */
+  next_read_at: string;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -28524,7 +28581,6 @@ export interface RunDashboardTaskApi {
   modality: string;
   /** @minLength 1 */
   provider: string;
-  completed_at: string;
 }
 
 export interface RunDashboardUnavailableApi {
@@ -43676,6 +43732,13 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
    * Run-test scope selected by the preview. The execution and every signed continuation must belong to this run test.
    */
   run_test_id: string;
+};
+
+export type SimulateV3CallExecutionWorkersParams = {
+  /**
+   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.
+   */
+  attempt?: string;
 };
 
 export type SimulateV3TestExecutionCallsParams = {

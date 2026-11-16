@@ -269,6 +269,7 @@ import type {
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
+  CallWorkersPendingApi,
   CallWorkersResponseApi,
   CancelTestExecutionResponseApi,
   CapabilitiesResponseApi,
@@ -1293,6 +1294,7 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3CallExecutionWorkersParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
   SimulationEvidenceRequestApi,
@@ -70775,6 +70777,11 @@ export type simulateV3CallExecutionWorkersResponse200 = {
   status: 200;
 };
 
+export type simulateV3CallExecutionWorkersResponse202 = {
+  data: CallWorkersPendingApi;
+  status: 202;
+};
+
 export type simulateV3CallExecutionWorkersResponse204 = {
   data: void;
   status: 204;
@@ -70782,11 +70789,12 @@ export type simulateV3CallExecutionWorkersResponse204 = {
 
 export type simulateV3CallExecutionWorkersResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 204>;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 204>;
 };
 
 export type simulateV3CallExecutionWorkersResponseSuccess = (
   | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse202
   | simulateV3CallExecutionWorkersResponse204
 ) & {
   headers: ApiResponseHeaders;
@@ -70802,8 +70810,25 @@ export type simulateV3CallExecutionWorkersResponse =
 
 export const getSimulateV3CallExecutionWorkersUrl = (
   callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
 ) => {
-  return `/simulate/v3/call-executions/${callExecutionId}/workers/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/call-executions/${callExecutionId}/workers/?${stringifiedParams}`
+    : `/simulate/v3/call-executions/${callExecutionId}/workers/`;
 };
 
 /**
@@ -70811,10 +70836,11 @@ export const getSimulateV3CallExecutionWorkersUrl = (
  */
 export const simulateV3CallExecutionWorkers = async (
   callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
   options?: RequestInit,
 ): Promise<simulateV3CallExecutionWorkersResponse> => {
   return apiMutator<simulateV3CallExecutionWorkersResponse>(
-    getSimulateV3CallExecutionWorkersUrl(callExecutionId),
+    getSimulateV3CallExecutionWorkersUrl(callExecutionId, params),
     {
       ...options,
       method: "GET",
