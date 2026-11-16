@@ -1928,7 +1928,7 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:108`
 
 **Tags:** —
 
@@ -1948,7 +1948,7 @@
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:161`
 
 **Tags:** —
 

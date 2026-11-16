@@ -1,5 +1,77 @@
 # Changelog
 
+## [1.58.0](https://github.com/future-agi/future-agi/compare/v1.57.0...v1.58.0) (2026-11-03)
+
+
+### Features
+
+* **error-feed:** send the agent's prompt and tool calls with each simulation call ([bb3162d](https://github.com/future-agi/future-agi/commit/bb3162d89cb81b27b0b04754300d9e2cb7e72abf))
+* **simulate:** fix my agent improvements tab, fix page and launch form [TH-8955] [agent] ([f28588d](https://github.com/future-agi/future-agi/commit/f28588d24b917b278f2d716923c71ba5b515c59b))
+* **simulate:** let a fix protect cases that must still pass ([2747c4b](https://github.com/future-agi/future-agi/commit/2747c4b824e683765c14f78ab419c78332c2fcf4))
+* **simulate:** prove a fix for a failing run and open its pull request ([4a4f226](https://github.com/future-agi/future-agi/commit/4a4f2263776d1e3a200741a1707869b9212c31e2))
+* **simulate:** ship a candidate the must-pass check vetoed, with a reason ([fec9b17](https://github.com/future-agi/future-agi/commit/fec9b17e3b5b0f7a5eeca7dfd9de3785100067e0))
+
+
+### Bug Fixes
+
+* **agentic_eval:** keep empty few-shot inputs skipped ([a51310b](https://github.com/future-agi/future-agi/commit/a51310b99a2782b26d24fb808f4984b5f08dcd93))
+* **agentic_eval:** keep zero and false few-shot inputs, skip empty ones by the eval rule ([8102cea](https://github.com/future-agi/future-agi/commit/8102cea943cb3a895e5ba6dd6e762a788571c1ea))
+* **agentic_eval:** match few-shot text inputs as strings so structured inputs find feedback ([47c94b3](https://github.com/future-agi/future-agi/commit/47c94b3d877c2f60eb80dc1ab878d48796031770))
+* **agentic_eval:** send JSON eval inputs to the embedder as text, not objects ([214b225](https://github.com/future-agi/future-agi/commit/214b225a26c2346bba7511a04031736abc1241a7))
+* **agentic_eval:** send JSON eval inputs to the embedder as text, not objects [TH-8996] [agent] ([61923d5](https://github.com/future-agi/future-agi/commit/61923d5563a988cb516cddca83dee109e81127e9))
+* **error-feed:** keep a tool-heavy call under the evidence page limit ([25f1cb2](https://github.com/future-agi/future-agi/commit/25f1cb20c8d06e19ffd32528dcede03470090c55))
+* **gateway:** give every Gemini tool call its own id ([88e8397](https://github.com/future-agi/future-agi/commit/88e8397f0d443ff0d976340ddbab46c3e58db066))
+* **gateway:** give every Gemini tool call its own id ([7a2c1be](https://github.com/future-agi/future-agi/commit/7a2c1be3357d1df33d3a066dae6d0d93be4c671f))
+* **simulate:** group accepted findings and revisit deferred batches ([478e11a](https://github.com/future-agi/future-agi/commit/478e11a4dfb7e7801e8ff07bff8a36cd1d8d64b4))
+* **simulate:** offer only passing cases to protect [TH-8955] ([0cbc866](https://github.com/future-agi/future-agi/commit/0cbc86604d9b964de62b3b5b639540922d746907))
+* **simulate:** protect only cases that passed and were scored ([5277fd7](https://github.com/future-agi/future-agi/commit/5277fd702f68f1aac93f5f3086f443ac22e7e281))
+* **simulate:** read the frozen plan for a refused candidate's held-back tier ([aed84c6](https://github.com/future-agi/future-agi/commit/aed84c6bdd6ff2ace9671f40586fba43e8994568))
+* **simulate:** remove hover tooltips from the environment workspace tabs ([bd36504](https://github.com/future-agi/future-agi/commit/bd3650419648a98fe8f0794b7849a63ba22709e4))
+* **simulate:** remove hover tooltips from the environment workspace tabs [TH-8994] [agent] ([0071539](https://github.com/future-agi/future-agi/commit/007153995f2cc7ef263348521817a49cf9712f22))
+* **simulate:** ship a must-pass refusal only on a whole final check ([d54614a](https://github.com/future-agi/future-agi/commit/d54614a790eb013759a71dca7770deadefe904b5))
+* **simulate:** ship exactly the accepted candidate's files ([773a190](https://github.com/future-agi/future-agi/commit/773a1900dc2c09e9ce0904f522d2ccda9311b0e5))
+* **simulate:** skip the fix list when the org lacks fix my agent [TH-8955] ([cb13120](https://github.com/future-agi/future-agi/commit/cb13120a3ea6a2f180321153425ba18db501fe88))
+
+## [1.57.0](https://github.com/future-agi/future-agi/compare/v1.56.1...v1.57.0) (2026-11-02)
+
+
+### Features
+
+* **eval-tasks:** Slack alert when a continuous eval task fails or stalls ([4bf7724](https://github.com/future-agi/future-agi/commit/4bf772449e9ed4367cbf854aae0a144c519648c9))
+* **eval-tasks:** Slack alert when a continuous eval task fails or stalls ([453a037](https://github.com/future-agi/future-agi/commit/453a0375e47ad8493e16f73a4de3365a17fb3456))
+* **tasks:** open a run's trace in a drawer from Task Usage [TH-8959] ([a98e201](https://github.com/future-agi/future-agi/commit/a98e2017c4ff64e209249621ff89dc1552756971))
+* **tasks:** open a run's trace in a drawer from Task Usage [TH-8959] ([7208af5](https://github.com/future-agi/future-agi/commit/7208af511b52a23953872fca941a7a10ac3162af))
+
+
+### Bug Fixes
+
+* **agentcc:** decrypt guardrail credentials only from the config's own organization ([b9cc5cb](https://github.com/future-agi/future-agi/commit/b9cc5cb2534faac06621b58f290a8cccc12dfb12))
+* **agentcc:** edit guardrails in place when the org config uses the checks map ([7a7fdd8](https://github.com/future-agi/future-agi/commit/7a7fdd8ebd7ac77ea788eee24bdf1a42c72d02fd))
+* **agentcc:** let gateway request contracts accept scalar values inside config dicts ([d900f62](https://github.com/future-agi/future-agi/commit/d900f623e53b1c93092394c369e326cc099cb097))
+* **agentcc:** report warn-mode guardrail hits in the guardrail Test tab ([0bb7603](https://github.com/future-agi/future-agi/commit/0bb7603873d2f347ad1a7f98591bf48851f9f9f3))
+* **agentcc:** store each gateway request log under its own organization ([3274a45](https://github.com/future-agi/future-agi/commit/3274a45f8cc2cc729284b2a6c9deca641fcf0274))
+* **annotations:** align label toolbar filter order [agent] ([a07b523](https://github.com/future-agi/future-agi/commit/a07b523ac2a9a73dcc0272003c7153841a213f36))
+* **datasets:** prevent silent blank rows from Falcon and MCP (TH-8841) ([a853c1d](https://github.com/future-agi/future-agi/commit/a853c1dbcb3ba687a66e42eade03240409ca205e))
+* **datasets:** prevent silent blank rows from Falcon and MCP (TH-8841) ([df96ffb](https://github.com/future-agi/future-agi/commit/df96ffb671bf6f31191fa63d3d7b8c5bf6ad5253))
+* **error-feed:** address review of eval membership retire and eval issue scores ([0bcc4c5](https://github.com/future-agi/future-agi/commit/0bcc4c5adc211d2fcac83200abe70de7fa425a98))
+* **error-feed:** retire deleted eval results from issues and fix eval issue scores ([215b195](https://github.com/future-agi/future-agi/commit/215b19543a47de8c7ae7e8dc452dc267440e5c8d))
+* **gateway:** fill pricing catalogue gaps from models.dev ([4efb205](https://github.com/future-agi/future-agi/commit/4efb20599f420f06c1b2a323b356245ade0678ea))
+* **gateway:** hide global models from keys that cannot call them ([59ce271](https://github.com/future-agi/future-agi/commit/59ce271ebee5bd32fd8f8c64287a163b97928c3f))
+* **gateway:** hide global models from keys that cannot call them ([65662da](https://github.com/future-agi/future-agi/commit/65662da7a4a4a97eac76d34b7c34908ae50f8ce1))
+* **gateway:** keep every org-config section when saving guardrails or fallbacks ([185abdc](https://github.com/future-agi/future-agi/commit/185abdcbecfac27ccdb7e53bcd51e84c9401b700))
+* **gateway:** keep the Future AGI Eval Base URL empty unless the user sets one ([4162b8e](https://github.com/future-agi/future-agi/commit/4162b8e1849ae0f5e02c9995bbd68cb31a529c5a))
+* **gateway:** load guardrail logs and budget activity without the undeclared gateway_id ([0a0bb56](https://github.com/future-agi/future-agi/commit/0a0bb56f57114bcd4a740ad3a97ef82fe61f7084))
+* **gateway:** price search requests per query and flag unpriced ones ([67c4a26](https://github.com/future-agi/future-agi/commit/67c4a26ab73f152912c87ee1f214ec657e13edf4))
+* **gateway:** price search requests per query and flag unpriced ones ([68f20bd](https://github.com/future-agi/future-agi/commit/68f20bd8c8afa0d8d7bd26452519559f6f28496e))
+* **gateway:** show the gateway's real status code in the guardrail Test tab ([da74570](https://github.com/future-agi/future-agi/commit/da74570db6268d30eaa714bc6e4fdfaa98adaf92))
+* **gateway:** treat a CrowdStrike token reply without access_token as a token failure ([53015b9](https://github.com/future-agi/future-agi/commit/53015b9e04518aae4bd0f45e2d57ae21721a233b))
+* **gateway:** warn when an org-config save or rollback did not reach the gateway ([6039909](https://github.com/future-agi/future-agi/commit/60399099511946cc0bf2484875828277984d2297))
+* **integrations:** fail SQS exports on unacknowledged entries ([ca932f0](https://github.com/future-agi/future-agi/commit/ca932f0b93f00a79ab56e03a97e646deb452517b))
+* **integrations:** preserve SQS checkpoints on partial batch failure [agent] ([c8d4ce5](https://github.com/future-agi/future-agi/commit/c8d4ce5c0f2eae1f1bc5701243cebeb60e302de8))
+* **repo:** pin LF for shell scripts so the stack boots on Windows ([d027f00](https://github.com/future-agi/future-agi/commit/d027f001727ffc20489daaabf341b958c13632da))
+* **simulate:** read the environment scenario count from the server detail [TH-8912] ([78b085b](https://github.com/future-agi/future-agi/commit/78b085bbe5fc9df3c5e3514397bdbd0bcff19450))
+* **simulate:** show the live scenario count in the environment workspace [TH-8912] ([5ee05b4](https://github.com/future-agi/future-agi/commit/5ee05b4a395a6b12a38c4fcec4c096dd5ae9f30a))
+
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
 
