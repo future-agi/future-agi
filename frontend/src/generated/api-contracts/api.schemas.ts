@@ -19854,6 +19854,80 @@ export interface HarnessCapabilitySelectionRowApi {
   affected: HarnessCapabilityAffectedApi;
 }
 
+export type WorkerBoundaryApiBinding =
+  (typeof WorkerBoundaryApiBinding)[keyof typeof WorkerBoundaryApiBinding];
+
+export const WorkerBoundaryApiBinding = {
+  separate: "separate",
+  shared: "shared",
+} as const;
+
+export type WorkerBoundaryApiStatus =
+  (typeof WorkerBoundaryApiStatus)[keyof typeof WorkerBoundaryApiStatus];
+
+export const WorkerBoundaryApiStatus = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export type WorkerToolApiBoundary =
+  (typeof WorkerToolApiBoundary)[keyof typeof WorkerToolApiBoundary];
+
+export const WorkerToolApiBoundary = {
+  allowed: "allowed",
+  blocked: "blocked",
+  not_enforced: "not_enforced",
+} as const;
+
+export interface WorkerToolApi {
+  /** @minLength 1 */
+  tool: string;
+  /**
+   * The sealed world action; null when the tool has no route.
+   * @minLength 1
+   */
+  action: string;
+  boundary: WorkerToolApiBoundary;
+}
+
+/**
+ * Recent calls where the worker reached the world without its own channel.
+ */
+export interface WorkerBypassApi {
+  /** @minLength 1 */
+  run_id: string;
+  /** @minLength 1 */
+  call_execution_id: string;
+  /** @minLength 1 */
+  tool: string;
+}
+
+/**
+ * One row per declared worker; empty when the contract declares none.
+ */
+export interface WorkerBoundaryApi {
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  name: string;
+  binding: WorkerBoundaryApiBinding;
+  status: WorkerBoundaryApiStatus;
+  /** @minLength 1 */
+  reason_code: string;
+  /** @minLength 1 */
+  reason: string;
+  tools: WorkerToolApi[];
+  /** Recent calls where the worker reached the world without its own channel. */
+  bypassed: WorkerBypassApi[];
+  fix: HarnessCapabilityFixApi;
+  /** @minLength 1 */
+  checked_at: string;
+}
+
 export interface HarnessCapabilityCountsApi {
   supported: number;
   partial: number;
@@ -19912,6 +19986,25 @@ export interface HarnessCapabilityCaseListsApi {
   blocked: HarnessCapabilityCaseListApi;
   stale: HarnessCapabilityCaseListApi;
   untested: HarnessCapabilityCaseListApi;
+}
+
+/**
+ * Each blocked row, then each blocked worker, holding selected cases back, with how many.
+ */
+export interface HarnessCapabilityHeldByApi {
+  /**
+   * The row id, or worker:<id> for a declared worker.
+   * @minLength 1
+   */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  area: string;
+  /** @minimum 1 */
+  count: number;
+  /** @minLength 1 */
+  reason: string;
 }
 
 /**
@@ -19977,6 +20070,8 @@ export interface HarnessCapabilitySelectionCountsApi {
   /** @minimum 0 */
   untested: number;
   lists: HarnessCapabilityCaseListsApi;
+  /** Each blocked row, then each blocked worker, holding selected cases back, with how many. */
+  held_by: HarnessCapabilityHeldByApi[];
   dropped: HarnessCapabilityDroppedCaseApi[];
   grading: HarnessCapabilityGradingApi;
   /** Every selected case's needs were read from its stored documents. */
@@ -19989,7 +20084,14 @@ export interface HarnessCapabilitySelectionReportApi {
   answer: HarnessCapabilityAnswerApi;
   areas: HarnessCapabilityAreaApi[];
   rows: HarnessCapabilitySelectionRowApi[];
+  /** One row per declared worker; empty when the contract declares none. */
+  workers?: WorkerBoundaryApi[];
   counts: HarnessCapabilityCountsApi;
+  /**
+   * Blocked rows plus blocked workers: what the run plan counts as blockers.
+   * @minimum 0
+   */
+  blockers: number;
   /** @minLength 1 */
   catalog_version: string;
   /** @minLength 1 */
@@ -26581,7 +26683,14 @@ export interface HarnessCapabilityReportApi {
   answer: HarnessCapabilityAnswerApi;
   areas: HarnessCapabilityAreaApi[];
   rows: HarnessCapabilityRowApi[];
+  /** One row per declared worker; empty when the contract declares none. */
+  workers?: WorkerBoundaryApi[];
   counts: HarnessCapabilityCountsApi;
+  /**
+   * Blocked rows plus blocked workers: what the run plan counts as blockers.
+   * @minimum 0
+   */
+  blockers: number;
   /** @minLength 1 */
   catalog_version: string;
   /** @minLength 1 */
