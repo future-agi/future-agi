@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from pydantic import ValidationError
+from rest_framework.renderers import JSONRenderer
 
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.models import AgentccOrgConfig
@@ -25,10 +27,9 @@ from agentcc.services.config_push import (
 )
 from agentcc.services.gateway_client import GatewayClient
 from agentcc.tests.test_guardrail_key_policies_round5 import _key
+from tfc.utils.general_methods import GeneralMethods
 
 HUGE = 10**400
-# Pin the promised transport budget, independently of the implementation constant.
-CONFIG_DEPTH_LIMIT = 128
 POLICY_ID = "00000000-0000-0000-0000-000000000001"
 KEY_ID = "00000000-0000-0000-0000-000000000002"
 ORG_ID = "00000000-0000-0000-0000-000000000003"
@@ -133,36 +134,144 @@ def test_opaque_json_and_finite_float64_edges_are_preserved_not_normalized():
     restored = _org_roundtrip(entry)["guardrails"]["key_policies"][0]["checks"]
     assert restored["custom-static"]["config"] == config
     assert math.copysign(1, restored["custom-static"]["config"]["numbers"][6]) == -1
+    assert check["config"]["unknown"][0] is check["config"]["unknown"][1]
+    assert check["config"]["unknown"][0] is not shared
     check["config"]["unknown"][0]["flags"].append("wire-only")
     assert shared["flags"] == [True, False]
 
 
-def _nested_config(depth):
+def _nested_config(depth, kind="object"):
+    # Exactly depth containers, including the config root (always an object).
     config = {"leaf": "kept"}
-    for _ in range(depth - 1):
-        config = {"next": config}
+    for level in range(depth - 1):
+        config = (
+            [config]
+            if kind == "array" and level < depth - 2
+            else {"next": config}
+        )
     return config
 
 
-def test_depth_budget_is_explicit_and_keeps_the_saved_json_and_siblings():
-    for depth in (CONFIG_DEPTH_LIMIT, CONFIG_DEPTH_LIMIT + 1, 2000):
+def _nested_leaf(config, depth):
+    for _ in range(depth - 1):
+        config = config[0] if isinstance(config, list) else config["next"]
+    return config
+
+
+@pytest.mark.parametrize("depth", [129, 200])
+@pytest.mark.parametrize("kind", ["object", "array"])
+def test_opaque_depth_survives_actual_full_payload_transports(depth, kind):
+    config = _nested_config(depth, kind)
+    raw = {
+        "name": "pii-detection",
+        "enabled": True,
+        "action": "block",
+        "config": config,
+    }
+    policy = _policy([raw, SIBLING])
+    payload = _build_test_payload(policy)
+    body = _client_body(payload)
+    bulk = _bulk_body(payload)
+    # Retain exact base/final HTTPX and DRF bytes before the Go assertions.
+    if output := os.environ.get("GUARDRAIL_R5_DEPTH_PAYLOAD_DIR"):
+        Path(output, f"r5-depth-{depth}-{kind}.json").write_bytes(body)
+        Path(output, f"r5-depth-{depth}-{kind}-bulk.json").write_bytes(bulk)
+    decoded = json.loads(body)
+    assert decoded == payload
+    assert json.loads(bulk)["result"][ORG_ID] == payload
+    checks = decoded["guardrails"]["key_policies"][0]["checks"]
+    check = checks["pii-detection"]
+    assert "configuration_error" not in check
+    assert check["enabled"] is True
+    assert check["action"] == "block"
+    assert check["config"] == config
+    assert _nested_leaf(check["config"], depth) == {"leaf": "kept"}
+    assert checks[SIBLING["name"]] == _project_key_check(SIBLING)
+    projected = payload["guardrails"]["key_policies"][0]["checks"]["pii-detection"]
+    _nested_leaf(projected["config"], depth)["leaf"] = "wire-only"
+    assert _nested_leaf(config, depth) == {"leaf": "kept"}
+    assert raw["config"] is config
+
+
+@pytest.mark.parametrize("kind", ["object", "array"])
+def test_actual_serializer_depth_failure_is_isolated_not_a_depth_policy(kind):
+    depth = max(2000, 2 * sys.getrecursionlimit())
+    config = _nested_config(depth, kind)
+    raw = {
+        "name": "custom-static",
+        "enabled": True,
+        "action": "block",
+        "config": config,
+    }
+    # Establish real transport rejection independently of the projection.
+    unprojected = _build_test_payload(_policy([SIBLING]))
+    unprojected["guardrails"]["key_policies"][0]["checks"]["custom-static"] = {
+        "enabled": True,
+        "action": "block",
+        "config": config,
+    }
+    with pytest.raises((ValueError, RecursionError)):
+        _client_body(unprojected)
+    with pytest.raises((ValueError, RecursionError)):
+        _bulk_body(unprojected)
+    opaque_sibling = {"name": "opaque-sibling", "config": _nested_config(200)}
+    payload = _build_test_payload(_policy([raw, SIBLING, opaque_sibling]))
+    checks = json.loads(_client_body(payload))["guardrails"]["key_policies"][0]["checks"]
+    assert "configuration_error" not in checks["opaque-sibling"]
+    assert checks["opaque-sibling"]["config"] == opaque_sibling["config"]
+    assert checks["custom-static"] == {
+        "enabled": True,
+        "action": "block",
+        "confidence_threshold": 0.8,
+        "config": {},
+        "configuration_error": "invalid_config",
+    }
+    assert checks[SIBLING["name"]] == _project_key_check(SIBLING)
+    assert json.loads(_bulk_body(payload))["result"][ORG_ID] == payload
+    assert raw["config"] is config
+    assert _nested_leaf(config, depth) == {"leaf": "kept"}
+
+
+def test_full_payload_context_not_standalone_config_decides_transport():
+    # Find the real runtime boundary, rather than pin another guessed constant.
+    # This control specifically requires cfg-alone success/full-envelope failure.
+    unprojected = _build_test_payload(_policy([SIBLING]))
+    checks = unprojected["guardrails"]["key_policies"][0]["checks"]
+    for depth in range(129, sys.getrecursionlimit() + 1):
         config = _nested_config(depth)
-        raw = {"name": "custom-static", "config": config}
-        entry = _entry([raw, SIBLING])
-        check = entry["checks"]["custom-static"]
-        if depth == CONFIG_DEPTH_LIMIT:
-            assert "configuration_error" not in check
-            assert check["config"] == config
-        else:
-            assert check["configuration_error"] == "invalid_config"
-            assert check["config"] == {}
-        _org_roundtrip(entry)
-        assert entry["checks"][SIBLING["name"]] == _project_key_check(SIBLING)
-        assert raw["config"] is config
-        cursor = config
-        for _ in range(depth - 1):
-            cursor = cursor["next"]
-        assert cursor == {"leaf": "kept"}
+        checks["custom-static"] = {
+            "enabled": True,
+            "action": "block",
+            "config": config,
+        }
+        try:
+            _client_body(unprojected)
+            _bulk_body(unprojected)
+        except (ValueError, RecursionError):
+            httpx.Request("PUT", "http://synthetic.invalid/", json=config)
+            break
+    else:
+        pytest.fail("no full-envelope serializer boundary exercised")
+    payload = _build_test_payload(
+        _policy([{"name": "custom-static", "config": config}, SIBLING])
+    )
+    projected = payload["guardrails"]["key_policies"][0]["checks"]
+    assert projected["custom-static"]["configuration_error"] == "invalid_config"
+    assert projected["custom-static"]["config"] == {}
+    assert projected[SIBLING["name"]] == _project_key_check(SIBLING)
+    _client_body(payload)
+    _bulk_body(payload)
+
+
+def test_unrelated_org_error_is_not_hidden_by_selected_config_fallback():
+    config = SimpleNamespace(**dict.fromkeys(GatewayOrgConfig.model_fields))
+    config.guardrails = {"checks": {}}
+    config.model_map = {"broken": []}
+    raw = {"name": "custom-static", "config": _nested_config(200)}
+    with pytest.raises(ValidationError):
+        _build_test_payload(_policy([raw, SIBLING]), config)
+    assert _nested_leaf(raw["config"], 200) == {"leaf": "kept"}
+    assert "configuration_error" not in raw
 
 
 @pytest.mark.parametrize("kind", ["object", "array"])
@@ -203,6 +312,53 @@ def test_injected_values_use_the_same_wire_boundary_without_mutating_saved_data(
     assert policy.encrypted_check_configs == b"synthetic-ciphertext"
 
 
+@pytest.mark.parametrize("kind", ["nested", "cycle", "serializer_failure"])
+def test_injected_containers_are_owned_and_checked_in_full_payload(kind):
+    depth = 200 if kind == "nested" else max(2000, 2 * sys.getrecursionlimit())
+    credential = _nested_config(depth)
+    if kind == "cycle":
+        credential = {}
+        credential["cycle"] = credential
+    raw = {"name": "custom-static", "config": {"api_key": "__encrypted__"}}
+    policy = _policy([raw, SIBLING])
+    policy.encrypted_check_configs = b"synthetic-ciphertext"
+    with patch(
+        "integrations.services.credentials.CredentialManager.decrypt",
+        return_value={"custom-static": {"api_key": credential}},
+    ):
+        entry = _build_key_policy(ORG_ID, policy, ["synthetic-key"])
+        payload = _build_test_payload(policy)
+    check = payload["guardrails"]["key_policies"][0]["checks"]["custom-static"]
+    if kind == "nested":
+        assert "configuration_error" not in check
+        assert check["config"]["api_key"] == credential
+        # Exercise ownership before Pydantic/HTTPX could incidentally copy it.
+        projected = entry["checks"]["custom-static"]["config"]["api_key"]
+        _nested_leaf(projected, depth)["leaf"] = "wire-only"
+        assert _nested_leaf(credential, depth) == {"leaf": "kept"}
+    else:
+        assert check["configuration_error"] == "invalid_config"
+        assert check["config"] == {}
+    assert raw["config"] == {"api_key": "__encrypted__"}
+    assert policy.encrypted_check_configs == b"synthetic-ciphertext"
+    checks = payload["guardrails"]["key_policies"][0]["checks"]
+    assert checks[SIBLING["name"]] == _project_key_check(SIBLING)
+    _client_body(payload)
+    _bulk_body(payload)
+
+
+def test_deep_eval_id_conversion_failure_does_not_remove_siblings():
+    value = _nested_config(max(2000, 2 * sys.getrecursionlimit()))
+    raw = {"name": "custom-static", "config": {"eval_id": value}}
+    with pytest.raises(RecursionError):
+        str(value)
+    entry = _entry([raw, SIBLING])
+    assert entry["checks"]["custom-static"]["configuration_error"] == "invalid_config"
+    assert entry["checks"]["custom-static"]["config"] == {}
+    assert entry["checks"][SIBLING["name"]] == _project_key_check(SIBLING)
+    assert raw["config"]["eval_id"] is value
+
+
 def _numeric_checks():
     return [
         {
@@ -223,11 +379,10 @@ def _numeric_checks():
     ]
 
 
-def test_full_payload_and_client_serializer_match_real_go_decoder_fixture():
-    policy = _policy(_numeric_checks())
-    before = copy.deepcopy(policy.checks)
-    config = SimpleNamespace(**dict.fromkeys(GatewayOrgConfig.model_fields))
-    config.guardrails = {"checks": {}, "pipeline_mode": "parallel", "fail_open": False}
+def _build_test_payload(policy, config=None):
+    if config is None:
+        config = SimpleNamespace(**dict.fromkeys(GatewayOrgConfig.model_fields))
+        config.guardrails = {"checks": {}, "pipeline_mode": "parallel", "fail_open": False}
     key = SimpleNamespace(id=uuid.UUID(KEY_ID), gateway_key_id="synthetic-key")
     with (
         patch(
@@ -238,7 +393,10 @@ def test_full_payload_and_client_serializer_match_real_go_decoder_fixture():
             "agentcc.models.AgentccAPIKey.no_workspace_objects.filter", return_value=[key]
         ),
     ):
-        payload = _build_payload(ORG_ID, config)
+        return _build_payload(ORG_ID, config)
+
+
+def _client_body(payload):
     captured = []
 
     def capture(request):
@@ -251,7 +409,20 @@ def test_full_payload_and_client_serializer_match_real_go_decoder_fixture():
     ):
         GatewayClient("http://synthetic.invalid").set_org_config(ORG_ID, payload)
     assert len(captured) == 1
-    body = captured[0]
+    return captured[0]
+
+
+def _bulk_body(payload):
+    response = GeneralMethods().success_response({ORG_ID: payload})
+    response.data["unbuilt_org_ids"] = []
+    return JSONRenderer().render(response.data)
+
+
+def test_full_payload_and_client_serializer_match_real_go_decoder_fixture():
+    policy = _policy(_numeric_checks())
+    before = copy.deepcopy(policy.checks)
+    payload = _build_test_payload(policy)
+    body = _client_body(payload)
     # Export even on a red assertion, so cloud qualification can feed the exact
     # before/after HTTPX bytes to the Go handler test. No default file output.
     if output := os.environ.get("GUARDRAIL_R5_PAYLOAD_PATH"):

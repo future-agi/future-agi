@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -141,6 +144,164 @@ func TestR5ConfigTransportPythonPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	r5AssertTransport(t, body)
+}
+
+func r5AssertOpaqueDepth(t *testing.T, cfg *tenant.OrgConfig, depth int, kind string) {
+	t.Helper()
+	if cfg == nil || cfg.Guardrails == nil || len(cfg.Guardrails.KeyPolicies) != 1 {
+		t.Fatal("opaque-depth policy was lost")
+	}
+	checks := cfg.Guardrails.KeyPolicies[0].Checks
+	check := checks["pii-detection"]
+	if len(checks) != 2 || check == nil || !check.Enabled || check.Action != "block" || check.ConfidenceThreshold != 0.8 || check.ConfigurationError != "" {
+		t.Fatalf("valid opaque config became unavailable: %+v", check)
+	}
+	var cursor interface{} = check.Config
+	for level := 0; level < depth-1; level++ {
+		if kind == "array" && level > 0 {
+			items, ok := cursor.([]interface{})
+			if !ok || len(items) != 1 {
+				t.Fatalf("lost array at level %d", level)
+			}
+			cursor = items[0]
+		} else {
+			item, ok := cursor.(map[string]interface{})
+			if !ok || len(item) != 1 {
+				t.Fatalf("lost object at level %d", level)
+			}
+			cursor = item["next"]
+		}
+	}
+	if !reflect.DeepEqual(cursor, map[string]interface{}{"leaf": "kept"}) {
+		t.Fatalf("opaque leaf changed: %+v", cursor)
+	}
+	sibling := checks["keyword-blocklist"]
+	if sibling == nil || !sibling.Enabled || sibling.ConfigurationError != "" || !reflect.DeepEqual(sibling.Config["words"], []interface{}{"forbidden"}) {
+		t.Fatal("opaque-depth sibling was lost")
+	}
+}
+
+func r5AssertOpaqueDepthTransport(t *testing.T, body []byte, depth int, kind string) {
+	t.Helper()
+	var want tenant.OrgConfig
+	if err := json.Unmarshal(body, &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, bulk := range []bool{false, true} {
+		store := tenant.NewStore()
+		h := NewOrgConfigHandlers(store, "synthetic-admin", nil)
+		w := r5SubmitOrgConfig(h, body, bulk)
+		if w.Code != http.StatusOK {
+			t.Fatalf("depth=%d kind=%s bulk=%t status=%d body=%s", depth, kind, bulk, w.Code, w.Body.String())
+		}
+		cfg := store.Get("synthetic-org")
+		r5AssertOpaqueDepth(t, cfg, depth, kind)
+		if !reflect.DeepEqual(cfg, &want) {
+			t.Fatal("full opaque org changed during contract-to-tenant conversion")
+		}
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored tenant.OrgConfig
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		r5AssertOpaqueDepth(t, &restored, depth, kind)
+		if !reflect.DeepEqual(cfg, &restored) {
+			t.Fatal("full opaque org changed during tenant roundtrip")
+		}
+	}
+}
+
+func TestR5ConfigTransportOpaqueDepth(t *testing.T) {
+	for _, depth := range []int{129, 200} {
+		for _, kind := range []string{"object", "array"} {
+			t.Run(fmt.Sprintf("%d-%s", depth, kind), func(t *testing.T) {
+				var payload map[string]interface{}
+				if err := json.Unmarshal([]byte(r5ProjectedOrgJSON), &payload); err != nil {
+					t.Fatal(err)
+				}
+				policies := payload["guardrails"].(map[string]interface{})["key_policies"].([]interface{})
+				checks := policies[0].(map[string]interface{})["checks"].(map[string]interface{})
+				delete(checks, "content-moderation")
+				delete(checks, "pii-detection")
+				var config interface{} = map[string]interface{}{"leaf": "kept"}
+				for level := 0; level < depth-1; level++ {
+					if kind == "array" && level < depth-2 {
+						config = []interface{}{config}
+					} else {
+						config = map[string]interface{}{"next": config}
+					}
+				}
+				checks["pii-detection"] = map[string]interface{}{
+					"enabled": true, "action": "block", "confidence_threshold": 0.8, "config": config,
+				}
+				body, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r5AssertOpaqueDepthTransport(t, body, depth, kind)
+			})
+		}
+	}
+}
+
+func TestR5ConfigTransportPythonOpaqueDepth(t *testing.T) {
+	dir := os.Getenv("GUARDRAIL_R5_DEPTH_PAYLOAD_DIR")
+	if dir == "" {
+		t.Skip("exact Python HTTPX/DRF bytes require the cloud pytest export directory")
+	}
+	for _, depth := range []int{129, 200} {
+		for _, kind := range []string{"object", "array"} {
+			t.Run(fmt.Sprintf("%d-%s", depth, kind), func(t *testing.T) {
+				body, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("r5-depth-%d-%s.json", depth, kind)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				r5AssertOpaqueDepthTransport(t, body, depth, kind)
+				bulk, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("r5-depth-%d-%s-bulk.json", depth, kind)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(bulk)
+				}))
+				defer controlPlane.Close()
+				store := tenant.NewStore()
+				if err := tenant.SyncFromControlPlane(context.Background(), controlPlane.URL, "synthetic-admin", store); err != nil {
+					t.Fatal(err)
+				}
+				cfg := store.Get("00000000-0000-0000-0000-000000000003")
+				r5AssertOpaqueDepth(t, cfg, depth, kind)
+				var want tenant.OrgConfig
+				if err := json.Unmarshal(body, &want); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(cfg, &want) {
+					t.Fatal("DRF startup-sync payload differs from HTTPX full org")
+				}
+			})
+		}
+	}
+}
+
+func TestR5ConfigTransportRejectsJSONNestingOverflow(t *testing.T) {
+	// Exceed encoding/json's actual 10,000-container scanner limit, not a
+	// conservative Python copy budget. Both handlers must keep the old store.
+	config := strings.Repeat(`{"next":`, 10001) + `{"leaf":"kept"}` + strings.Repeat("}", 10001)
+	body := []byte(`{"guardrails":{"key_policies":[{"id":"deep","key_ids":["key"],"checks":{"custom-static":{"enabled":true,"action":"block","config":` + config + `}}}]}}`)
+	for _, bulk := range []bool{false, true} {
+		store := tenant.NewStore()
+		old := &tenant.OrgConfig{}
+		store.Set("synthetic-org", old)
+		h := NewOrgConfigHandlers(store, "synthetic-admin", nil)
+		w := r5SubmitOrgConfig(h, body, bulk)
+		if w.Code != http.StatusBadRequest || store.Get("synthetic-org") != old {
+			t.Fatalf("bulk=%t nesting overflow was not atomic: status=%d", bulk, w.Code)
+		}
+	}
 }
 
 func TestR5ConfigTransportRejectsOriginalNestedInteger(t *testing.T) {

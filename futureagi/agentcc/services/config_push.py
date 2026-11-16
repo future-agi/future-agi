@@ -8,9 +8,11 @@ import math
 import uuid
 from typing import Any
 
+import httpx
 import structlog
 from django.conf import settings as django_settings
 from pydantic import ValidationError
+from rest_framework.renderers import JSONRenderer
 
 from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
@@ -30,6 +32,7 @@ from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
 from tfc.temporal.drop_in import temporal_activity
+from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
@@ -767,34 +770,28 @@ def _wire_number(value):
         return False
 
 
-# A selected config may contain at most 128 nested objects/arrays. This is a
-# conservative transport budget for Python copying/serialization, NOT Go's JSON
-# nesting limit. Deeper configs remain saved and explicitly unavailable on wire.
-_KEY_CONFIG_MAX_DEPTH = 128
-
-
 def _wire_key_config(value: Any) -> bool:
     """Check JSON shape and Go's interface{} float64 range without coercion.
 
-    Walk iteratively before copying: even a non-JSON in-memory cycle or very
-    deep saved JSON must not take down a policy (and its valid siblings).
     Shared, acyclic containers are allowed; only ancestors count as cycles.
+    Depth alone is not invalid: the full outbound serializers decide whether
+    a value can be transported, after iterative copying and credential injection.
     """
-    pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    pending: list[tuple[Any, bool]] = [(value, False)]
     ancestors: set[int] = set()
     while pending:
-        item, depth, leaving = pending.pop()
+        item, leaving = pending.pop()
         if leaving:
             ancestors.remove(id(item))
         elif isinstance(item, (dict, list)):
-            if depth >= _KEY_CONFIG_MAX_DEPTH or id(item) in ancestors:
+            if id(item) in ancestors:
                 return False
             if isinstance(item, dict) and any(not isinstance(key, str) for key in item):
                 return False
             ancestors.add(id(item))
-            pending.append((item, depth, True))
+            pending.append((item, True))
             children = item.values() if isinstance(item, dict) else item
-            pending.extend((child, depth + 1, False) for child in children)
+            pending.extend((child, False) for child in children)
         elif item is None or isinstance(item, (str, bool)):
             continue
         elif not _wire_number(item):
@@ -802,8 +799,33 @@ def _wire_key_config(value: Any) -> bool:
     return True
 
 
+def _copy_key_config(cfg):
+    """Own an already shape-checked JSON object without recursive deepcopy.
+
+    Memoization preserves shared acyclic containers, but never aliases saved
+    data or decrypted credential containers into the outgoing projection.
+    """
+    result: dict[str, Any] = {}
+    memo: dict[int, Any] = {id(cfg): result}
+    pending: list[tuple[Any, Any]] = [(cfg, result)]
+    while pending:
+        source, target = pending.pop()
+        items = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, value in items:
+            if isinstance(value, (dict, list)):
+                if id(value) not in memo:
+                    memo[id(value)] = (
+                        {} if isinstance(value, dict) else [None] * len(value)
+                    )
+                    pending.append((value, memo[id(value)]))
+                target[key] = memo[id(value)]
+            else:
+                target[key] = value
+    return result
+
+
 def _project_key_check(check):
-    """Own a transportable config copy; keep saved data and check intent intact."""
+    """Own JSON config and preserve intent; full-payload transport is checked later."""
     invalid = False
     enabled = check.get("enabled", True)
     if not isinstance(enabled, bool):
@@ -818,7 +840,7 @@ def _project_key_check(check):
     if not isinstance(cfg, dict) or not _wire_key_config(cfg):
         cfg, invalid = {}, True
     else:
-        cfg = copy.deepcopy(cfg)
+        cfg = _copy_key_config(cfg)
     result = {
         "enabled": enabled,
         "action": action,
@@ -848,8 +870,8 @@ def _colliding_key_check(checks):
 
 
 def _build_key_policy(org_id, policy, gateway_ids):
-    # Bound each config before copying, then inject credentials only into owned
-    # projections. A bad/deep check must not prevent copying its valid siblings.
+    # Copy each JSON config iteratively, then inject credentials into owned
+    # projections. One cyclic or deep check must not prevent copying siblings.
     checks = policy.checks if isinstance(policy.checks, list) else [None]
     named = []
     unusable = 0
@@ -876,10 +898,16 @@ def _build_key_policy(org_id, policy, gateway_ids):
         if not _wire_key_config(cfg):
             cfg = projected["config"] = {}
             projected["configuration_error"] = "invalid_config"
+        else:
+            cfg = projected["config"] = _copy_key_config(cfg)
         if name in _RULE_PROVIDER_DEFAULTS:
             cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
         if registry_name not in BUILTIN_CONFIG_NAMES:
-            _normalize_eval_ids(cfg)
+            try:
+                _normalize_eval_ids(cfg)
+            except (TypeError, ValueError, OverflowError, RecursionError):
+                projected["config"] = {}
+                projected["configuration_error"] = "invalid_config"
         grouped.setdefault(registry_name, []).append(projected)
     mapped = {
         name: entries[0] if len(entries) == 1 else _colliding_key_check(entries)
@@ -900,6 +928,62 @@ def _build_key_policy(org_id, policy, gateway_ids):
         # Pydantic error strings can include raw parameters or credentials.
         raise ValueError("invalid selected policy envelope") from None
     return entry
+
+
+def _serialize_org_payload(org_id, payload):
+    """Exercise the actual outbound encoders without sending or retaining bytes.
+
+    GatewayClient validates/dumps again before HTTPX encodes JSON. Startup sync
+    instead renders the org-id map inside GeneralMethods' response envelope.
+    Checking cfg alone misses both the model traversal and those outer levels.
+    model_dump_json is deliberately not used: neither outbound path uses it.
+    """
+    body = GatewayOrgConfig.model_validate(payload).model_dump(
+        by_alias=True, exclude_none=True
+    )
+    client_body = GatewayOrgConfig.model_validate(body).model_dump(
+        by_alias=True, exclude_none=True
+    )
+    httpx.Request("PUT", "http://gateway.invalid/", json=client_body)
+    bulk = GeneralMethods().success_response({str(org_id): body}).data
+    bulk["unbuilt_org_ids"] = []
+    JSONRenderer().render(bulk)
+    return body
+
+
+def _transport_key_configs(org_id, payload, key_policies):
+    """Isolate only selected configs that fail in their full outbound context.
+
+    The normal path probes each outbound encoder once. On failure, establish that
+    payload works without selected configs, then restore each owned config at
+    its original position. Unrelated org/envelope errors still propagate; they
+    must not turn every valid selected sibling into an unavailable check.
+    """
+    try:
+        return _serialize_org_payload(org_id, payload)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        pass
+    configs = [
+        (check, check["config"])
+        for policy in key_policies
+        for check in policy["checks"].values()
+    ]
+    for check, _ in configs:
+        check["config"] = {}
+    try:
+        _serialize_org_payload(org_id, payload)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        for check, cfg in configs:
+            check["config"] = cfg
+        raise
+    for check, cfg in configs:
+        check["config"] = cfg
+        try:
+            _serialize_org_payload(org_id, payload)
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            check["config"] = {}
+            check["configuration_error"] = "invalid_config"
+    return _serialize_org_payload(org_id, payload)
 
 
 def _build_payload(org_id, config):
@@ -929,6 +1013,8 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
+    if key_policies:
+        return _transport_key_configs(org_id, payload, key_policies)
     return GatewayOrgConfig.model_validate(payload).model_dump(
         by_alias=True,
         exclude_none=True,
