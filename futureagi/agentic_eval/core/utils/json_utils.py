@@ -36,9 +36,7 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
     return value
 
 
-_CODE_FENCE_RE = re.compile(
-    r"^```[ \t]*[a-zA-Z0-9_-]*[ \t]*\n?(.*?)\n?```$", re.DOTALL
-)
+_CODE_FENCE_RE = re.compile(r"^```[ \t]*[a-zA-Z0-9_-]*[ \t]*\n?(.*?)\n?```$", re.DOTALL)
 
 
 def strip_code_fence(text: str) -> str:

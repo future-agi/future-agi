@@ -112,7 +112,6 @@ dependencies = [
     "protobuf",
     "xmlsec",
     "pysaml2",
-    "python-jose",
     "mixpanel",
     "posthog>=7.9.0",
     "minio",

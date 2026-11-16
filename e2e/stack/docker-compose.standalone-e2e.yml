@@ -14,6 +14,7 @@
 #     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
 services:
   app:
+    networks: [default, link-public]
     depends_on:
       mock-google:
         condition: service_healthy
@@ -24,6 +25,8 @@ services:
     # The public API URL, as docker-compose.e2e.yml sets it for Distributed:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
+      # Use the dedicated internal-only sandbox, not the in-app loopback alias.
+      CODE_EXECUTOR_URL: http://code-executor-nsjail:8060
       REQUESTS_CA_BUNDLE: /run/google-fixture-tls/ca.pem
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
@@ -70,6 +73,53 @@ services:
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
     restart: "no"
 
+  # Dedicated executor selection/fallback policy reuses the executor harness.
+  # Its only networks are internal: no default route to real destinations.
+  code-executor:
+    # Mandatory for this suite: include it in ordinary ps/down, not just explicit up.
+    profiles: !reset []
+    networks: !override
+      link-public:
+        aliases: [code-executor-nsjail]
+      link-private: {}
+    extra_hosts:
+      - "allowed.example:11.23.0.10"
+      - "worker-allowed.example:11.23.0.11"
+      - "denied.example:11.23.0.10"
+      - "private.example:172.30.91.10"
+    restart: "no"
+  link-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28082:80"
+    networks:
+      # Host-only readout port needs a non-internal bridge. This listener never
+      # makes outbound requests; the executor stays on internal networks only.
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.10
+      link-private:
+        ipv4_address: 172.30.91.10
+    restart: "no"
+
+  # A separate journal keeps asynchronous harness traffic out of the browser
+  # flow's full-journal assertion when Playwright runs the files in parallel.
+  link-worker-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28083:80"
+    networks:
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.11
+    restart: "no"
+
   mock-google:
     image: futureagi/future-agi:${E2E_GOOGLE_IMAGE_TAG:-latest}
     entrypoint: ["python"]
@@ -88,5 +138,17 @@ services:
       timeout: 3s
       retries: 30
     restart: "no"
+
+networks:
+  link-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.23.0.0/24
+  link-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.91.0/24
 volumes:
   google-fixture-tls:

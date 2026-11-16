@@ -35,6 +35,7 @@ from agentic_eval.core.embeddings.serving_client import (
 from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
 from agentic_eval.core_evals.run_prompt.litellm_models import (
     MissingProviderKeyError,
+    UnavailableModelError,
     missing_provider_key_message,
 )
 from model_hub.constants import (
@@ -139,6 +140,7 @@ from model_hub.services.eval_log_source_navigation import (
     resolve_eval_log_source_navigation,
 )
 from model_hub.utils.api_log_config import parse_api_log_config
+from model_hub.utils.eval_input_validation import EvalConfigError
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
@@ -152,12 +154,14 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from sdk.serializers.contracts import SDKEvaluationDenialResponseSerializer
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
@@ -176,11 +180,6 @@ from tracer.services.exact_aggregation_cache import (
     read_exact_snapshot,
     read_or_schedule_exact_snapshot,
 )
-
-try:
-    from ee.usage.exceptions import UsageLimitExceeded
-except ImportError:
-    UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
 
@@ -6923,6 +6922,31 @@ class TraceEvalView(APIView):
                     status="completed",
                 )
 
+            except EvaluationDenied as denial:
+                logger.warning("trace_evaluation_denied", code=denial.code)
+                return denial.response(self._gm)
+            except (
+                EvalConfigError,
+                MissingProviderKeyError,
+                UnavailableModelError,
+            ) as eval_error:
+                from tfc.ee_gates import jev_error_message
+
+                # Trace runs keep their explicit failed-result contract (HTTP 200).
+                # The shared runner already emitted the configuration warning.
+                response = TraceEvalResponse(
+                    template_id=str(template_id),
+                    trace_id=req.trace_id,
+                    status="failed",
+                    reason=(
+                        jev_error_message(eval_error)
+                        or (
+                            missing_provider_key_message(eval_error.provider)
+                            if isinstance(eval_error, MissingProviderKeyError)
+                            else str(eval_error)
+                        )
+                    ),
+                )
             except Exception as eval_error:
                 from tfc.ee_gates import jev_error_message
 
@@ -7082,7 +7106,12 @@ class EvalPlayGroundAPIView(APIView):
 
     @validated_request(
         request_serializer=EvalPlayGroundSerializer,
-        responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalExecutionResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            402: SDKEvaluationDenialResponseSerializer,
+            429: SDKEvaluationDenialResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -7518,6 +7547,14 @@ class EvalPlayGroundAPIView(APIView):
                 return self._gm.success_response(
                     response if response else "Evaluation has been updated."
                 )
+            except EvalConfigError as exc:
+                # The runner records the failed call and logs this once at WARNING.
+                return self._gm.bad_request(str(exc))
+            except UnavailableModelError as exc:
+                # The saved model was retired from the catalog: name it so the
+                # user can pick another; retrying cannot help. The runner logs
+                # this once at WARNING.
+                return self._gm.bad_request(str(exc))
             except CodeEvalSetupError as exc:
                 # This install cannot run the code eval (no executor, or no
                 # Node.js for JavaScript); the sandbox's message says how to
@@ -7539,14 +7576,12 @@ class EvalPlayGroundAPIView(APIView):
                 # template rather than the exception text.
                 return self._gm.bad_request(missing_provider_key_message(exc.provider))
             except Exception as exc:
-                if UsageLimitExceeded is not None and isinstance(
-                    exc, UsageLimitExceeded
-                ):
+                if isinstance(exc, EvaluationDenied):
                     logger.warning(
                         "eval_playground_usage_limit",
                         error_type=type(exc).__name__,
                     )
-                    return self._gm.usage_limit_response(exc.check_result)
+                    return exc.response(self._gm)
                 from model_hub.utils.jev_templates import jev_error_response
 
                 # A failed Jev run says what to fix: a rejected key will never
@@ -8083,7 +8118,12 @@ class TestEvaluationTemplateAPIView(APIView):
 
     @validated_request(
         request_serializer=TestEvalTemplateSerializer,
-        responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalExecutionResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            402: SDKEvaluationDenialResponseSerializer,
+            429: SDKEvaluationDenialResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -8111,7 +8151,17 @@ class TestEvaluationTemplateAPIView(APIView):
             if not template_type:
                 return self._gm.bad_request(get_error_message("MISSING_TEMPLATE_TYPE"))
 
-            config = prepare_user_eval_config(validated_data, True)
+            try:
+                config = prepare_user_eval_config(validated_data, True)
+            except UnavailableModelError as exc:
+                # An LLM judge's provider is resolved here, before the runner
+                # (which logs the catalog misses it raises itself).
+                logger.warning(
+                    "evaluation_configuration_invalid",
+                    error_type=type(exc).__name__,
+                    model=exc.model_name,
+                )
+                return self._gm.bad_request(str(exc))
             template_eval_type = "llm"
             if template_type == EvalTemplateType.FUTUREAGI.value:
                 eval_id = "DeterministicEvaluator"
@@ -8238,6 +8288,12 @@ class TestEvaluationTemplateAPIView(APIView):
 
             return self._gm.success_response(response)
 
+        except EvalConfigError as exc:
+            return self._gm.bad_request(str(exc))
+        except UnavailableModelError as exc:
+            # As in the eval playground: name the retired model. The runner
+            # already logged it at WARNING.
+            return self._gm.bad_request(str(exc))
         except CodeEvalSetupError as exc:
             # As in the eval playground: the sandbox's setup hint is safe to show.
             logger.warning(
@@ -8254,6 +8310,9 @@ class TestEvaluationTemplateAPIView(APIView):
             if jev_error is not None:
                 return jev_error
             return self._gm.bad_request(missing_provider_key_message(exc.provider))
+        except EvaluationDenied as denial:
+            logger.warning("evaluation_template_test_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as exc:
             from model_hub.utils.jev_templates import jev_error_response
 

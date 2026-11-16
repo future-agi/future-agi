@@ -303,8 +303,7 @@ class RerunCoordinatorWorkflow:
         """
         self._cancelled = True
         workflow.logger.info(
-            f"Cancel signal received for rerun coordinator: "
-            f"{self._test_execution_id}"
+            f"Cancel signal received for rerun coordinator: {self._test_execution_id}"
         )
 
     # ========================================

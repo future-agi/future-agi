@@ -9,6 +9,7 @@
     {"pattern": "scripts/**", "reason": "Scan developer and release production drivers for literal schema/mutation statements, excluding only verified test fixtures."}
   ],
   "exclusions": [
+    {"pattern": "scripts/verify-eval-sampling-native.py", "reason": "Inspected synthetic sampling SQL correctness fixture: CREATE TABLE runs only inside a temporary clickhouse local process, never a shipping server/schema migration.", "sha256": "6392c8661f742012401005152ab49c39d5b85bfa30cd6cc4265fc349e356c2bd"},
     {"pattern": "futureagi/tracer/sql_workbench/tests/**", "reason": "Inspected pytest fixtures and assertions for isolated SQL workbench databases; not product schema or provisioning entrypoints.", "sha256": null},
     {"pattern": "e2e/stack/backend/bootstrap_sql.py", "reason": "Inspected E2E-image-only fixed-account bootstrap, gated by the managed fixture identity and private test network; production provisioning remains scanned.", "sha256": "a06b2450979431bd6042fa46b17be9a255caa9a7cd2b287e934e5315cd8a8f6c"},
     {"pattern": "futureagi/scripts/sql_workbench/capability_check.py", "reason": "Inspected pytest capability-corpus driver: the DROP TABLE literal is a rejection test, not an operator schema migration; production provision.py remains scanned.", "sha256": "680c4067fea983cb811e410bcb3001bfa3bd77d673c7177e7d6d1964c96d2a03"},

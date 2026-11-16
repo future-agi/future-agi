@@ -3,6 +3,9 @@
 ARG BASE_TAG=e2e-local
 FROM futureagi/future-agi:${BASE_TAG}
 
+# Standalone collectstatic also runs Django while assembling this test image.
+ENV FUTURE_AGI_TELEMETRY_DISABLED=true FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9
+
 COPY e2e/stack/backend/e2e_clean_signup.py /app/backend/accounts/views/e2e_clean_signup.py
 COPY e2e/stack/backend/settings_e2e.py /app/backend/tfc/settings/e2e.py
 COPY e2e/stack/backend/urls_e2e.py /app/backend/tfc/urls_e2e.py

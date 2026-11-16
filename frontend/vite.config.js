@@ -65,9 +65,10 @@ const VENDOR_CHUNKS = {
     "@sentry/core",
     "@sentry-internal/browser-utils",
     "@sentry-internal/feedback",
-    "@sentry-internal/replay",
-    "@sentry-internal/replay-canvas",
   ],
+  // @sentry/browser re-exports Replay. Claim its modules separately so the
+  // sentry group's automatic dependency collection cannot pull them into startup.
+  "sentry-replay": ["@sentry-internal/replay", "@sentry-internal/replay-canvas"],
   grid: ["ag-grid-enterprise", "ag-grid-community", "ag-grid-react"],
 };
 const VENDOR_CHUNK_BY_PACKAGE = Object.fromEntries(
@@ -86,7 +87,7 @@ export const vendorChunkFor = (id) => {
   if (id.includes("vite/preload-helper")) return "vendor";
   const match = id.match(NODE_MODULES_PACKAGE_RE);
   if (!match) return undefined;
-  return VENDOR_CHUNK_BY_PACKAGE[match[1].replace("\\", "/")];
+  return VENDOR_CHUNK_BY_PACKAGE[match[1].replaceAll("\\", "/")];
 };
 
 export default defineConfig({

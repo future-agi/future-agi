@@ -24,7 +24,6 @@ import * as Sentry from "@sentry/react";
 import {
   samlUrlPrivacyIntegration,
   scrubSamlBreadcrumb,
-  scrubSamlRecordingEvent,
   scrubSamlSpan,
   scrubSamlTelemetryEvent,
 } from "./utils/saml-telemetry-urls";
@@ -105,13 +104,6 @@ Sentry.init({
         !/(?:googleadservices|googletagmanager|google-analytics|doubleclick|googlesyndication|redditstatic|reddit\.com|ads-twitter|t\.co|analytics\.twitter)\.com/i.test(
           url,
         ),
-    }),
-    // Mask text and media in session replays so we never stream customer
-    // content (prompts, PII, uploads) to a third party.
-    Sentry.replayIntegration({
-      maskAllText: true,
-      blockAllMedia: true,
-      beforeAddRecordingEvent: scrubSamlRecordingEvent,
     }),
     samlUrlPrivacyIntegration(),
   ],
@@ -242,12 +234,47 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 
 // ----------------------------------------------------------------------
 
+// Schedule from a committed React tree, then yield the animation frame to paint.
+// Replay only buffers from this point; earlier errors still reach Sentry but
+// cannot include a replay of the interval before the integration was added.
+function AfterFirstPaint() {
+  React.useEffect(() => {
+    let timer;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        const client = Sentry.getClient();
+        const canStartReplay = () =>
+          !cancelled &&
+          client === Sentry.getClient() &&
+          client?.getTransport() &&
+          client.getOptions().enabled !== false &&
+          !client.getIntegrationByName("Replay");
+        if (!canStartReplay()) return;
+        import("./utils/sentry-replay")
+          .then(({ createSentryReplay }) => {
+            // Recheck after loading: the client may have been disabled or closed.
+            if (canStartReplay()) Sentry.addIntegration(createSentryReplay());
+          })
+          .catch((error) => logger.warn("Failed to load Sentry Replay:", error));
+      }, 0);
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, []);
+  return null;
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
 bootstrapSamlSession();
 
 root.render(
   <HelmetProvider>
+    <AfterFirstPaint />
     <BrowserRouter>
       <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
         <Suspense fallback={<SplashScreen />}>
