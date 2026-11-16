@@ -437,7 +437,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
     addCase({ id: '3', title: 'Answer unchanged; resolved model recorded', ticket: 'The answer comes back unchanged, and the resolved model version is recorded',
       verdict: shape.fails.length ? 'FAIL' : shape.notes.length ? 'NOTE' : 'PASS',
       actual: [...shape.fails, ...shape.notes].join('; ')
-        || `body keys answers,model,usage; TypeSafe model "${String((typed[0].body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`, calls: [typed[0]] });
+        || typed.map(c => `${c.label}: exact mock bytes; body model "${String((c.body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`).join('; '), calls: typed });
 
     const logIssues: string[] = [];
     for (const c of typed) {

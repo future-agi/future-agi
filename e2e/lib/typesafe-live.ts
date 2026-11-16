@@ -335,6 +335,30 @@ export const mockDecisionText = (answer: Record<string, unknown>) =>
   JSON.stringify({ model: 'jev-latest', answers: { resolved: answer }, usage: { input_tokens: 37, output_tokens: 0 } });
 export const MOCK_NOUL_PASS_TEXT = mockDecisionText({ type: 'noul', noul: 0.9 });
 export const MOCK_REFUSAL_TEXT = mockDecisionText({ type: 'refusal' });
+// Oracle for the pass-marker requests in Cases 2–3 and lifecycle mode only.
+// Derived from stack/mock-llm/server.mjs, not from the received answer. The
+// selftests compare this with the real mock handler; no vendor answer is guessed.
+function mockPassText(c: CallRecord): string | undefined {
+  const questions = (c.request.body as { questions?: Record<string, { type?: string; criteria?: unknown }> } | null)?.questions;
+  if (!questions || typeof questions !== 'object' || Array.isArray(questions) || !Object.keys(questions).length) return undefined;
+  const answers: Record<string, unknown> = {};
+  for (const [id, q] of Object.entries(questions)) {
+    if (q?.type === 'noul') answers[id] = { type: 'noul', noul: 0.9 };
+    else if (q?.type === 'choice' || q?.type === 'score') {
+      const score = q.type === 'score';
+      const criteria = q.criteria;
+      if (!criteria || typeof criteria !== 'object' || (score && !Array.isArray(criteria))) return undefined;
+      const labels = score ? (criteria as unknown[]).map((_, i) => String(i)) : Object.keys(criteria);
+      if (!labels.length) return undefined;
+      const chosen = labels.length - 1;
+      answers[id] = { type: q.type, confidence: 1,
+        ...(score ? { score: chosen, legend: Object.fromEntries((criteria as unknown[]).map((v, i) => [String(i), v])) }
+          : { choice: labels[chosen] }),
+        probabilities: Object.fromEntries(labels.map((label, i) => [label, i === chosen ? 1 : 0])) };
+    } else return undefined;
+  }
+  return JSON.stringify({ model: 'jev-latest', answers, usage: { input_tokens: 37, output_tokens: 0 } });
+}
 const REQUIRED_KEYS = ['answers', 'model', 'usage'];
 // Body keys only the gateway would add: its own x-agentcc / agentcc names.
 const GATEWAY_KEY = /^(x[-_])?agentcc/i;
@@ -355,22 +379,28 @@ export function countUpstream(counters: Counters, c: CallRecord): void {
 }
 
 // Case 3: the answer comes back unchanged. fails make the case FAIL, notes NOTE.
-// Dry run: the mock's output is known, so the key set is exact and the first
-// call's body must be the mock's bytes (a re-marshalled body fails). Live: the
-// gateway writes TypeSafe's bytes through, so it cannot tell a TypeSafe field
-// from one the gateway added; extra keys are a note, the gateway's own names fail.
+// Dry run: EVERY call must match the mock's bytes, including values, nested
+// fields and serialization for each question in the combined call. Live: this
+// only checks the envelope and headers, not equality to unobserved upstream
+// bytes. Record that missing evidence as NOTE, never an unchanged-answer PASS.
 export function answerShape(calls: CallRecord[], opts: { dryRun: boolean; provider: string })
   : { fails: string[]; notes: string[] } {
   const fails: string[] = [];
   const notes: string[] = [];
+  if (!calls.length) fails.push('no calls to check for unchanged answers');
   for (const c of calls) {
+    if (c.status !== 200) fails.push(`${c.label}: status ${c.status} (want 200)`);
     const b = c.body as Record<string, unknown>;
     const keys = Object.keys(b !== null && typeof b === 'object' ? b : {});
     const missing = REQUIRED_KEYS.filter(k => !keys.includes(k));
     const extra = keys.filter(k => !REQUIRED_KEYS.includes(k)).sort();
     if (opts.dryRun) {
       if (missing.length || extra.length) fails.push(`${c.label}: body keys ${[...keys].sort().join(',')}`);
+      const expected = mockPassText(c);
+      if (expected === undefined) fails.push(`${c.label}: no mock pass oracle for the requested questions`);
+      else if (c.text !== expected) fails.push(`${c.label}: body is not the mock's bytes: ${String(c.text)} (want ${expected})`);
     } else {
+      notes.push(`${c.label}: envelope and model headers checked; unchanged live answer NOT PROVEN without raw upstream bytes`);
       if (missing.length) fails.push(`${c.label}: body lacks ${missing.join(',')}`);
       const gatewayKeys = extra.filter(k => GATEWAY_KEY.test(k));
       if (gatewayKeys.length) fails.push(`${c.label}: gateway-named body keys ${gatewayKeys.join(',')}`);
@@ -379,9 +409,6 @@ export function answerShape(calls: CallRecord[], opts: { dryRun: boolean; provid
     }
     if (c.headers['x-agentcc-provider'] !== opts.provider) fails.push(`${c.label}: x-agentcc-provider ${c.headers['x-agentcc-provider']}`);
     if (c.headers['x-agentcc-model-used'] !== b?.model) fails.push(`${c.label}: x-agentcc-model-used ${c.headers['x-agentcc-model-used']} vs body model ${String(b?.model)}`);
-  }
-  if (opts.dryRun && calls[0] && calls[0].text !== MOCK_NOUL_PASS_TEXT) {
-    fails.push(`noul body is not the mock's bytes: ${String(calls[0].text)} (want ${MOCK_NOUL_PASS_TEXT})`);
   }
   return { fails, notes };
 }

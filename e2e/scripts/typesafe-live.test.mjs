@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { registerHooks } from "node:module";
+import { handleRequest } from "../stack/mock-llm/server.mjs";
 import test from "node:test";
 import ts from "typescript";
 
@@ -30,7 +32,7 @@ function call(text, extra = {}) {
   let body = text;
   try { body = JSON.parse(text); } catch { /* keep text */ }
   return {
-    label: "c", request: { route: "/v1/systemone", model: "typesafe/jev-latest", body: {} }, status: 200,
+    label: "c", request: { route: "/v1/systemone", model: "typesafe/jev-latest", body: { questions: { resolved: { type: "noul" } } } }, status: 200,
     headers: { "x-agentcc-provider": PROVIDER, "x-agentcc-model-used": body?.model, ...(extra.headers ?? {}) },
     body, text, logRow: "not checked", ...extra,
   };
@@ -92,13 +94,96 @@ test("Case 3 dry run: the body must be the mock's bytes, not just equal JSON", (
   assert.ok(lib.answerShape([spaced], { dryRun: true, provider: PROVIDER }).fails.length > 0);
 });
 
+// Exercise the real import-safe mock handler, without a socket, rather than
+// inventing a successful response or calling the helper to build its own oracle.
+const questions = {
+  noul: { resolved: { type: "noul", instructions: "Was a follow-up promised?" } },
+  choice: { sentiment: { type: "choice", instructions: "Sentiment?",
+    criteria: { positive: "satisfied or thankful", neutral: "matter of fact", negative: "frustrated or upset" } } },
+  score: { quality: { type: "score", instructions: "Reply quality?", criteria: ["poor", "fair", "good", "excellent"] } },
+};
+const questionCases = [
+  ["noul", questions.noul], ["choice", questions.choice], ["score", questions.score],
+  ["all three", { ...questions.noul, ...questions.choice, ...questions.score }],
+];
+function mockPassCall(label, asked) {
+  const body = { model: "jev-latest", state: "e2e-decision:pass", questions: asked };
+  const req = Object.assign(new EventEmitter(), { method: "POST", url: "/v1/systemone",
+    headers: { authorization: `Bearer ${["e2e", "decision", "typesafe", "key"].join("-")}` } });
+  let status, text;
+  handleRequest(req, {
+    writeHead(code) { status = code; },
+    end(value) { text = value; },
+    destroy() { throw new Error("mock handler destroyed the response"); },
+  });
+  req.emit("data", Buffer.from(JSON.stringify(body)));
+  req.emit("end");
+  assert.equal(status, 200, `real mock handler accepted ${label}`);
+  assert.equal(typeof text, "string");
+  return call(text, { label, status, request: { route: "/v1/systemone", model: "typesafe/jev-latest",
+    body: { ...body, model: "typesafe/jev-latest" } } });
+}
+const dryOptions = { dryRun: true, provider: PROVIDER };
+for (const [index, [name]] of questionCases.entries()) {
+  test(`Case 3 dry run: ${name} is checked independently, including every answer value and raw byte`, () => {
+    const calls = questionCases.map(([label, asked]) => mockPassCall(label, asked));
+    const original = calls[index];
+    assert.deepEqual(lib.answerShape(calls, dryOptions), { fails: [], notes: [] });
+    assert.deepEqual(lib.answerShape([original], dryOptions), { fails: [], notes: [] });
+    const rejected = (changed, detail) => {
+      const mutated = calls.map((c, i) => i === index ? changed : c);
+      assert.ok(lib.answerShape(mutated, dryOptions).fails.some(f => f.startsWith(`${name}:`)), `${name}: ${detail}`);
+    };
+    const changedBody = (mutate, detail) => {
+      const body = structuredClone(original.body);
+      mutate(body);
+      rejected({ ...original, body, text: JSON.stringify(body) }, detail);
+    };
+    // Mutate only this call at its real matrix position. In particular, a good
+    // first/noul answer must not hide changed choice, score or combined answers.
+    for (const [id, answer] of Object.entries(original.body.answers)) {
+      const valueField = answer.type;
+      changedBody(b => { b.answers[id][valueField] = answer.type === "choice" ? "positive" : 0.1; }, `${id} changed ${valueField}`);
+      for (const field of Object.keys(answer)) {
+        changedBody(b => { delete b.answers[id][field]; }, `${id} missing ${field}`);
+      }
+      changedBody(b => { delete b.answers[id]; }, `missing answer ${id}`);
+    }
+    changedBody(b => { b.answers.unasked = { type: "noul", noul: 0.9 }; }, "extra answer");
+    const { model, answers, usage } = original.body;
+    rejected({ ...original, text: JSON.stringify({ usage, answers, model }) }, "reordered JSON");
+    rejected({ ...original, text: JSON.stringify(original.body, null, 2) }, "reserialized whitespace");
+    rejected({ ...original, text: undefined }, "missing raw bytes");
+    rejected({ ...original, status: 500 }, "non-200 status");
+    rejected({ ...original, headers: { ...original.headers, "x-agentcc-model-used": "wrong-model" } }, "wrong resolved model");
+  });
+}
+
+test("Case 3 cannot pass an empty batch or a dry-run request without a question oracle", () => {
+  assert.ok(lib.answerShape([], dryOptions).fails.length > 0);
+  const original = mockPassCall("missing questions", questions.noul);
+  assert.ok(lib.answerShape([{ ...original, request: { ...original.request, body: {} } }], dryOptions).fails
+    .some(f => /no mock pass oracle/.test(f)));
+});
+
+test("Case 3 live: every individual type and combined call reports the missing raw-upstream comparison", () => {
+  const calls = questionCases.map(([label, asked]) => mockPassCall(label, asked));
+  const result = lib.answerShape(calls, { dryRun: false, provider: PROVIDER });
+  assert.deepEqual(result.fails, []);
+  assert.equal(result.notes.length, 4);
+  for (const [label] of questionCases) {
+    assert.ok(result.notes.some(n => n.startsWith(`${label}:`) && n.includes("unchanged live answer NOT PROVEN")), label);
+  }
+});
+
 test("Case 3 live: vendor fields are a note, missing fields and gateway fields fail", () => {
   const withId = call(JSON.stringify({ id: "r-1", model: "jev-1.14.0", answers: { q: { type: "noul", noul: 0.5 } },
     usage: { input_tokens: 40, output_tokens: 0 } }));
   const r = lib.answerShape([withId], { dryRun: false, provider: PROVIDER });
   assert.deepEqual(r.fails, []);
-  assert.equal(r.notes.length, 1);
-  assert.match(r.notes[0], /\bid\b/);
+  assert.equal(r.notes.length, 2);
+  assert.ok(r.notes.some(n => /\bid\b/.test(n)));
+  assert.ok(r.notes.some(n => /unchanged live answer NOT PROVEN/.test(n)));
   const injected = call(JSON.stringify({ model: "jev-1.14.0", answers: {}, usage: {}, x_agentcc_cost: "0.1" }));
   assert.ok(lib.answerShape([injected], { dryRun: false, provider: PROVIDER }).fails.some(f => /x_agentcc_cost/.test(f)));
   const missing = call(JSON.stringify({ model: "jev-1.14.0", answers: {} }));
