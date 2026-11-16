@@ -11319,6 +11319,33 @@ export interface EvalExecutionResponseApi {
   result: EvalExecutionResponseResultApi;
 }
 
+export type SDKEvaluationDenialResponseApiErrors = { [key: string]: string[] };
+
+export type SDKEvaluationDenialResponseApiUpgradeCta = {
+  [key: string]: unknown;
+};
+
+export type SDKEvaluationDenialResponseApiCompletedResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface SDKEvaluationDenialResponseApi {
+  status: boolean;
+  result?: string;
+  message?: string;
+  errors?: SDKEvaluationDenialResponseApiErrors;
+  /** @minLength 1 */
+  code: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: SDKEvaluationDenialResponseApiUpgradeCta;
+  completed_results?: SDKEvaluationDenialResponseApiCompletedResultsItem[];
+  /** @minimum 0 */
+  failed_index?: number;
+}
+
 export interface EvalPlayGroundFeedbackApi {
   log_id: string;
   /** @minLength 1 */
@@ -17925,6 +17952,7 @@ export type AgentFixEngineReportApiStep =
   (typeof AgentFixEngineReportApiStep)[keyof typeof AgentFixEngineReportApiStep];
 
 export const AgentFixEngineReportApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",
@@ -17983,11 +18011,40 @@ export const AgentFixVerdictTierApiStatus = {
   skipped: "skipped",
 } as const;
 
+export type AgentFixVerdictTierPartApiStatus =
+  (typeof AgentFixVerdictTierPartApiStatus)[keyof typeof AgentFixVerdictTierPartApiStatus];
+
+export const AgentFixVerdictTierPartApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixVerdictTierPartApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  status: AgentFixVerdictTierPartApiStatus;
+  detail?: string;
+}
+
+export interface AgentFixCeilingNumbersApi {
+  baseline?: number;
+  candidate?: number;
+  allowed?: number;
+  limit?: number;
+}
+
 export interface AgentFixVerdictTierApi {
   /** @minLength 1 */
   name: string;
   status: AgentFixVerdictTierApiStatus;
   detail?: string;
+  parts?: AgentFixVerdictTierPartApi[];
+  latency?: AgentFixCeilingNumbersApi;
+  cost?: AgentFixCeilingNumbersApi;
 }
 
 export interface AgentFixVerdictApi {
@@ -18026,6 +18083,18 @@ export interface AgentFixEngineFailureApi {
   message: string;
 }
 
+export interface AgentFixFlakyProtectedApi {
+  /** @minLength 1 */
+  key: string;
+  name?: string;
+  /** @minLength 1 */
+  sub_goal: string;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 1 */
+  runs: number;
+}
+
 export interface AgentFixEngineReportApi {
   /**
    * @minLength 1
@@ -18040,6 +18109,7 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
   /** @maxItems 50 */
   lost_models?: string[];
   last_error?: string;
@@ -18081,6 +18151,7 @@ export const AgentFixRunApiState = {
   out_of_budget: "out_of_budget",
   stopped: "stopped",
   failed: "failed",
+  too_few_cases: "too_few_cases",
 } as const;
 
 /**
@@ -18090,11 +18161,14 @@ export type AgentFixRunApiStep =
   (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
 
 export const AgentFixRunApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",
   done: "done",
 } as const;
+
+export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
   target_scenario_keys: string[];
@@ -18105,6 +18179,14 @@ export interface AgentFixRequestApi {
   locked_paths: string[];
   budget_credits: number;
   max_minutes: number;
+  variations_pending?: boolean;
+  variation_parents?: AgentFixRequestApiVariationParents;
+  allowed_models?: string[];
+  reply_latency_margin_pct?: number;
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
+  observes_models?: boolean;
+  meters_agent_cost?: boolean;
 }
 
 export interface AgentFixReportApi {
@@ -18113,6 +18195,7 @@ export interface AgentFixReportApi {
   summary: string;
   /** @minLength 1 */
   winner_candidate_id: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
 export interface AgentFixFailureApi {
@@ -18249,6 +18332,19 @@ export interface AgentFixLaunchApi {
    * @maximum 1440
    */
   max_minutes?: number;
+  /** @maxItems 50 */
+  allowed_models?: string[];
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  reply_latency_margin_pct?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -18314,12 +18410,20 @@ export interface AgentFixLaunchDefaultsApi {
   surfaces: AgentFixLaunchDefaultsApiSurfacesItem[];
   budget_credits: number;
   max_minutes: number;
+  allowed_models: string[];
+  agent_cost_metered: boolean;
+  agent_calls_unmeasured: boolean;
+  reply_latency_margin_pct: number;
+  cost_margin_pct: number;
 }
 
 export interface AgentFixLaunchLimitsApi {
   budget_credits_max: number;
   max_minutes_max: number;
   scenarios_min: number;
+  cases_min: number;
+  variations_per_case: number;
+  verified_cases_min: number;
   scenarios_max: number;
 }
 
@@ -18333,6 +18437,7 @@ export interface AgentFixLaunchOptionsApi {
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
   blocked: AgentFixFailureApi;
+  variations_blocked: AgentFixFailureApi;
 }
 
 export type AgentFixRunDetailApiState =
@@ -18348,6 +18453,7 @@ export const AgentFixRunDetailApiState = {
   out_of_budget: "out_of_budget",
   stopped: "stopped",
   failed: "failed",
+  too_few_cases: "too_few_cases",
 } as const;
 
 /**
@@ -18357,10 +18463,21 @@ export type AgentFixRunDetailApiStep =
   (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
 
 export const AgentFixRunDetailApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",
   done: "done",
+} as const;
+
+export type AgentFixRunDetailApiEvalGrading =
+  (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
+
+export const AgentFixRunDetailApiEvalGrading = {
+  none: "none",
+  pending: "pending",
+  done: "done",
+  incomplete: "incomplete",
 } as const;
 
 export interface AgentFixEvalWarningApi {
@@ -18403,6 +18520,7 @@ export interface AgentFixRunDetailApi {
   finished_at?: string;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+  readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
 }
 
 export interface AgentFixShipApi {

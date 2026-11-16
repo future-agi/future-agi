@@ -2947,28 +2947,54 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
+### SIM-E2E-007 — a run with fewer failing cases than an epoch needs starts one that writes variations first
 
-**Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
+**Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed two sessions in a minted Observe project; one user turn carries a minted ask and a minted email
-2. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
-3. open the project's Sessions and select the two seeded rows
-4. open Actions and read the menu
-5. choose Create environment test, pick the seeded environment and import
-6. land on the environment's Scenarios tab with the import's review open
+1. open a finished run of the environment
+2. open Debug failures
+3. press Run Epoch
+4. read the Scenarios row of the launch form
+5. press Run Epoch in the form
+6. read the epoch page
 
-**Backend state verified:**
+**Browser observations:**
 
-- both seeded sessions are stored for the minted project in ClickHouse trace_sessions (FINAL)
-- the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
-- from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
-- simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
-- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
-- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
+
+### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
+
+**Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
+
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the finished epoch
+2. read its ending
+3. open How it was decided
+4. press Run a new epoch
+5. read the model lock
+6. type a cost limit of 0.01
+7. press Run Epoch
+8. read the new epoch's page
+
+**Browser observations:**
+
+- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
+- the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
+- the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
