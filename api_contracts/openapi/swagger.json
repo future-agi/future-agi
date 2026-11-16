@@ -160654,12 +160654,8 @@
                 },
                 "code": {
                     "title": "Code",
-                    "type": "string",
-                    "enum": [
-                        "not_permitted",
-                        "deadline_passed",
-                        "approval_missing"
-                    ]
+                    "description": "The world's refusal code, as the harness sealed it.",
+                    "type": "string"
                 },
                 "reason": {
                     "title": "Reason",
@@ -162301,12 +162297,8 @@
                 },
                 "refusal_code": {
                     "title": "Refusal code",
-                    "type": "string",
-                    "enum": [
-                        "not_permitted",
-                        "deadline_passed",
-                        "approval_missing"
-                    ]
+                    "description": "The world's refusal code, as the harness sealed it.",
+                    "type": "string"
                 },
                 "relationship": {
                     "title": "Relationship",
@@ -162452,12 +162444,8 @@
                 },
                 "refusal_code": {
                     "title": "Refusal code",
-                    "type": "string",
-                    "enum": [
-                        "not_permitted",
-                        "deadline_passed",
-                        "approval_missing"
-                    ]
+                    "description": "The world's refusal code, as the harness sealed it.",
+                    "type": "string"
                 },
                 "relationship": {
                     "title": "Relationship",

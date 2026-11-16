@@ -60922,11 +60922,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .array(
             zod.object({
               action: zod.string().min(1),
-              code: zod.enum([
-                "not_permitted",
-                "deadline_passed",
-                "approval_missing",
-              ]),
+              code: zod
+                .string()
+                .describe(
+                  "The world's refusal code, as the harness sealed it.",
+                ),
               reason: zod.string(),
             }),
           )
@@ -61430,11 +61430,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .array(
                 zod.object({
                   action: zod.string().min(1),
-                  code: zod.enum([
-                    "not_permitted",
-                    "deadline_passed",
-                    "approval_missing",
-                  ]),
+                  code: zod
+                    .string()
+                    .describe(
+                      "The world's refusal code, as the harness sealed it.",
+                    ),
                   reason: zod.string(),
                 }),
               )
@@ -61994,8 +61994,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       input_omitted: zod.boolean().optional(),
       output_omitted: zod.boolean().optional(),
       refusal_code: zod
-        .enum(["not_permitted", "deadline_passed", "approval_missing"])
-        .optional(),
+        .string()
+        .optional()
+        .describe("The world's refusal code, as the harness sealed it."),
       relationship: zod.enum(["observed", "unknown"]).optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "unattributed"]),
@@ -62059,8 +62060,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           refusal_code: zod
-            .enum(["not_permitted", "deadline_passed", "approval_missing"])
-            .optional(),
+            .string()
+            .optional()
+            .describe("The world's refusal code, as the harness sealed it."),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -62104,8 +62106,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           refusal_code: zod
-            .enum(["not_permitted", "deadline_passed", "approval_missing"])
-            .optional(),
+            .string()
+            .optional()
+            .describe("The world's refusal code, as the harness sealed it."),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -62170,8 +62173,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           refusal_code: zod
-            .enum(["not_permitted", "deadline_passed", "approval_missing"])
-            .optional(),
+            .string()
+            .optional()
+            .describe("The world's refusal code, as the harness sealed it."),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),

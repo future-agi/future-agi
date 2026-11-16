@@ -27566,19 +27566,11 @@ export interface BlockedCallApi {
   count?: number;
 }
 
-export type TrialRefusedActionApiCode =
-  (typeof TrialRefusedActionApiCode)[keyof typeof TrialRefusedActionApiCode];
-
-export const TrialRefusedActionApiCode = {
-  not_permitted: "not_permitted",
-  deadline_passed: "deadline_passed",
-  approval_missing: "approval_missing",
-} as const;
-
 export interface TrialRefusedActionApi {
   /** @minLength 1 */
   action: string;
-  code: TrialRefusedActionApiCode;
+  /** The world's refusal code, as the harness sealed it. */
+  code: string;
   reason: string;
 }
 
@@ -28260,15 +28252,6 @@ export const CallWorkerEventApiStatus = {
   error: "error",
 } as const;
 
-export type CallWorkerEventApiRefusalCode =
-  (typeof CallWorkerEventApiRefusalCode)[keyof typeof CallWorkerEventApiRefusalCode];
-
-export const CallWorkerEventApiRefusalCode = {
-  not_permitted: "not_permitted",
-  deadline_passed: "deadline_passed",
-  approval_missing: "approval_missing",
-} as const;
-
 export type CallWorkerEventApiRelationship =
   (typeof CallWorkerEventApiRelationship)[keyof typeof CallWorkerEventApiRelationship];
 
@@ -28323,7 +28306,8 @@ export interface CallWorkerEventApi {
   output?: CallWorkerEventApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
-  refusal_code?: CallWorkerEventApiRefusalCode;
+  /** The world's refusal code, as the harness sealed it. */
+  refusal_code?: string;
   relationship?: CallWorkerEventApiRelationship;
   /** @minLength 1 */
   at: string;
@@ -28359,15 +28343,6 @@ export type CallWorkerEventOrNullApiStatus =
 export const CallWorkerEventOrNullApiStatus = {
   ok: "ok",
   error: "error",
-} as const;
-
-export type CallWorkerEventOrNullApiRefusalCode =
-  (typeof CallWorkerEventOrNullApiRefusalCode)[keyof typeof CallWorkerEventOrNullApiRefusalCode];
-
-export const CallWorkerEventOrNullApiRefusalCode = {
-  not_permitted: "not_permitted",
-  deadline_passed: "deadline_passed",
-  approval_missing: "approval_missing",
 } as const;
 
 export type CallWorkerEventOrNullApiRelationship =
@@ -28424,7 +28399,8 @@ export interface CallWorkerEventOrNullApi {
   output?: CallWorkerEventOrNullApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
-  refusal_code?: CallWorkerEventOrNullApiRefusalCode;
+  /** The world's refusal code, as the harness sealed it. */
+  refusal_code?: string;
   relationship?: CallWorkerEventOrNullApiRelationship;
   /** @minLength 1 */
   at: string;
