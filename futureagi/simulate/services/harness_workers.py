@@ -25,8 +25,11 @@ from simulate.types import (
     SealedToolCall,
     WorkerEvent,
     WorkerSpan,
+    WorkerState,
     WorkerStatus,
     WorkerTimeline,
+    is_worker_subject,
+    worker_subject_id,
 )
 from tracer.services.clickhouse.application_read_policy import application_read_context
 from tracer.services.clickhouse.v2 import get_reader
@@ -1004,16 +1007,21 @@ MAX_SPANS = 5000
 SPAN_READ_CAP_MS = 30_000
 
 
-def stored_record(
+def kept_metadata(
     call: CallExecution, attempt: UUID | None = None
-) -> WorkerTimeline | None:
-    """The call's worker record, or an earlier attempt's as its rerun snapshot kept it; None when none was kept."""
+) -> dict[str, object] | None:
+    """The call's metadata, or an earlier attempt's as its rerun snapshot kept it; None when none was kept."""
     if attempt is None:
         metadata = call.call_metadata
     else:
         snapshot = call.snapshots.filter(id=attempt).only("call_metadata").first()
         metadata = snapshot.call_metadata if snapshot is not None else None
-    record = metadata.get(WORKERS_KEY) if isinstance(metadata, dict) else None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def stored_record(metadata: Mapping[str, object] | None) -> WorkerTimeline | None:
+    """The worker record a call's (or an earlier attempt's) metadata kept; None when none was kept."""
+    record = metadata.get(WORKERS_KEY) if metadata is not None else None
     return cast(WorkerTimeline, record) if record else None
 
 
@@ -1038,7 +1046,7 @@ def _span_dict(span: CHSpan) -> WorkerSpan:
 _SCENARIO_DOMAINS = frozenset({"simulator", "environment"})
 
 # The end state of a worker still out when the trial ended, by how the trial ended.
-_STILL_OUT = {
+_STILL_OUT: dict[str, WorkerState] = {
     "ended": "no_return",
     "infrastructure": "infrastructure",
     "cancel_requested": "cancel_requested",
@@ -1056,7 +1064,7 @@ def worker_states(
     handed: dict[str, list[str]] = {}
     for event in events:
         if event["type"] == "delegated":
-            handed.setdefault(event["worker_id"], []).append(
+            handed.setdefault(str(event["worker_id"]), []).append(
                 str(event.get("delegation_id") or "")
             )
     returns = {
@@ -1068,15 +1076,17 @@ def worker_states(
     unkeyed: dict[str, list[WorkerEvent]] = {}
     for event in events:
         if event["type"] == "returned" and not event.get("delegation_id"):
-            unkeyed.setdefault(event["worker_id"], []).append(event)
+            unkeyed.setdefault(str(event["worker_id"]), []).append(event)
     # Refused past its deadline: by the trial's world changes, or by the refusal code on its own recorded calls.
     late = set(past_deadline) | {
         str(event["worker_id"]).rsplit("/", 1)[-1]
         for event in events
         if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
     }
-    workers = []
+    workers: list[HarnessWorker] = []
     for worker in timeline["workers"]:
+        ended = worker.copy()
+        state: WorkerState
         delegations = handed.get(worker["worker_id"], [])
         spare = list(unkeyed.get(worker["worker_id"], []))
         back = [
@@ -1093,7 +1103,9 @@ def worker_states(
             )
         elif worker["id"] in late:
             # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
-            workers.append({**worker, "observed": True, "state": "deadline_passed"})
+            ended["observed"] = True
+            ended["state"] = "deadline_passed"
+            workers.append(ended)
             continue
         elif not worker["observed"]:
             state = "not_observed"
@@ -1101,9 +1113,10 @@ def worker_states(
             state = _STILL_OUT.get(trial, "no_return")
         else:
             # Seen only through its tool calls: no recorded end, so no end state rather than an invented one.
-            workers.append(dict(worker))
+            workers.append(ended)
             continue
-        workers.append({**worker, "state": state})
+        ended["state"] = state
+        workers.append(ended)
     return {**timeline, "workers": workers}
 
 
@@ -1114,10 +1127,10 @@ def deadline_refused(call: CallExecution) -> set[str]:
 
     trial = (call.call_metadata or {}).get(TRIAL_STATE_KEY) or {}
     return {
-        str(entry["who"])[len("worker:") :]
+        str(worker_subject_id(entry.get("who")))
         for entry in trial.get("state_changes") or []
         if isinstance(entry, dict)
-        and str(entry.get("who") or "").startswith("worker:")
+        and is_worker_subject(entry.get("who"))
         and any(
             isinstance(one, dict) and one.get("code") == "deadline_passed"
             for one in entry.get("refused_actions") or []

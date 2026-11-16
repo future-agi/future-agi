@@ -108,12 +108,21 @@ export const CALL_WORKERS_COPY = {
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
     no_return: "no return before the call ended",
-    deadline_passed: "past its action deadline",
+    deadline_passed: "past deadline",
     cancel_requested: "cancel requested",
     cancelled: "cancelled",
     infrastructure: "infrastructure fault",
   },
   workersCutShort: (list) => `Cut short: ${list}`,
+  // Each failed or unsure check on the step its evidence points to, or why it is on none.
+  placedChecks: "Failed and unsure checks",
+  checkStatus: { failed: "Failed", inconclusive: "Unsure" },
+  placedOn: (worker, tool) => `on ${worker}'s ${tool} call`,
+  untied: {
+    no_moment: () =>
+      "Not tied to a step: the check doesn't point to a moment in the call",
+    never_called: (tool) => `Not tied to a step: ${tool} was never called`,
+  },
   // Past its action deadline: the world refused its later calls; its execution was not stopped.
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,

@@ -174,6 +174,7 @@ const timeline = ({
   counts: counts(end === "finished" ? 1 : 0, end === "finished" ? 0 : 1),
   cut_off: false,
   beyond_boundary: false,
+  placements: [],
   pending: false,
   ...rest,
 });
@@ -187,14 +188,14 @@ describe("CallWorkersPanel", () => {
   const steps = () =>
     screen.getAllByTestId("raw-event").map((one) => one.dataset.type);
 
-  it.each([
-    [{ depth: 1, parallel: 0 }, false],
-    [{ depth: 2, parallel: 0 }, true],
-    [{ depth: 1, parallel: 1 }, true],
-  ])(
-    "says what multi-agent testing covers on every multi-agent call, and adds when a call went past it (%o)",
-    (shape, shown) => {
-      result = { data: timeline(shape), isLoading: false, isError: false };
+  it.each([false, true])(
+    "says what multi-agent testing covers on every multi-agent call, and adds when the API says it went past it (%s)",
+    (shown) => {
+      result = {
+        data: timeline({ beyond_boundary: shown }),
+        isLoading: false,
+        isError: false,
+      };
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getByTestId("supported-boundary")).toBeTruthy();
       expect(screen.queryByTestId("beyond-boundary") !== null).toBe(shown);
@@ -856,12 +857,12 @@ describe("CallWorkersPanel", () => {
     it("marks only the hand-off a worker never came back from, keeping its steps so far", () => {
       result = {
         data: {
-          // The first hand-off returned; the second never did, so only the second takes the worker's end.
-          ...twoTurns({ returned: null }),
+          // The API puts the worker's end only on the hand-off that never came back.
+          ...twoTurns({ returned: null, end_state: "deadline_passed" }),
           workers: TIMELINE.workers.map((one) =>
             one.worker_id === handoff.worker_id
-              ? { ...one, state: "deadline_passed" }
-              : { ...one, state: "not_observed" },
+              ? { ...one, state: "deadline_passed", cut_short: false }
+              : { ...one, state: "not_observed", cut_short: false },
           ),
         },
         isLoading: false,
@@ -871,13 +872,47 @@ describe("CallWorkersPanel", () => {
       const [chip] = screen.getAllByTestId("worker-cut-short");
       expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(1);
       expect(screen.getAllByTestId("turn")[1]).toContainElement(chip);
-      expect(chip).toHaveTextContent("past its action deadline");
+      expect(chip).toHaveTextContent(C.cutShort.deadline_passed);
       // Past its deadline is not "cut short": its execution was never stopped.
       expect(
-        screen.getByText("Past their action deadline: Order-lookup worker"),
+        screen.getByText(C.workersPastDeadline("Order-lookup worker")),
       ).toBeInTheDocument();
       expect(screen.queryByText(/^Cut short:/)).toBeNull();
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
+    });
+
+    it("shows each failed check on its step's worker, and an unplaced one with why, never guessing a worker", () => {
+      result = {
+        data: timeline({
+          placements: [
+            {
+              name: "call_get_order",
+              status: "failed",
+              step: LOOKUP.seq,
+              worker_id: "r/order_lookup",
+              untied: null,
+              tool: "get_order",
+            },
+            {
+              name: "explained_refusal",
+              status: "inconclusive",
+              step: null,
+              worker_id: null,
+              untied: "no_moment",
+            },
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const [placed, untied] = screen.getAllByTestId("placed-check");
+      expect(placed.dataset.step).toBe(String(LOOKUP.seq));
+      expect(placed).toHaveTextContent(
+        C.placedOn("Order-lookup worker", "get_order"),
+      );
+      expect(untied.dataset.step).toBe("");
+      expect(untied).toHaveTextContent(C.untied.no_moment());
     });
 
     it("says when nothing was recorded for the participants", () => {

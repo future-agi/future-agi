@@ -6,11 +6,13 @@ from rest_framework import serializers
 
 from simulate.types import (
     HandOffEnd,
+    RefusalCode,
     TextFormat,
     WorkerAttribution,
     WorkerCollection,
     WorkerEventType,
     WorkerRelationship,
+    WorkerState,
     WorkerStatus,
     WorkerStepKind,
 )
@@ -27,6 +29,9 @@ class CallWorkerSerializer(serializers.Serializer):
     instance_ids = serializers.ListField(child=serializers.CharField())
     model = serializers.CharField(required=False)
     tokens = serializers.IntegerField(required=False)
+    # Absent on a record read before end states were kept.
+    state = serializers.ChoiceField(choices=get_args(WorkerState), required=False)
+    cut_short = serializers.BooleanField()
 
 
 class ShownTextSerializer(serializers.Serializer):
@@ -56,6 +61,9 @@ class CallWorkerEventSerializer(serializers.Serializer):
     # The record's size limit was reached before this step, so that part was not kept.
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
+    refusal_code = serializers.ChoiceField(
+        choices=get_args(RefusalCode), required=False
+    )
     relationship = serializers.ChoiceField(
         choices=get_args(WorkerRelationship), required=False
     )
@@ -98,6 +106,7 @@ class CallWorkerStepSerializer(serializers.Serializer):
     ended_at = serializers.CharField(allow_null=True, required=False)
     parallel = serializers.BooleanField(required=False)
     end = serializers.ChoiceField(choices=get_args(HandOffEnd), required=False)
+    end_state = serializers.ChoiceField(choices=get_args(WorkerState), required=False)
     children = serializers.ListField(child=serializers.IntegerField(), required=False)
     call = CallWorkerEventSerializer(required=False)
     # Turn n starts at the caller's nth message, 0 is before they spoke; null when the record does not say.
@@ -124,6 +133,20 @@ class HandOffCountsSerializer(serializers.Serializer):
     did_not_finish = serializers.IntegerField()
     passed = serializers.IntegerField()
     cut_off = serializers.IntegerField()
+
+
+class FailurePlacementSerializer(serializers.Serializer):
+    """A failed or unsure sub-goal on the step its evidence points to, or not tied to one, with why."""
+
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=("failed", "inconclusive"))
+    step = serializers.IntegerField(allow_null=True)
+    # Null when the record does not say which worker: shown as Unknown.
+    worker_id = serializers.CharField(allow_null=True)
+    untied = serializers.ChoiceField(
+        choices=("no_moment", "never_called"), allow_null=True
+    )
+    tool = serializers.CharField(required=False)
 
 
 class CallWorkersQuerySerializer(serializers.Serializer):
@@ -160,6 +183,7 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     # The record is not whole, so a missing return may only be one it did not keep.
     cut_off = serializers.BooleanField()
     beyond_boundary = serializers.BooleanField()
+    placements = FailurePlacementSerializer(many=True)
     # A later read is still due and may change the record.
     pending = serializers.BooleanField()
     next_read_at = serializers.CharField(required=False)

@@ -57,6 +57,7 @@ from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_worker_steps import served_record
 from simulate.services.harness_workers import (
     first_read_due,
+    kept_metadata,
     read_pending,
     stored_record,
 )
@@ -67,6 +68,7 @@ from simulate.services.run_results_v3 import (
     build_evaluation_catalog,
     function_calls,
     receipt_sub_goal_names,
+    receipt_sub_goals,
 )
 from simulate.services.run_results_v3_page import (
     page_calls,
@@ -366,6 +368,10 @@ class SubGoalResultSerializer(serializers.Serializer):
     )
     # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
     subject = serializers.CharField(required=False)
+    subject_kind = serializers.ChoiceField(choices=("task", "worker"), default="task")
+    worker_id = serializers.CharField(
+        required=False, help_text="The worker whose own check this is."
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -1056,11 +1062,14 @@ class CallExecutionV3WorkersView(APIView):
     def get(self, request, call_execution_id, *args, **kwargs):
         call = _call_for_request(request, call_execution_id)
         attempt = request.validated_query_data.get("attempt")
-        timeline = stored_record(call, attempt)
+        metadata = kept_metadata(call, attempt)
+        timeline = stored_record(metadata)
         now = timezone.now()
         if timeline:
             return Response(
-                CallWorkersResponseSerializer(served_record(timeline, now)).data
+                CallWorkersResponseSerializer(
+                    served_record(timeline, now, receipt_sub_goals(metadata))
+                ).data
             )
         due = first_read_due(call) if attempt is None else None
         if due is not None and read_pending(due, now):

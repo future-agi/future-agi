@@ -635,13 +635,12 @@ function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
             {step.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
-            {/* Only a hand-off that did not come back takes the worker's end; one that returned ended by its return. */}
-            {!step.returned && !step.transfer && C.cutShort[worker?.state] ? (
+            {step.end_state ? (
               <Chip
                 size="small"
                 variant="outlined"
                 color="warning"
-                label={C.cutShort[worker.state]}
+                label={C.cutShort[step.end_state]}
                 data-testid="worker-cut-short"
                 sx={{ mt: 0.5, ml: 2.25 }}
               />
@@ -747,6 +746,39 @@ WorkersTable.propTypes = {
 };
 
 /** One call of a multi-agent app: a table of its hand-offs first, every step in order on request. */
+function PlacedChecks({ placements, names }) {
+  return (
+    <Stack spacing={0.5} data-testid="placed-checks">
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {C.placedChecks}
+      </Typography>
+      {placements.map((one, index) => {
+        // A missing worker is Unknown, never guessed.
+        const worker = one.worker_id
+          ? names.ofWorker(one.worker_id)
+          : C.unknown;
+        return (
+          <Typography
+            key={`${one.name}-${index}`}
+            data-testid="placed-check"
+            data-step={one.step ?? ""}
+            sx={{ typography: "s3", color: "text.secondary" }}
+          >
+            {C.checkStatus[one.status]} · {one.name} ·{" "}
+            {one.untied
+              ? C.untied[one.untied](one.tool)
+              : C.placedOn(worker, one.tool)}
+          </Typography>
+        );
+      })}
+    </Stack>
+  );
+}
+PlacedChecks.propTypes = {
+  placements: PropTypes.arrayOf(PropTypes.object).isRequired,
+  names: PropTypes.object.isRequired,
+};
+
 export default function CallWorkersPanel({
   callExecutionId,
   callStatus = null,
@@ -793,10 +825,9 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
-  // Workers the trial's end stopped before they returned; their steps so far are kept above.
   const pastDeadline = named((one) => one.state === "deadline_passed");
   const cutShort = data.workers
-    .filter((one) => one.state !== "deadline_passed" && C.cutShort[one.state])
+    .filter((one) => one.cut_short)
     .map((one) => `${one.name} (${C.cutShort[one.state]})`)
     .join(", ");
   const notDeclared = named((one) => one.undeclared);
@@ -901,6 +932,9 @@ export default function CallWorkersPanel({
           );
         })
       )}
+      {data.placements.length ? (
+        <PlacedChecks placements={data.placements} names={names} />
+      ) : null}
       {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}

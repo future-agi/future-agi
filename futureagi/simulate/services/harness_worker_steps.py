@@ -5,19 +5,24 @@ from __future__ import annotations
 import json
 import re
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Literal, cast
 
 from simulate.services.harness_workers import read_pending
 from simulate.types import (
     CallTurn,
     CallWorkersRecord,
+    FailurePlacement,
     HandOffCounts,
     HandOffEnd,
+    HarnessWorker,
     ShownText,
+    SubGoalEntry,
     TurnSummary,
     WorkerEvent,
     WorkerRelationship,
+    WorkerState,
     WorkerStep,
     WorkerSteps,
     WorkerTimeline,
@@ -25,6 +30,12 @@ from simulate.types import (
 )
 
 _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
+# A worker's end when the trial stopped it before it returned; one that returned or never ran has none.
+_CUT_SHORT: frozenset[WorkerState] = frozenset(
+    {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
+)
+# The design's rule: a check named "Call <tool>" (or `call_<tool>`) is about that tool's call.
+_CALL_CHECK = re.compile(r"^call[\s_]+(\S+)$", re.IGNORECASE)
 # A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
 _PRINTED_DICT = re.compile(r"^\{\s*(?:(['\"]).*?\1|\w+)\s*:")
 _PRINTED_LIST = re.compile(
@@ -470,9 +481,68 @@ def worker_steps(
     }
 
 
-def served_record(timeline: WorkerTimeline, now: datetime) -> CallWorkersRecord:
-    """A kept record as the client reads it, old records included: its steps, times with their zone, and whether a
-    later read is still due."""
+def _with_ends(
+    steps: list[WorkerStep], workers: Iterable[Mapping[str, object]]
+) -> None:
+    """Each hand-off that did not come back takes its worker's end state when the trial's end cut it short."""
+    states = {str(one.get("worker_id")): one.get("state") for one in workers}
+    for step in steps:
+        state = states.get(str(step["worker_id"]))
+        if step.get("end") in ("no_return", "cut_off") and state in _CUT_SHORT:
+            step["end_state"] = cast("WorkerState", state)
+
+
+def failure_placements(
+    steps: Sequence[WorkerStep], sub_goals: Iterable[SubGoalEntry]
+) -> list[FailurePlacement]:
+    """Each failed or unsure sub-goal on the step and worker its evidence points to, else not tied, with the reason."""
+    placements: list[FailurePlacement] = []
+    for goal in sub_goals:
+        if goal["passed"] is False:
+            status: Literal["failed", "inconclusive"] = "failed"
+        elif goal.get("result") == "inconclusive":
+            status = "inconclusive"
+        else:
+            continue
+        placement: FailurePlacement = {
+            "name": goal["name"],
+            "status": status,
+            "step": None,
+            "worker_id": goal.get("worker_id"),
+            "untied": None,
+        }
+        named = _CALL_CHECK.match(goal["name"].strip())
+        if named is None:
+            # No recorded check names a moment in the call yet, so nothing else can be placed without guessing.
+            placement["untied"] = "no_moment"
+        else:
+            tool = named.group(1)
+            placement["tool"] = tool
+            calls = [
+                step
+                for step in steps
+                if step["kind"] == "tool_call"
+                and step.get("call", {}).get("tool") == tool
+            ]
+            failed = [
+                step for step in calls if step.get("call", {}).get("status") == "error"
+            ]
+            hits = failed or calls
+            if not hits:
+                placement["untied"] = "never_called"
+            else:
+                # The step's own worker, which is Unknown (null) when the record does not say.
+                placement["step"] = hits[0]["key"]
+                placement["worker_id"] = hits[0]["worker_id"]
+        placements.append(placement)
+    return placements
+
+
+def served_record(
+    timeline: WorkerTimeline, now: datetime, sub_goals: Iterable[SubGoalEntry] = ()
+) -> CallWorkersRecord:
+    """A kept record as the client reads it, old records included: its steps, each worker's end, where each failed
+    check sits, times with their zone, and whether a later read is still due."""
     cut_off = bool(timeline.get("events_omitted")) or timeline.get("collection") in (
         "partial",
         "unavailable",
@@ -483,9 +553,20 @@ def served_record(timeline: WorkerTimeline, now: datetime) -> CallWorkersRecord:
         turns_cut=bool(timeline.get("messages_omitted")),
         cut_off=cut_off,
     )
+    _with_ends(steps["steps"], timeline["workers"])
+    workers: list[HarnessWorker] = []
+    for one in timeline["workers"]:
+        served = one.copy()
+        # Past its deadline is told apart: the world refused its later calls, it was not stopped.
+        served["cut_short"] = (
+            one.get("state") in _CUT_SHORT and one.get("state") != "deadline_passed"
+        )
+        workers.append(served)
     return {
         **timeline,
         **steps,
+        "workers": workers,
+        "placements": failure_placements(steps["steps"], sub_goals),
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),
         "pending": read_pending(timeline.get("next_read_at"), now),

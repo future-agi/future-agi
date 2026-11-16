@@ -1,6 +1,10 @@
 from datetime import UTC, datetime
 
-from simulate.services.harness_worker_steps import served_record, worker_steps
+from simulate.services.harness_worker_steps import (
+    failure_placements,
+    served_record,
+    worker_steps,
+)
 
 
 def at(second):
@@ -930,3 +934,106 @@ class TestWorkerRecordAsServed:
         long_after = datetime(2026, 11, 2, tzinfo=UTC)
         assert served_record(record, before)["pending"] is True
         assert served_record(record, long_after)["pending"] is False
+
+    def test_only_a_hand_off_that_never_came_back_takes_the_worker_s_end(self):
+        def worker(state):
+            return {
+                "worker_id": "searcher",
+                "id": "searcher",
+                "name": "S",
+                "state": state,
+            }
+
+        record = {
+            "workers": [worker("cancelled")],
+            "events": [HOTELS, answer(3, "A", "three"), FLIGHTS],
+            "events_omitted": 0,
+            "coordinator": None,
+            "spans_received": True,
+            "started_at": None,
+        }
+        now = datetime(2026, 11, 2, tzinfo=UTC)
+        served = served_record(record, now)
+        assert [one.get("end_state") for one in handoffs(served["steps"])] == [
+            None,
+            "cancelled",
+        ]
+        assert served["workers"][0]["cut_short"] is True
+        # Past its deadline the world refused its later calls; it was not stopped, so it is not cut short.
+        late = served_record({**record, "workers": [worker("deadline_passed")]}, now)
+        assert late["workers"][0]["cut_short"] is False
+        assert handoffs(late["steps"])[1]["end_state"] == "deadline_passed"
+
+
+class TestFailurePlacements:
+    STEPS = [
+        {"kind": "handoff", "key": 1, "worker_id": "searcher"},
+        {
+            "kind": "tool_call",
+            "key": 2,
+            "worker_id": "searcher",
+            "call": {"tool": "book", "status": "ok"},
+        },
+        {
+            "kind": "tool_call",
+            "key": 3,
+            "worker_id": None,
+            "call": {"tool": "book", "status": "error"},
+        },
+    ]
+
+    def place(self, *goals):
+        return failure_placements(self.STEPS, goals)
+
+    def test_a_tool_check_sits_on_the_failed_call_of_that_tool_and_its_worker_reads_unknown_when_unsaid(
+        self,
+    ):
+        [placed] = self.place(
+            {"name": "call_book", "passed": False, "subject_kind": "task"}
+        )
+        assert (placed["step"], placed["worker_id"], placed["untied"]) == (
+            3,
+            None,
+            None,
+        )
+
+    def test_a_tool_never_called_and_a_check_with_no_moment_are_not_tied_to_a_step(
+        self,
+    ):
+        never, judged = self.place(
+            {"name": "Call refund", "passed": False, "subject_kind": "task"},
+            {
+                "name": "explained",
+                "passed": None,
+                "result": "inconclusive",
+                "subject_kind": "task",
+            },
+        )
+        assert (never["step"], never["untied"]) == (None, "never_called")
+        assert (judged["step"], judged["untied"], judged["status"]) == (
+            None,
+            "no_moment",
+            "inconclusive",
+        )
+
+    def test_a_passed_or_not_applicable_check_is_not_placed(self):
+        assert not self.place(
+            {"name": "call_book", "passed": True, "subject_kind": "task"},
+            {
+                "name": "x",
+                "passed": None,
+                "result": "not_applicable",
+                "subject_kind": "task",
+            },
+        )
+
+    def test_a_worker_s_own_check_keeps_its_worker_when_no_step_is_named(self):
+        [placed] = self.place(
+            {
+                "name": "read_only",
+                "passed": False,
+                "subject_kind": "worker",
+                "worker_id": "searcher",
+            }
+        )
+        assert (placed["worker_id"], placed["step"]) == ("searcher", None)
