@@ -1553,8 +1553,8 @@ class TestProductionOnly:
 
 
 class TestRunPlanVerdict:
-    """The plan says, for the scenarios a run would select, which blocked tools they meet, how many are held back
-    and whether the run would start: the same rule the run itself applies."""
+    """The plan says, for the scenarios a run would select, which blocked tools they meet, whether the run would start
+    and, when it would not, how many are held back: the same rule the run itself applies."""
 
     _blocked = TestProductionOnly._blocked
 
@@ -1591,7 +1591,7 @@ class TestRunPlanVerdict:
             1,
         )
 
-    def test_a_mixed_selection_runs_and_holds_back_the_one_that_needs_it(
+    def test_a_mixed_selection_runs_every_scenario_and_holds_none_back(
         self, auth_client, user, workspace, storage
     ):
         environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-mix")
@@ -1603,7 +1603,7 @@ class TestRunPlanVerdict:
             scenario_keys=f"{_key(NAMES[0])},{_key(NAMES[1])}",
         )
 
-        assert (runnable, code, held) == (True, None, 1)
+        assert (runnable, code, held) == (True, None, 0)
         assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
 
     def test_a_selection_that_needs_no_blocked_tool_names_none(
@@ -1639,7 +1639,7 @@ class TestRunPlanVerdict:
         tools, runnable, code, held = self._verdict(auth_client, environment, s1)
 
         # One of the two needs the tool, so the whole suite still runs.
-        assert (runnable, code, held) == (True, None, 1)
+        assert (runnable, code, held) == (True, None, 0)
         assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
 
     def test_too_many_scenarios_are_refused(

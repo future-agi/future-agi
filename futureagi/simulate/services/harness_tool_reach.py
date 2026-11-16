@@ -158,7 +158,8 @@ class BlockedTool(TypedDict):
 class PinnedEnvironment(Protocol):
     """A run's pins as far as the production-only rule reads them: the environment version, if any."""
 
-    environment_version: HarnessEnvironmentVersion | None
+    @property
+    def environment_version(self) -> HarnessEnvironmentVersion | None: ...
 
 
 def _version_documents(
@@ -239,7 +240,8 @@ def run_verdict(
         "blocked_tools": tools,
         "runnable": runnable,
         "blocked_code": None if runnable else "production_only",
-        "held_back": len(held),
+        # A run that starts runs every selected scenario, blocking only the calls; held back means refused.
+        "held_back": 0 if runnable else len(held),
     }
 
 

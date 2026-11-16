@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
 from django.db import transaction
@@ -34,9 +34,21 @@ from tfc.utils.api_errors import build_error_envelope
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord
-    from simulate.services.scenario_faults import FaultTarget
+    from simulate.services.scenario_faults import FaultProblem, FaultTarget
 
 logger = logging.getLogger(__name__)
+
+
+class AmendReceipt(TypedDict):
+    """What became of one scenario's change in an amend."""
+
+    scenario: str
+    outcome: str
+    why: str
+    code: str
+    field: str | None
+    problems: NotRequired[list[FaultProblem]]
+
 
 _SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
 _SOURCE_ARCHIVE_DETAIL = (
@@ -2348,7 +2360,7 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
             by_name = {str(one.get("name") or ""): one for one in suite}
-            receipts = []
+            receipts: list[AmendReceipt] = []
             touched = False
             changed: set[str] = set()
             # One change may name many scenarios; each gets its own receipt.
@@ -2568,11 +2580,13 @@ class HostedHarnessProvider:
                     else ()
                 ):
                     try:
-                        problems = scenario_edit_problems(Scenario.model_validate(one))
+                        edit_problems = scenario_edit_problems(
+                            Scenario.model_validate(one)
+                        )
                     except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
-                        problems = ["the edited scenario could not be read"]
-                    if problems:
-                        rejected.append((str(one.get("name") or ""), problems))
+                        edit_problems = ["the edited scenario could not be read"]
+                    if edit_problems:
+                        rejected.append((str(one.get("name") or ""), edit_problems))
                 if rejected:
                     named = {name for name, _ in rejected}
                     return Response(

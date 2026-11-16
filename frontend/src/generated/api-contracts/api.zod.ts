@@ -39126,7 +39126,6 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
                   "error",
                   "approval_required",
                 ]),
-                label: zod.string().min(1),
                 hint: zod
                   .string()
                   .min(1)
@@ -39146,6 +39145,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
                   .describe(
                     "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                   ),
+                label: zod.string().min(1),
                 fields: zod
                   .array(
                     zod.enum([
@@ -39679,7 +39679,6 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
                   "error",
                   "approval_required",
                 ]),
-                label: zod.string().min(1),
                 hint: zod
                   .string()
                   .min(1)
@@ -39699,6 +39698,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
                   .describe(
                     "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                   ),
+                label: zod.string().min(1),
                 fields: zod
                   .array(
                     zod.enum([
@@ -45344,7 +45344,6 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
                     "error",
                     "approval_required",
                   ]),
-                  label: zod.string().min(1),
                   hint: zod
                     .string()
                     .min(1)
@@ -45364,6 +45363,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
                     .describe(
                       "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                     ),
+                  label: zod.string().min(1),
                   fields: zod
                     .array(
                       zod.enum([
@@ -47909,7 +47909,9 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
   held_back: zod
     .number()
     .min(simulateApiHarnessEnvironmentsRunPlanResponseHeldBackMin)
-    .describe("Selected scenarios that need a blocked tool."),
+    .describe(
+      "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
+    ),
 });
 
 /**
@@ -50939,7 +50941,6 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
   fields: zod.array(
     zod.object({
       value: zod.string().min(1),
-      label: zod.string().min(1),
       type: zod.enum(["string", "enum"]),
       category: zod.string().min(1),
       choices: zod.array(zod.string().min(1)).optional(),
@@ -50953,6 +50954,7 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
         .describe(
           "The name to show for each value, keyed by the value (actors only).",
         ),
+      label: zod.string().min(1),
     }),
   ),
 });

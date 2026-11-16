@@ -2,6 +2,7 @@
 transcript turns and recorded calls are an actor's, and the trial's World state with its end state, notices and the
 actors' model use already worked out."""
 
+import uuid
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
@@ -288,9 +289,20 @@ def tagged_function_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, 
 
 def _actor_turn(row: dict[str, Any], actor: Mapping[str, str]) -> dict[str, Any]:
     """A chat row an actor wrote, as that actor's own turn: the text without the label the agent was shown."""
-    label = f"{call_actor_label(actor.get('name'))}: "
     items = row.get("content") or []
-    texts = [str(item.get("content") or "") for item in items if isinstance(item, dict)]
+    labels = {
+        f"{call_actor_label(name)}: "
+        for name in (
+            actor.get("name"),
+            actor.get("id"),
+            *(item.get("name") for item in items if isinstance(item, dict)),
+        )
+    }
+    texts = [
+        _unlabelled(str(item.get("content") or ""), labels)
+        for item in items
+        if isinstance(item, dict)
+    ]
     return {
         **row,
         "speaker_role": "actor",
@@ -298,8 +310,15 @@ def _actor_turn(row: dict[str, Any], actor: Mapping[str, str]) -> dict[str, Any]
         "actor_id": actor.get("id") or "",
         "actor_role": actor.get("role") or "",
         "channel": actor.get("channel") or "",
-        "content": "\n".join(text.removeprefix(label) for text in texts),
+        "content": "\n".join(texts),
     }
+
+
+def _unlabelled(text: str, labels: set[str]) -> str:
+    """The text without the label the agent was shown, under whichever name the harness gave the actor."""
+    return next(
+        (text.removeprefix(label) for label in labels if text.startswith(label)), text
+    )
 
 
 def transcript_turns(
@@ -320,9 +339,15 @@ def transcript_turns(
             ]
             ids = {str(item.get("actor") or "") for item in items}
             if items and len(ids) == 1 and "" not in ids:
-                actor = by_id.get(ids.pop())
-                if actor is not None:
-                    row = _actor_turn(row, actor)
+                actor_id = ids.pop()
+                # One the cast does not list still reads as that actor, by the name its turn carries or its id.
+                named = next(
+                    (str(item["name"]) for item in items if item.get("name")), ""
+                )
+                row = _actor_turn(
+                    row,
+                    by_id.get(actor_id) or {"id": actor_id, "name": named or actor_id},
+                )
             elif items and all(item.get("role") == "task" for item in items):
                 row["speaker_role"] = "task"
         elif row.get("speaker_role") == "actor":
@@ -340,7 +365,8 @@ def transcript_turns(
 def _end_state_url(
     call: CallExecution, metadata: Mapping[str, Any], state: Mapping[str, Any]
 ) -> str | None:
-    """Where this trial's end state is kept: the artifact its own run stored in its organisation and workspace."""
+    """Where this trial's end state is kept: the artifact the job that sent its receipt stored, in the run's
+    organisation and workspace."""
     artifacts = metadata.get("hosted_harness_artifacts")
     end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
     url = end.get("url") if isinstance(end, dict) else None
@@ -349,11 +375,17 @@ def _end_state_url(
     sealed = state.get("end_state_artifact")
     if not (isinstance(sealed, str) and sealed.startswith("sha256:")):
         return None
+    receipt = metadata.get("hosted_harness_receipt")
+    job_id = receipt.get("job_id") if isinstance(receipt, dict) else None
+    try:
+        job_id = uuid.UUID(str(job_id))
+    except ValueError:
+        return None
     run_test = call.test_execution.run_test
     artifacts_of_run = HostedHarnessArtifact.no_workspace_objects.filter(
         sha256=sealed.removeprefix("sha256:"),
         kind="world_state",
-        job__payload__metadata__platform_run_id=str(call.test_execution_id),
+        job_id=job_id,
         job__organization_id=run_test.organization_id,
     )
     # In the run's own workspace; a run kept without one matches only artifacts kept without one.

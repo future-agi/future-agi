@@ -1614,6 +1614,8 @@ def _store_alk_chat_messages(
             }
             if seg.get("actor"):
                 item["actor"] = seg["actor"]
+                if seg.get("name"):
+                    item["name"] = seg["name"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
             if speaker in {"tool_calls", "tool_call_result"}:

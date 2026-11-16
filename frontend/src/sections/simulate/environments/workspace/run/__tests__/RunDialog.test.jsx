@@ -141,7 +141,7 @@ describe("RunDialog", () => {
     });
   });
 
-  it("says in one line how many scenarios the blocked tools hold back, with each tool's scenarios under Details", async () => {
+  it("says in one line that a runnable plan's blocked tool has its calls blocked, with its scenarios under Details", async () => {
     const user = userEvent.setup();
     state.plans["{}"] = {
       blocked_tools: [
@@ -150,14 +150,15 @@ describe("RunDialog", () => {
           scenarios: [{ key: "k1", name: "Refund a late ride" }],
         },
       ],
-      held_back: 1,
+      held_back: 0,
     };
     renderDialog();
 
     const line = screen.getByTestId("run-blocked-tool");
     expect(line).toHaveTextContent(
-      "1 scenario held back: issue_refund reaches production",
+      "issue_refund reaches production, so this test blocks its calls",
     );
+    expect(line).not.toHaveTextContent("held back");
     expect(
       within(line).getByText(/Scenarios that use it: Refund a late ride\./),
     ).not.toBeVisible();

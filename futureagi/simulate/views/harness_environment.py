@@ -104,7 +104,7 @@ from simulate.services.evidence_import import (
     create_transcript_import,
     discard_evidence_import,
 )
-from simulate.services.harness_actor_rules import UPLOAD_MAX_BYTES
+from simulate.services.harness_actor_rules import UPLOAD_MAX_BYTES, ActorLimits
 from simulate.services.harness_actor_validation import Problem
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -644,10 +644,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
+        limits: ActorLimits = request.validated_data.get("limits") or ActorLimits()
         return Response(
             harness_actors.write_actor_limits(
                 job,
-                limits=request.validated_data.get("limits") or {},
+                limits=limits,
                 user=request.user,
                 expected_revision=request.validated_data.get("expected_revision"),
             )
