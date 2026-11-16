@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 
 import SideDrawer from "../../components/SideDrawer";
+import { subscribeBuilderChatFocus } from "../../buildEnvironment/console/builderChatFocusBus";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import {
   EDITOR_COPY,
@@ -46,6 +47,12 @@ export default function ScenarioEditor({
   levelLabels = {},
   env,
 }) {
+  // Asked to show a builder chat message, the editor steps aside so the chat can be used.
+  useEffect(
+    () =>
+      open && onClose ? subscribeBuilderChatFocus(() => onClose()) : undefined,
+    [open, onClose],
+  );
   const [saveError, setSaveError] = useState("");
   // The server's problems with the test conditions, each naming the fault (`index`) and its field.
   const [faultProblems, setFaultProblems] = useState([]);
