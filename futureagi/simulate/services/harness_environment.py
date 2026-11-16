@@ -37,6 +37,7 @@ from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentVersion,
+    CallExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessStageOutput,
@@ -297,6 +298,29 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
         .annotate(count=Count("id"))
     ):
         counts.setdefault(row["job_id"], {})[row["outcome"]] = row["count"]
+    # A call stopped before its receipt arrived (the guest's seal timed out, or its sandbox never started) has no
+    # receipt to count, and it is cancelled all the same.
+    for row in (
+        CallExecution.no_workspace_objects.filter(
+            test_execution__hosted_harness_job__id__in=job_ids,
+            status__in=CANCELLED_CALL_STATUSES,
+            deleted=False,
+            hosted_harness_execution__receipt__isnull=True,
+            hosted_registration__receipts__isnull=True,
+        )
+        .annotate(
+            harness_status=Coalesce(
+                KeyTextTransform("harness_outcome_status", "call_metadata"),
+                Value(""),
+                output_field=CharField(),
+            )
+        )
+        .exclude(harness_status__in=SKIPPED_HARNESS_STATUSES)
+        .values("test_execution__hosted_harness_job__id")
+        .annotate(count=Count("id"))
+    ):
+        outcomes = counts.setdefault(row["test_execution__hosted_harness_job__id"], {})
+        outcomes["cancelled"] = outcomes.get("cancelled", 0) + row["count"]
     return counts
 
 

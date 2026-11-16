@@ -423,3 +423,24 @@ def test_the_runs_list_counts_a_stopped_call_as_cancelled_not_errored(
         "cancelled": 1,
         "skipped": 1,
     }
+
+
+@pytest.mark.django_db
+def test_the_runs_list_counts_a_call_stopped_before_its_receipt_as_cancelled(
+    finished_run,  # noqa: F811
+    calls,  # noqa: F811
+):
+    from simulate.services.harness_environment import receipt_outcome_counts
+
+    # Neither call has a receipt: one was stopped before the guest sealed it, the other is a skipped case.
+    stopped, skipped = calls
+    stopped.status = CallExecution.CallStatus.CANCELLED
+    stopped.call_metadata = {}
+    stopped.save(update_fields=["status", "call_metadata"])
+    skipped.status = CallExecution.CallStatus.CANCELLED
+    skipped.call_metadata = {"harness_outcome_status": "skipped"}
+    skipped.save(update_fields=["status", "call_metadata"])
+
+    assert receipt_outcome_counts([finished_run.id])[finished_run.id] == {
+        "cancelled": 1
+    }
