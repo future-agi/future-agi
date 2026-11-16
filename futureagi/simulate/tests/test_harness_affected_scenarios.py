@@ -800,6 +800,9 @@ class TestAgentGapCases:
         assert _rows(lookups)["tool_discovery"]["affected"]["count"] == 0
         assert lookups["selection"]["blocked"] == 0
         assert lookups["answer"]["kind"] != "blocked"
+        # The blocked tool-binding area holds none of the lookups, so it is not named as holding them.
+        assert whole["selection"]["blocking_area"] == "tool_binding"
+        assert lookups["selection"]["blocking_area"] is None
 
     def test_a_changed_signature_holds_back_only_the_cases_using_it(
         self, user, workspace, storage
