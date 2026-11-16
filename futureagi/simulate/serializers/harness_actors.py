@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 
 from rest_framework import serializers
+from rest_framework.exceptions import ErrorDetail
 
 from model_hub.serializers.contracts import JsonObjectRequestField
-from simulate.services.harness_actor_rules import LIMIT_FIELDS
-from simulate.services.harness_actor_validation import ACTOR_RECORD_MAX_CHARS
+from simulate.services.harness_actor_rules import LIMIT_FIELDS, UPLOAD_KINDS
+from simulate.services.harness_actor_validation import (
+    ACTOR_RECORD_MAX_CHARS,
+    Problem,
+    problem,
+)
 
 # The trigger kinds a stored record may hold; a kind the editor cannot make reads as kept (`editable_trigger`).
 TRIGGER_KINDS = (
@@ -93,6 +98,12 @@ class HarnessActorResponseTimingSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("immediate", "delayed"))
     # How long a delayed actor waits before it answers; an immediate one ignores it.
     seconds = serializers.FloatField(required=False, min_value=0)
+
+
+class HarnessActorResponseTimingChangeSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("immediate", "delayed"))
+    # How long a delayed actor waits before it answers; null or left out answers straight away.
+    seconds = serializers.FloatField(required=False, allow_null=True, min_value=0)
 
 
 class HarnessActorBehaviourSerializer(serializers.Serializer):
@@ -232,14 +243,25 @@ class HarnessActorLimitsSerializer(serializers.Serializer):
             unknown = sorted(set(data) - set(LIMIT_FIELDS))
             if unknown:
                 raise serializers.ValidationError(
-                    {key: ["is not an actor limit"] for key in unknown}
+                    {key: ["This is not an actor limit."] for key in unknown}
                 )
         return super().to_internal_value(data)
+
+
+class HarnessActorLimitDefaultField(serializers.JSONField):
+    """What a limit left unset takes: a number (a model's name for `model`), or null for no limit."""
+
+    class Meta:
+        swagger_schema_fields = {"type": "number", "x-nullable": True}
 
 
 class HarnessActorLimitFieldSerializer(serializers.Serializer):
     key = serializers.CharField()
     kind = serializers.ChoiceField(choices=("whole", "seconds", "model"))
+    # From the sealed rules; null when the release that sealed the environment declares none.
+    default = HarnessActorLimitDefaultField(allow_null=True)
+    # The default in words ("Default: 60 s"); null when the sealed rules declare none.
+    default_label = serializers.CharField(allow_null=True)
 
 
 class HarnessActorChannelOptionSerializer(serializers.Serializer):
@@ -250,6 +272,51 @@ class HarnessActorChannelOptionSerializer(serializers.Serializer):
     loudness = serializers.BooleanField()
     trigger_kinds = serializers.ListField(child=serializers.CharField())
     required_fields = serializers.ListField(child=serializers.CharField())
+    # The actor's own cap that counts when it joins this way: lines for one who speaks, turns for one in the world.
+    cap_field = serializers.ChoiceField(choices=("max_turns", "max_lines"))
+
+
+class HarnessActorFieldOptionSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+
+
+class HarnessActorFieldOptionsSerializer(serializers.Serializer):
+    """The values each pickable field offers; a write setting another is refused as a problem on that field."""
+
+    kind = HarnessActorFieldOptionSerializer(many=True)
+    play = HarnessActorFieldOptionSerializer(many=True)
+    # What happens when the actor does not answer, without naming an action or another actor.
+    fallback_word = HarnessActorFieldOptionSerializer(many=True)
+    # From the persona model's choices; an empty value ("") is any.
+    gender = HarnessActorFieldOptionSerializer(many=True)
+    age_group = HarnessActorFieldOptionSerializer(many=True)
+    accent = HarnessActorFieldOptionSerializer(many=True)
+    response_timing = HarnessActorFieldOptionSerializer(many=True)
+
+
+class HarnessActorLoudnessSerializer(serializers.Serializer):
+    """How loud an actor is next to the caller."""
+
+    # The channels where an actor has a loudness.
+    channels = serializers.ListField(child=serializers.CharField())
+    # `[low, high]`: the range a call draws from when none is set; empty when the sealed rules give none.
+    automatic = serializers.ListField(child=serializers.FloatField(), max_length=2)
+    # The range a fixed loudness is picked in, and its step.
+    min = serializers.FloatField()
+    max = serializers.FloatField()
+    step = serializers.FloatField()
+    # Where a fixed loudness starts: the middle of the automatic range.
+    default = serializers.FloatField()
+
+
+class HarnessActorUploadSerializer(serializers.Serializer):
+    """What a document an actor reads may be, to upload."""
+
+    formats = serializers.ListField(child=serializers.CharField())
+    max_bytes = serializers.IntegerField()
+    # The bound in words, such as 1 MB.
+    max_label = serializers.CharField()
 
 
 class HarnessActorChangesSerializer(serializers.Serializer):
@@ -304,13 +371,16 @@ class HarnessActorChangesSerializer(serializers.Serializer):
     style = serializers.CharField(
         required=False, allow_blank=True, trim_whitespace=False
     )
-    response_timing = HarnessActorResponseTimingSerializer(required=False)
+    response_timing = HarnessActorResponseTimingChangeSerializer(required=False)
     permitted_actions = serializers.ListField(
         child=serializers.CharField(max_length=200), required=False, max_length=200
     )
     play = serializers.CharField(required=False, max_length=100)
     trigger = HarnessActorTriggerSerializer(required=False)
-    timeout_seconds = serializers.FloatField(required=False, min_value=0)
+    # Null or left empty: it never waits.
+    timeout_seconds = serializers.FloatField(
+        required=False, allow_null=True, min_value=0
+    )
     fallback = serializers.CharField(required=False, max_length=200)
     # The fallback action's own arguments; null or empty clears them. A new fallback sent without them drops them.
     fallback_arguments = JsonObjectRequestField(required=False, allow_null=True)
@@ -464,16 +534,17 @@ class HarnessActorSideDefaultsSerializer(serializers.Serializer):
 
 class HarnessActorListSerializer(serializers.Serializer):
     actors = HarnessActorSerializer(many=True)
-    # The API field is named source.
-    source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source, as Field's own
+        choices=("draft", "saved")
+    )
     revision = serializers.IntegerField()
     # Each actor file's record schema, from the rules of the release that sealed the environment.
     record_schemas = JsonObjectRequestField()
     # What an actor can be given here: the world's actions, and the call channels an actor speaks on.
     actions = HarnessWorldActionSerializer(many=True)
     channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
-    # Which channels have a loudness, and the range a call draws from when none is set.
-    loudness = JsonObjectRequestField()
+    # Which channels have a loudness, the range a call draws from when none is set, and the range one may be set in.
+    loudness = HarnessActorLoudnessSerializer()
     # Ids no actor may take.
     reserved_ids = serializers.ListField(child=serializers.CharField())
     # What an actor may be given to read here: the environment's own files and its world's record collections.
@@ -494,13 +565,15 @@ class HarnessActorListSerializer(serializers.Serializer):
     # How each limit is typed.
     limit_fields = HarnessActorLimitFieldSerializer(many=True)
     side_defaults = HarnessActorSideDefaultsSerializer()
+    field_options = HarnessActorFieldOptionsSerializer()
+    upload = HarnessActorUploadSerializer()
 
 
 class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
     # An empty file is the service's to refuse, with the other problems of the same upload.
     file = serializers.FileField(allow_empty_file=True)
     kind = serializers.ChoiceField(
-        choices=("knowledge",),
+        choices=tuple(UPLOAD_KINDS),
         help_text="What the file is for: `knowledge`, a document an actor may be given to read.",
     )
     expected_revision = serializers.IntegerField(min_value=0, required=False)
@@ -519,9 +592,11 @@ class HarnessActorViewQuerySerializer(serializers.Serializer):
 class HarnessActorSeenSerializer(serializers.Serializer):
     input = serializers.CharField()
     value = serializers.JSONField()
-    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source, as Field's own
         choices=("actor", "scenario", "caller")
     )
+    # The value as one line a person reads.
+    text = serializers.CharField(allow_blank=True)
 
 
 class HarnessActorOthersPrivateSerializer(serializers.Serializer):
@@ -552,3 +627,118 @@ class HarnessActorViewSerializer(serializers.Serializer):
     # Whether a run plays the actor from what it sees; when not, why.
     played_from_view = serializers.BooleanField()
     unused_reason = serializers.CharField(allow_null=True)
+
+
+# Each part of a field the editor shows inside one input, as words a problem names it by.
+_PART_WORDS = {
+    "turn": "The agent's turn",
+    "seconds": "The seconds",
+    "on_call": "The call number",
+    "p": "The chance",
+    "tool": "The action",
+    "words": "The words",
+    "collection": "The record collection",
+    "where": "The matching values",
+    "store": "The store",
+    "kind": "The choice",
+}
+
+
+def _errors_in(
+    detail: object, where: tuple[str | int, ...]
+) -> list[tuple[tuple[str | int, ...], ErrorDetail]]:
+    """Every error in a serializer's error tree, with where it sits: nested keys and list positions."""
+    if isinstance(detail, dict):
+        return [
+            found
+            for key, one in detail.items()
+            for found in _errors_in(
+                one, (*where, int(key) if str(key).isdigit() else str(key))
+            )
+        ]
+    if isinstance(detail, list):
+        if all(isinstance(one, str) for one in detail):
+            return [
+                (where, one if isinstance(one, ErrorDetail) else ErrorDetail(one))
+                for one in detail
+            ]
+        return [
+            found
+            for index, one in enumerate(detail)
+            for found in _errors_in(one, (*where, index))
+        ]
+    return [
+        (where, detail if isinstance(detail, ErrorDetail) else ErrorDetail(str(detail)))
+    ]
+
+
+def _field_at(
+    field: serializers.Field | None, where: tuple[str | int, ...]
+) -> serializers.Field | None:
+    """The serializer field an error's place names: a nested serializer's field, a list's item."""
+    for part in where:
+        if field is None:
+            return None
+        if isinstance(part, str) and isinstance(field, serializers.Serializer):
+            field = field.fields.get(part)
+        else:
+            field = getattr(field, "child", None)
+    return field
+
+
+def _predicate(field: serializers.Field | None, error: ErrorDetail) -> str:
+    """What is wrong, in the editor's words, from the error's code and the field's own bounds."""
+    code = error.code
+    if code in ("null", "required", "blank"):
+        return "needs a value"
+    if code == "invalid" and isinstance(field, serializers.IntegerField):
+        return "must be a whole number"
+    if code == "invalid" and isinstance(field, serializers.FloatField):
+        return "must be a number"
+    if code == "max_string_length":
+        return "must be a smaller number"
+    if code == "min_value":
+        return f"must be {getattr(field, 'min_value', 0)} or more"
+    if code == "max_value":
+        return f"must be {getattr(field, 'max_value', 0)} or less"
+    if code == "max_length" and isinstance(
+        field, (serializers.ListField, serializers.ListSerializer)
+    ):
+        return f"can hold at most {getattr(field, 'max_length', 0)} entries"
+    if code == "max_length":
+        return f"must be at most {getattr(field, 'max_length', 0)} characters"
+    if code == "invalid_choice" and isinstance(field, serializers.ChoiceField):
+        return f"must be one of: {', '.join(str(one) for one in field.choices)}"
+    return ""
+
+
+def editor_problems(
+    serializer: serializers.Serializer, errors: dict[str, object]
+) -> list[Problem]:
+    """Each error a serializer found in what the editor sent, as a problem on the editor's field (the top-level key)
+    in its words; never the request's path. A nested key names the part of the field, a list position its entry."""
+    problems: list[Problem] = []
+    for key, detail in errors.items():
+        top = serializer.fields.get(key)
+        for where, error in _errors_in(detail, ()):
+            parts = [one for one in where if isinstance(one, str)]
+            entries = [one + 1 for one in where if isinstance(one, int)]
+            subject = (
+                _PART_WORDS.get(parts[-1], parts[-1].replace("_", " ").capitalize())
+                if parts
+                else "This"
+            )
+            if entries:
+                subject = (
+                    f"{subject} in entry {entries[0]}"
+                    if parts
+                    else f"Entry {entries[0]}"
+                )
+            said = _predicate(_field_at(top, where), error)
+            message = (
+                f"{subject} {said}."
+                if said
+                else (str(error) if not where else f"{subject}: {error}")
+            )
+            problems.append(problem(key if top is not None else None, message))
+    return problems

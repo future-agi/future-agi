@@ -6,7 +6,6 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 
-// Adding someone starts with which side they are on: the button opens the two sides, each with what it is for.
 export default function AddActorMenu({ label, disabled, onPick }) {
   const [anchor, setAnchor] = useState(null);
   return (

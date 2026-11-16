@@ -4,6 +4,10 @@ from typing import get_args
 
 from rest_framework import serializers
 
+from simulate.serializers.harness_actors import (
+    HarnessActorFallbackSerializer,
+    HarnessActorLimitsSerializer,
+)
 from simulate.types import CallActorDelivery
 
 FUNCTION_CALL_KINDS = ("agent_call", "world_actor_action")
@@ -76,6 +80,10 @@ class BlockedCallSerializer(serializers.Serializer):
     tool = serializers.CharField(
         required=False, allow_blank=True, help_text="The tool that made it, when known."
     )
+    count = serializers.IntegerField(
+        required=False,
+        help_text="How many calls to this host were refused; absent on older trials (one).",
+    )
 
 
 class TrialStateChangeSerializer(serializers.Serializer):
@@ -115,10 +123,10 @@ class ActorDecisionSerializer(serializers.Serializer):
     or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout).
     """
 
-    actor = serializers.CharField()
+    actor = serializers.CharField(allow_blank=True)
     name = serializers.CharField(
-        required=False,
-        help_text="The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+        allow_blank=True,
+        help_text="The actor's name, or its id when the trial did not name it.",
     )
     play = serializers.ChoiceField(
         choices=(
@@ -147,9 +155,10 @@ class ActorDecisionSerializer(serializers.Serializer):
     why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     status = serializers.IntegerField(required=False, allow_null=True)
     timeout_seconds = serializers.FloatField(required=False)
-    fallback = serializers.CharField(
-        required=False,
-        help_text="silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
+    fallback = HarnessActorFallbackSerializer(
+        allow_null=True,
+        help_text="What its fallback is, classified: nothing, a refusal, one of its own actions, or another actor "
+        "answering; null when it has none.",
     )
     outcome = serializers.CharField(
         required=False,
@@ -163,6 +172,14 @@ class ActorDecisionSerializer(serializers.Serializer):
         required=False,
         help_text="For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
     )
+    verdict = serializers.ChoiceField(
+        choices=("approved", "refused"),
+        allow_null=True,
+        help_text="For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+    )
+    committed_after_refusal = serializers.BooleanField(
+        help_text="The agent committed a write after this actor refused it; false on a trial that predates verdicts."
+    )
 
 
 class ApprovalWriteSerializer(serializers.Serializer):
@@ -170,14 +187,50 @@ class ApprovalWriteSerializer(serializers.Serializer):
     outcome = serializers.CharField(allow_null=True)
 
 
+class ApprovalRequestSerializer(serializers.Serializer):
+    """The agent's call that asked for the approval."""
+
+    action = serializers.CharField(allow_null=True)
+    at = serializers.FloatField(
+        allow_null=True, help_text="Epoch seconds the world logged it."
+    )
+    action_id = serializers.CharField(allow_null=True)
+
+
+class ApprovalDecisionSerializer(serializers.Serializer):
+    """Who decided and how: the actor's own action, or the timeout's fallback (`timeout: <fallback>`, no time)."""
+
+    by = serializers.CharField(allow_null=True)
+    verdict = serializers.ChoiceField(
+        choices=("approved", "refused"),
+        allow_null=True,
+        help_text="Null when it decided none or the trial predates verdicts.",
+    )
+    name = serializers.CharField(
+        allow_null=True,
+        help_text="Who decided, by display name; their id when nameless; null when nobody did.",
+    )
+    action = serializers.CharField(allow_null=True)
+    outcome = serializers.CharField(allow_null=True)
+    at = serializers.FloatField(allow_null=True)
+
+
 class ApprovalLineSerializer(serializers.Serializer):
     """One approval, read from the action log: the agent's request, the decision, and the agent's writes around it."""
 
-    request = serializers.DictField()
-    decision = serializers.DictField()
+    request = ApprovalRequestSerializer()
+    decision = ApprovalDecisionSerializer()
     before_decision = ApprovalWriteSerializer(many=True)
     after_decision = ApprovalWriteSerializer(many=True)
     acted_before_decision = serializers.BooleanField()
+    verdict = serializers.ChoiceField(
+        choices=("approved", "refused"),
+        allow_null=True,
+        help_text="Null on a trial that predates verdicts.",
+    )
+    committed_after_refusal = serializers.BooleanField(
+        help_text="The agent committed a write after the refusal; false on a trial that predates verdicts."
+    )
 
 
 class ActorUsageSerializer(serializers.Serializer):
@@ -208,8 +261,11 @@ class ActorUsageTotalSerializer(serializers.Serializer):
 
 
 class TrialNoticeSerializer(serializers.Serializer):
+    """About a fault (`action`, `on_call`, `mode`), or for `evidence_incomplete` how many pieces (`count`)."""
+
     code = serializers.CharField(
-        help_text="fault_not_applied, fault_not_triggered, start_differs or changed_outside_world"
+        help_text="fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, "
+        "duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world"
     )
     message = serializers.CharField(
         help_text="Plain words for the person reading the run."
@@ -217,6 +273,9 @@ class TrialNoticeSerializer(serializers.Serializer):
     action = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     on_call = serializers.IntegerField(required=False, allow_null=True)
     mode = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    count = serializers.IntegerField(
+        required=False, help_text="For evidence_incomplete."
+    )
 
 
 class DuplicateCommitSerializer(serializers.Serializer):
@@ -238,9 +297,32 @@ class RecordSkippedSerializer(serializers.Serializer):
     why = serializers.CharField()
 
 
+class TrialRecordChangeSerializer(serializers.Serializer):
+    """One record the trial added, changed or removed."""
+
+    table = serializers.CharField()
+    key = serializers.JSONField(
+        help_text="The record's key as the table holds it: one value, or several."
+    )
+    kind = serializers.ChoiceField(choices=("added", "changed", "removed"))
+    before = serializers.DictField(
+        child=serializers.JSONField(),
+        allow_null=True,
+        help_text="Its values before; null when added.",
+    )
+    after = serializers.DictField(
+        child=serializers.JSONField(),
+        allow_null=True,
+        help_text="Its values after; null when removed.",
+    )
+    fields = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="The fields a change changed; empty when added or removed.",
+    )
+
+
 class TrialRecordsSerializer(serializers.Serializer):
-    # Each `{table, key, kind: added|changed|removed, before, after, fields}`; `fields` names the changed columns.
-    changes = serializers.ListField(child=serializers.JSONField())
+    changes = TrialRecordChangeSerializer(many=True)
     skipped = RecordSkippedSerializer(many=True, required=False)
     truncated = serializers.IntegerField(
         required=False, help_text="Changes past the cap, counted, not listed."
@@ -250,13 +332,19 @@ class TrialRecordsSerializer(serializers.Serializer):
 class TrialStartSerializer(serializers.Serializer):
     state = serializers.ChoiceField(choices=("seeded", "differs", "unknown"))
     tables = serializers.ListField(child=serializers.CharField(), required=False)
+    against = serializers.ChoiceField(
+        choices=("sealed_seed", "first_trial"),
+        required=False,
+        help_text="What the start was compared with; absent on trials from before it was said.",
+    )
 
 
 class TrialStateSerializer(serializers.Serializer):
-    state_changes = TrialStateChangeSerializer(many=True, required=False)
+    """A trial's World state. Every list is present, empty when the trial had none."""
+
+    state_changes = TrialStateChangeSerializer(many=True)
     duplicates = DuplicateCommitSerializer(
         many=True,
-        required=False,
         help_text="Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
     )
     recorded = serializers.BooleanField(
@@ -267,11 +355,11 @@ class TrialStateSerializer(serializers.Serializer):
         required=False, allow_blank=True, help_text="Why they were not recorded."
     )
     unreadable = serializers.BooleanField(
-        required=False,
         help_text="True when what changed in the world could not be read; checks that needed it read Unmeasured.",
     )
     records = TrialRecordsSerializer(
-        required=False, help_text="The records the trial changed, before and after."
+        required=False,
+        help_text="The records the trial changed, before and after; absent when they could not be read.",
     )
     start = TrialStartSerializer(
         required=False,
@@ -279,35 +367,31 @@ class TrialStateSerializer(serializers.Serializer):
     )
     decisions = ActorDecisionSerializer(
         many=True,
-        required=False,
         help_text="What actors did or chose during the trial; messages written before it are in pre_run.",
     )
     pre_run = ActorDecisionSerializer(
         many=True,
-        required=False,
         help_text="Messages actors wrote before the run: the trial's starting point, not a change made during it.",
     )
-    approvals = ApprovalLineSerializer(many=True, required=False)
+    approvals = ApprovalLineSerializer(many=True)
     end_state_url = serializers.URLField(
         required=False,
         help_text="The world's records at the trial's end and its action log, kept for grading it again.",
     )
-    usage = ActorUsageSerializer(many=True, required=False)
+    usage = ActorUsageSerializer(many=True)
     usage_summary = ActorUsageLineSerializer(
         many=True,
-        required=False,
         help_text="Actors' model use summed per actor and model.",
     )
     usage_total = ActorUsageTotalSerializer(
         required=False,
         help_text="Actors' model use in all; absent when no actor used a model.",
     )
-    limits = serializers.DictField(
+    limits = HarnessActorLimitsSerializer(
         required=False,
         help_text="The actor limits this trial ran with; null is no limit.",
     )
     notices = TrialNoticeSerializer(
         many=True,
-        required=False,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )

@@ -6,10 +6,6 @@ import { ACTORS_COPY } from "./actors.constants";
 const C = ACTORS_COPY.worldActors;
 const F = C.form;
 
-/**
- * The bottom of the actor form: every problem the server found that no field on screen shows, a failed check with a
- * retry, "Checking…" while the server looks at the edit, then Cancel and Save.
- */
 export default function ActorFormFooter({
   problems,
   overBy,
@@ -96,7 +92,7 @@ export default function ActorFormFooter({
 }
 
 ActorFormFooter.propTypes = {
-  // The server's problems no field on screen shows.
+  // Problems no field on screen shows.
   problems: PropTypes.arrayOf(
     PropTypes.shape({ field: PropTypes.string, message: PropTypes.string }),
   ).isRequired,

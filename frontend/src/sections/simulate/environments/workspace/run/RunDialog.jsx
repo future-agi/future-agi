@@ -22,10 +22,9 @@ import {
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
-import { inlineRunError, planRefusal } from "./runErrors";
+import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
-import { parseRunSeed } from "./runSeed";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -73,9 +72,9 @@ export default function RunDialog({
   const [agentFellBack, setAgentFellBack] = useState(false);
   // A refusal stays shown until the user changes a pick.
   const [dismissedError, setDismissedError] = useState(null);
-  // The run's seed, as typed: empty keeps the environment's; a re-run starts from its run's.
+  // Empty keeps the environment's seed; sent as typed so the server validates it.
   const [seed, setSeed] = useState(() => initialSeed ?? "");
-  const { value: seedValue, invalid: seedInvalid } = parseRunSeed(seed);
+  const seedValue = seed.trim() || null;
 
   const options = useMemo(
     () =>
@@ -124,7 +123,6 @@ export default function RunDialog({
     : scenarioIds.filter((key) => !missing.includes(key));
   if (needsMembers) runIds = memberKeys;
 
-  // What the run would block, known before it starts: a picked selection is asked by its keys, a whole suite by none.
   const plan = useRunPlan(env?.id, picks, {
     enabled: open && !versions.isLoading,
     scenarioKeys: runAll ? null : runIds,
@@ -179,17 +177,18 @@ export default function RunDialog({
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
   }
-  // Tools that reach production are blocked in this controlled test. The plan
-  // names them for the chosen scenarios, how many it holds back and whether
-  // anything is left to run.
+  // Tools that reach production are blocked in this controlled test.
   const blockedTools = plan.data ? plan.data.blocked_tools : [];
   if (!blocked && plan.data && !plan.data.runnable)
     blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
+  const seedError = submitError ? seedRefusal(submitError) : null;
   // A re-run's refused versions fall back to the defaults instead.
-  const shownError = submitError || (rerun === "checking" ? null : refusedPlan);
+  const shownError =
+    (seedError ? null : submitError) ||
+    (rerun === "checking" ? null : refusedPlan);
   const pickerError =
     shownError?.error === "version_not_pickable" &&
     VERSION_PIECES.includes(shownError.piece)
@@ -203,11 +202,11 @@ export default function RunDialog({
   const canSubmit =
     !submitting &&
     !versions.isLoading &&
-    // Held while the plan is being asked; a plan that failed leaves the block to the run's own refusal.
+    // A failed plan leaves blocking to the run's own refusal.
     (Boolean(plan.data) || planFailed) &&
     !refusedPlan &&
     !blocked &&
-    !seedInvalid &&
+    !seedError &&
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0);
 
@@ -315,8 +314,11 @@ export default function RunDialog({
         <RunSeedLine
           seed={seed}
           value={seedValue}
-          invalid={seedInvalid}
-          onChange={setSeed}
+          error={seedError}
+          onChange={(next) => {
+            setSeed(next);
+            setDismissedError(error);
+          }}
         />
         {drafts?.any && (
           <Alert severity="info" data-testid="run-drafts-note">
@@ -431,10 +433,9 @@ RunDialog.propTypes = {
   trials: PropTypes.number,
   // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
   initialPicks: PropTypes.objectOf(PropTypes.string),
-  // A re-run's seed as decimal text, pre-filled.
   initialSeed: PropTypes.string,
   onClose: PropTypes.func,
-  // (picks, scenarioIds, resolved {agent, environment, suite} version ids, seed as decimal text or null).
+  // (picks, scenarioIds, resolved version ids, seed or null)
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,

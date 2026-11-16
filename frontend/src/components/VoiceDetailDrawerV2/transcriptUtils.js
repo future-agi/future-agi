@@ -21,30 +21,13 @@ export const normalizeRole = (role) => {
   return r || "unknown";
 };
 
-// Roles of anyone on the call other than the agent and the customer.
 const OTHER_ROLES = new Set(["actor", "world_actor"]);
 export const isOtherRole = (role) => OTHER_ROLES.has(role);
 
-// `Name · role`; a call stored before roles were kept shows just the name.
 export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
   [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
 
-// How an actor was heard, in the actor editor's own words; none for an unknown channel.
 export const channelLabel = (channel) => ACTOR_CHANNEL_LABELS[channel] || "";
-
-// One person on the call: an actor by their id, or by name on a turn stored before ids were kept.
-export const otherPartyKey = (turn) =>
-  `${turn.role}:${turn.actorId || turn.speakerName}`;
-
-// Everyone other than the agent and the customer, once each, in the order they first appear.
-export const otherParties = (turns = []) => {
-  const seen = new Map();
-  for (const turn of turns) {
-    const key = otherPartyKey(turn);
-    if (isOtherRole(turn.role) && !seen.has(key)) seen.set(key, turn);
-  }
-  return [...seen.values()];
-};
 
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
@@ -238,10 +221,7 @@ export const enrichTurns = (
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap between consecutive spoken turns. A tool call or
-  // a world actor's action sits inline at the moment it ran, often mid-turn; it
-  // is not speech, so it neither interrupts nor splits the gap between the
-  // turns around it.
+  // Step 7: silence + overlap between spoken turns; tool calls and actor actions are not speech.
   let prev = null;
   for (const cur of sorted) {
     cur.silenceBefore = null;

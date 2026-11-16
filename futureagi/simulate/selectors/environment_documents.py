@@ -15,12 +15,7 @@ def contract_data(job: HostedHarnessJob) -> dict[str, Any]:
 
 
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
-    """One authoring snapshot without touching the database.
-
-    The list reads it from the prefetch the queryset set up; a job fetched on
-    its own has no prefetch, so the live copy on the row is used instead. Either
-    way no query is issued, which is what keeps a page of rows to one query.
-    """
+    """One authoring snapshot from the prefetch, else the row's live copy; never issues a query."""
     for output in getattr(job, "row_outputs", None) or []:
         if output.kind == kind:
             return output.data

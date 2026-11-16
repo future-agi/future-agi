@@ -77,15 +77,6 @@ const kpisPayload = () => ({
   task_completion: 75,
 });
 
-const perfPayload = () => ({
-  test_run_performance_metrics: {
-    pass_rate: 74,
-    total_test_runs: 12,
-    latest_fail_rate: 26,
-  },
-  top_performing_scenarios: [],
-});
-
 describe("buildRunIdentity", () => {
   it("stamps ordinal-keyed letter + colour from the mapped row", () => {
     const rows = mapExecutions(executionsPayload());
@@ -113,7 +104,7 @@ describe("buildRunStats", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-new");
 
-    const stats = buildRunStats(kpisPayload(), perfPayload(), row);
+    const stats = buildRunStats(kpisPayload(), row);
     expect(stats.total).toBe(12);
     expect(stats.failed).toBe(3);
     expect(stats.passed).toBe(9);
@@ -151,7 +142,6 @@ describe("buildRunStats", () => {
     })[0];
     const stats = buildRunStats(
       { total_calls: 6, failed_calls: 0 },
-      { test_run_performance_metrics: { pass_rate: 100 } },
       row,
     );
 
@@ -169,13 +159,13 @@ describe("buildRunStats", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
 
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     // Row: total 10, success_rate 60 → passed 6, failed 4.
     expect(stats.total).toBe(10);
     expect(stats.passed).toBe(6);
     expect(stats.failed).toBe(4);
     expect(stats.passRate).toBe(55);
-    expect(buildRunStats(null, null, null).passRate).toBeNull();
+    expect(buildRunStats(null, null).passRate).toBeNull();
     expect(stats.durationS).toBeNull();
     expect(stats.avgDurationMs).toBeNull();
   });
@@ -193,7 +183,6 @@ describe("buildRunStats", () => {
         connected_calls: 12,
         total_calls: 16,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);
@@ -213,7 +202,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.total).toBe(16);
@@ -222,7 +210,7 @@ describe("buildRunStats", () => {
   it("leaves `completed` null (never 0, never `total`) while kpis hasn't loaded yet", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     expect(stats.completed).toBeNull();
     expect(stats.completed).not.toBe(stats.total);
   });
@@ -232,7 +220,6 @@ describe("buildRunStats", () => {
   it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
     const stats = buildRunStats(
       { agent_type: "voice", connected_calls: 9, total_calls: 16 },
-      null,
       null,
     );
     expect(stats.completed).toBeNull();
@@ -251,7 +238,6 @@ describe("buildRunStats", () => {
         task_success: 49,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.scores).toEqual({ task_success: 49 });
@@ -266,7 +252,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
         task_success: 49,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);

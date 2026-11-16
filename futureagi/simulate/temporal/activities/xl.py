@@ -33,6 +33,7 @@ from django.utils import timezone
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution, CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
@@ -243,9 +244,9 @@ def _build_transcript_data(call_execution):
         if is_text:
             transcripts = call_execution.chat_messages.all().order_by("created_at")
         else:
-            transcripts = call_execution.transcripts.select_related(
-                "actor_turn"
-            ).order_by("start_time_ms")
+            transcripts = with_speakers(call_execution.transcripts.all()).order_by(
+                "start_time_ms"
+            )
 
         if transcripts.exists():
             transcript_text = []

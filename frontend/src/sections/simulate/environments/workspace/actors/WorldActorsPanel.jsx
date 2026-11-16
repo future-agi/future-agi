@@ -28,19 +28,13 @@ const OUTLINED = {
   flexShrink: 0,
 };
 
-/**
- * The environment's cast, read from and edited in its draft: people on the caller's side who
- * speak on the call, and people and systems in the world who act through its actions. A saved
- * version changes only when the draft is saved from the Save bar. Each row opens what that actor
- * sees and never sees.
- */
+// Edits go to the draft; a version changes only when the draft is saved.
 export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
   const accept = useAcceptUnresolved(envId);
-  // A double click lands before the pending state disables the button: one request at a time, or the second is
-  // refused as an edit made elsewhere.
+  // One request at a time: a double click lands before the pending state disables the button.
   const sending = useRef(false);
   const once = (mutation, variables, options = {}) => {
     if (sending.current) return;
@@ -55,24 +49,22 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const [settings, setSettings] = useState(false);
   const upload = useUploadEnvironmentFile(envId);
   const [inUse, setInUse] = useState(null);
-  // The record and the revision it was read at, taken together when the form opens: a refresh under an open form must
-  // not move the revision, or a save would overwrite an edit it never saw.
+  // Pins the revision when the form opens so a refresh cannot move it under the open form.
   const [editing, setEditing] = useState(null);
+  const [uploadMoved, setUploadMoved] = useState(false);
   const openForm = (actor) => {
-    // An error from a remove belongs to that remove, not to the form opening now.
     edit.reset();
     setInUse(null);
+    setUploadMoved(false);
     setEditing({ actor, revision });
   };
-  // A new actor starts on its side's default way of joining, as the cast gives it.
   const addOn = (side) =>
     openForm({ side, channel: data.side_defaults[side].channel });
   const cast = data?.actors || [];
-  // Without a channel an actor cannot speak on the call, whatever side it is on: it acts in the world.
-  // One list: the caller, people beside them and people and systems in the world are all actors.
-  const revision = data?.revision ?? 0;
-  // A refused save moves the form onto the record the refusal refreshed. Its key stays, so what was typed stays too.
-  const conflicted = Boolean(editing) && edit.error?.error === "draft_changed";
+  const revision = data?.revision;
+  // On a refused save or upload the form moves onto the refreshed record, keeping what was typed.
+  const conflicted =
+    Boolean(editing) && (edit.error?.error === "draft_changed" || uploadMoved);
   const fresh = conflicted
     ? cast.find((one) => one.id === editing.actor.id)
     : null;
@@ -80,35 +72,38 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const form = conflicted
     ? { actor: fresh || editing.actor, revision }
     : editing;
-  // Read only once the cast has loaded: everything an actor can be given comes with it.
   const context = data && {
     actions: data.actions,
     channelOptions: data.channel_options,
-    loudnessRange: data.loudness.automatic,
+    fieldOptions: data.field_options,
+    loudness: data.loudness,
+    uploadRules: data.upload,
     idHint: data.id_hint,
     knowledgeSources: data.knowledge_sources,
     others: cast,
     actorModels: data.actor_models,
-    // Uploads a document into the draft and answers with where it was stored, so the form can pick it for this actor.
     upload: locked
       ? null
       : async (file) => {
-          // Sent at the open form's revision, so an edit made elsewhere since it opened is refused, not stepped over.
-          const next = await upload.mutateAsync({
-            file,
-            kind: "knowledge",
-            revision: editing ? editing.revision : revision,
-          });
-          // The upload is a draft change of its own: the form saves on top of it.
-          setEditing((open) => open && { ...open, revision: next.revision });
-          return next.uploaded_path;
+          try {
+            const next = await upload.mutateAsync({
+              file,
+              kind: "knowledge",
+              revision: form.revision,
+            });
+            setEditing((open) => open && { actor: form.actor, revision: next.revision });
+            setUploadMoved(false);
+            return next.uploaded_path;
+          } catch (failure) {
+            if (failure?.error === "draft_changed") setUploadMoved(true);
+            throw failure;
+          }
         },
   };
 
-  // Kept after the dialog closes, so its title doesn't blank while it fades out.
+  // Kept after close so the dialog title doesn't blank while it fades out.
   const [removing, setRemoving] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  // The cast says whether an actor can go and, when not, why: a scenario includes it, or another actor names it.
   const remove = (actor) => {
     if (!actor.removable) {
       setInUse(actor.removal_blocked_by.join(" "));
@@ -118,7 +113,6 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     setRemoving(actor);
     setConfirmRemove(true);
   };
-  // The ways of joining that have a loudness.
   const loudChannels = (data ? data.channel_options : [])
     .filter((one) => one.loudness)
     .map((one) => one.channel);
@@ -141,7 +135,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       />
     ));
 
-  // A cast already read stays on screen when a refresh fails; the revision check refuses an edit to a stale one.
+  // A cast already read stays on screen when a refresh fails.
   const failed = isError && !data;
   if (failed)
     return (
@@ -215,7 +209,6 @@ export default function WorldActorsPanel({ envId, locked = false }) {
                         >
                           {C.unresolved.accept}
                         </Button>
-                        {/* A point about no actor in the cast adds one, its side picked first. */}
                         {about ? (
                           <Button
                             size="small"
@@ -280,8 +273,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       </Button>
       <Collapse in={settings} unmountOnExit>
         <Stack spacing={2} sx={{ mt: 1 }}>
+          {/* Not keyed on the revision, so typed limits survive a cast refresh. */}
           <ActorLimits
-            key={revision}
             limits={data.limits}
             fields={data.limit_fields}
             models={data.actor_models}
@@ -309,11 +302,12 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         conflict={gone ? "removed" : conflicted ? "changed" : null}
         onClose={() => {
           setEditing(null);
+          setUploadMoved(false);
           edit.reset();
         }}
         onSave={(request, shareActions) => {
-          // A new save clears the refusal, so what it refreshed has to stay.
           setEditing(form);
+          setUploadMoved(false);
           once(
             edit,
             { ...request, revision: form.revision, shareActions },

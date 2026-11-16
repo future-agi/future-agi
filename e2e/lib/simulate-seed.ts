@@ -225,15 +225,8 @@ export interface HarnessEnvironmentSeed {
 }
 
 /**
- * Seeds an Environment as a finished build leaves it, then versions it with the
- * real backfill: agent, environment and suite versions, suite members and, when
- * `certified`, the pairing's certified bundle (every check passed, both tools
- * certified). Uncertified, the pairing has no bundle and its first check is a
- * validation. `productionOnly` names a tool the contract says reaches production.
- * `failedCheck` names an action an uncertified pairing's last validation failed on,
- * leaving its bundle failed by that check.
- * Refund scenarios use `lookup_order` and `issue_refund`; lookups use only
- * `lookup_order`. See e2e/lib/harness_environment_seed.py.
+ * Seeds a finished-build Environment and versions it with the real backfill; `certified` adds the pairing's bundle.
+ * See e2e/lib/harness_environment_seed.py.
  */
 export function seedHarnessEnvironment(opts: {
   organizationId: string;
@@ -245,9 +238,8 @@ export function seedHarnessEnvironment(opts: {
   failedCheck?: 'lookup_order' | 'issue_refund';
   /** The refunds include a world actor with no channel (Dana Brooks). */
   actors?: boolean;
-  /** One finished trial whose World changes hold a committed write and a read; `fault`: the refund was faulted by a
-   *  test condition instead; `actor`: the world actor also committed its approval during the call. */
-  trial?: boolean | 'fault' | 'actor';
+  /** One finished trial; the string variants pick its World changes (see harness_environment_seed.py). */
+  trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
   /** The contract's tools with their fields: inputs, units and what each returns. */
   toolDetail?: boolean;
 }): HarnessEnvironmentSeed {

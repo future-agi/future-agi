@@ -251,7 +251,7 @@ def test_a_file_only_the_evaluator_reads_is_never_uploaded_for_an_actor(
     )
 
 
-def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_replaces_the_file(
+def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_never_replaces_the_file(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "actor-upload-revision")
@@ -268,11 +268,10 @@ def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_replaces_
     again = _upload(
         auth_client, environment, "policy.md", b"second", expected_revision=1
     )
-    assert again.status_code == 200
-    assert again.json()["knowledge_sources"]["files"].count("knowledge/policy.md") == 1
+    assert (again.status_code, again.json()["error"]) == (409, "upload_exists")
+    assert again.json()["readers"] == []
     assert (
-        drafts.edit_sides(environment)["environment"]["knowledge/policy.md"]
-        == b"second"
+        drafts.edit_sides(environment)["environment"]["knowledge/policy.md"] == b"first"
     )
 
 

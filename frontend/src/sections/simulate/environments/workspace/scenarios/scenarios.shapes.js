@@ -36,7 +36,6 @@ export const SCENARIO_SHAPE = PropTypes.shape({
   critical: PropTypes.bool,
   persona: PERSONA_SHAPE,
   subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE),
-  // Each actor resolved against the cast: who they are, when they come in and how long the world waits for them.
   callActors: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string,
@@ -51,12 +50,10 @@ export const SCENARIO_SHAPE = PropTypes.shape({
       actions: PropTypes.arrayOf(PropTypes.object),
     }),
   ),
-  // Why the scenario cannot work as set, or null.
   doorProblem: PropTypes.shape({
     code: PropTypes.oneOf(["fault_unreachable", "actor_no_door"]),
     message: PropTypes.string,
   }),
-  // The scenario's test conditions, as its `faults` carry them.
   faults: PropTypes.arrayOf(
     PropTypes.shape({
       action: PropTypes.string,

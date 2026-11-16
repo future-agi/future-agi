@@ -1,5 +1,4 @@
-// The cast as `GET .../actors/` returns it: each actor typed, with what the server works out for it, and what an actor
-// can be given here. Every field the contract names is present, so a test states only what it is about.
+// The cast as `GET .../actors/` returns it, every contract field present.
 
 export const SILENT = {
   kind: "silent",
@@ -7,10 +6,7 @@ export const SILENT = {
   label: "Nothing happens",
 };
 
-/**
- * One typed actor. `trigger` and `fallback` go where the cast keeps them; `permissions` follow `permitted_actions`
- * (each still in the world) unless given.
- */
+/** `permissions` follow `permitted_actions` unless given. */
 export const typedActor = ({
   trigger = { kind: "always" },
   fallback = SILENT,
@@ -103,6 +99,7 @@ export const CHANNEL_OPTIONS = [
     loudness: false,
     trigger_kinds: WORLD_KINDS,
     required_fields: [],
+    cap_field: "max_turns",
   },
   {
     channel: "audio_mix",
@@ -110,6 +107,7 @@ export const CHANNEL_OPTIONS = [
     loudness: true,
     trigger_kinds: SPEAKING_KINDS,
     required_fields: ["role"],
+    cap_field: "max_lines",
   },
   {
     channel: "audio_handoff",
@@ -117,18 +115,53 @@ export const CHANNEL_OPTIONS = [
     loudness: false,
     trigger_kinds: SPEAKING_KINDS,
     required_fields: ["role"],
+    cap_field: "max_lines",
   },
 ];
 
+const limit = (key, kind, value = null, label = null) => ({
+  key,
+  kind,
+  default: value,
+  default_label: label,
+});
+
 export const LIMIT_FIELDS = [
-  { key: "max_active", kind: "whole" },
-  { key: "caller_takes_back_after_turns", kind: "whole" },
-  { key: "actor_seconds_per_call", kind: "seconds" },
-  { key: "max_messages", kind: "whole" },
-  { key: "live_turns_per_actor", kind: "whole" },
-  { key: "live_turns_per_trial", kind: "whole" },
-  { key: "model", kind: "model" },
+  limit("max_active", "whole", 2, "Default: 2"),
+  limit("caller_takes_back_after_turns", "whole"),
+  limit("actor_seconds_per_call", "seconds", 60, "Default: 60 s"),
+  limit("max_messages", "whole", 20, "Default: 20"),
+  limit("live_turns_per_actor", "whole", 10, "Default: 10"),
+  limit("live_turns_per_trial", "whole", 20, "Default: 20"),
+  limit("model", "model"),
 ];
+
+const option = (value, label) => ({ value, label });
+
+export const FIELD_OPTIONS = {
+  kind: [
+    option("person", "A person"),
+    option("approver", "An approver"),
+    option("agent", "Another agent"),
+    option("system", "A system"),
+  ],
+  play: [
+    option("mocked", "Only the actions each scenario gives them"),
+    option("live", "Decide their own actions when reached"),
+    option("both", "Both"),
+  ],
+  fallback_word: [
+    option("silent", "Nothing happens"),
+    option("decline", "They decline"),
+  ],
+  gender: [option("male", "Male"), option("female", "Female")],
+  age_group: [option("18-25", "18-25"), option("60+", "60+")],
+  accent: [option("American", "American"), option("Indian", "Indian")],
+  response_timing: [
+    option("immediate", "Straight away"),
+    option("delayed", "After a delay"),
+  ],
+};
 
 export const cast = (actors, extra = {}) => ({
   actors,
@@ -136,7 +169,20 @@ export const cast = (actors, extra = {}) => ({
   revision: 3,
   actions: ACTIONS,
   channel_options: CHANNEL_OPTIONS,
-  loudness: { automatic: [0.333, 0.667] },
+  field_options: FIELD_OPTIONS,
+  loudness: {
+    channels: ["audio_mix"],
+    automatic: [0.333, 0.667],
+    min: 0.05,
+    max: 1,
+    step: 0.05,
+    default: 0.5,
+  },
+  upload: {
+    formats: [".md", ".txt", ".json", ".csv"],
+    max_bytes: 1048576,
+    max_label: "1 MB",
+  },
   id_hint: "1 to 64 lowercase letters, digits or underscores.",
   knowledge_sources: { files: [], records: [] },
   actor_models: [],
@@ -149,7 +195,6 @@ export const cast = (actors, extra = {}) => ({
   ...extra,
 });
 
-// The server's verdict on an edit with nothing to fix.
 export const CLEAN = {
   problems: [],
   conflicts: [],

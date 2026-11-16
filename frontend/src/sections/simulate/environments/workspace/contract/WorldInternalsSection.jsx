@@ -15,28 +15,18 @@ const MONO = "ui-monospace, Menlo, monospace";
 
 /**
  * "World" internals on the Contract tab: the tables the world holds and the
- * tools the agent has, as the environment's detail states them. The tables are
- * the world's own (`world.tables`, harness tables left out), with their fields
- * when the build read them; each tool's status, where it runs and whether it is
- * reset between trials is `contract.tool_status`. Nothing is derived here.
+ * tools the agent has, as the environment's detail states them. Nothing is derived here.
  */
 export default function WorldInternalsSection({ env }) {
   const tables = env?.worldTables;
-  const tools = env?.tools || [];
-  const entrypoints = entrypointsByTool(env);
+  const tools = env?.toolStatus || [];
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
       {tables?.length > 0 && (
         <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
       )}
-      {tools.length > 0 && (
-        <ToolsCard
-          tools={tools}
-          entrypoints={entrypoints}
-          statuses={env?.toolStatus}
-        />
-      )}
+      {tools.length > 0 && <ToolsCard tools={tools} />}
     </Stack>
   );
 }
@@ -46,14 +36,6 @@ WorldInternalsSection.propTypes = {
   patch: PropTypes.func,
   locked: PropTypes.bool,
 };
-
-function entrypointsByTool(env) {
-  const out = {};
-  for (const e of env?.toolEntrypoints || []) {
-    if (e?.tool) out[e.tool] = e;
-  }
-  return out;
-}
 
 /* ── tables ─────────────────────────────────────────────────────────── */
 
@@ -211,7 +193,6 @@ function SchemaCard({ schema, totalRows }) {
   );
 }
 SchemaCard.propTypes = {
-  // The world's own tables: {name, rows, note, fields: [{name, type}]}.
   schema: PropTypes.arrayOf(
     PropTypes.shape({
       name: PropTypes.string.isRequired,
@@ -227,7 +208,7 @@ SchemaCard.propTypes = {
 
 /* ── tools ──────────────────────────────────────────────────────────── */
 
-// How each status reads on its chip, and its colour; `unknown` has no chip.
+// `unknown` has no chip.
 const STATUS_CHIP = {
   simulated: {
     label: T.labels.simulated,
@@ -246,7 +227,7 @@ const STATUS_CHIP = {
   },
 };
 
-function ToolsCard({ tools, entrypoints, statuses }) {
+function ToolsCard({ tools }) {
   const [openTool, setOpenTool] = useState(null);
   return (
     <SectionCard
@@ -270,21 +251,19 @@ function ToolsCard({ tools, entrypoints, statuses }) {
         }
       >
         {tools.map((tool) => {
-          const entry = entrypoints[tool.name];
-          const status = statuses?.find((one) => one.tool === tool.name);
-          const runsAt = status?.runs_at;
-          const chip = status && STATUS_CHIP[status.status];
-          const open = openTool === tool.name;
+          const runsAt = tool.runs_at;
+          const chip = STATUS_CHIP[tool.status];
+          const open = openTool === tool.tool;
           return (
-            <Box key={tool.name}>
+            <Box key={tool.tool}>
               <Stack
                 direction="row"
                 alignItems="center"
                 spacing={1.5}
-                onClick={() => setOpenTool(open ? null : tool.name)}
+                onClick={() => setOpenTool(open ? null : tool.tool)}
                 role="button"
                 aria-expanded={open}
-                aria-label={T.expand(tool.name)}
+                aria-label={T.expand(tool.tool)}
                 sx={{
                   px: 1.5,
                   minHeight: ROW_HEIGHT.default,
@@ -308,7 +287,7 @@ function ToolsCard({ tools, entrypoints, statuses }) {
                     minWidth: 220,
                   }}
                 >
-                  {tool.name}
+                  {tool.tool}
                 </Typography>
                 <Typography
                   sx={{
@@ -319,13 +298,13 @@ function ToolsCard({ tools, entrypoints, statuses }) {
                   }}
                   noWrap
                 >
-                  {tool.desc}
+                  {tool.description}
                 </Typography>
                 {chip && (
                   <Tooltip
                     arrow
                     title={
-                      status.status === "unsupported" ? T.unsupportedWhy : ""
+                      tool.status === "unsupported" ? T.unsupportedWhy : ""
                     }
                   >
                     <Box
@@ -373,7 +352,7 @@ function ToolsCard({ tools, entrypoints, statuses }) {
                 )}
               </Stack>
               <Collapse in={open}>
-                <ToolDetail tool={tool} entry={entry} status={status} />
+                <ToolDetail tool={tool} />
               </Collapse>
             </Box>
           );
@@ -383,13 +362,9 @@ function ToolsCard({ tools, entrypoints, statuses }) {
   );
 }
 
-// One tool's contract: its arguments with types and units, what it changes, when it refuses, what it needs first and
-// whether it is reset between trials.
-function ToolDetail({ tool, entry, status }) {
-  const args = tool.args || [];
-  const units = tool.argUnits || {};
-  const types = tool.argTypes || {};
-  const returned = Object.entries(tool.returns || {});
+function ToolDetail({ tool }) {
+  const args = tool.arguments;
+  const returned = tool.returns;
   const field = (label, body) => (
     <Box key={label} sx={{ display: "contents" }}>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -419,12 +394,12 @@ function ToolDetail({ tool, entry, status }) {
         T.arguments,
         args.length ? (
           <Stack spacing={0.25}>
-            {args.map((name) => (
+            {args.map((one) => (
               <Typography
-                key={name}
+                key={one.name}
                 sx={{ typography: "s1", fontFamily: MONO }}
               >
-                {inputLine(name, types[name], units[name])}
+                {inputLine(one.name, one.type, one.unit)}
               </Typography>
             ))}
           </Stack>
@@ -436,12 +411,12 @@ function ToolDetail({ tool, entry, status }) {
         T.returns,
         returned.length ? (
           <Stack spacing={0.25}>
-            {returned.map(([name, kind]) => (
+            {returned.map((one) => (
               <Typography
-                key={name}
+                key={one.name}
                 sx={{ typography: "s1", fontFamily: MONO }}
               >
-                {returnLine(name, kind)}
+                {returnLine(one.name, one.kind)}
               </Typography>
             ))}
           </Stack>
@@ -452,7 +427,10 @@ function ToolDetail({ tool, entry, status }) {
       {field(
         T.changes,
         <Stack spacing={0.25}>
-          {text(effectLabel(entry?.effect))}
+          {text(effectLabel(tool.effect))}
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {tool.tables.label}
+          </Typography>
           {tool.effects && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {tool.effects}
@@ -461,33 +439,44 @@ function ToolDetail({ tool, entry, status }) {
         </Stack>,
       )}
       {tool.refuses && field(T.refusesWhen, text(tool.refuses))}
-      {tool.requires?.length > 0 &&
+      {tool.requires.length > 0 &&
         field(T.needsFirst, text(tool.requires.join(", ")))}
-      {status &&
-        status.reset_between_trials !== null &&
+      {tool.reset_between_trials !== null &&
         field(
           T.resetLabel,
-          text(status.reset_between_trials ? T.reset : T.notReset),
+          text(tool.reset_between_trials ? T.reset : T.notReset),
         )}
     </Box>
   );
 }
-const TOOL_STATUS_SHAPE = PropTypes.shape({
+// One `contract.tool_status` entry.
+const TOOL_SHAPE = PropTypes.shape({
   tool: PropTypes.string.isRequired,
   status: PropTypes.oneOf(["simulated", "in_process", "unsupported", "unknown"])
     .isRequired,
   reset_between_trials: PropTypes.bool,
   runs_at: PropTypes.string,
   writes: PropTypes.bool,
+  description: PropTypes.string.isRequired,
+  arguments: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string,
+      type: PropTypes.string,
+      unit: PropTypes.string,
+    }),
+  ).isRequired,
+  returns: PropTypes.arrayOf(
+    PropTypes.shape({ name: PropTypes.string, kind: PropTypes.string }),
+  ).isRequired,
+  requires: PropTypes.arrayOf(PropTypes.string).isRequired,
+  refuses: PropTypes.string.isRequired,
+  effect: PropTypes.oneOf(["read", "write", "unknown"]).isRequired,
+  effects: PropTypes.string.isRequired,
+  tables: PropTypes.shape({ label: PropTypes.string.isRequired }).isRequired,
 });
 ToolDetail.propTypes = {
-  tool: PropTypes.object.isRequired,
-  entry: PropTypes.object,
-  status: TOOL_STATUS_SHAPE,
+  tool: TOOL_SHAPE.isRequired,
 };
 ToolsCard.propTypes = {
-  tools: PropTypes.array,
-  entrypoints: PropTypes.object,
-  // Per contract tool, as the environment's detail states it; absent before the detail is ready.
-  statuses: PropTypes.arrayOf(TOOL_STATUS_SHAPE),
+  tools: PropTypes.arrayOf(TOOL_SHAPE).isRequired,
 };

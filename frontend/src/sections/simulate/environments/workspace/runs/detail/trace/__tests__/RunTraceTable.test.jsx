@@ -399,7 +399,10 @@ describe("RunTraceTable", () => {
     expect(onQueryChange).toHaveBeenLastCalledWith(base);
     // What it reports is what it asked the list for — the drawer reads the
     // same cache entry.
-    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", base);
+    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", {
+      ...base,
+      keepPrevious: true,
+    });
 
     await user.click(screen.getByRole("button", { name: /Group by/ }));
     await user.click(screen.getByRole("menuitem", { name: "Status" }));
@@ -490,11 +493,13 @@ describe("RunTraceTable", () => {
       },
     }));
     const { rerender } = renderTable();
+    // `keepPrevious` keeps the last facets while the next page loads.
     useRunCalls.mockImplementation((...args) => ({
       ...base(...args),
-      tasks: [],
-      groups: [],
-      facets: {},
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
       isLoading: true,
     }));
     rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);

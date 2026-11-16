@@ -22,11 +22,10 @@ export const toRun = (raw) => ({
   agentVersion: toVersionRef(raw.agent_version),
   passed: raw.outcome_passed ?? null,
   failed: raw.outcome_failed ?? null,
-  // Calls that errored or got no score: never in the rate, so shown beside it.
   errored: raw.outcome_errored ?? null,
   noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
-  // The server's rate, passed over passed plus failed (null when nothing was scored), and its base.
+  // Null when nothing was scored.
   passRate: raw.pass_rate,
   scored: raw.scored,
   startedAt: raw.started_at ?? null,

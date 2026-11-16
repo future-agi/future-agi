@@ -4,6 +4,7 @@ read, and the id a new actor is given."""
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 import unicodedata
 from typing import Any, Literal, NotRequired, TypedDict, cast
@@ -18,18 +19,22 @@ from simulate.services.harness_actor_fields import (
     typed_fields,
     written_fact,
 )
+from simulate.services.harness_actor_labels import cap_field
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     ActorRecord,
     ActorRules,
     RecordSource,
+    mapping_of,
+    text_of,
 )
 from simulate.types import CallActorTrigger
 
 
 class ResponseTimingChange(TypedDict):
     kind: Literal["immediate", "delayed"]
-    seconds: NotRequired[float]
+    # Null or left out on a delay: it answers straight away.
+    seconds: NotRequired[float | None]
 
 
 class ActorChanges(TypedDict, total=False):
@@ -59,7 +64,8 @@ class ActorChanges(TypedDict, total=False):
     permitted_actions: list[str]
     play: str
     trigger: CallActorTrigger
-    timeout_seconds: float
+    # Null: it never waits.
+    timeout_seconds: float | None
     fallback: str
     fallback_arguments: dict[str, object] | None
     model: str | None
@@ -75,18 +81,43 @@ VOICE_FIELDS = ("gender", "age_group", "accent")
 ACTIVATION_FIELDS = ("trigger", "timeout_seconds", "fallback", "fallback_arguments")
 
 
+# The record fields each patch field is written into.
+_RECORD_FIELD = {
+    **dict.fromkeys(VOICE_FIELDS, "persona"),
+    **dict.fromkeys(CONSTRAINT_FIELDS, "constraints"),
+    **dict.fromkeys(("facts", "files", "records"), "knowledge"),
+    **dict.fromkeys(("style", "response_timing"), "behaviour"),
+    **dict.fromkeys(ACTIVATION_FIELDS, "activation"),
+}
+
+
+def touched_fields(changes: ActorChanges) -> set[str]:
+    """The record fields a patch writes: what a check of the edit is about."""
+    return {_RECORD_FIELD.get(name, name) for name in changes}
+
+
 # An id made from a name keeps room for a `_<n>` that makes it unique.
 _ID_BASE_CHARS = 60
+# How much of a name's hash an id made from a name in another script carries.
+_ID_HASH_CHARS = 8
 
 
 def id_from(name: str, taken: set[str]) -> str:
     """An id made from a name, unique among `taken` (`sam_lee`, then `sam_lee_2`): lower case, accents dropped, every
-    run of other characters one underscore."""
-    folded = unicodedata.normalize("NFKD", (name or "actor").lower())
+    run of other characters one underscore. A name with no letter an id can hold (one in another script) is `actor_`
+    and a short hash of the name, so it is the same each time and two such names differ."""
+    folded = unicodedata.normalize("NFKD", (name or "").strip().lower())
     plain = "".join(
         one for one in folded if not unicodedata.category(one).startswith("M")
     )
-    base = (re.sub(r"[^a-z0-9]+", "_", plain).strip("_") or "actor")[:_ID_BASE_CHARS]
+    base = re.sub(r"[^a-z0-9]+", "_", plain).strip("_")[:_ID_BASE_CHARS]
+    if not base:
+        named = (name or "").strip()
+        base = (
+            f"actor_{hashlib.sha256(named.encode('utf-8')).hexdigest()[:_ID_HASH_CHARS]}"
+            if named
+            else "actor"
+        )
     made, count = base, 2
     while made in taken:
         made, count = f"{base}_{count}", count + 1
@@ -247,12 +278,7 @@ def replaced_record(
 ) -> ActorRecord:
     """A whole record sent to replace the stored one, kept lossless for a client that sends back what it read.
 
-    What only a read adds is dropped. A field sent back exactly as a read shows it keeps its stored value (its
-    untyped keys, or its absence, included); a field sent changed is the client's, keeping the stored keys a read
-    never shows inside `persona` and `activation`, and each knowledge entry it sends back unchanged. Knowledge the
-    record leaves out is kept, as is a stored field a read never shows; any other field a read shows and the record
-    leaves out is removed, as a replace removes it.
-    """
+    A field sent back exactly as read keeps its stored value; stored fields a read never shows are kept."""
     shown: dict[str, object] = dict(typed_fields(stored, defaults))
     kept: dict[str, Any] = dict(stored)
     record: dict[str, Any] = {}
@@ -289,9 +315,9 @@ def _merge_who(
     channel with a loudness keeps one."""
     if "name" in sent:
         record["name"] = sent["name"].strip()
-        if str((stored.get("persona") or {}).get("name") or "").strip():
+        if str(mapping_of(stored.get("persona")).get("name") or "").strip():
             record["persona"] = {
-                **(stored.get("persona") or {}),
+                **mapping_of(stored.get("persona")),
                 "name": record["name"],
             }
     if "role" in sent:
@@ -306,6 +332,7 @@ def _merge_who(
             record["channel"] = sent["channel"]
         else:
             record.pop("channel", None)
+    _move_cap(record, stored, sent)
     if ("channel" in sent or "loudness_ratio" in sent) and (
         record.get("channel") or stored.get("loudness_ratio") is not None
     ):
@@ -316,14 +343,29 @@ def _merge_who(
         )
 
 
+def _move_cap(
+    record: dict[str, Any], stored: ActorRecord, sent: dict[str, Any]
+) -> None:
+    """A change of the way the actor joins moves its own cap to the field that counts there (lines for one who speaks,
+    turns for one in the world), so the cap is never kept where nothing reads or shows it. A cap sent in this edit is
+    the edit's."""
+    before = cap_field(text_of(stored.get("channel")) or None)
+    after = cap_field(text_of(record.get("channel")) or None)
+    if "channel" not in sent or before == after or before in sent:
+        return
+    value = record.pop(before, None)
+    if value is not None and after not in sent:
+        record[after] = value
+
+
 def _merge_voice(
     record: dict[str, Any], stored: ActorRecord, sent: dict[str, Any]
 ) -> None:
     """The persona fields the voice is picked from; one sent empty is removed."""
     if not any(name in sent for name in VOICE_FIELDS):
         return
-    before = stored.get("persona") or {}
-    persona = dict(record.get("persona") or {})
+    before = mapping_of(stored.get("persona"))
+    persona = dict(mapping_of(record.get("persona")))
     for name in VOICE_FIELDS:
         value = sent.get(name, before.get(name) or "")
         if value:
@@ -340,7 +382,7 @@ def _merge_knowledge(
     """Constraints, facts, files and record collections."""
     sent_constraints = [name for name in CONSTRAINT_FIELDS if name in sent]
     if sent_constraints:
-        constraints = dict(stored.get("constraints") or {})
+        constraints = dict(mapping_of(stored.get("constraints")))
         for name in sent_constraints:
             constraints[name] = _lines(sent[name])
         record["constraints"] = constraints
@@ -361,14 +403,15 @@ def _merge_behaviour(
     """How the actor talks and how soon it answers."""
     if "style" not in sent and "response_timing" not in sent:
         return
-    behaviour = dict(stored.get("behaviour") or {})
+    behaviour = dict(mapping_of(stored.get("behaviour")))
     if "style" in sent:
         behaviour["style"] = sent["style"]
     if "response_timing" in sent:
         timing = sent["response_timing"]
+        # A delay left empty is none: it answers straight away.
         behaviour["response_timing"] = (
-            {"kind": "delayed", "seconds": float(timing.get("seconds") or 0)}
-            if timing["kind"] == "delayed"
+            {"kind": "delayed", "seconds": float(timing["seconds"])}
+            if timing["kind"] == "delayed" and timing.get("seconds") is not None
             else {"kind": "immediate", "seconds": 0}
         )
     record["behaviour"] = behaviour
@@ -381,7 +424,7 @@ def _merge_activation(
     they are sent too."""
     if not any(name in sent for name in ACTIVATION_FIELDS):
         return
-    before = stored.get("activation") or {}
+    before = mapping_of(stored.get("activation"))
     activation = dict(before)
     if "trigger" in sent:
         activation["trigger"] = dict(sent["trigger"])

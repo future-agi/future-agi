@@ -4,28 +4,25 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from simulate.models import HostedHarnessJob
+from simulate.services.harness_actor_fields import knowledge_of
+from simulate.services.harness_actor_options import size_label
 from simulate.services.harness_actor_reads import Cast
-from simulate.services.harness_actor_rules import actor_rules, readable_file
+from simulate.services.harness_actor_rules import (
+    UPLOAD_KINDS,
+    UPLOAD_MAX_BYTES,
+    ActorRecord,
+    actor_rules,
+    cast_records,
+    readable_file,
+)
 from simulate.services.harness_actors import draft_read, written_cast
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
     from accounts.models.user import User
-
-# What a person may upload into an environment draft, by kind: the folder it lands in and the formats it may be. A
-# later kind (seed data, recordings) adds one entry here and a reader where it is used, nothing else.
-UPLOAD_KINDS: dict[str, dict[str, Any]] = {
-    # Documents an actor may be given to read (a policy, a price list), picked per actor like any environment file.
-    "knowledge": {"folder": "knowledge/", "formats": (".md", ".txt", ".json", ".csv")},
-}
-
-
-# An upload's size bound: an actor is given at most the start of a file, so a larger one only costs storage.
-UPLOAD_MAX_BYTES = 1024 * 1024
-
 
 _UPLOAD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$")
 
@@ -39,16 +36,10 @@ def upload_environment_file(
     user: User | None,
     expected_revision: int | None,
 ) -> tuple[Cast, str]:
-    """Put one uploaded file into the environment draft under its kind's folder and return the cast, whose knowledge
-    sources then list it, and the path the file was stored at. A file of the same name is replaced. Refuses
-    `upload_kind_unknown`, `upload_invalid` (400) and `draft_changed` (409)."""
-    spec = UPLOAD_KINDS.get(kind)
-    if spec is None:
-        raise HostedHarnessError(
-            "upload_kind_unknown",
-            f"{kind!r} is not a kind of upload; one of {', '.join(sorted(UPLOAD_KINDS))}",
-            status_code=400,
-        )
+    """Put one uploaded file into the environment draft and return the cast and the stored path.
+
+    Never replaces a file: refuses `upload_exists` (409), `upload_invalid` (400) and `draft_changed` (409)."""
+    spec = UPLOAD_KINDS[kind]
     base = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
     problems = []
     if not _UPLOAD_NAME.match(base):
@@ -60,7 +51,7 @@ def upload_environment_file(
     if not content:
         problems.append("the file is empty")
     if len(content) > UPLOAD_MAX_BYTES:
-        problems.append(f"the file is larger than {UPLOAD_MAX_BYTES // 1024} KB")
+        problems.append(f"the file is larger than {size_label(UPLOAD_MAX_BYTES)}")
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -85,7 +76,30 @@ def upload_environment_file(
             f"{base}: an actor may not be given a file by this name; rename it",
             status_code=400,
         )
+    if path in environment_files:
+        raise _taken(base, path, cast_records(environment_files))
     cast = written_cast(
         environment, {**environment_files, path: content}, suite_files, refs, user
     )
     return cast, path
+
+
+def _taken(base: str, path: str, actors: list[ActorRecord]) -> HostedHarnessError:
+    """Why a file of a name the draft holds is not replaced: the actors given it would read the new one unasked."""
+    readers = [
+        str(one.get("name") or one.get("id") or "")
+        for one in actors
+        if path in knowledge_of(one)[1]
+    ]
+    return HostedHarnessError(
+        "upload_exists",
+        f"This environment already has a file named {base}"
+        + (
+            f", which {', '.join(readers)} {'reads' if len(readers) == 1 else 'read'}"
+            if readers
+            else ""
+        )
+        + "; rename the file to upload it",
+        status_code=409,
+        details={"readers": readers},
+    )

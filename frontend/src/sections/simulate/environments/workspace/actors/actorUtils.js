@@ -1,5 +1,3 @@
-import { genderLabel } from "../scenarios/personaLabels";
-
 export const lines = (value) =>
   (value || "")
     .split("\n")
@@ -8,38 +6,16 @@ export const lines = (value) =>
 
 export const words = (key) => key.replace(/_/g, " ");
 
-// A view value as a person reads it: lists joined, objects as "field: value" pairs, never raw JSON. A typed entry
-// reads as its content (a fact's text), and a `kind` tag as its value alone.
-export const readable = (value) => {
-  if (value == null) return "";
-  if (Array.isArray(value))
-    return value.map(readable).filter(Boolean).join("; ");
-  if (typeof value === "object") {
-    if (typeof value.text === "string") return value.text;
-    return Object.entries(value)
-      .map(([key, one]) => [key, readable(one)])
-      .filter(([, one]) => one)
-      .map(([key, one]) => (key === "kind" ? one : `${words(key)}: ${one}`))
-      .join(" · ");
-  }
-  return String(value);
-};
+// Keeps the starting value listed so a select never goes blank on it.
+export const withStart = (options, start, label = start) =>
+  start && !options.some((one) => one.value === start)
+    ? [...options, { value: start, label }]
+    : options;
 
-// A persona's own label already says what it is, so its voice fields read as values, as the actor's row shows them.
-export const seenValue = (input, value) => {
-  if (input !== "actor.persona" || !value || typeof value !== "object")
-    return readable(value);
-  const { name, gender, age_group: age, accent, ...rest } = value;
-  return [name, genderLabel(gender), age, accent, readable(rest)]
-    .filter(Boolean)
-    .join(" · ");
-};
-
-// The "Comes in" choice for a stored trigger the form cannot make (the cast says so per actor): kept as it is.
+// "Comes in" choice for a stored trigger the form cannot make; it is kept as is.
 export const KEPT = "kept";
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
-// The persona fields an actor's voice is picked from.
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
 const TRIGGER_FIELDS = [
   "mode",
@@ -51,16 +27,13 @@ const TRIGGER_FIELDS = [
   "triggerWhere",
 ];
 
-// A nullable value as an input holds it.
 const typed = (value) => (value == null ? "" : value);
 
-// Empty is no value of its own; the server says when a field needs one.
 const orNull = (text) => (String(text).trim() === "" ? null : text);
 const numberOrNull = (text) =>
   String(text).trim() === "" ? null : Number(text);
 
-// The trigger the form's fields make. Only read once `whereProblem` has nothing to say, so the text is a JSON object.
-// A number goes as typed, and an emptied one as null: the server says when one is out of range or missing.
+// Call only once `whereProblem` is "", so `triggerWhere` parses.
 export const triggerOf = (read) => {
   switch (read("mode")) {
     case "on_tool":
@@ -81,7 +54,6 @@ export const triggerOf = (read) => {
         seconds: numberOrNull(read("triggerSeconds")),
       };
     case "conditional": {
-      // Blank or spaces is no match at all.
       const where = String(read("triggerWhere")).trim();
       return {
         kind: "conditional",
@@ -94,7 +66,6 @@ export const triggerOf = (read) => {
   }
 };
 
-// Why the form's conditional "where" is not yet JSON the request can carry, or "".
 export const whereProblem = (text) => {
   if (!String(text || "").trim()) return "";
   try {
@@ -107,7 +78,7 @@ export const whereProblem = (text) => {
   }
 };
 
-// A fallback action's arguments as typed: a JSON object, `{}` when empty; null when the text is not one.
+// `{}` when empty; null when the text is not a JSON object.
 export const parsedArguments = (text) => {
   if (!String(text ?? "").trim()) return {};
   try {
@@ -120,13 +91,11 @@ export const parsedArguments = (text) => {
   }
 };
 
-// The fallback as the form's choice holds it: its kind and value together, so a picked action and a picked actor are
-// told apart by the list they were picked from, never by guessing. `silent:silent`, `action:<id>`, `actor:<id>`.
+// `silent:silent`, `action:<id>` or `actor:<id>`, so an action and an actor with one id stay apart.
 export const fallbackKey = ({ kind, value }) => `${kind}:${value}`;
 const fallbackValue = (key) => key.slice(key.indexOf(":") + 1);
 export const fallbackActs = (key) => key.startsWith("action:");
 
-// What a new actor's form starts from: nothing is sent for a field left as it is, so the service's defaults apply.
 const NEW_FIELDS = {
   id: "",
   name: "",
@@ -166,9 +135,7 @@ const NEW_FIELDS = {
   max_lines: "",
 };
 
-// What each form field starts from, read from the cast's typed actor.
 export const initialFields = (actor) => {
-  // A new actor starts on its side's default way of joining.
   if (!actor?.id) return { ...NEW_FIELDS, channel: typed(actor?.channel) };
   const { activation, behaviour, constraints } = actor;
   const { trigger } = activation;
@@ -196,7 +163,6 @@ export const initialFields = (actor) => {
     permitted: actor.permitted_actions,
     play: actor.play,
     mode: actor.editable_trigger ? trigger.kind : KEPT,
-    // A trigger keeps only its own kind's keys; another kind's field starts where a new actor's does.
     triggerTool: "tool" in trigger ? trigger.tool : NEW_FIELDS.triggerTool,
     triggerWords:
       "words" in trigger ? trigger.words.join(", ") : NEW_FIELDS.triggerWords,
@@ -229,24 +195,16 @@ const differs = (one, other) =>
     ? JSON.stringify(one) !== JSON.stringify(other)
     : String(one ?? "").trim() !== String(other ?? "").trim();
 
-// Whether anything typed differs from where it started; typing something and deleting it again is no change.
 export const hasEdits = (actor, fields) => {
   const start = initialFields(actor);
   return Object.keys(fields).some((name) => differs(fields[name], start[name]));
 };
 
-/**
- * The typed patch a save sends: only the fields the person really edited, by the request's own names. The service
- * merges it into the stored record and keeps everything it does not name. A new actor also carries the side it was
- * added on.
- * @param {Object} actor The cast's actor the form is editing; `{side}` for a new one.
- * @param {Object} fields What the form holds, by field name, for the fields touched.
- */
+/** Only the edited fields, by request name; the service merges them. `actor` is `{side}` for a new one. */
 export const changesOf = (actor, fields) => {
   const start = initialFields(actor);
   const edited = (name) => name in fields && differs(fields[name], start[name]);
   const read = (name) => (name in fields ? fields[name] : start[name]);
-  // A new actor carries its side, and the way of joining it started on unless that was changed below.
   const changes = actor?.id
     ? {}
     : {
@@ -277,7 +235,8 @@ export const changesOf = (actor, fields) => {
   if (edited("timing") || edited("seconds"))
     changes.response_timing = {
       kind: read("timing"),
-      seconds: read("timing") === "delayed" ? numberOrNull(read("seconds")) : 0,
+      seconds:
+        read("timing") === "delayed" ? numberOrNull(read("seconds")) : null,
     };
   if (edited("permitted")) changes.permitted_actions = read("permitted");
   if (edited("play")) changes.play = read("play");
@@ -298,13 +257,24 @@ export const changesOf = (actor, fields) => {
   return changes;
 };
 
-// Which form field a server problem is about, by the request field it names; one not listed is shown above Save.
+// Request field to form field; a problem on an unlisted one shows above Save.
 export const PROBLEM_FIELDS = {
   id: "id",
   name: "name",
   role: "role",
   channel: "channel",
+  gender: "gender",
+  age_group: "age_group",
+  accent: "accent",
+  loudness_ratio: "loudness_ratio",
   kind: "kind",
+  parent: "parent",
+  goal: "goal",
+  may_agree: "may_agree",
+  private: "private",
+  escalate_when: "escalate_when",
+  stop_when: "stop_when",
+  style: "style",
   facts: "facts",
   files: "files",
   records: "records",
@@ -319,3 +289,33 @@ export const PROBLEM_FIELDS = {
   max_turns: "max_turns",
   max_lines: "max_lines",
 };
+
+const MORE_DETAILS = [...CONSTRAINTS, "parent", "goal", "style"];
+
+// A server problem on a field not in this set shows above Save.
+export const fieldsOnScreen = (read, { capField, loud, models, more }) =>
+  new Set([
+    ...[
+      "id",
+      "name",
+      "role",
+      "channel",
+      "kind",
+      "facts",
+      "files",
+      "records",
+      "permitted",
+      "play",
+      "mode",
+      "timeout",
+      "fallback",
+      "timing",
+    ],
+    ...(capField ? [capField] : []),
+    ...(read("channel") ? VOICE_FIELDS : []),
+    ...(read("channel") && loud ? ["loudness_ratio"] : []),
+    ...(read("timing") === "delayed" ? ["seconds"] : []),
+    ...(fallbackActs(read("fallback")) ? ["fallback_arguments"] : []),
+    ...(models ? ["model"] : []),
+    ...(more ? MORE_DETAILS : []),
+  ]);

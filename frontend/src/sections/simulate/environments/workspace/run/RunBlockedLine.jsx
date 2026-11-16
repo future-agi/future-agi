@@ -3,8 +3,6 @@ import { useState } from "react";
 import { Alert, Button, Collapse, Stack, Typography } from "@mui/material";
 import { RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 
-// The tools this controlled test blocks, as one line with how many chosen scenarios they hold back, and each tool's
-// scenarios under Details. Nothing when the plan blocks nothing.
 export default function RunBlockedLine({ blockedTools, heldBack }) {
   const [open, setOpen] = useState(false);
   if (!blockedTools.length) return null;
@@ -46,7 +44,6 @@ export default function RunBlockedLine({ blockedTools, heldBack }) {
 }
 
 RunBlockedLine.propTypes = {
-  // The plan's blocked tools, each with the chosen scenarios that need it.
   blockedTools: PropTypes.arrayOf(
     PropTypes.shape({
       tool: PropTypes.string.isRequired,
@@ -55,6 +52,5 @@ RunBlockedLine.propTypes = {
       ).isRequired,
     }),
   ).isRequired,
-  // The chosen scenarios that need a blocked tool.
   heldBack: PropTypes.number.isRequired,
 };

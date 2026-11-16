@@ -89,7 +89,7 @@ describe("AgentOverviewTab", () => {
     ).toHaveTextContent("30% 3/10");
   });
 
-  it("shows errored and unscored calls beside a rate they are left out of", () => {
+  it("says errored calls are in the rate and unscored calls are not", () => {
     runsState.current = loaded([
       {
         ...ENVIRONMENT_RUN,
@@ -97,14 +97,14 @@ describe("AgentOverviewTab", () => {
         outcome_failed: 0,
         outcome_errored: 9,
         outcome_no_score: 2,
-        pass_rate: 100,
-        scored: 1,
+        pass_rate: 10,
+        scored: 10,
       },
     ]);
     renderTab();
     expect(
       screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
-    ).toHaveTextContent("100% 1/1 · 9 errored, 2 no score");
+    ).toHaveTextContent("10% 1/10 · 9 errored, 2 no score, not in the rate");
   });
 
   it("marks a running Simulate run and gives it no pass rate", () => {

@@ -237,12 +237,9 @@ def preview_run(
     scenario_keys: list[str] | None = None,
     hidden: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """The versions a run of ``picks`` would use, its warnings, whether its bundle is
-    cached (``None`` when the run is not assembled) and whether a run of
-    ``scenario_keys`` (None: every scenario) would start, with the production-only
-    tools it meets; ``hidden`` scenarios, which the caller may not read, are left out
-    of both. Without versioning the versions are all ``None`` and there are no
-    warnings; the verdict is the same."""
+    """The versions a run of ``picks`` would use, its warnings, whether its bundle
+    is cached (``None`` when the run is not assembled) and ``run_verdict`` for
+    ``scenario_keys``; without versioning only the verdict is filled."""
     from simulate.services.harness_tool_reach import run_verdict
 
     pins = resolve_run_pins(environment, picks=picks)

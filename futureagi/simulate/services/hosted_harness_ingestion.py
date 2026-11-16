@@ -28,6 +28,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -1249,10 +1250,7 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
-    """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
-    sub-goal not applicable, inconclusive, or a mix of the two, and no evaluation decided. An execution
-    error stays an error.
-    """
+    """The receipt's status, or no_score when no sub-goal or evaluation passed or failed; an error stays an error."""
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
@@ -1278,12 +1276,25 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
 SUB_GOAL_PASSED: dict[str | None, bool] = {"pass": True, "fail": False}
 
 
+# The reason prefixes the harness gives a sub-goal it did not decide (its `verdict_named`).
+_UNDECIDED_PREFIXES = {"Unmeasured: ": "unmeasured", "Inconclusive: ": "inconclusive"}
+
+
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
-    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`, and an
+    undecided one without a verdict from its reason's prefix, as the harness names it."""
     if goal.get("verdict"):
         return str(goal["verdict"])
     if not isinstance(goal.get("held"), bool):
-        return None
+        reason = str(goal.get("reason") or "")
+        return next(
+            (
+                named
+                for prefix, named in _UNDECIDED_PREFIXES.items()
+                if reason.startswith(prefix)
+            ),
+            None,
+        )
     return "pass" if goal["held"] else "fail"
 
 
@@ -1534,6 +1545,7 @@ def _call_actor_record(raw: object) -> CallCallActors | None:
 
 
 _START_STATES = ("seeded", "differs", "unknown")
+_START_BASELINES = ("sealed_seed", "first_trial")
 
 
 def _shown_record(row: object) -> object:
@@ -1600,6 +1612,11 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
             "tables": [
                 str(one) for one in start.get("tables") or [] if isinstance(one, str)
             ][:MAX_RECORDED_ENTRIES],
+            **(
+                {"against": start["against"]}
+                if start.get("against") in _START_BASELINES
+                else {}
+            ),
         }
     return kept
 
@@ -1672,9 +1689,11 @@ def _ingest_hosted_transcript(
             # What the person should know about how the trial ran, e.g. a fault that did not take effect.
             notices = payload.get("notices") if isinstance(payload, dict) else None
             notices = [
+                # A fault's notice names its action, call and mode; evidence_incomplete counts the pieces instead.
                 {
                     key: one.get(key)
-                    for key in ("code", "message", "action", "on_call", "mode")
+                    for key in ("code", "message", "action", "on_call", "mode", "count")
+                    if key in one
                 }
                 for one in _entries(notices)
                 if isinstance(one.get("message"), str)
@@ -1764,7 +1783,7 @@ def _ingest_hosted_transcript(
                 else:
                     metadata.pop(STARTED_BY_KEY, None)
             return _placed_world_actions(metadata, base_time)
-        rows: list[CallTranscript] = []
+        rows: list[SpokenTurn] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
             # (``started_speaking_at`` / ``stopped_speaking_at`` in epoch
@@ -1839,41 +1858,45 @@ def _ingest_hosted_transcript(
                     # Older guests emit no timing; preserve turn order only.
                     start_ms = index
                     end_ms = index
+                spoken_by_actor = role == CallTranscript.SpeakerRole.ACTOR
                 rows.append(
-                    CallTranscript.spoken(
-                        call_execution=call,
-                        speaker_role=role if role in valid_roles else "unknown",
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call,
+                            speaker_role=role if role in valid_roles else "unknown",
+                            content=str(content),
+                            start_time_ms=start_ms,
+                            end_time_ms=end_ms,
+                        ),
                         speaker_name=(
                             str(message.get("name") or "")[:255]
-                            if role == CallTranscript.SpeakerRole.ACTOR
+                            if spoken_by_actor
                             else ""
                         ),
                         actor_id=(
                             str(message.get("actor") or "")[:255] or None
-                            if role == CallTranscript.SpeakerRole.ACTOR
+                            if spoken_by_actor
                             else None
                         ),
-                        content=str(content),
-                        start_time_ms=start_ms,
-                        end_time_ms=end_ms,
                     )
                 )
         if not rows and isinstance(payload, dict) and payload.get("transcript"):
             rows.append(
-                CallTranscript(
-                    call_execution=call,
-                    speaker_role=CallTranscript.SpeakerRole.UNKNOWN,
-                    content=str(payload["transcript"]),
+                SpokenTurn(
+                    row=CallTranscript(
+                        call_execution=call,
+                        speaker_role=CallTranscript.SpeakerRole.UNKNOWN,
+                        content=str(payload["transcript"]),
+                    )
                 )
             )
         # Transcript text columns reject U+0000 and lone surrogates as JSONB does.
         validate_jsonb_strings(
-            [row.content for row in rows], field="transcript artifact"
+            [turn.row.content for turn in rows], field="transcript artifact"
         )
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
-            CallTranscript.objects.bulk_create(rows)
-            CallTranscript.create_actor_turns(rows)
+            store_transcript(rows)
         return _placed_world_actions(metadata, base_time)
     finally:
         if response is not None:

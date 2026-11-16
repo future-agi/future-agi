@@ -2,51 +2,59 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "src/utils/test-utils";
 import WorldInternalsSection from "../WorldInternalsSection";
 
+const NOT_RECORDED =
+  "Which tables it reads and changes is not recorded for this environment version";
 const status = (tool, value, extra = {}) => ({
   tool,
   status: value,
   reset_between_trials: null,
   runs_at: null,
   writes: false,
+  description: "",
+  arguments: [],
+  returns: [],
+  requires: [],
+  refuses: "",
+  effect: "unknown",
+  effects: "",
+  tables: { recorded: false, read: [], changed: [], label: NOT_RECORDED },
   ...extra,
 });
 
-// One tool's row with its contract under it.
 const toolOf = (name) =>
   screen.getByRole("button", { name: `Show the contract of ${name}` })
     .parentElement;
 
 const env = {
-  tools: [
-    {
-      name: "issue_refund",
-      desc: "Refunds a charge.",
-      args: ["refund_amount", "order_id"],
-      argTypes: { refund_amount: "number", order_id: "string" },
-      argUnits: { refund_amount: "cents, USD" },
-      returns: { refund_id: "string", amount: "integer, cents, USD" },
-      refuses: "the order is older than 30 days",
-      effects: "adds a refund row and marks the order refunded",
-      requires: ["lookup_order"],
-    },
-    { name: "summarise", desc: "Summarises the call.", args: [] },
-  ],
-  toolEntrypoints: [
-    {
-      tool: "issue_refund",
-      mode: "service",
-      endpoint: "orders/refund",
-      effect: "write",
-    },
-    { tool: "summarise", mode: "unreachable" },
-  ],
   toolStatus: [
     status("issue_refund", "simulated", {
       reset_between_trials: true,
       runs_at: "orders POST /orders/refund",
       writes: true,
+      description: "Refunds a charge.",
+      arguments: [
+        { name: "refund_amount", type: "number", unit: "cents, USD" },
+        { name: "order_id", type: "string", unit: null },
+      ],
+      returns: [
+        { name: "refund_id", kind: "string" },
+        { name: "amount", kind: "integer, cents, USD" },
+      ],
+      refuses: "the order is older than 30 days",
+      effects: "adds a refund row and marks the order refunded",
+      requires: ["lookup_order"],
+      effect: "write",
+      tables: {
+        recorded: true,
+        read: ["orders"],
+        changed: ["refunds", "orders"],
+        label: "Reads orders; changes refunds, orders",
+      },
     }),
-    status("summarise", "in_process", { reset_between_trials: false }),
+    status("summarise", "in_process", {
+      reset_between_trials: false,
+      description: "Summarises the call.",
+    }),
   ],
 };
 
@@ -115,6 +123,9 @@ describe("WorldInternalsSection tools", () => {
     expect(detail.getByText("Changes")).toBeInTheDocument();
     expect(screen.getByText("Can change records")).toBeInTheDocument();
     expect(
+      screen.getByText("Reads orders; changes refunds, orders"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText("adds a refund row and marks the order refunded"),
     ).toBeInTheDocument();
     expect(
@@ -137,25 +148,19 @@ describe("WorldInternalsSection tools", () => {
       screen.getByRole("button", { name: "Show the contract of summarise" }),
     );
     expect(screen.getByText("Not reset by the test world")).toBeInTheDocument();
-    // A contract written before returned fields were recorded says so rather than showing nothing.
     expect(
       screen.getAllByText("Not recorded for this environment version").length,
     ).toBeGreaterThan(0);
     expect(screen.getByText("Not declared")).toBeInTheDocument();
+    expect(screen.getByText(NOT_RECORDED)).toBeInTheDocument();
     expect(screen.getAllByText("Simulated")).toHaveLength(1);
   });
 
   it("marks a tool the contract calls unsupported, never Simulated or in-process, and an unknown one with no chip", () => {
-    const tools = [
-      ...env.tools,
-      { name: "charge_card", desc: "Charges the card.", args: ["amount"] },
-      { name: "mystery", desc: "Not read.", args: [] },
-    ];
     render(
       <WorldInternalsSection
         env={{
           ...env,
-          tools,
           toolStatus: [
             ...env.toolStatus,
             status("charge_card", "unsupported"),

@@ -675,6 +675,8 @@ import type {
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessStartingRecordChoiceApi,
+  HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
@@ -61629,9 +61631,7 @@ export const getSimulateApiHarnessEnvironmentsRunPlanUrl = (
 
 /**
  * The versions a run of these picks would use, what to warn about and whether
-a run of the selected scenarios would start; no writes. An absent pick is the
-environment's default. Without versioning only picks are refused: the verdict
-on blocked tools holds for an environment built before versions.
+it would start; no writes. An absent pick is the environment's default.
  */
 export const simulateApiHarnessEnvironmentsRunPlan = async (
   id: string,
@@ -61798,6 +61798,104 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
       },
     );
   };
+
+export type simulateApiHarnessEnvironmentsStartingRecordsResponse200 = {
+  data: HarnessStartingRecordsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseSuccess =
+  simulateApiHarnessEnvironmentsStartingRecordsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseError =
+  simulateApiHarnessEnvironmentsStartingRecordsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsStartingRecordsResponse =
+  | simulateApiHarnessEnvironmentsStartingRecordsResponseSuccess
+  | simulateApiHarnessEnvironmentsStartingRecordsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsStartingRecordsUrl = (
+  id: string,
+  scenarioKey: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioKey}/starting-records/`;
+};
+
+/**
+ * The seeded rows this scenario's facts name, each with the other rows it could start from instead.
+ */
+export const simulateApiHarnessEnvironmentsStartingRecords = async (
+  id: string,
+  scenarioKey: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsStartingRecordsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsStartingRecordsResponse>(
+    getSimulateApiHarnessEnvironmentsStartingRecordsUrl(id, scenarioKey),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsChooseStartingRecordResponse200 = {
+  data: HarnessStartingRecordsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsChooseStartingRecordResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsChooseStartingRecordResponseSuccess =
+  simulateApiHarnessEnvironmentsChooseStartingRecordResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsChooseStartingRecordResponseError =
+  simulateApiHarnessEnvironmentsChooseStartingRecordResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsChooseStartingRecordResponse =
+  | simulateApiHarnessEnvironmentsChooseStartingRecordResponseSuccess
+  | simulateApiHarnessEnvironmentsChooseStartingRecordResponseError;
+
+export const getSimulateApiHarnessEnvironmentsChooseStartingRecordUrl = (
+  id: string,
+  scenarioKey: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioKey}/starting-records/`;
+};
+
+/**
+ * Start this scenario from another seeded row, in the unsaved changes; Save proves it again.
+ */
+export const simulateApiHarnessEnvironmentsChooseStartingRecord = async (
+  id: string,
+  scenarioKey: string,
+  harnessStartingRecordChoiceApi: HarnessStartingRecordChoiceApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsChooseStartingRecordResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsChooseStartingRecordResponse>(
+    getSimulateApiHarnessEnvironmentsChooseStartingRecordUrl(id, scenarioKey),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessStartingRecordChoiceApi),
+    },
+  );
+};
 
 export type simulateApiHarnessEnvironmentsVerifyResponse202 = {
   data: HarnessVerifyCreateResponseApi;

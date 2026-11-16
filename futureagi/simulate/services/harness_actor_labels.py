@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict, cast
 
 from simulate.services.harness_actor_rules import (
     ActorRecord,
@@ -28,6 +28,8 @@ SPEAKING_TRIGGERS = ("always", "on_tool", "on_keyword", "mid_journey", "conditio
 WORLD_TRIGGERS = ("always", "on_tool", "contacted", "after_seconds", "conditional")
 # What an actor that does not answer in time leaves behind, without naming an action or another actor.
 FALLBACK_WORDS = {"silent": "Nothing happens", "decline": "They decline"}
+# An actor's own cap on a trial: the lines one who speaks says, the turns one acting through the world takes.
+CapField = Literal["max_turns", "max_lines"]
 
 Side = Literal["caller", "world"]
 FallbackKind = Literal["silent", "decline", "action", "actor"]
@@ -39,6 +41,15 @@ class FallbackView(TypedDict):
     kind: FallbackKind
     value: str
     label: str
+
+
+class ResolvedScenarioAction(TypedDict):
+    """A world action an actor takes in a scenario, as stored, with when the world takes it in words."""
+
+    action: str
+    arguments: NotRequired[dict[str, object]]
+    trigger: NotRequired[CallActorTrigger]
+    when_label: str
 
 
 class ResolvedScenarioActor(TypedDict):
@@ -53,6 +64,8 @@ class ResolvedScenarioActor(TypedDict):
     when_label: str
     timeout_label: str | None
     instruction: str
+    # Only when the scenario gives the actor actions.
+    actions: NotRequired[list[ResolvedScenarioAction]]
 
 
 # What each trigger key holds, as the sealed record schema types it; a stored trigger holding anything else is one
@@ -120,15 +133,26 @@ def _kind_words(kind: object) -> str:
     return text_of(kind).replace("_", " ").capitalize() or "Its own trigger"
 
 
-def when_label(trigger: CallActorTrigger, channel: str | None) -> str:
-    """When the actor comes in, in the words the editor shows, for the way it joins. A trigger whose keys are not
-    the types the schema gives them reads by its kind alone."""
+def cap_field(channel: str | None) -> CapField:
+    """Which of an actor's own caps counts for the way it joins: lines for one who speaks, turns for one who acts
+    through the world."""
+    return "max_lines" if channel else "max_turns"
+
+
+def when_label(
+    trigger: CallActorTrigger, channel: str | None, *, scheduled: bool = False
+) -> str:
+    """When the actor comes in, in the words the editor shows, for the way it joins; `scheduled` says when the world
+    takes one of a scenario's actions instead. A trigger whose keys are not the types the schema gives them reads by
+    its kind alone."""
     kind = trigger.get("kind") or "always"
     if not well_formed(trigger):
         return _kind_words(kind)
     handoff = channel == HANDOFF_CHANNEL
     start = (
-        f"Present from the start: after the agent's {'second' if handoff else 'first'} turn"
+        "At the start"
+        if scheduled
+        else f"Present from the start: after the agent's {'second' if handoff else 'first'} turn"
         if channel
         else "Present from the start"
     )
@@ -154,15 +178,19 @@ def when_label(trigger: CallActorTrigger, channel: str | None) -> str:
             f"{field} {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
             for field, value in (trigger.get("where") or {}).items()
         )
-        return f"Once a {trigger.get('collection') or 'record'} record{f' with {where}' if where else ''} exists"
+        collection = text_of(trigger.get("collection"))
+        return (
+            f"Once a record{f' in {collection}' if collection else ''}"
+            f"{f' with {where}' if where else ''} exists"
+        )
     if kind == "probability":
         # A chance left out is the runtime's default, every call.
         share = real_of(trigger.get("p"))
-        return f"In about {_percent(1.0 if share is None else share)}% of calls, {start.lower()}"
+        return f"In about {_percent(1.0 if share is None else share)}% of calls, {start[0].lower()}{start[1:]}"
     if kind != "always":
         # A kind a later release adds reads by its own name rather than as something it is not.
         return _kind_words(kind)
-    return "Answers the call" if channel == IVR_CHANNEL else start
+    return "Answers the call" if channel == IVR_CHANNEL and not scheduled else start
 
 
 def fallback_of(
@@ -259,4 +287,29 @@ def resolved_scenario_actors(
                 "instruction": text_of(entry.get("instruction")),
             }
         )
+        actions = entry.get("actions")
+        if isinstance(actions, list):
+            resolved[-1]["actions"] = _resolved_actions(list(actions))
     return resolved
+
+
+def _resolved_actions(actions: list[object]) -> list[ResolvedScenarioAction]:
+    """Each action as stored, with when the world takes it: its own trigger, at the start when it has none. An entry
+    that is not an action (written elsewhere) is left out."""
+    out: list[ResolvedScenarioAction] = []
+    for one in actions:
+        if not isinstance(one, dict):
+            continue
+        trigger = one.get("trigger")
+        typed: CallActorTrigger = (
+            cast(CallActorTrigger, trigger)
+            if isinstance(trigger, dict) and trigger
+            else {"kind": "always"}
+        )
+        out.append(
+            cast(
+                ResolvedScenarioAction,
+                {**one, "when_label": when_label(typed, None, scheduled=True)},
+            )
+        )
+    return out

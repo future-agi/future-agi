@@ -4,7 +4,6 @@ import { Box, ButtonBase, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { WORLD_ACTION_DETAILS } from "./constants";
 
-// A world actor's action as an event: what they did and how it went, with its raw record folded away.
 export default function WorldActorAction({
   text,
   query = "",
@@ -14,7 +13,7 @@ export default function WorldActorAction({
   const detailsId = useId();
   const [event, ...details] = text.split("\n");
   const hidden = details.join("\n");
-  // A search that matched inside the fold has to show why this row stayed.
+  // A search match inside the fold opens it.
   const needle = query.trim().toLowerCase();
   const open =
     opened || (Boolean(needle) && hidden.toLowerCase().includes(needle));

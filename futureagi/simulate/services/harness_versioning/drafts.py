@@ -643,9 +643,23 @@ def record_draft(
     checked = wanted | set(checked or ())
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
-    from simulate.services.harness_tool_reach import require_valid_faults
+    from simulate.selectors.stage_outputs import stage_output
+    from simulate.services.harness_actor_rules import actor_rules
+    from simulate.services.harness_tool_reach import door_targets
+    from simulate.services.scenario_faults import require_valid_faults
 
-    require_valid_faults(prepared.scenarios)
+    # Only the scenarios whose faults this write changes, judged against the contract they will run on.
+    base = fresh_draft(environment, "suite") or getattr(
+        environment, "suite_version", None
+    )
+    before = (base.documents or {}).get("scenarios") if base is not None else None
+    require_valid_faults(
+        prepared.scenarios,
+        targets=door_targets(prepared.contract, actor_rules(split.environment)),
+        before=before
+        if isinstance(before, list)
+        else stage_output(environment, "scenarios"),
+    )
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,
@@ -809,23 +823,22 @@ def edit_side(
     environment: HostedHarnessJob, piece: str
 ) -> tuple[dict[str, bytes], str]:
     """One piece's files the next edit builds on (its open draft, else its saved default), with the archive key they
-    were read from ("" when there is none)."""
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+    were read from ("" when there is none). ``environment`` is the caller's scoped job."""
+    version = fresh_draft(environment, piece) or getattr(
+        environment, f"{piece}_version"
+    )
     key = str(getattr(version, "archive_object_key", "") or "")
-    return _piece_files(head, piece, version), key
+    return _piece_files(environment, piece, version), key
 
 
 def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
-    """The files the next edit builds on, per piece: its open draft, else its saved default."""
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
+    """The files the next edit builds on, per piece: its open draft, else its saved default. ``environment`` is the
+    caller's scoped job."""
     return {
         piece: _piece_files(
-            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+            environment,
+            piece,
+            fresh_draft(environment, piece) or getattr(environment, f"{piece}_version"),
         )
         for piece in DRAFT_PIECES
     }

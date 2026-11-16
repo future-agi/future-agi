@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1152,
+  endpointCount: 1153,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29353,6 +29353,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
+      {
+        get: {
+          operationId: "simulate_api_harness-environments_starting_records",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessStartingRecords",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+        put: {
+          operationId:
+            "simulate_api_harness-environments_choose_starting_record",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessStartingRecordChoice",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessStartingRecords",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/verify/": {
       post: {
         operationId: "simulate_api_harness-environments_verify",
@@ -57021,6 +57057,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluations",
         "function_calls",
         "call_actors",
+        "has_customer",
         "trial_state",
         "scoring_status",
         "csat_status",
@@ -57500,6 +57537,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/CallCallActor",
           },
+        },
+        has_customer: {
+          title: "Has customer",
+          description:
+            "The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke.",
+          type: "boolean",
         },
         trial_state: {
           $ref: "#/definitions/TrialState",
@@ -67478,6 +67521,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id_hint",
         "limit_fields",
         "side_defaults",
+        "field_options",
+        "upload",
       ],
       type: "object",
       properties: {
@@ -67515,9 +67560,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         loudness: {
-          title: "Loudness",
-          type: "object",
-          additionalProperties: true,
+          $ref: "#/definitions/HarnessActorLoudness",
         },
         reserved_ids: {
           type: "array",
@@ -67571,6 +67614,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         side_defaults: {
           $ref: "#/definitions/HarnessActorSideDefaults",
+        },
+        field_options: {
+          $ref: "#/definitions/HarnessActorFieldOptions",
+        },
+        upload: {
+          $ref: "#/definitions/HarnessActorUpload",
         },
       },
     },
@@ -68651,6 +68700,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id_hint",
         "limit_fields",
         "side_defaults",
+        "field_options",
+        "upload",
         "uploaded_path",
       ],
       type: "object",
@@ -68689,9 +68740,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         loudness: {
-          title: "Loudness",
-          type: "object",
-          additionalProperties: true,
+          $ref: "#/definitions/HarnessActorLoudness",
         },
         reserved_ids: {
           type: "array",
@@ -68745,6 +68794,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         side_defaults: {
           $ref: "#/definitions/HarnessActorSideDefaults",
+        },
+        field_options: {
+          $ref: "#/definitions/HarnessActorFieldOptions",
+        },
+        upload: {
+          $ref: "#/definitions/HarnessActorUpload",
         },
         uploaded_path: {
           title: "Uploaded path",
@@ -70063,6 +70118,76 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_bytes: {
           title: "Total bytes",
           type: "integer",
+        },
+      },
+    },
+    HarnessStartingRecordChoice: {
+      required: ["path", "table", "key"],
+      type: "object",
+      properties: {
+        path: {
+          description: "The `path` of one of the scenario's starting records.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 32,
+          minItems: 1,
+        },
+        table: {
+          title: "Table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        key: {
+          title: "Key",
+          description: "The key of the seeded row to start from instead.",
+          type: "string",
+          maxLength: 1024,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessStartingRecords: {
+      required: [
+        "scenario_key",
+        "origin",
+        "editable",
+        "records",
+        "rows_unavailable",
+      ],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        origin: {
+          title: "Origin",
+          description:
+            "Where the fixture's data comes from: seed, generated or mixed.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        editable: {
+          title: "Editable",
+          description:
+            "Whether a choice can be written to this environment's draft.",
+          type: "boolean",
+        },
+        records: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessStartingRecord",
+          },
+        },
+        rows_unavailable: {
+          $ref: "#/definitions/HarnessRowsUnavailable",
         },
       },
     },
@@ -98105,6 +98230,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     TrialState: {
+      required: [
+        "state_changes",
+        "duplicates",
+        "unreadable",
+        "decisions",
+        "pre_run",
+        "approvals",
+        "usage",
+        "usage_summary",
+        "notices",
+      ],
       type: "object",
       properties: {
         state_changes: {
@@ -98191,14 +98327,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/ActorUsageTotal",
         },
         limits: {
-          title: "Limits",
-          description:
-            "The actor limits this trial ran with; null is no limit.",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          $ref: "#/definitions/HarnessActorLimits",
         },
         notices: {
           description:
@@ -105140,6 +105269,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "loudness",
         "trigger_kinds",
         "required_fields",
+        "cap_field",
       ],
       type: "object",
       properties: {
@@ -105172,6 +105302,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        cap_field: {
+          title: "Cap field",
+          type: "string",
+          enum: ["max_turns", "max_lines"],
+        },
+      },
+    },
+    HarnessActorFieldOptions: {
+      required: [
+        "kind",
+        "play",
+        "fallback_word",
+        "gender",
+        "age_group",
+        "accent",
+        "response_timing",
+      ],
+      type: "object",
+      properties: {
+        kind: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        play: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        fallback_word: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        gender: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        age_group: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        accent: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
+        response_timing: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorFieldOption",
+          },
+        },
       },
     },
     HarnessActorKnowledgeSources: {
@@ -105194,7 +105385,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessActorLimitField: {
-      required: ["key", "kind"],
+      required: ["key", "kind", "default", "default_label"],
       type: "object",
       properties: {
         key: {
@@ -105206,6 +105397,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Kind",
           type: "string",
           enum: ["whole", "seconds", "model"],
+        },
+        default: {
+          title: "Default",
+          type: "number",
+          "x-nullable": true,
+        },
+        default_label: {
+          title: "Default label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessActorLoudness: {
+      required: ["channels", "automatic", "min", "max", "step", "default"],
+      type: "object",
+      properties: {
+        channels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        automatic: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          maxItems: 2,
+        },
+        min: {
+          title: "Min",
+          type: "number",
+        },
+        max: {
+          title: "Max",
+          type: "number",
+        },
+        step: {
+          title: "Step",
+          type: "number",
+        },
+        default: {
+          title: "Default",
+          type: "number",
         },
       },
     },
@@ -105237,6 +105475,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         actor: {
           title: "Actor",
           type: "string",
+        },
+      },
+    },
+    HarnessActorUpload: {
+      required: ["formats", "max_bytes", "max_label"],
+      type: "object",
+      properties: {
+        formats: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        max_bytes: {
+          title: "Max bytes",
+          type: "integer",
+        },
+        max_label: {
+          title: "Max label",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -105374,7 +105634,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         response_timing: {
-          $ref: "#/definitions/HarnessActorResponseTiming",
+          $ref: "#/definitions/HarnessActorResponseTimingChange",
         },
         permitted_actions: {
           type: "array",
@@ -105398,6 +105658,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Timeout seconds",
           type: "number",
           minimum: 0,
+          "x-nullable": true,
         },
         fallback: {
           title: "Fallback",
@@ -105521,7 +105782,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessActorSeen: {
-      required: ["input", "value", "source"],
+      required: ["input", "value", "source", "text"],
       type: "object",
       properties: {
         input: {
@@ -105537,6 +105798,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Source",
           type: "string",
           enum: ["actor", "scenario", "caller"],
+        },
+        text: {
+          title: "Text",
+          type: "string",
         },
       },
     },
@@ -108782,6 +109047,87 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Purpose",
           type: "string",
           enum: ["target_provider", "simulator_provider", "source_checkout"],
+        },
+      },
+    },
+    HarnessRowsUnavailable: {
+      description: "Why the world's rows can't be read, or null when they can.",
+      required: ["code", "reason"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          enum: ["no_seed_rows", "files_unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessStartingRecord: {
+      required: [
+        "path",
+        "label",
+        "table",
+        "key_field",
+        "key",
+        "fields",
+        "alternatives",
+        "alternatives_total",
+      ],
+      type: "object",
+      properties: {
+        path: {
+          description:
+            "Where the fact sits in the scenario's fixture, one segment per level (a list position as digits).",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        table: {
+          title: "Table",
+          type: "string",
+          minLength: 1,
+        },
+        key_field: {
+          title: "Key field",
+          type: "string",
+          minLength: 1,
+        },
+        key: {
+          title: "Key",
+          type: "object",
+        },
+        fields: {
+          title: "Fields",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
+        },
+        alternatives: {
+          description:
+            "Other rows of the table the scenario could start from instead, the first few.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSeededRow",
+          },
+        },
+        alternatives_total: {
+          title: "Alternatives total",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
@@ -122656,20 +123002,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
     ActorDecision: {
       description:
         "What actors did or chose during the trial; messages written before it are in pre_run.",
-      required: ["actor", "play"],
+      required: [
+        "actor",
+        "name",
+        "play",
+        "fallback",
+        "verdict",
+        "committed_after_refusal",
+      ],
       type: "object",
       properties: {
         actor: {
           title: "Actor",
           type: "string",
-          minLength: 1,
         },
         name: {
           title: "Name",
           description:
-            "The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+            "The actor's name, or its id when the trial did not name it.",
           type: "string",
-          minLength: 1,
         },
         play: {
           title: "Play",
@@ -122728,11 +123079,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
         },
         fallback: {
-          title: "Fallback",
-          description:
-            "silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
-          type: "string",
-          minLength: 1,
+          $ref: "#/definitions/HarnessActorFallback",
         },
         outcome: {
           title: "Outcome",
@@ -122747,6 +123094,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
           type: "string",
           minLength: 1,
+        },
+        verdict: {
+          title: "Verdict",
+          description:
+            "For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+          type: "string",
+          enum: ["approved", "refused"],
+          "x-nullable": true,
+        },
+        committed_after_refusal: {
+          title: "Committed after refusal",
+          description:
+            "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
+          type: "boolean",
         },
       },
     },
@@ -122839,24 +123200,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "before_decision",
         "after_decision",
         "acted_before_decision",
+        "verdict",
+        "committed_after_refusal",
       ],
       type: "object",
       properties: {
         request: {
-          title: "Request",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          $ref: "#/definitions/ApprovalRequest",
         },
         decision: {
-          title: "Decision",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          $ref: "#/definitions/ApprovalDecision",
         },
         before_decision: {
           type: "array",
@@ -122872,6 +123225,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         acted_before_decision: {
           title: "Acted before decision",
+          type: "boolean",
+        },
+        verdict: {
+          title: "Verdict",
+          description: "Null on a trial that predates verdicts.",
+          type: "string",
+          enum: ["approved", "refused"],
+          "x-nullable": true,
+        },
+        committed_after_refusal: {
+          title: "Committed after refusal",
+          description:
+            "The agent committed a write after the refusal; false on a trial that predates verdicts.",
           type: "boolean",
         },
       },
@@ -122917,7 +123283,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         code: {
           title: "Code",
           description:
-            "fault_not_applied, fault_not_triggered, start_differs or changed_outside_world",
+            "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world",
           type: "string",
           minLength: 1,
         },
@@ -122942,17 +123308,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        count: {
+          title: "Count",
+          description: "For evidence_incomplete.",
+          type: "integer",
+        },
       },
     },
     TrialRecords: {
-      description: "The records the trial changed, before and after.",
+      description:
+        "The records the trial changed, before and after; absent when they could not be read.",
       required: ["changes"],
       type: "object",
       properties: {
         changes: {
           type: "array",
           items: {
-            type: "object",
+            $ref: "#/definitions/TrialRecordChange",
           },
         },
         skipped: {
@@ -122985,6 +123357,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        against: {
+          title: "Against",
+          description:
+            "What the start was compared with; absent on trials from before it was said.",
+          type: "string",
+          enum: ["sealed_seed", "first_trial"],
         },
       },
     },
@@ -127937,6 +128316,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorFieldOption: {
+      required: ["value", "label"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessActorSideDefault: {
       required: ["channel"],
       type: "object",
@@ -127949,7 +128344,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessActorResponseTiming: {
+    HarnessActorResponseTimingChange: {
       required: ["kind"],
       type: "object",
       properties: {
@@ -127962,6 +128357,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Seconds",
           type: "number",
           minimum: 0,
+          "x-nullable": true,
         },
       },
     },
@@ -128257,7 +128653,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentFaultTarget: {
-      required: ["tool", "action", "reachable", "writes"],
+      required: [
+        "tool",
+        "action",
+        "reachable",
+        "writes",
+        "modes",
+        "defaults",
+        "bounds",
+      ],
       type: "object",
       properties: {
         tool: {
@@ -128282,6 +128686,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "It changes records, so a timeout after the change commits means something.",
           type: "boolean",
+        },
+        modes: {
+          description:
+            "The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessFaultMode",
+          },
+        },
+        defaults: {
+          $ref: "#/definitions/HarnessFaultDefaults",
+        },
+        bounds: {
+          $ref: "#/definitions/HarnessFaultBounds",
         },
       },
     },
@@ -128342,7 +128760,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentToolStatus: {
-      required: ["tool", "status", "reset_between_trials", "runs_at", "writes"],
+      required: [
+        "tool",
+        "status",
+        "reset_between_trials",
+        "runs_at",
+        "writes",
+        "description",
+        "arguments",
+        "returns",
+        "requires",
+        "refuses",
+        "effect",
+        "effects",
+        "tables",
+      ],
       type: "object",
       properties: {
         tool: {
@@ -128374,8 +128806,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         writes: {
           title: "Writes",
-          description: "The tool declares a change to records.",
+          description:
+            "It changes records, as the world's door decides: its declared effect, else its HTTP method.",
           type: "boolean",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        arguments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessToolArgument",
+          },
+        },
+        returns: {
+          description:
+            "Empty when the contract did not record what it returns.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessToolReturn",
+          },
+        },
+        requires: {
+          description: "Tools that must have run before it stops refusing.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        refuses: {
+          title: "Refuses",
+          description: "When it refuses, in the contract's words.",
+          type: "string",
+        },
+        effect: {
+          title: "Effect",
+          description:
+            "What its entrypoint declares; unknown when it declares neither.",
+          type: "string",
+          enum: ["read", "write", "unknown"],
+        },
+        effects: {
+          title: "Effects",
+          description:
+            "What a call changes or clears, in the contract's words.",
+          type: "string",
+        },
+        tables: {
+          $ref: "#/definitions/HarnessToolTables",
         },
       },
     },
@@ -129068,45 +129548,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessScenarioFault: {
-      required: ["action", "mode"],
+      required: [
+        "action",
+        "tool",
+        "mode",
+        "mode_label",
+        "on_call",
+        "delay_seconds",
+        "status",
+        "message",
+      ],
       type: "object",
       properties: {
         action: {
           title: "Action",
           type: "string",
+        },
+        tool: {
+          title: "Tool",
+          description: "The contract tool it names; null when it names none.",
+          type: "string",
           minLength: 1,
+          "x-nullable": true,
         },
         mode: {
           title: "Mode",
+          description: "One of the fault modes, as stored.",
           type: "string",
-          enum: [
-            "timeout_before_commit",
-            "timeout_after_commit",
-            "unavailable",
-            "error",
-          ],
+        },
+        mode_label: {
+          title: "Mode label",
+          type: "string",
         },
         on_call: {
           title: "On call",
           type: "integer",
-          minimum: 1,
+          "x-nullable": true,
         },
         delay_seconds: {
           title: "Delay seconds",
+          description: "For a timeout.",
           type: "number",
-          maximum: 30,
-          minimum: 0,
+          "x-nullable": true,
         },
         status: {
           title: "Status",
+          description: "For an error.",
           type: "integer",
-          maximum: 599,
-          minimum: 400,
+          "x-nullable": true,
         },
         message: {
           title: "Message",
+          description: "For an error.",
           type: "string",
-          maxLength: 500,
         },
       },
     },
@@ -129198,6 +129692,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Call execution id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    HarnessSeededRow: {
+      description:
+        "Other rows of the table the scenario could start from instead, the first few.",
+      required: ["key", "fields"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          description: "The row's key, a string or an integer.",
+          type: "object",
+        },
+        fields: {
+          title: "Fields",
+          description: "The row as the world is seeded with it.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
         },
       },
     },
@@ -136855,6 +137370,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ApprovalDecision: {
+      required: ["by", "verdict", "name", "action", "outcome", "at"],
+      type: "object",
+      properties: {
+        by: {
+          title: "By",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          description:
+            "Null when it decided none or the trial predates verdicts.",
+          type: "string",
+          enum: ["approved", "refused"],
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description:
+            "Who decided, by display name; their id when nameless; null when nobody did.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        at: {
+          title: "At",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    ApprovalRequest: {
+      required: ["action", "at", "action_id"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        at: {
+          title: "At",
+          description: "Epoch seconds the world logged it.",
+          type: "number",
+          "x-nullable": true,
+        },
+        action_id: {
+          title: "Action id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     ApprovalWrite: {
       required: ["action", "outcome"],
       type: "object",
@@ -136889,6 +137473,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TrialRecordChange: {
+      required: ["table", "key", "kind", "before", "after", "fields"],
+      type: "object",
+      properties: {
+        table: {
+          title: "Table",
+          type: "string",
+          minLength: 1,
+        },
+        key: {
+          title: "Key",
+          description:
+            "The record's key as the table holds it: one value, or several.",
+          type: "object",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["added", "changed", "removed"],
+        },
+        before: {
+          title: "Before",
+          description: "Its values before; null when added.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+        after: {
+          title: "After",
+          description: "Its values after; null when removed.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+        fields: {
+          description:
+            "The fields a change changed; empty when added or removed.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     BlockedCall: {
       description:
         "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
@@ -136908,6 +137541,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Tool",
           description: "The tool that made it, when known.",
           type: "string",
+        },
+        count: {
+          title: "Count",
+          description:
+            "How many calls to this host were refused; absent on older trials (one).",
+          type: "integer",
         },
       },
     },
@@ -137954,6 +138593,148 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorResponseTiming: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["immediate", "delayed"],
+        },
+        seconds: {
+          title: "Seconds",
+          type: "number",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessFaultBounds: {
+      required: ["delay_seconds", "status"],
+      type: "object",
+      properties: {
+        delay_seconds: {
+          $ref: "#/definitions/HarnessFaultRange",
+        },
+        status: {
+          $ref: "#/definitions/HarnessFaultRange",
+        },
+      },
+    },
+    HarnessFaultDefaults: {
+      required: ["on_call", "delay_seconds", "status"],
+      type: "object",
+      properties: {
+        on_call: {
+          title: "On call",
+          type: "integer",
+        },
+        delay_seconds: {
+          title: "Delay seconds",
+          type: "number",
+        },
+        status: {
+          title: "Status",
+          type: "integer",
+        },
+      },
+    },
+    HarnessFaultMode: {
+      description:
+        "The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.",
+      required: ["mode", "label"],
+      type: "object",
+      properties: {
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: [
+            "timeout_before_commit",
+            "timeout_after_commit",
+            "unavailable",
+            "error",
+          ],
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessToolArgument: {
+      required: ["name", "type", "unit"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        unit: {
+          title: "Unit",
+          description:
+            "The unit or format it is written in, where the name does not say.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessToolReturn: {
+      description: "Empty when the contract did not record what it returns.",
+      required: ["name", "kind"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          description:
+            "Its type and, where the name does not say, unit or format.",
+          type: "string",
+        },
+      },
+    },
+    HarnessToolTables: {
+      required: ["recorded", "read", "changed", "label"],
+      type: "object",
+      properties: {
+        recorded: {
+          title: "Recorded",
+          type: "boolean",
+        },
+        read: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        label: {
+          title: "Label",
+          description: "What the Changes line says.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentCallActorTrigger: {
       type: "object",
       properties: {
@@ -138010,7 +138791,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "x-nullable": true,
     },
     HarnessEnvironmentScenarioActorAction: {
-      required: ["action"],
+      required: ["action", "when_label"],
       type: "object",
       properties: {
         action: {
@@ -138024,6 +138805,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trigger: {
           $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
+        },
+        when_label: {
+          title: "When label",
+          description: "When the world takes the action, as a sentence.",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -139173,6 +139960,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Avg score",
           type: "number",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessFaultRange: {
+      required: ["min", "max"],
+      type: "object",
+      properties: {
+        min: {
+          title: "Min",
+          type: "number",
+        },
+        max: {
+          title: "Max",
+          type: "number",
         },
       },
     },

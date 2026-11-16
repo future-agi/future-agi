@@ -259,7 +259,6 @@ describe("SharedView simulation call rendering", () => {
         status: "completed",
         turn_count: 2,
         transcript: [
-          // As the call detail sends a chat row: its speaker said outright.
           {
             role: "user",
             speaker_role: "user",

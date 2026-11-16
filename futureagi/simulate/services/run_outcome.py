@@ -88,13 +88,9 @@ def pass_rate(*, passed: int, base: int) -> int | None:
 
 
 def run_outcome(*, status: str, counts: OutcomeCounts | None) -> RunOutcome:
-    """A run's verdict from its lifecycle status and its calls' outcomes.
+    """A run's verdict and pass rate from its lifecycle status and its calls' outcomes.
 
-    A run that has not ended is running and a stopped one is cancelled. A completed run passes when no call failed,
-    errored or was skipped; when it also has no passed call but some calls with no score, it has no score. Every
-    other ended run failed. The rate is passed over passed, failed, errored and skipped calls. A run with no counts
-    (None) gets no verdict and no rate.
-    """
+    The rate is passed over passed, failed, errored and skipped; ``counts`` None gives no verdict and no rate."""
     if counts is None:
         return {"outcome_status": None, "pass_rate": None, "scored": None}
     lifecycle = status.lower()
@@ -160,11 +156,7 @@ def outcome_fields(
 ) -> OutcomeFields:
     """A run payload's outcome counts and verdict.
 
-    A hosted run (``receipts`` not None) reports its receipts by status: ``outcome_failed`` is failed plus errored
-    receipts, ``outcome_passed`` every passed receipt; ``outcome_errored`` and ``outcome_no_score`` count apart. Any
-    other run reports no receipt counts; it is judged by ``calls`` when the payload gives them (the runs list), and
-    has no verdict when it does not (run summaries).
-    """
+    Hosted runs count ``receipts`` (``outcome_failed`` includes errored); others are judged by ``calls``, if given."""
     if receipts is not None:
         counts: OutcomeCounts | None = receipt_counts(receipts)
     elif calls is not None:
@@ -197,12 +189,9 @@ def outcome_fields(
 def receipt_outcome_counts(
     job_ids: Iterable[uuid.UUID],
 ) -> dict[uuid.UUID, ReceiptTally]:
-    """Each job's receipts counted by status, and how many of each status belong to a call with no score.
+    """Each job's receipts counted by status, and how many of each belong to a call with no score.
 
-    A receipt belongs to a call through its execution, or, for a scenario-level receipt, through the scenario
-    registration. Receipts of soft-deleted calls stay in the table and are not counted. ``job_ids`` must already be
-    scoped to the caller.
-    """
+    Soft-deleted calls are not counted. ``job_ids`` must already be scoped to the caller."""
     job_ids = list(job_ids)
     tallies: dict[uuid.UUID, ReceiptTally] = {}
     if not job_ids:

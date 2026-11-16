@@ -14,20 +14,17 @@ import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useActorView } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
-import { seenValue } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
-// Only as wide as its text, so the tooltip sits over the text, not the middle of the row.
+// Only as wide as its text so the tooltip sits over the text.
 const ONE_LINE = {
   display: "inline-block",
   maxWidth: "100%",
   verticalAlign: "top",
 };
 
-// The row's one line, every part as the cast states it: how it speaks (if it does), what it may do in the world and
-// whether this world still has each action, when it comes in and what happens when it does not answer.
 function summary(actor, loudChannels) {
   return [
     actor.channel && (CHANNEL_LABELS[actor.channel] || actor.channel),
@@ -64,7 +61,7 @@ export default function ActorRow({
   busy,
 }) {
   const [open, setOpen] = useState(false);
-  // Off while it is being removed, so the removed actor's view is not read again.
+  // Off while removing so the removed actor's view is not refetched.
   const {
     data: view,
     isLoading: viewLoading,
@@ -109,13 +106,15 @@ export default function ActorRow({
         >
           <Box>
             <OverflowTooltip
-              title={[actor.name, actor.role].filter(Boolean).join(" · ")}
+              title={[actor.name || actor.id, actor.role]
+                .filter(Boolean)
+                .join(" · ")}
             >
               <Typography
                 noWrap
                 sx={{ typography: "s1", fontWeight: 600, ...ONE_LINE }}
               >
-                {actor.name}
+                {actor.name || actor.id}
                 {actor.role ? (
                   <Box
                     component="span"
@@ -218,7 +217,7 @@ export default function ActorRow({
             {view.sees.map((one) => (
               <Typography key={one.input} sx={quiet}>
                 {`${C.inputs[one.input] || one.input}: `}
-                {seenValue(one.input, one.value) || (
+                {one.text || (
                   <Box component="span" sx={{ color: "text.disabled" }}>
                     {C.notSet}
                   </Box>

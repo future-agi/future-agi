@@ -95,6 +95,8 @@ const SharedSimulationCallView = ({ call }) => {
           <ChatTranscriptPane
             turns={chatDetail?.turns || []}
             customerName={chatDetail?.persona}
+            callActors={chatDetail?.callActors || []}
+            hasCustomer={chatDetail?.hasCustomer}
           />
         </Box>
       )}

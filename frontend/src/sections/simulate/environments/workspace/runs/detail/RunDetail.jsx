@@ -200,7 +200,6 @@ export default function RunDetail({
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
   const lastResume = resumeState?.history?.at(-1);
-  // A re-run starts from the versions and the seed this run used.
   const rerunOptions = {
     initialPicks: {
       agent: identity?.pinnedAgentVersion?.id,

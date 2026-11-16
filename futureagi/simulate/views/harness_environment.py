@@ -36,7 +36,9 @@ from simulate.serializers.evidence_import import (
     EvidenceImportSerializer,
 )
 from simulate.serializers.harness_actors import (
+    HarnessActorChangesSerializer,
     HarnessActorDeleteQuerySerializer,
+    HarnessActorLimitsSerializer,
     HarnessActorLimitsWriteSerializer,
     HarnessActorListSerializer,
     HarnessActorUnresolvedAcceptSerializer,
@@ -47,6 +49,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorWriteSerializer,
     HarnessEnvironmentFileUploadedSerializer,
     HarnessEnvironmentFileUploadSerializer,
+    editor_problems,
 )
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
@@ -89,6 +92,7 @@ from simulate.serializers.response.run_test import SimulateEvalConfigResponseSer
 from simulate.services import (
     harness_actor_reads,
     harness_actor_uploads,
+    harness_actor_validation,
     harness_actor_view,
     harness_actors,
 )
@@ -100,6 +104,8 @@ from simulate.services.evidence_import import (
     create_transcript_import,
     discard_evidence_import,
 )
+from simulate.services.harness_actor_rules import UPLOAD_MAX_BYTES
+from simulate.services.harness_actor_validation import Problem
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
@@ -116,6 +122,7 @@ from simulate.services.harness_provider import (
 from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
+from simulate.views.harness_starting_records import HarnessStartingRecordsMixin
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
@@ -134,7 +141,48 @@ def _refused(code: str, errors: dict) -> Response:
 
 
 def _limits_refused(errors: dict) -> Response:
-    return _refused("limits_invalid", errors)
+    """Limits their serializer refuses, as the service refuses them: `limits_invalid` with a problem per limit."""
+    limits = errors.get("limits")
+    if set(errors) != {"limits"} or not isinstance(limits, dict):
+        return _refused("limits_invalid", errors)
+    refused = harness_actor_validation.limits_invalid(
+        editor_problems(HarnessActorLimitsSerializer(), limits)
+    )
+    return Response(refused.as_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _changes_problems(errors: dict) -> list[Problem] | None:
+    """The problems of an actor's `changes` its serializer refuses, on the editor's fields; none when the request is
+    wrong elsewhere too."""
+    changes = errors.get("changes")
+    if set(errors) != {"changes"} or not isinstance(changes, dict):
+        return None
+    return editor_problems(HarnessActorChangesSerializer(), changes)
+
+
+def _actor_write_refused(errors: dict) -> Response:
+    """An actor write whose `changes` its serializer refuses, answered as the check refuses one: `actor_invalid`
+    (400) with its problems."""
+    problems = _changes_problems(errors)
+    if problems is None:
+        return Response(
+            build_error_envelope(errors), status=status.HTTP_400_BAD_REQUEST
+        )
+    refused = harness_actor_validation.actor_invalid(problems)
+    return Response(refused.as_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _actor_check_refused(errors: dict) -> Response:
+    """An actor check whose `changes` its serializer refuses: a verdict (200) with its problems, as for any other
+    problem with the edit."""
+    problems = _changes_problems(errors)
+    if problems is None:
+        return Response(
+            build_error_envelope(errors), status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(
+        {"problems": problems, "conflicts": [], "suggested_id": None, "over_by": 0}
+    )
 
 
 def _upload_refused(errors: dict) -> Response:
@@ -200,7 +248,7 @@ def _uuid_or_none(value):
         return None
 
 
-class HarnessEnvironmentViewSet(viewsets.ViewSet):
+class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     """The environments surface: list, delete, and start a simulation.
 
     An environment is the job that built it (the world itself lives in object
@@ -496,6 +544,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         responses={200: HarnessActorListSerializer},
         request_methods=["POST"],
         reject_unknown_fields=True,
+        validation_error_response=_actor_write_refused,
         operation_id="simulate_api_harness-environments_create_actor",
     )
     @actors.mapping.post
@@ -528,6 +577,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         responses={200: HarnessActorListSerializer},
         request_methods=["PUT"],
         reject_unknown_fields=True,
+        validation_error_response=_actor_write_refused,
         operation_id="simulate_api_harness-environments_replace_actor",
     )
     @actor_detail.mapping.put
@@ -551,6 +601,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         responses={200: HarnessActorValidationSerializer},
         request_methods=["POST"],
         reject_unknown_fields=True,
+        validation_error_response=_actor_check_refused,
         operation_id="simulate_api_harness-environments_validate_actor",
     )
     # Beside `actors/`, not under it: an actor's id may be any word, `validate` included.
@@ -650,7 +701,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             kind=data["kind"],
             name=str(upload.name or ""),
             # Read one byte past the bound, so a larger file is refused without reading all of it.
-            content=upload.read(harness_actor_uploads.UPLOAD_MAX_BYTES + 1),
+            content=upload.read(UPLOAD_MAX_BYTES + 1),
             user=request.user,
             expected_revision=data.get("expected_revision"),
         )
@@ -1033,9 +1084,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="run-plan")
     def run_plan(self, request, pk=None):
         """The versions a run of these picks would use, what to warn about and whether
-        a run of the selected scenarios would start; no writes. An absent pick is the
-        environment's default. Without versioning only picks are refused: the verdict
-        on blocked tools holds for an environment built before versions."""
+        it would start; no writes. An absent pick is the environment's default."""
         from simulate.services.harness_versioning.run_warnings import preview_run
 
         query = request.validated_query_data

@@ -4,7 +4,6 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 
-// One side's heading inside the cast, with how many actors are on it.
 function SideHeader({ title, count }) {
   return (
     <Stack
@@ -34,10 +33,7 @@ SideHeader.propTypes = {
   count: PropTypes.number.isRequired,
 };
 
-/**
- * The cast grouped by side, the caller's first, each under its heading and count; inside a side the cast's own order
- * (the caller first) is kept.
- */
+// Caller's side first; within a side the cast's own order is kept.
 export default function ActorSideGroups({ cast, renderRows }) {
   return Object.entries(C.sides).map(([side, { label }]) => {
     const group = cast.filter((one) => one.side === side);
@@ -71,6 +67,6 @@ export default function ActorSideGroups({ cast, renderRows }) {
 
 ActorSideGroups.propTypes = {
   cast: PropTypes.arrayOf(PropTypes.object).isRequired,
-  // (actors on one side) => their rows
+  // (actors) => rows
   renderRows: PropTypes.func.isRequired,
 };

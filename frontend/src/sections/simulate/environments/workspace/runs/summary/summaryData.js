@@ -36,7 +36,7 @@ export function buildSummaryRow(run, scores) {
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
-    // The server's rate over calls with a pass or fail; null when none had one.
+    // Null when no call passed or failed.
     passRate: run?.passRate,
     durationS: run?.durationS ?? null,
     scores: scores || {},

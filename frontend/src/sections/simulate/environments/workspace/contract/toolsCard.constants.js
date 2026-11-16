@@ -1,6 +1,3 @@
-// The Tools card's detail block: what each tool takes, what it changes, when it refuses and what happens to it
-// between trials, read from the contract.
-
 export const TOOLS_CARD_COPY = {
   subtitle: "The tools the agent declares, and where each one runs",
   arguments: "Arguments",
@@ -28,17 +25,15 @@ export const TOOLS_CARD_COPY = {
   expand: (name) => `Show the contract of ${name}`,
 };
 
-// One argument as a line: "refund_amount: number, cents, USD".
+// "refund_amount: number, cents, USD"
 export function inputLine(name, type, unit) {
   return [`${name}: ${type || "any"}`, unit].filter(Boolean).join(", ");
 }
 
-// One returned field as a line: "amount: integer, cents, USD"; a field recorded without a type reads its name alone.
 export function returnLine(name, kind) {
   return kind ? `${name}: ${kind}` : name;
 }
 
-// What a tool changes, from its entrypoint's declared effect.
 export function effectLabel(effect) {
   return TOOLS_CARD_COPY.effect[effect] || TOOLS_CARD_COPY.effect.unknown;
 }

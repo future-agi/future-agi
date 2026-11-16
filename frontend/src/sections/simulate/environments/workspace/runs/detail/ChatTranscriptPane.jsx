@@ -15,12 +15,9 @@ import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipant
 import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
 import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
-import {
-  isOtherRole,
-  otherParties,
-} from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+import { isOtherRole } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
-// `task`: a scenario's own start message, when no person or actor sent it.
+// `task`: a scenario's start message no person or actor sent.
 const ROLE_LABEL = { agent: "Assistant", customer: "Customer", task: "Task" };
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
@@ -79,14 +76,17 @@ ToolCall.propTypes = { call: PropTypes.any };
 // The left pane: the conversation, in order, filterable by speaker and text.
 // Tool calls hang under the turn that issued them so a "said, not done" gap is
 // visible in the transcript itself rather than buried in a side tab.
-export default function ChatTranscriptPane({ turns, customerName }) {
+export default function ChatTranscriptPane({
+  turns,
+  customerName,
+  callActors,
+  hasCustomer,
+}) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
-  const others = otherParties(turns);
-  const hasCustomer = turns.some((s) => s.role === "customer");
-  // The pane stays mounted across calls, and the next call may have no others.
+  // The pane stays mounted across calls; the next call may have no others.
   const activeFilter =
-    roleFilter === "others" && !others.length ? "all" : roleFilter;
+    roleFilter === "others" && !callActors.length ? "all" : roleFilter;
 
   const shown = turns.filter((s) => {
     if (
@@ -102,10 +102,10 @@ export default function ChatTranscriptPane({ turns, customerName }) {
 
   return (
     <>
-      {others.length > 0 && (
+      {callActors.length > 0 && (
         <Box sx={{ px: 2, pt: 1.25 }}>
           <CallParticipants
-            others={others}
+            actors={callActors}
             customerName={customerName}
             withCustomer={hasCustomer}
           />
@@ -145,7 +145,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           {(hasCustomer || !turns.some((s) => s.role === "task")) && (
             <Tab value="customer" label="Customer" />
           )}
-          {others.length > 0 && (
+          {callActors.length > 0 && (
             <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
           )}
         </SegmentedTabs>
@@ -165,7 +165,6 @@ export default function ChatTranscriptPane({ turns, customerName }) {
               py: 1.25,
             }}
           >
-            {/* One line: a long role is cut rather than dropping below the stamp. */}
             <Typography
               sx={{
                 typography: "s3",
@@ -214,6 +213,16 @@ export default function ChatTranscriptPane({ turns, customerName }) {
 }
 ChatTranscriptPane.propTypes = {
   customerName: PropTypes.string,
+  callActors: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string,
+      name: PropTypes.string,
+      role: PropTypes.string,
+      channel: PropTypes.string,
+    }),
+  ).isRequired,
+  // False for a run started by someone's message.
+  hasCustomer: PropTypes.bool,
   turns: PropTypes.arrayOf(
     PropTypes.shape({
       role: PropTypes.string,

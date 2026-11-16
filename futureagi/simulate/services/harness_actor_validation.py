@@ -142,9 +142,10 @@ def new_choice_problems(
         for one in (given if isinstance(given, list) else [])
         if one not in old and one not in known
     ]
-    tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
-    old_tool = ((before.get("activation") or {}).get("trigger") or {}).get("tool")
-    if tool and tool != old_tool and tool not in known:
+    # Read by path, so a record whose activation is not of the right shape (written elsewhere) has no tool.
+    tool = value_at(after, "activation.trigger.tool")
+    old_tool = value_at(before, "activation.trigger.tool")
+    if isinstance(tool, str) and tool and tool != old_tool and tool not in known:
         added.append(tool)
     if added and not known:
         problems.append(
@@ -245,17 +246,22 @@ def record_schema(rules: ActorRules) -> dict[str, Any]:
 
 def _record_problems(
     actor: ActorRecord, rules: ActorRules, *, new_id: bool
-) -> list[Problem]:
+) -> list[tuple[str, Problem]]:
+    """Each problem with the record, with the record field it sits in ("" for the record as a whole)."""
     actor_id = str(actor.get("id") or "")
     schema = record_schema(rules)
     record = dict(actor)
-    problems: list[Problem] = []
+    problems: list[tuple[str, Problem]] = []
     extra = sorted(set(record) - set(schema["properties"]) - set(PLATFORM_FIELDS))
     if extra:
         problems.append(
-            problem(
-                None,
-                f"{actor_id} has no {', '.join(extra)} in {ACTORS_FILE}; remove {'it' if len(extra) == 1 else 'them'}.",
+            (
+                "",
+                problem(
+                    None,
+                    f"{actor_id} has no {', '.join(extra)} in {ACTORS_FILE}; remove "
+                    f"{'it' if len(extra) == 1 else 'them'}.",
+                ),
             )
         )
     checked = {
@@ -276,7 +282,12 @@ def _record_problems(
             if where
             else f"{actor_id}:"
         )
-        problems.append(problem(field_at(where), f"{subject} {_reason(error)}."))
+        problems.append(
+            (
+                where.split(".")[0],
+                problem(field_at(where), f"{subject} {_reason(error)}."),
+            )
+        )
     for path, field in (rules.get("equal_when_set") or {}).items():
         named = value_at(actor, path)
         if (
@@ -285,15 +296,21 @@ def _record_problems(
             and named.strip() != actor.get(field)
         ):
             problems.append(
-                problem(
+                (
                     field,
-                    f"{actor_id}'s {path} is {named.strip()!r} but its {field} is {actor.get(field)!r}; make them "
-                    "the same.",
+                    problem(
+                        field,
+                        f"{actor_id}'s {path} is {named.strip()!r} but its {field} is {actor.get(field)!r}; make "
+                        "them the same.",
+                    ),
                 )
             )
     if new_id and actor_id in rules.get("reserved_ids", []):
         problems.append(
-            problem("id", f"{actor_id!r} is reserved; give the actor another id.")
+            (
+                "id",
+                problem("id", f"{actor_id!r} is reserved; give the actor another id."),
+            )
         )
     return problems
 
@@ -337,6 +354,26 @@ def permission_conflicts(
                 }
             )
     return conflicts
+
+
+def actor_invalid(problems: list[Problem]) -> HostedHarnessError:
+    """An edit that cannot be written, each problem about its editor field as the check names it."""
+    return HostedHarnessError(
+        "actor_invalid",
+        " ".join(one["message"] for one in problems),
+        status_code=400,
+        details={"problems": problems},
+    )
+
+
+def limits_invalid(problems: list[Problem]) -> HostedHarnessError:
+    """Limits that cannot be written, each problem about the limit it names."""
+    return HostedHarnessError(
+        "limits_invalid",
+        "Fix the limits marked before saving.",
+        status_code=400,
+        details={"problems": problems},
+    )
 
 
 def conflict_error(conflicts: list[PermissionConflict]) -> HostedHarnessError:
@@ -389,17 +426,35 @@ def _in_a_cycle(actor_id: str, actors: list[ActorRecord], path: str) -> bool:
 
 
 def actor_problems(
-    actors: list[ActorRecord], actor_id: str, rules: ActorRules, *, new_id: bool
+    actors: list[ActorRecord],
+    actor_id: str,
+    rules: ActorRules,
+    *,
+    new_id: bool,
+    before: ActorRecord | None = None,
+    touched: set[str] | None = None,
 ) -> list[Problem]:
-    """The edited record checked against the sealing release's rules, one sentence each with its fix, with the field
-    it is about where it is about one.
+    """The edited record's problems against the sealing release's rules, each with its fix and field.
 
-    Other records are taken as they are, so a value written elsewhere never blocks an edit; what an actor should do
-    is never judged.
-    """
+    A problem `before` already had in a field outside `touched` is not this edit's, so it never blocks the edit."""
     known = {str(one.get("id") or "") for one in actors}
     actor = next(one for one in actors if one.get("id") == actor_id)
-    problems = _record_problems(actor, rules, new_id=new_id)
+    had = (
+        [
+            found
+            for where, found in _record_problems(
+                {**before, "id": actor_id}, rules, new_id=False
+            )
+            if touched is None or where not in touched
+        ]
+        if before is not None
+        else []
+    )
+    problems = [
+        found
+        for _, found in _record_problems(actor, rules, new_id=new_id)
+        if found not in had
+    ]
     if problems:
         # The links are read only from a record of the right shape.
         return problems
@@ -416,6 +471,37 @@ def actor_problems(
         if _in_a_cycle(actor_id, actors, path)
     ]
     return problems
+
+
+def same_name_problems(
+    actors: list[ActorRecord], actor_id: str, before: ActorRecord | None
+) -> list[Problem]:
+    """Two actors of one name read as one person to the agent, in a transcript and in every list that names them, so
+    a name this edit gives is one no other actor has (trimmed, in any case)."""
+    actor = next(one for one in actors if one.get("id") == actor_id)
+    name = str(actor.get("name") or "").strip()
+    if not name or (
+        before is not None
+        and name.casefold() == str(before.get("name") or "").strip().casefold()
+    ):
+        return []
+    holder = next(
+        (
+            one
+            for one in actors
+            if one.get("id") != actor_id
+            and str(one.get("name") or "").strip().casefold() == name.casefold()
+        ),
+        None,
+    )
+    if holder is None:
+        return []
+    return [
+        problem(
+            "name",
+            f"Another actor is already called {str(holder.get('name') or '').strip()}; give this one another name.",
+        )
+    ]
 
 
 def removal_problems(

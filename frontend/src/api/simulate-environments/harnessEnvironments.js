@@ -66,7 +66,7 @@ export const runHarnessEnvironment = async (
         scenario_ids: scenarioIds,
         trials,
         ...versionPickFields(picks),
-        // Left out unless set: the run then keeps the environment's seed.
+        // Omitted so the run keeps the environment's seed.
         ...(seed != null ? { seed } : {}),
       },
       { headers: { "Idempotency-Key": idempotencyKey } },

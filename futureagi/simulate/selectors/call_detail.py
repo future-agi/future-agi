@@ -3,11 +3,12 @@ transcript turns and recorded calls are an actor's, and the trial's World state 
 actors' model use already worked out."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
 from simulate.models import CallExecution, HostedHarnessArtifact
+from simulate.services.harness_actor_labels import FallbackView, fallback_of
 from simulate.services.hosted_harness_ingestion import (
     TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
@@ -24,6 +25,165 @@ AGENT_NAME = "The agent"
 # A world actor's action logged before the world kept outcomes, and not refused.
 OUTCOME_NOT_RECORDED = "not_recorded"
 HISTORY = "history"
+# The speaker roles a transcript gives the simulated person, by producer.
+CUSTOMER_ROLES = ("user", "customer", "human")
+# A decision's fallback outcome when one of the actor's own actions was taken for it.
+_FALLBACK_ACTED = ("fallback_action", "fallback_not_committed")
+
+Verdict = Literal["approved", "refused"]
+
+
+class BlockedCall(TypedDict, total=False):
+    """Calls the agent made to one host outside the test world, refused before they left."""
+
+    host: str
+    method: str
+    tool: str
+    count: int
+
+
+class StateChange(TypedDict, total=False):
+    """What one participant attempted in the trial and what the world made of it, as the harness counts it."""
+
+    who: str
+    name: str
+    attempted: int
+    committed: int
+    refused: int
+    faulted: int
+    duplicate: int
+    committed_actions: list[str]
+    read: int
+    read_actions: list[str]
+    no_change: bool
+    blocked: list[BlockedCall]
+
+
+class ActorDecision(TypedDict):
+    """One thing an actor did or chose in the trial, with its name, its fallback classified and, for an approval, the
+    verdict and whether the agent committed a write after a refusal."""
+
+    actor: str
+    name: str
+    play: str
+    action: NotRequired[str | None]
+    arguments: NotRequired[dict[str, object]]
+    channel: NotRequired[str]
+    problem: NotRequired[str]
+    why: NotRequired[str | None]
+    status: NotRequired[int | None]
+    timeout_seconds: NotRequired[float]
+    outcome: NotRequired[str]
+    action_outcome: NotRequired[str]
+    fallback: FallbackView | None
+    verdict: Verdict | None
+    committed_after_refusal: bool
+
+
+class ApprovalRequest(TypedDict):
+    action: str | None
+    at: float | None
+    action_id: str | None
+
+
+class ApprovalDecision(TypedDict):
+    by: str | None
+    verdict: Verdict | None
+    # Who decided, by display name; their id when nameless.
+    name: str | None
+    action: str | None
+    outcome: str | None
+    at: float | None
+
+
+class ApprovalWrite(TypedDict):
+    action: str | None
+    outcome: str | None
+
+
+class ApprovalLine(TypedDict):
+    request: ApprovalRequest
+    decision: ApprovalDecision
+    before_decision: list[ApprovalWrite]
+    after_decision: list[ApprovalWrite]
+    acted_before_decision: bool
+    verdict: Verdict | None
+    # The agent committed a write after this approval was refused.
+    committed_after_refusal: bool
+
+
+RecordChangeKind = Literal["added", "changed", "removed"]
+
+
+class RecordChange(TypedDict):
+    """One record the trial added, changed or removed, with its values before and after."""
+
+    table: str
+    key: object
+    kind: RecordChangeKind
+    before: dict[str, object] | None
+    after: dict[str, object] | None
+    fields: list[str]
+
+
+class TrialRecords(TypedDict):
+    changes: list[RecordChange]
+    skipped: list[dict[str, str]]
+    truncated: int
+
+
+class UsageLine(TypedDict):
+    actor: str
+    name: str
+    model: str
+    calls: int
+    tokens: int
+    cost_usd: float
+
+
+class UsageTotal(TypedDict):
+    calls: int
+    tokens: int
+    cost_usd: float
+
+
+class TrialNotice(TypedDict, total=False):
+    """About a fault (`action`, `on_call`, `mode`) or, for `evidence_incomplete`, how many pieces (`count`)."""
+
+    code: str
+    message: str
+    action: str | None
+    on_call: int | None
+    mode: str | None
+    count: int
+
+
+class TrialStart(TypedDict, total=False):
+    state: str
+    tables: list[str]
+    # What the start was compared against: the sealed seed, or (older trials) the first trial's start.
+    against: str
+
+
+class TrialState(TypedDict):
+    """A trial's World state ready to show. Every list is present, empty when the trial had none."""
+
+    state_changes: list[StateChange]
+    duplicates: list[dict[str, object]]
+    unreadable: bool
+    decisions: list[ActorDecision]
+    pre_run: list[ActorDecision]
+    approvals: list[ApprovalLine]
+    usage: list[dict[str, object]]
+    usage_summary: list[UsageLine]
+    notices: list[TrialNotice]
+    recorded: NotRequired[bool]
+    why: NotRequired[str]
+    records: NotRequired[TrialRecords]
+    start: NotRequired[TrialStart]
+    usage_total: NotRequired[UsageTotal]
+    limits: NotRequired[dict[str, int | float | str | None]]
+    end_state_url: NotRequired[str]
 
 
 def call_actors(metadata: object) -> list[dict[str, str]]:
@@ -152,9 +312,9 @@ def _end_state_url(
 
 def _usage(
     rows: Sequence[Mapping[str, Any]], names: Mapping[str, str]
-) -> tuple[list[dict[str, Any]], dict | None]:
+) -> tuple[list[UsageLine], UsageTotal | None]:
     """Actors' model calls summed per actor and model, then in all."""
-    lines: dict[tuple[str, str], dict[str, Any]] = {}
+    lines: dict[tuple[str, str], UsageLine] = {}
     for one in rows:
         actor, model = str(one.get("actor") or ""), str(one.get("model") or "")
         line = lines.setdefault(
@@ -176,7 +336,7 @@ def _usage(
     summary = list(lines.values())
     if not summary:
         return [], None
-    total = {
+    total: UsageTotal = {
         "calls": sum(one["calls"] for one in summary),
         "tokens": sum(one["tokens"] for one in summary),
         "cost_usd": sum(one["cost_usd"] for one in summary),
@@ -184,7 +344,7 @@ def _usage(
     return summary, total
 
 
-def _start_notice(start: object) -> dict[str, str] | None:
+def _start_notice(start: object) -> TrialNotice | None:
     if not (isinstance(start, dict) and start.get("state") == "differs"):
         return None
     tables = ", ".join(str(one) for one in start.get("tables") or [])
@@ -194,18 +354,20 @@ def _start_notice(start: object) -> dict[str, str] | None:
     }
 
 
-def _outside_world_notice(state: Mapping[str, Any]) -> dict[str, str] | None:
+def _outside_world_notice(
+    state: Mapping[str, Any], unreadable: bool
+) -> TrialNotice | None:
     """The agent committed changes, yet no record of the test world changed: its tools keep their records in the
     agent's own process, which the test world cannot read."""
     records = state.get("records")
-    if (
-        not isinstance(records, dict)
-        or records.get("unreadable")
-        or records.get("changes")
-    ):
+    if not isinstance(records, dict) or unreadable or records.get("changes"):
         return None
     agent = next(
-        (one for one in state.get("state_changes") or [] if one.get("who") == AGENT),
+        (
+            one
+            for one in state.get("state_changes") or []
+            if isinstance(one, dict) and one.get("who") == AGENT
+        ),
         None,
     )
     if not agent or not agent.get("committed"):
@@ -219,20 +381,195 @@ def _outside_world_notice(state: Mapping[str, Any]) -> dict[str, str] | None:
     }
 
 
-def _decision(one: Mapping[str, Any]) -> dict[str, Any]:
-    """A decision with its final outcome: a fallback action the world did not commit says so."""
+def _fallback(one: Mapping[str, Any], names: Mapping[str, str]) -> FallbackView | None:
+    """A decision's fallback classified by the editor's own rule: one of the actor's actions when the world took an
+    action for it (or the decision names that action), another actor when that actor answered; none when it has no
+    fallback."""
+    value = one.get("fallback")
+    if not isinstance(value, str) or not value:
+        return None
+    acted = one.get("outcome") in _FALLBACK_ACTED or one.get("action") == value
+    known = dict(names)
+    if one.get("outcome") == "answered_by":
+        known.setdefault(value, value)
+    return fallback_of(
+        {
+            "activation": {"fallback": value},
+            "permitted_actions": [value] if acted else [],
+        },
+        known,
+    )
+
+
+def _verdict(value: object) -> Verdict | None:
+    return (
+        "approved" if value == "approved" else "refused" if value == "refused" else None
+    )
+
+
+def _decision(
+    one: Mapping[str, Any], names: Mapping[str, str], approvals: Sequence[ApprovalLine]
+) -> ActorDecision:
+    """A decision as shown: named (by its id when nameless), its fallback classified, its final outcome (a fallback
+    action the world did not commit says so), and an approval's verdict; a trial from before verdicts were recorded
+    reads none."""
+    actor = str(one.get("actor") or "")
+    shown = cast(
+        ActorDecision,
+        {
+            key: one[key]
+            for key in (
+                "action",
+                "arguments",
+                "channel",
+                "problem",
+                "why",
+                "status",
+                "timeout_seconds",
+                "outcome",
+                "action_outcome",
+            )
+            if key in one
+        },
+    )
     if one.get("outcome") == "fallback_action" and one.get("action_outcome") not in (
         None,
         "committed",
     ):
-        return {**one, "outcome": "fallback_not_committed"}
-    return dict(one)
+        shown["outcome"] = "fallback_not_committed"
+    # The approval this decision answered (the same actor deciding by the same action) says whether the agent
+    # committed a write after it was refused.
+    approval = next(
+        (
+            line
+            for line in approvals
+            if line["decision"]["by"] == actor
+            and line["decision"]["action"] == one.get("action")
+        ),
+        None,
+    )
+    shown.update(
+        {
+            "actor": actor,
+            "name": str(one.get("name") or names.get(actor) or actor),
+            "play": str(one.get("play") or ""),
+            "fallback": _fallback(one, names),
+            "verdict": _verdict(one.get("verdict")),
+            "committed_after_refusal": bool(
+                approval and approval["committed_after_refusal"]
+            ),
+        }
+    )
+    return shown
 
 
-def trial_state(call: CallExecution) -> dict[str, Any] | None:
-    """The trial's World state, ready to show: what each participant did, the records before and after, messages
-    written before the run apart from choices made in it, notices first, actors' model use summed, and where the
-    trial's end state is kept."""
+def _number(value: object) -> float | None:
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
+def _text(value: object) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _writes(rows: object) -> list[ApprovalWrite]:
+    return (
+        [
+            {"action": _text(one.get("action")), "outcome": _text(one.get("outcome"))}
+            for one in rows
+            if isinstance(one, dict)
+        ]
+        if isinstance(rows, list)
+        else []
+    )
+
+
+def _approval(one: Mapping[str, Any], names: Mapping[str, str]) -> ApprovalLine:
+    request = one.get("request") if isinstance(one.get("request"), dict) else {}
+    decision = one.get("decision") if isinstance(one.get("decision"), dict) else {}
+    return {
+        "request": {
+            "action": _text(request.get("action")),
+            "at": _number(request.get("at")),
+            "action_id": _text(request.get("action_id")),
+        },
+        "decision": {
+            "by": _text(decision.get("by")),
+            "name": (
+                names.get(str(decision["by"])) or str(decision["by"])
+                if decision.get("by")
+                else None
+            ),
+            "action": _text(decision.get("action")),
+            "outcome": _text(decision.get("outcome")),
+            "at": _number(decision.get("at")),
+            "verdict": _verdict(decision.get("verdict")),
+        },
+        "before_decision": _writes(one.get("before_decision")),
+        "after_decision": _writes(one.get("after_decision")),
+        "acted_before_decision": one.get("acted_before_decision") is True,
+        "verdict": _verdict(one.get("verdict")) or _verdict(decision.get("verdict")),
+        "committed_after_refusal": one.get("committed_after_refusal") is True,
+    }
+
+
+def _record(row: object) -> dict[str, object] | None:
+    return (
+        {str(key): value for key, value in row.items()}
+        if isinstance(row, dict)
+        else None
+    )
+
+
+def _records(records: Mapping[str, Any]) -> TrialRecords:
+    """The record changes as kept at ingestion, each with its fields said outright."""
+    changes: list[RecordChange] = []
+    for one in records.get("changes") or []:
+        if not isinstance(one, dict) or one.get("kind") not in (
+            "added",
+            "changed",
+            "removed",
+        ):
+            continue
+        changes.append(
+            {
+                "table": str(one.get("table") or ""),
+                "key": one.get("key"),
+                "kind": one["kind"],
+                "before": _record(one.get("before")),
+                "after": _record(one.get("after")),
+                "fields": [
+                    str(name)
+                    for name in one.get("fields") or []
+                    if isinstance(name, str)
+                ],
+            }
+        )
+    truncated = records.get("truncated")
+    return {
+        "changes": changes,
+        "skipped": [
+            {"table": str(one.get("table") or ""), "why": str(one.get("why") or "")}
+            for one in records.get("skipped") or []
+            if isinstance(one, dict)
+        ],
+        "truncated": truncated
+        if isinstance(truncated, int) and not isinstance(truncated, bool)
+        else 0,
+    }
+
+
+def _entries(raw: object) -> list[dict[str, Any]]:
+    return (
+        [one for one in raw if isinstance(one, dict)] if isinstance(raw, list) else []
+    )
+
+
+def trial_state(call: CallExecution) -> TrialState | None:
+    """The trial's World state, ready to show; every list is present and `unreadable` is said once."""
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     if state is None:
@@ -244,24 +581,27 @@ def trial_state(call: CallExecution) -> dict[str, Any] | None:
             kind=type(state).__name__,
         )
         return None
-    shown = dict(state)
-    shown["state_changes"] = [
-        {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one
-        for one in state.get("state_changes") or []
-        if isinstance(one, dict)
+    records = state.get("records") if isinstance(state.get("records"), dict) else {}
+    unreadable = state.get("unreadable") is True or records.get("unreadable") is True
+    changes = [
+        cast(
+            StateChange, {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one
+        )
+        for one in _entries(state.get("state_changes"))
     ]
-    decisions = [one for one in state.get("decisions") or [] if isinstance(one, dict)]
-    shown["pre_run"] = [
-        _decision(one) for one in decisions if one.get("play") == HISTORY
-    ]
-    shown["decisions"] = [
-        _decision(one) for one in decisions if one.get("play") != HISTORY
-    ]
+    decisions = _entries(state.get("decisions"))
     names = {
-        str(one.get("who")): str(one.get("name"))
-        for one in state.get("state_changes") or []
-        if isinstance(one, dict) and one.get("name")
+        one["id"]: one["name"]
+        for one in call_actors(metadata)
+        if one.get("id") and one.get("name")
     }
+    names.update(
+        {
+            str(one.get("who")): str(one.get("name"))
+            for one in changes
+            if one.get("name")
+        }
+    )
     names.update(
         {
             str(one["actor"]): str(one["name"])
@@ -269,16 +609,52 @@ def trial_state(call: CallExecution) -> dict[str, Any] | None:
             if one.get("actor") and one.get("name")
         }
     )
-    shown["usage_summary"], total = _usage(
-        [one for one in state.get("usage") or [] if isinstance(one, dict)], names
-    )
+    usage, total = _usage(_entries(state.get("usage")), names)
+    approvals = [_approval(one, names) for one in _entries(state.get("approvals"))]
+    notices = [
+        _start_notice(state.get("start")),
+        _outside_world_notice(state, unreadable),
+    ]
+    shown: TrialState = {
+        "state_changes": changes,
+        "duplicates": _entries(state.get("duplicates")),
+        "unreadable": unreadable,
+        "pre_run": [
+            _decision(one, names, approvals)
+            for one in decisions
+            if one.get("play") == HISTORY
+        ],
+        "decisions": [
+            _decision(one, names, approvals)
+            for one in decisions
+            if one.get("play") != HISTORY
+        ],
+        "approvals": approvals,
+        "usage": _entries(state.get("usage")),
+        "usage_summary": usage,
+        "notices": [one for one in notices if one]
+        + [cast(TrialNotice, one) for one in _entries(state.get("notices"))],
+    }
+    if state.get("recorded") is False:
+        shown["recorded"] = False
+        shown["why"] = str(state.get("why") or "")
+    if records and not unreadable:
+        shown["records"] = _records(records)
+    if isinstance(state.get("start"), dict):
+        shown["start"] = cast(TrialStart, state["start"])
     if total is not None:
         shown["usage_total"] = total
-    notices = [_start_notice(state.get("start")), _outside_world_notice(state)]
-    shown["notices"] = [one for one in notices if one] + list(
-        state.get("notices") or []
-    )
+    if isinstance(state.get("limits"), dict):
+        shown["limits"] = state["limits"]
     url = _end_state_url(call, metadata, state)
     if url:
         shown["end_state_url"] = url
     return shown
+
+
+def has_customer(turns: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether the simulated person spoke in the call: a run an actor's message or the scenario's own task started
+    may have no turn of theirs."""
+    return any(
+        str(turn.get("speaker_role") or "").lower() in CUSTOMER_ROLES for turn in turns
+    )

@@ -6,6 +6,7 @@ import re
 from typing import Any, TypedDict
 
 from simulate.models import HostedHarnessJob
+from simulate.models.persona import Persona
 from simulate.services.harness_actor_rules import (
     CALLER,
     actor_not_found,
@@ -22,6 +23,52 @@ class Seen(TypedDict):
     input: str
     value: Any
     source: str
+    # The value as one line a person reads: lists joined, fields as "field: value", never raw JSON.
+    text: str
+
+
+def readable(value: object) -> str:
+    """A view value as a person reads it: lists joined, a typed entry as its content (a fact's text), a `kind` tag as
+    its value alone, other fields as "field: value"."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "; ".join(one for one in (readable(item) for item in value) if one)
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return text
+        pairs = [(str(key), readable(one)) for key, one in value.items()]
+        return " · ".join(
+            text if key == "kind" else f"{key.replace('_', ' ')}: {text}"
+            for key, text in pairs
+            if text
+        )
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def seen_text(field: str, value: object) -> str:
+    """One seen value as its line; a persona's voice fields read as values, its label already saying what they are."""
+    if field != "persona" or not isinstance(value, dict):
+        return readable(value)
+    rest = {key: one for key, one in value.items() if key not in _PERSONA_LEAD}
+    gender = str(value.get("gender") or "")
+    lead = [
+        str(value.get("name") or ""),
+        _GENDER_LABELS.get(gender, gender),
+        str(value.get("age_group") or ""),
+        str(value.get("accent") or ""),
+    ]
+    return " · ".join(one for one in [*lead, readable(rest)] if one)
+
+
+# The persona fields a seen persona leads with, as values.
+_PERSONA_LEAD = ("name", "gender", "age_group", "accent")
+_GENDER_LABELS = {
+    str(value): str(label) for value, label in Persona.GenderChoices.choices
+}
 
 
 class OthersPrivate(TypedDict):
@@ -132,7 +179,14 @@ def actor_view(
             )
         if value in (None, "", [], {}):
             continue
-        sees.append({"input": f"{source}.{field}", "value": value, "source": source})
+        sees.append(
+            {
+                "input": f"{source}.{field}",
+                "value": value,
+                "source": source,
+                "text": seen_text(field, value),
+            }
+        )
     hidden = rules["evaluator_only"]
     others = [
         f"{one.get('name') or one.get('id')}.{name}"

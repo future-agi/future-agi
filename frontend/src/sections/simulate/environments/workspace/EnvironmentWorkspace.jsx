@@ -132,7 +132,7 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // The run awaiting its version picks: { ids, trials, initialPicks, seed }.
+  // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
   const runMutation = useMutation({
     meta: { errorHandled: true },

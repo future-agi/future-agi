@@ -15,7 +15,6 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
-  // Shown only when the environment has a cast to edit or list.
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
@@ -427,13 +426,11 @@ export const AGENT_VERSIONS_COPY = {
 export const RUN_DIALOG_COPY = {
   title: "Run simulation",
   seed: "Seed (optional)",
-  // The seed folded to one line until someone edits it.
   seedLine: "Seed",
   seedNew: "New seed",
   edit: "Edit",
   done: "Done",
   seedHelp: "The same seed draws the same personas and variations again",
-  seedInvalid: "A seed is a whole number from 0 to 9223372036854775807",
   pieces: {
     agent: "Agent version",
     environment: "Environment version",
@@ -465,14 +462,12 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
-  // The tools that reach production, as one line: how many of the chosen scenarios they hold back.
   heldBack: (n, tools) =>
     n
       ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
       : `${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production, so this test blocks ${tools.length === 1 ? "its" : "their"} calls`,
   details: "Details",
   hideDetails: "Hide details",
-  // A tool that reaches production: the test blocks its calls, and says how to test it.
   blockedTool: (tool) =>
     `Blocked: ${tool} reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.`,
   usedBy: (names) => `Scenarios that use it: ${names.join(", ")}.`,

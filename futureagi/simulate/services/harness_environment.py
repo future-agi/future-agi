@@ -62,7 +62,7 @@ from simulate.types import ContractCallActor
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
-    from simulate.services.harness_tool_reach import FaultTarget
+    from simulate.services.scenario_faults import FaultTarget
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 logger = structlog.get_logger(__name__)
@@ -506,10 +506,9 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
 def environment_actor_side(
     job: HostedHarnessJob,
 ) -> tuple[list[ActorRecord], ActorRules]:
-    """The environment's cast and the actor rules its files were sealed with, from the files the next edit builds
-    on. Best effort: files that cannot be read (storage unreachable or refusing, an archive or actor file that does
-    not parse) leave the page readable with no cast (scenario actors read by their ids) and the first sealing
-    release's rules, logged."""
+    """The cast and sealed actor rules from the files the next edit builds on.
+
+    Best effort: unreadable files give no cast and the first sealing release's rules, logged."""
     from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_versioning import drafts
     from simulate.services.hosted_harness import HostedHarnessError
@@ -524,6 +523,26 @@ def environment_actor_side(
             exc_info=True,
         )
         return [], actor_rules({})
+
+
+def edit_fault_targets(job: HostedHarnessJob) -> list[FaultTarget] | None:
+    """The fault targets a scenario-fault edit is judged against, from the files the next edit builds on.
+
+    Unreadable files fall back to the environment's contract, logged; None when the contract says nothing of the door."""
+    from simulate.services.harness_actor_rules import actor_rules, read_json
+    from simulate.services.harness_tool_reach import door_targets
+    from simulate.services.harness_versioning import drafts
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    try:
+        files, _ = drafts.edit_side(job, "environment")
+        contract = read_json(files, "contract.json") or contract_data(job)
+        return door_targets(contract, actor_rules(files))
+    except (S3Error, HTTPError, HostedHarnessError):
+        logger.exception(
+            "fault_targets_environment_files_unreadable", job_id=str(job.id)
+        )
+        return door_targets(contract_data(job), actor_rules({}))
 
 
 def _names_actors(call_actors: object, scenario_docs: object) -> bool:
@@ -907,12 +926,14 @@ def call_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
     from django.core.cache import cache
 
     from simulate.services.harness_versioning import drafts, hashing
+    from simulate.services.hosted_harness import HostedHarnessError
 
     labels = call_actor_choice_labels(stage_output(job, "call_actors"))
     try:
         files, key = drafts.edit_side(job, "environment")
-    except Exception:  # noqa: BLE001 - the labels are a convenience: storage trouble keeps the list's own names
-        logger.warning("scenario_filter_actor_names_unreadable", job_id=str(job.id))
+    except (S3Error, HTTPError, HostedHarnessError):
+        # The labels are a convenience: storage that cannot be read keeps the list's own names.
+        logger.exception("scenario_filter_actor_names_unreadable", job_id=str(job.id))
         return labels
     cache_key = f"simulate:actor-names:{key}" if key else None
     names = cache.get(cache_key) if cache_key else None

@@ -1,22 +1,20 @@
-from django.db.models import F, Value
-from django.db.models.functions import Coalesce
-
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
+from simulate.selectors.call_transcripts import with_speakers
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
     """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn."""
     return [
         dict(row)
-        for row in call_execution.transcripts.values(
+        for row in with_speakers(call_execution.transcripts.all()).values(
             "speaker_role",
             "content",
             "start_time_ms",
             "end_time_ms",
             "confidence_score",
-            speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
-            actor_id=F("actor_turn__actor_id"),
+            "speaker_name",
+            "actor_id",
         )
     ]
 
@@ -88,12 +86,9 @@ def clear_call_for_rerun(
     keep_metadata_keys: tuple[str, ...] = (),
     clear_metadata: bool = True,
 ) -> None:
-    """Snapshot a call's result, then reset the row so a rerun can fill it again. Deleting the transcripts removes
-    their actor rows with them (cascade).
+    """Snapshot a call's result, then reset the row so a rerun can fill it again.
 
-    ``clear_metadata``: a hosted rerun drops ``call_metadata`` (the harness batch claim, eval flags) so its rerun is
-    ingested like a first one, keeping ``row_id`` and any ``keep_metadata_keys``. A native rerun keeps it, apart from
-    the eval flags ``reset_to_default`` clears."""
+    ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``."""
     call_snapshot(call_execution).save()
     call_execution.transcripts.all().delete()
     call_execution.reset_to_default(save=False)

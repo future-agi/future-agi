@@ -27,6 +27,7 @@ from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.call_detail import (
     call_actors,
+    has_customer,
     tagged_function_calls,
     transcript_turns,
     trial_state,
@@ -633,6 +634,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
     call_actors = CallCallActorSerializer(many=True)
+    has_customer = serializers.BooleanField(
+        help_text="The simulated person spoke in the call; false when an actor's message or the scenario's task "
+        "started it and the person never spoke."
+    )
     trial_state = TrialStateSerializer(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
@@ -654,6 +659,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "evaluations",
             "function_calls",
             "call_actors",
+            "has_customer",
             "trial_state",
             "scoring_status",
             "csat_status",
@@ -936,6 +942,7 @@ def build_call_execution_detail(
             "evaluations": normalized["evaluations"],
             "function_calls": tagged_function_calls(function_calls(call)),
             "call_actors": actors,
+            "has_customer": has_customer(data["transcript"]),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call),
             "scoring_status": normalized["scoring_status"],

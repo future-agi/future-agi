@@ -1,14 +1,4 @@
-// A scenario's test conditions: the faults the world gives the agent's calls in it, as the scenario file's
-// `faults` carries them ({ action, mode, on_call, delay_seconds, status, message }).
-
-export const TEST_CONDITION_MODES = {
-  timeout_before_commit: "Times out before it runs",
-  timeout_after_commit: "Runs, then the answer is lost",
-  unavailable: "Unavailable",
-  error: "Answers with an error",
-};
-
-// What each mode means for the agent, under the choice.
+// A mode missing here shows without a hint.
 export const TEST_CONDITION_HINTS = {
   timeout_before_commit:
     "The call waits, then times out. Nothing changes in the world.",
@@ -21,7 +11,6 @@ export const TEST_CONDITION_HINTS = {
 export const TIMEOUT_MODES = ["timeout_before_commit", "timeout_after_commit"];
 
 export const TEST_CONDITIONS_COPY = {
-  // The agent never sees them: they shape how its tools answer in this scenario.
   heading: "Hidden · test conditions",
   empty: "Tools behave normally",
   add: "Add a test condition",
@@ -33,33 +22,14 @@ export const TEST_CONDITIONS_COPY = {
   message: "Message",
   remove: "Remove",
   inProcess: "This tool runs inside the agent, so it cannot be held",
-  refused: "The test world cannot apply this test condition.",
 };
 
-// The modes a tool can be given: "Runs, then the answer is lost" only for a tool that changes records, since a read
-// has nothing to lose.
-export const modesFor = (target) =>
-  Object.keys(TEST_CONDITION_MODES).filter(
-    (mode) => mode !== "timeout_after_commit" || Boolean(target?.writes),
-  );
+export const testConditionRoute = (fault) =>
+  fault.tool !== fault.action ? fault.action : "";
 
-// The contract tool a fault names, from the environment's fault targets.
-const targetOf = (fault, env) =>
-  env?.faultTargets?.find((one) => one.action === fault?.action);
-
-// The route a fault holds, shown under its line, when it reads differently from the tool's name.
-export function testConditionRoute(fault, env) {
-  const target = targetOf(fault, env);
-  return target && target.tool !== target.action ? target.action : "";
-}
-
-// One line per fault, from the fields it holds: "{tool}: {mode label} on call {n}", with the delay for a timeout and
-// the status for an error.
-export function testConditionLine(fault, env) {
-  const target = targetOf(fault, env);
-  const label = TEST_CONDITION_MODES[fault.mode] || fault.mode;
+export function testConditionLine(fault) {
   return [
-    `${target ? target.tool : fault.action}: ${label}`,
+    `${fault.tool}: ${fault.mode_label}`,
     fault.on_call != null && ` on call ${fault.on_call}`,
     fault.delay_seconds != null && ` after ${fault.delay_seconds} s`,
     fault.status != null &&
@@ -67,4 +37,20 @@ export function testConditionLine(fault, env) {
   ]
     .filter(Boolean)
     .join("");
+}
+
+// Only the fields the mode reads; numbers go as they are so the server can refuse a null.
+export function fileFault(fault) {
+  const stored = {
+    action: fault.action,
+    mode: fault.mode,
+    on_call: fault.on_call,
+  };
+  if (TIMEOUT_MODES.includes(fault.mode))
+    stored.delay_seconds = fault.delay_seconds;
+  if (fault.mode === "error") {
+    stored.status = fault.status;
+    if (fault.message) stored.message = fault.message;
+  }
+  return stored;
 }

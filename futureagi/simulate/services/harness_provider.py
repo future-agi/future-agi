@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import transaction
@@ -31,6 +31,9 @@ from simulate.models import (
 from simulate.selectors.runs import user_runs
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
+
+if TYPE_CHECKING:
+    from simulate.services.scenario_faults import FaultTarget
 
 logger = logging.getLogger(__name__)
 
@@ -2165,30 +2168,26 @@ class HostedHarnessProvider:
         from simulate.selectors.environment_documents import contract_data
         from simulate.services.harness_actor_rules import actor_rules
         from simulate.services.harness_environment import environment_actor_side
-        from simulate.services.harness_tool_reach import door_targets
+        from simulate.services.harness_tool_reach import door_reach, fault_targets
 
         page = list(page or [])
-        # The environment's files are read only for a page that has actors to resolve.
+        # The environment's files are read only for a page that has actors to resolve or faults to name.
         actor_cast, rules = (
             environment_actor_side(job)
-            if any(one.actors for one in page)
+            if any(one.actors or one.faults for one in page)
             else ([], actor_rules({}))
         )
-        targets = door_targets(contract_data(job), rules)
-        rows = grouped(
-            [
-                (
-                    {
-                        **scenario_row(one, targets=targets, actor_cast=actor_cast),
-                        "draft_change": one.draft_change,
-                    }
-                    if drafted is not None
-                    else scenario_row(one, targets=targets, actor_cast=actor_cast)
-                )
-                for one in page
-            ],
-            group_by,
-        )
+        contract = contract_data(job)
+        targets = fault_targets(contract, rules)
+        door = targets if door_reach(contract) else None
+
+        def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
+            row = scenario_row(
+                one, targets=door, fault_targets=targets, actor_cast=actor_cast
+            )
+            return row if drafted is None else {**row, "draft_change": one.draft_change}
+
+        rows = grouped([row_of(one) for one in page], group_by)
         response = paginator.get_paginated_response(rows)
         if drafted is not None:
             response.data["draft"] = drafted.draft
@@ -2365,6 +2364,9 @@ class HostedHarnessProvider:
                     )
                     continue
                 spread.extend({**change, "scenario": name} for name in meant)
+            # Read once, and only when a change sets a scenario's faults.
+            fault_targets: list[FaultTarget] | None = None
+            targets_read = False
             for change in spread:
                 name = str(change.get("scenario") or "")
                 target = by_name.get(name)
@@ -2433,9 +2435,14 @@ class HostedHarnessProvider:
                         )
                         continue
                     if field == "faults":
-                        from simulate.services.harness_tool_reach import faults_problem
+                        from simulate.services.harness_environment import (
+                            edit_fault_targets,
+                        )
+                        from simulate.services.scenario_faults import faults_problem
 
-                        problem = faults_problem(change.get("value"))
+                        if not targets_read:
+                            fault_targets, targets_read = edit_fault_targets(job), True
+                        problem = faults_problem(change.get("value"), fault_targets)
                         if problem:
                             receipts.append(
                                 {
@@ -2630,7 +2637,7 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
 
-        def kept(why: str) -> Response:
+        def kept(why: str, code: str = "not_saved") -> Response:
             return Response(
                 {
                     "receipts": [
@@ -2639,7 +2646,7 @@ class HostedHarnessProvider:
                                 **one,
                                 "outcome": "refused",
                                 "why": f"nothing changed: {why}",
-                                "code": "not_saved",
+                                "code": code,
                             }
                             if one.get("outcome") == "applied"
                             else one
@@ -2657,7 +2664,9 @@ class HostedHarnessProvider:
                     {"error": exc.code, "message": exc.message},
                     status=exc.status_code,
                 )
-            return kept(exc.message)
+            return kept(
+                exc.message, exc.code if exc.code == "fault_invalid" else "not_saved"
+            )
         except AuthoringArchiveKept as refused:
             return kept(str(refused))
         if write is None:

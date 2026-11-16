@@ -549,8 +549,8 @@ def test_a_change_to_actors_json_outside_one_record_per_actor_still_reads_as_a_c
 def test_an_actor_who_speaks_takes_the_whole_contract_in_the_one_actor_list(
     user, workspace, storage, auth_client
 ):
-    """TH-8927 done-when with the one actor type: a Manager who joins the call is read back with its permissions and
-    its view, and no field is refused because it speaks."""
+    """With the one actor type, a Manager who joins the call is read back with its permissions and its view, and no
+    field is refused because it speaks."""
     from simulate.services.harness_versioning.drafts import edit_sides, fresh_draft
 
     environment = _built(user, workspace, "actors-actor")
@@ -1530,7 +1530,7 @@ def test_a_call_actor_follows_the_sealed_persona_role_and_channel_rules(
         _add(
             auth_client,
             environment,
-            {**colleague, "persona": {"name": "Jordan", "age_group": "adult"}},
+            {**colleague, "persona": {"name": "Jordan", "age_group": "25-32"}},
         ).status_code
         == 200
     )
@@ -1633,7 +1633,7 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
         "state_changes": changes,
         "decisions": decisions,
     }
-    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+    assert TrialStateSerializer(data=_served(metadata[TRIAL_STATE_KEY])).is_valid()
 
     cleared = {TRIAL_STATE_KEY: {"stale": True}}
     _ingest(
@@ -1645,6 +1645,18 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
         cleared,
     )
     assert TRIAL_STATE_KEY not in cleared
+
+
+def _served(state):
+    """A stored trial state as the call detail serves it: through its selector, as every reader gets it."""
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    return trial_state(
+        SimpleNamespace(id="call", call_metadata={TRIAL_STATE_KEY: state})
+    )
 
 
 def test_a_trial_s_reads_are_served_apart_from_its_committed_changes():
@@ -1662,16 +1674,18 @@ def test_a_trial_s_reads_are_served_apart_from_its_committed_changes():
         "read": 2,
         "read_actions": ["get_order", "list_refunds"],
     }
-    served = TrialStateSerializer({"state_changes": [change]}).data["state_changes"][0]
+    served = TrialStateSerializer(_served({"state_changes": [change]})).data[
+        "state_changes"
+    ][0]
     assert (served["committed"], served["read"], served["read_actions"]) == (
         1,
         2,
         ["get_order", "list_refunds"],
     )
-    assert TrialStateSerializer(data={"state_changes": [change]}).is_valid()
+    assert TrialStateSerializer(data=_served({"state_changes": [change]})).is_valid()
     # A trial stored before reads were told apart still serves.
     older = {key: value for key, value in change.items() if not key.startswith("read")}
-    assert TrialStateSerializer(data={"state_changes": [older]}).is_valid()
+    assert TrialStateSerializer(data=_served({"state_changes": [older]})).is_valid()
 
 
 def test_a_call_blocked_outside_the_test_world_is_served_beside_the_refused_count():
@@ -1691,10 +1705,12 @@ def test_a_call_blocked_outside_the_test_world_is_served_beside_the_refused_coun
             {"host": "refunds.example.com", "method": "CONNECT", "tool": "issue_refund"}
         ],
     }
-    served = TrialStateSerializer({"state_changes": [change]}).data["state_changes"][0]
+    served = TrialStateSerializer(_served({"state_changes": [change]})).data[
+        "state_changes"
+    ][0]
     assert served["blocked"] == change["blocked"]
     assert served["refused"] == 1 and served["committed"] == 0
-    assert TrialStateSerializer(data={"state_changes": [change]}).is_valid()
+    assert TrialStateSerializer(data=_served({"state_changes": [change]})).is_valid()
 
 
 def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
@@ -1725,7 +1741,7 @@ def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
     )
     expected = {key: value for key, value in notice.items() if key != "internal"}
     assert metadata[TRIAL_STATE_KEY] == {"notices": [expected]}
-    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+    assert TrialStateSerializer(data=_served(metadata[TRIAL_STATE_KEY])).is_valid()
 
 
 def test_a_write_committed_twice_is_kept_on_the_trial_and_named_in_the_call_s_reason(
@@ -1754,7 +1770,7 @@ def test_a_write_committed_twice_is_kept_on_the_trial_and_named_in_the_call_s_re
         metadata,
     )
     assert metadata[TRIAL_STATE_KEY] == {"duplicates": [duplicate]}
-    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+    assert TrialStateSerializer(data=_served(metadata[TRIAL_STATE_KEY])).is_valid()
     message = "The agent repeated issue_refund after its answer was lost, and the world committed it twice."
     assert (
         _reader_failure_reason(
@@ -1811,8 +1827,8 @@ def test_world_changes_keep_records_start_and_why_they_were_not_recorded(
         "truncated": 3,
     }
     assert trial["start"] == {"state": "differs", "tables": ["orders"]}
-    assert TrialStateSerializer(data=trial).is_valid(), TrialStateSerializer(
-        data=trial
+    assert TrialStateSerializer(data=_served(trial)).is_valid(), TrialStateSerializer(
+        data=_served(trial)
     ).errors
 
     in_process: dict = {}
@@ -2275,8 +2291,10 @@ def test_the_scenario_filter_keeps_its_own_names_when_the_environment_s_files_ca
     environment = _built(user, workspace, "actor-filter-storage-down")
     assert _add(auth_client, environment, MANAGER).status_code == 200
 
+    from minio.error import S3Error
+
     def down(*_args, **_kwargs):
-        raise RuntimeError("storage down")
+        raise S3Error("NoSuchKey", "storage down", "r", "h", "i", None)
 
     monkeypatch.setattr(archives, "get_archive", down)
     from django.core.cache import cache
@@ -2311,85 +2329,6 @@ def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
     assert "channel" not in MANAGER
     assert _add(auth_client, environment, MANAGER).status_code == 200
     assert call_actor_labels(environment)["manager"] == "Priya Raman"
-
-
-@pytest.mark.parametrize(
-    "fault,problem",
-    [
-        ({"action": "orders.get", "mode": "delay"}, "mode must be"),
-        ({"action": "", "mode": "timeout_before_commit"}, "action must name"),
-        (
-            {"action": "orders.get", "mode": "timeout_after_commit", "on_call": 0},
-            "on_call must be",
-        ),
-        (
-            {
-                "action": "orders.get",
-                "mode": "timeout_after_commit",
-                "delay_seconds": 31,
-            },
-            "delay_seconds must be",
-        ),
-        (
-            {"action": "orders.get", "mode": "timeout_after_commit", "when": "now"},
-            "unknown field when",
-        ),
-        ("orders.get", "a fault must be an object"),
-        ({"action": "orders.get", "mode": "error", "status": 200}, "status must be"),
-        ({"action": "orders.get", "mode": "error", "message": 5}, "message must be"),
-    ],
-)
-def test_a_scenario_fault_the_world_cannot_apply_is_refused_by_name(fault, problem):
-    from simulate.services.harness_tool_reach import require_valid_faults
-    from simulate.services.hosted_harness import HostedHarnessError
-
-    with pytest.raises(HostedHarnessError) as raised:
-        require_valid_faults([{"name": "refund-late", "faults": [fault]}])
-    assert raised.value.code == "scenario_faults_invalid"
-    assert "refund-late" in str(raised.value) and problem in str(raised.value)
-
-
-def test_scenario_faults_the_world_can_apply_pass():
-    from simulate.services.harness_tool_reach import require_valid_faults
-
-    require_valid_faults(
-        [
-            {
-                "name": "a",
-                "faults": [{"action": "orders.get", "mode": "timeout_before_commit"}],
-            },
-            {
-                "name": "b",
-                "faults": [
-                    {
-                        "action": "x",
-                        "mode": "timeout_after_commit",
-                        "on_call": 2,
-                        "delay_seconds": 4.5,
-                    }
-                ],
-            },
-            {"name": "c"},
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    "fault",
-    [
-        {"action": "inventory.reserve", "mode": "unavailable"},
-        {
-            "action": "inventory.reserve",
-            "mode": "error",
-            "status": 429,
-            "message": "slow down",
-        },
-    ],
-)
-def test_unavailable_is_a_valid_fault_mode(fault):
-    from simulate.services.harness_tool_reach import require_valid_faults
-
-    require_valid_faults([{"name": "stock-out", "faults": [fault]}])
 
 
 def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupported():
@@ -2530,7 +2469,7 @@ def test_a_draft_write_with_a_fault_mode_the_world_does_not_know_is_refused(
 
     with pytest.raises(HostedHarnessError) as raised:
         drafts.record_draft(environment, _authoring(**edited), origin="chat", user=user)
-    assert raised.value.code == "scenario_faults_invalid"
+    assert raised.value.code == "fault_invalid"
     assert drafts.fresh_draft(environment, "suite") is None
 
 

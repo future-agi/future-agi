@@ -83,6 +83,9 @@ class ActorRules(TypedDict, total=False):
     not_knowledge: dict[str, list[str]]
     record_changes: dict[str, Any]
     own_actions: list[str]
+    # What each actor limit left unset takes, by limit: `{default, by_modality: {modality: value}}`, `by_modality`
+    # empty when every modality shares the default; a release that seals none leaves the defaults unsaid.
+    limit_defaults: dict[str, dict[str, object]]
 
 
 class WorldAction(TypedDict):
@@ -359,6 +362,24 @@ def actor_models(rules: ActorRules) -> list[str]:
     )
 
 
+class UploadKind(TypedDict):
+    # The folder an upload of this kind lands in, and the formats it may be.
+    folder: str
+    formats: tuple[str, ...]
+
+
+# What a person may upload into an environment draft, by kind. A later kind (seed data, recordings) adds one entry here
+# and a reader where it is used, nothing else.
+UPLOAD_KINDS: dict[str, UploadKind] = {
+    # Documents an actor may be given to read (a policy, a price list), picked per actor like any environment file.
+    "knowledge": {"folder": "knowledge/", "formats": (".md", ".txt", ".json", ".csv")},
+}
+
+
+# An upload's size bound: an actor is given at most the start of a file, so a larger one only costs storage.
+UPLOAD_MAX_BYTES = 1024 * 1024
+
+
 LIMIT_FIELDS = {
     "max_active": int,
     "caller_takes_back_after_turns": int,
@@ -453,10 +474,7 @@ def scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str]
 
 
 def _takes_part(scenario: dict[str, Any], actor_id: str) -> bool:
-    """Whether an actor is in a scenario: listed, sending its start, or writing a pre-run session.
-
-    The caller is the person in every scenario a person starts, so only one started by a task or an event has none.
-    """
+    """Whether an actor is in a scenario: listed, sending its start, or writing a pre-run session."""
     start = scenario.get("starts_with")
     if actor_id == CALLER:
         return not start

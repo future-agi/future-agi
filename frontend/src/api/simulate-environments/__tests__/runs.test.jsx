@@ -168,15 +168,6 @@ describe("executionToRun", () => {
     expect(run.durationS).toBe(11.9);
   });
 
-  it("reads a lifecycle the Status column has no key for as the run's verdict, never blank", () => {
-    const run = executionToRun({
-      id: "ex-new-state",
-      status: "Archived",
-      outcome_status: "passed",
-    });
-    expect(run.runState).toBe("passed");
-  });
-
   it("maps the raw lifecycle to the Status column's runState", () => {
     const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");

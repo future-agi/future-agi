@@ -26,6 +26,17 @@ const API_ROW = {
   sub_goals: ["acknowledges_concern", "offers_alternative"],
 };
 
+const UNAVAILABLE = {
+  action: "refund",
+  tool: "refund",
+  mode: "unavailable",
+  mode_label: "Unavailable",
+  on_call: 1,
+  delay_seconds: null,
+  status: null,
+  message: "",
+};
+
 const open = (apiRow = API_ROW, props = {}) =>
   render(
     <ScenarioDrawer
@@ -177,7 +188,7 @@ describe("ScenarioDrawer actors", () => {
     expect(screen.queryByText("Actors")).not.toBeInTheDocument();
   });
 
-  it("lists the actions an actor takes in the scenario", () => {
+  it("lists the actions an actor takes in the scenario, each with when the server says the world takes it", () => {
     open({
       ...API_ROW,
       actors: [
@@ -188,32 +199,48 @@ describe("ScenarioDrawer actors", () => {
           when_label: "From the start",
           timeout_label: null,
           actions: [
-            { action: "approvals.put" },
+            { action: "approvals.put", when_label: "At the start" },
             {
               action: "tickets.change",
-              trigger: { kind: "after_seconds", seconds: 20 },
+              trigger: { kind: "on_tool", tool: "refund" },
+              when_label: "When the agent calls refund",
             },
           ],
         },
       ],
     });
-    expect(screen.getByText("Takes approvals.put")).toBeInTheDocument();
     expect(
-      screen.getByText("Takes tickets.change after 20 s"),
+      screen.getByText("Takes approvals.put · At the start"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Takes tickets.change · When the agent calls refund"),
     ).toBeInTheDocument();
   });
 
-  it("lists a scenario's test conditions under Hidden, each from the fields it holds", () => {
+  it("lists a scenario's test conditions under Hidden, each as the server resolved it", () => {
     open({
       ...API_ROW,
       faults: [
         {
           action: "orders.refund",
+          tool: "orders.refund",
           mode: "timeout_after_commit",
+          mode_label: "Runs, then the answer is lost",
           on_call: 1,
           delay_seconds: 5,
+          status: null,
+          message: "",
         },
-        { action: "inventory.reserve", mode: "unavailable" },
+        {
+          action: "inventory.reserve",
+          tool: "inventory.reserve",
+          mode: "unavailable",
+          mode_label: "Unavailable",
+          on_call: null,
+          delay_seconds: null,
+          status: null,
+          message: "",
+        },
       ],
     });
     expect(screen.getByText("Hidden · test conditions")).toBeInTheDocument();
@@ -228,33 +255,22 @@ describe("ScenarioDrawer actors", () => {
     expect(screen.queryByText("Tools behave normally")).toBeNull();
   });
 
-  it("names a test condition by the tool the person knows, from the fault targets, with its route under it", () => {
-    open(
-      {
-        ...API_ROW,
-        faults: [
-          {
-            action: "orders.update_status",
-            mode: "error",
-            on_call: 1,
-            status: 503,
-            message: "The order status service is down",
-          },
-        ],
-      },
-      {
-        env: {
-          faultTargets: [
-            {
-              tool: "update_order_status",
-              action: "orders.update_status",
-              reachable: true,
-              writes: true,
-            },
-          ],
+  it("names a test condition by the tool the server resolved it to, with its route under it", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "orders.update_status",
+          tool: "update_order_status",
+          mode: "error",
+          mode_label: "Answers with an error",
+          on_call: 1,
+          delay_seconds: null,
+          status: 503,
+          message: "The order status service is down",
         },
-      },
-    );
+      ],
+    });
     expect(
       screen.getByText(
         "update_order_status: Answers with an error on call 1 (503: The order status service is down)",
@@ -281,7 +297,7 @@ describe("ScenarioDrawer actors", () => {
             timeout_label: null,
           },
         ],
-        faults: [{ action: "refund", mode: "unavailable", on_call: 1 }],
+        faults: [UNAVAILABLE],
         door_problem: { code, message },
       });
       const line = screen.getByText(message);
@@ -292,7 +308,7 @@ describe("ScenarioDrawer actors", () => {
   it("says nothing about a door when the server finds no problem", () => {
     open({
       ...API_ROW,
-      faults: [{ action: "refund", mode: "unavailable", on_call: 1 }],
+      faults: [UNAVAILABLE],
       door_problem: null,
     });
     expect(screen.queryByText(/cannot/)).toBeNull();

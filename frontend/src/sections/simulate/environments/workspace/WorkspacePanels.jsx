@@ -86,7 +86,6 @@ export default function WorkspacePanels({
       (t.id !== "runs" || showRuns) &&
       (t.id !== "improvements" || showImprovements) &&
       (t.id !== "versions" || showVersions) &&
-      // The environment says whether the Actors tab shows.
       (t.id !== "actors" || Boolean(env?.actorsTab)),
   );
 
@@ -214,7 +213,6 @@ WorkspacePanels.propTypes = {
       testExecutionId: PropTypes.string,
     }),
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
-    // Whether the Actors tab shows: `edit`, `list` or not at all.
     actorsTab: PropTypes.oneOf(["edit", "list"]),
   }).isRequired,
   envState: PropTypes.shape({

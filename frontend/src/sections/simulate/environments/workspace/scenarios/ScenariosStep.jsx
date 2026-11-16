@@ -11,7 +11,6 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
@@ -463,24 +462,18 @@ export default function ScenariosStep({
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
-  // Answers the editor with what was refused, so a refused test condition is shown where it was set.
+  // Resolves to { refused, failed } so the editor can stay open on a refusal.
   const saveScenario = async ({ changes, rework }) => {
-    if (!changes?.length) return undefined;
     try {
       const data = await amend.mutateAsync({ rework, changes });
       surfaceReceipts(data, "Saved");
-      // Each receipt names the field it is about (`faults` for a test condition), so the editor shows it there.
       const refused = (data?.receipts || []).filter(
         (one) => one.outcome === "refused",
       );
-      return { refused };
-    } catch (error) {
-      const code = error?.response?.data?.code || error?.code;
-      if (code === "scenario_faults_invalid") {
-        return { error: { message: errorMessage(error) } };
-      }
+      return { refused, failed: false };
+    } catch {
       enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
-      return undefined;
+      return { refused: [], failed: true };
     }
   };
 
@@ -679,7 +672,6 @@ export default function ScenariosStep({
       />
       <ScenarioDrawer
         row={openRow}
-        env={env}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);

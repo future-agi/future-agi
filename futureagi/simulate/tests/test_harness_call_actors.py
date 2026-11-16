@@ -49,7 +49,7 @@ _LIST = {
 
 
 # A row read with no contract and no cast: its actors read by their ids, and no door problem can be told.
-_NO_CAST = {"targets": None, "actor_cast": []}
+_NO_CAST = {"targets": None, "fault_targets": [], "actor_cast": []}
 
 
 def _docs():
@@ -227,7 +227,9 @@ def test_a_call_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_p
         metadata,
     )
 
-    rows = list(call.transcripts.order_by("start_time_ms"))
+    from simulate.selectors.call_transcripts import with_speakers
+
+    rows = list(with_speakers(call.transcripts.all()).order_by("start_time_ms"))
     assert [(row.speaker_role, row.speaker_name, row.actor_id) for row in rows] == [
         ("assistant", "", None),
         ("actor", "Rowan", "friend"),
@@ -367,7 +369,12 @@ def test_a_transcript_without_actors_stores_no_actor_turns(organization, workspa
     assert not CallTranscriptActor.objects.filter(
         transcript__call_execution=call
     ).exists()
-    assert [(row.speaker_name, row.actor_id) for row in call.transcripts.all()] == [
+    from simulate.selectors.call_transcripts import with_speakers
+
+    assert [
+        (row.speaker_name, row.actor_id)
+        for row in with_speakers(call.transcripts.all())
+    ] == [
         ("", None),
         ("", None),
     ]
@@ -938,24 +945,31 @@ def test_a_sandbox_list_adds_at_most_the_cap_to_a_call():
 
 
 def test_a_pre_run_message_keeps_its_actor_s_name_in_the_served_trial_state():
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
     from simulate.views.run_results_v3 import TrialStateSerializer
 
-    served = TrialStateSerializer(
-        {
-            "decisions": [
-                {
-                    "actor": "lead",
-                    "name": "Sam Lee",
-                    "play": "history",
-                    "action": "chat.post_message",
-                },
-                {"actor": "manager", "play": "history", "action": "chat.post_message"},
-            ]
-        }
-    ).data
-    assert [(one["actor"], one.get("name")) for one in served["decisions"]] == [
+    state = {
+        "decisions": [
+            {
+                "actor": "lead",
+                "name": "Sam Lee",
+                "play": "history",
+                "action": "chat.post_message",
+            },
+            {"actor": "manager", "play": "history", "action": "chat.post_message"},
+        ]
+    }
+    shown = trial_state(
+        SimpleNamespace(id="call", call_metadata={TRIAL_STATE_KEY: state})
+    )
+    served = TrialStateSerializer(shown).data
+    # A writer the trial did not name reads by its id.
+    assert [(one["actor"], one["name"]) for one in served["pre_run"]] == [
         ("lead", "Sam Lee"),
-        ("manager", None),
+        ("manager", "manager"),
     ]
 
 
@@ -1007,22 +1021,38 @@ def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
     index_scenarios(job, [dict(_docs()[0], faults=[fault]), _docs()[1]])
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
 
-    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["faults"] == [fault]
+    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["faults"] == [
+        {
+            "action": "orders.refund",
+            "tool": None,
+            "mode": "unavailable",
+            "mode_label": "Unavailable",
+            "on_call": 1,
+            "delay_seconds": None,
+            "status": None,
+            "message": "",
+        }
+    ]
     assert (
         scenario_row(rows.get(scenario_key="with-friend"), **_NO_CAST)["faults"] == []
     )
 
 
 def test_an_amend_refuses_a_test_condition_the_world_cannot_apply_with_why():
-    from simulate.services.harness_tool_reach import faults_problem
+    from simulate.services.scenario_faults import faults_problem
 
-    assert faults_problem([{"action": "orders.refund", "mode": "explode"}]).startswith(
-        "mode must be"
+    assert (
+        faults_problem([{"action": "orders.refund", "mode": "explode"}], None)
+        == "choose what happens to the call"
     )
     assert (
         faults_problem(
-            [{"action": "orders.refund", "mode": "timeout_after_commit", "on_call": 1}]
+            [{"action": "orders.refund", "mode": "timeout_after_commit", "on_call": 1}],
+            None,
         )
         is None
     )
-    assert faults_problem("not a list") == "faults must be a list"
+    assert (
+        faults_problem("not a list", None)
+        == "a scenario's test conditions could not be read"
+    )

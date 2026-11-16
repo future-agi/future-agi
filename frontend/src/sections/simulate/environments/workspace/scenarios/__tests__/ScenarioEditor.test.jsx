@@ -15,27 +15,29 @@ const ROW_API = {
 };
 const ROW = scenarioFromApi(ROW_API);
 
-// The tools a test condition can name, as the contract states them.
+const BEFORE = { mode: "timeout_before_commit", label: "Times out before it runs" };
+const AFTER = { mode: "timeout_after_commit", label: "Runs, then the answer is lost" };
+const ERROR = { mode: "error", label: "Answers with an error" };
+const DEFAULTS = { on_call: 1, delay_seconds: 30, status: 500 };
+const BOUNDS = {
+  delay_seconds: { min: 0, max: 30 },
+  status: { min: 400, max: 599 },
+};
+const target = (tool, action, reachable, modes) => ({
+  tool,
+  action,
+  reachable,
+  writes: modes.includes(AFTER),
+  modes,
+  defaults: DEFAULTS,
+  bounds: BOUNDS,
+});
+
 const ENV = {
   faultTargets: [
-    {
-      tool: "apply_discount",
-      action: "crm.apply_discount",
-      reachable: true,
-      writes: true,
-    },
-    {
-      tool: "lookup_order",
-      action: "orders.lookup",
-      reachable: true,
-      writes: false,
-    },
-    {
-      tool: "local_tool",
-      action: "local_tool",
-      reachable: false,
-      writes: false,
-    },
+    target("apply_discount", "crm.apply_discount", true, [BEFORE, AFTER, ERROR]),
+    target("lookup_order", "orders.lookup", true, [BEFORE, ERROR]),
+    target("local_tool", "local_tool", false, []),
   ],
 };
 
@@ -46,7 +48,7 @@ const EDITING = {
 };
 
 const openEditor = (
-  onSave = vi.fn(async () => ({ refused: [] })),
+  onSave = vi.fn(async () => ({ refused: [], failed: false })),
   row = ROW,
 ) => {
   const onClose = vi.fn();
@@ -122,7 +124,7 @@ describe("ScenarioEditor test conditions", () => {
     expect(list.getByText("crm.apply_discount")).toBeInTheDocument();
   });
 
-  it("offers Runs, then the answer is lost only for a tool that changes records", async () => {
+  it("offers each tool only the modes the server says the world can apply to it", async () => {
     openEditor();
     fireEvent.click(
       screen.getByRole("button", { name: "Add a test condition" }),
@@ -135,7 +137,7 @@ describe("ScenarioEditor test conditions", () => {
       screen.getByRole("option", { name: "Runs, then the answer is lost" }),
     );
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    // A read has nothing to lose: picking one takes the first mode it offers.
+    // A tool that does not offer the picked mode takes the first one it does.
     pickTool("lookup_order");
     expect(whatHappens()).toHaveTextContent("Times out before it runs");
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
@@ -181,7 +183,16 @@ describe("ScenarioEditor test conditions", () => {
       scenarioFromApi({
         ...ROW_API,
         faults: [
-          { action: "orders.lookup", mode: "timeout_after_commit", on_call: 1 },
+          {
+            action: "orders.lookup",
+            tool: "lookup_order",
+            mode: "timeout_after_commit",
+            mode_label: "Runs, then the answer is lost",
+            on_call: 1,
+            delay_seconds: null,
+            status: null,
+            message: "",
+          },
         ],
       }),
     );
@@ -217,6 +228,7 @@ describe("ScenarioEditor test conditions", () => {
           why: "the test world cannot apply this test condition: on_call must be a whole number from 1",
         },
       ],
+      failed: false,
     }));
     const { onClose } = openEditor(onSave);
     fireEvent.click(
@@ -231,5 +243,77 @@ describe("ScenarioEditor test conditions", () => {
       "on_call must be a whole number from 1",
     );
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("fills a picked tool's numbers from its own defaults and bounds the inputs by them", () => {
+    openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    const delay = screen.getByLabelText("Delay in seconds");
+    expect(delay).toHaveValue(30);
+    expect(delay).toHaveAttribute("max", "30");
+    expect(screen.getByLabelText("On which call")).toHaveValue(1);
+  });
+
+  it("sends a stored condition back as the scenario file keeps it, unchanged when only another field changes", async () => {
+    const { onSave } = openEditor(
+      undefined,
+      scenarioFromApi({
+        ...ROW_API,
+        faults: [
+          {
+            action: "crm.apply_discount",
+            tool: "apply_discount",
+            mode: "error",
+            mode_label: "Answers with an error",
+            on_call: 2,
+            delay_seconds: null,
+            status: 503,
+            message: "",
+          },
+        ],
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByTestId("test-conditions")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].changes[0].value).toEqual([]);
+  });
+
+  it("keeps the editor open with the edits when the save fails, and sends one save per click while one is in flight", async () => {
+    let answer;
+    const onSave = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const { onClose } = openEditor(onSave);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+    const save = screen.getByRole("button", { name: /save/i });
+    fireEvent.click(save);
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    answer({ refused: [], failed: true });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      within(screen.getByTestId("test-conditions")).getByText(
+        /apply_discount: Times out before it runs/,
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -339,6 +339,13 @@ describe("TraceTable — sub-goal verdicts", () => {
                     result: "unmeasured",
                     evidence: ["transcript"],
                   },
+                  {
+                    name: "Refund once",
+                    passed: null,
+                    result: "unmeasured",
+                    reason: "Unmeasured: the world's action log could not be read",
+                    evidence: ["world_state"],
+                  },
                 ],
               },
             ],
@@ -351,6 +358,11 @@ describe("TraceTable — sub-goal verdicts", () => {
       .getAllByText("Scenario a1")[0]
       .closest("td");
     expect(within(details).getByText("Not measured")).toBeInTheDocument();
+    expect(
+      within(details).getByText(
+        "Unmeasured: the world's action log could not be read",
+      ),
+    ).toBeInTheDocument();
     expect(
       within(details).getByText("from the world, the agent's calls"),
     ).toBeInTheDocument();

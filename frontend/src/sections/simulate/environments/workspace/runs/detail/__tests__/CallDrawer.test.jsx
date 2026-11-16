@@ -189,7 +189,6 @@ describe("CallDrawer — chat branch", () => {
     // The reason shows once in the failed-eval banner already.
     expect(screen.getAllByText("wrong amount")).toHaveLength(1);
     await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
-    // The call's own status, then each of its two evals.
     expect(screen.getAllByText("Failed")).toHaveLength(3);
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
     expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();

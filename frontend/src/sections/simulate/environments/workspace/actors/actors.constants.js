@@ -2,10 +2,8 @@ import { ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constan
 
 // Every copy string on the Actors tab, so nothing is inlined in the JSX.
 export const ACTORS_COPY = {
-  // What an actor does in one scenario's world, under its line in the scenario drawer.
   scenarioActions: {
-    takes: (action) => `Takes ${action}`,
-    after: (seconds) => ` after ${seconds} s`,
+    takes: (action, when) => `Takes ${action} · ${when}`,
   },
   limits: {
     title: "Limits",
@@ -18,15 +16,6 @@ export const ACTORS_COPY = {
       max_messages: "Most messages in a conversation before the run",
       live_turns_per_actor: "Most turns each actor takes during a run",
       live_turns_per_trial: "Most turns all actors take together in a run",
-    },
-    defaults: {
-      max_active: "Default: 2 on a phone line, none in a chat",
-      caller_takes_back_after_turns:
-        "Default: 4 on a phone line, none in a chat",
-      actor_seconds_per_call: "Default: 60 on a phone line, none in a chat",
-      max_messages: "Default: 20",
-      live_turns_per_actor: "Default: 10",
-      live_turns_per_trial: "Default: 20",
     },
     none: "none",
     model: "Model actors are played on",
@@ -58,7 +47,6 @@ export const ACTORS_COPY = {
   },
 
   worldActors: {
-    // Policy points the builder could not turn into an actor's permissions or knowledge, shown above the cast.
     unresolved: {
       title: "Needs your decision",
       about:
@@ -82,13 +70,11 @@ export const ACTORS_COPY = {
     subtitle:
       "Everyone the agent deals with who is not the agent. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
-    // A change sent while offline waits and goes through once the connection is back.
     offline:
       "No connection: your change is kept and saves once you are back online",
     everyoneAbout:
       "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
     add: "Add actor",
-    // The two sides an actor is on, each listed under its own heading, the caller's side first.
     sides: {
       caller: {
         label: "On the caller's side",
@@ -121,7 +107,7 @@ export const ACTORS_COPY = {
     graderMaterial: "Grader material",
     othersPrivate: (fields, count) =>
       `What the ${count === 1 ? "other actor keeps" : `${count} other actors each keep`} to themselves: ${fields}`,
-    // What the view's inputs are called on screen; an input a newer release adds shows by its own name.
+    // An input missing here shows by its own name.
     inputs: {
       "actor.name": "Name",
       "actor.role": "Role",
@@ -146,7 +132,6 @@ export const ACTORS_COPY = {
         'Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and "Brought in by" is for reading only.',
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
-      // The rule's words are the server's own.
       idHelp: (rule) =>
         [
           "Made from the name; change it now if you like.",
@@ -168,12 +153,6 @@ export const ACTORS_COPY = {
       tooLong: (over) =>
         `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",
-      kinds: {
-        person: "A person",
-        approver: "An approver",
-        agent: "Another agent",
-        system: "A system",
-      },
       parent: "Brought in by (optional)",
       parentHelp: "Someone already in the world who brings them in, if anyone",
       nobody: "No one",
@@ -195,15 +174,13 @@ export const ACTORS_COPY = {
       noFiles: "This environment has no documents an actor can read",
       upload: "Upload a document",
       uploading: "Uploading…",
-      uploadHelp:
-        "A policy, price list or note they know (.md, .txt, .json or .csv, up to 1 MB). Only actors you give it to can read it.",
+      uploadHelp: (formats, size) =>
+        `A policy, price list or note they know (${formats.join(", ")}, up to ${size}). Only actors you give it to can read it.`,
       uploadFailed: "The document could not be uploaded",
       noRecords: "This environment's world has no records yet",
       style: "How they behave (optional)",
       styleHelp: "Their manner, such as brisk and decides quickly",
       answers: "Answers",
-      immediately: "Straight away",
-      afterDelay: "After a delay",
       seconds: "Seconds",
       permitted: "World actions they may take (optional)",
       permittedHelp:
@@ -242,14 +219,15 @@ export const ACTORS_COPY = {
       model: "Model they are played on",
       environmentModel: "The environment's model",
       modelHelp: "A cheaper model costs less per actor turn",
-      maxTurns: "Most turns in a call (optional)",
-      maxLines: "Most lines in a call (optional)",
+      caps: {
+        max_turns: "Most turns in a call (optional)",
+        max_lines: "Most lines in a call (optional)",
+      },
       noLimitHelp: "Empty is no limit of their own",
       timeout: "Waits, in seconds (optional)",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",
       fallback: "If they do not answer",
-      fallbacks: { silent: "Nothing happens", decline: "They decline" },
       answeredBy: (name) => `${name} answers instead`,
       channel: "How they join the conversation",
       noChannel: "Doesn't speak in the conversation",
@@ -258,11 +236,6 @@ export const ACTORS_COPY = {
       checkFailed: "Couldn't check this change. Try again in a moment.",
       retryCheck: "Try again",
       play: "How they act in the world",
-      plays: {
-        mocked: "Only the actions each scenario gives them",
-        live: "Decide their own actions when reached",
-        both: "Both",
-      },
       playHelp:
         "Deciding their own actions, they read what they see below and choose within what they may do; the world still refuses anything they may not.",
       noChannelHelp:
@@ -275,25 +248,17 @@ export const ACTORS_COPY = {
       voiceHelp:
         "Picks their voice on a call; left empty, a voice is chosen for them",
       gender: "Gender",
-      genders: { "": "Any", male: "Male", female: "Female" },
       ageGroup: "Age",
-      ageGroups: {
-        "": "Any",
-        "18-31": "Under 32",
-        "32-49": "32 to 49",
-        "50-59": "50 to 59",
-        "60+": "60 or older",
-      },
       accent: "Accent",
-      accents: ["", "American", "British", "Indian", "Australian", "Neutral"],
-      anyAccent: "Any",
+      anyVoice: "Any",
       changedElsewhere:
         "The actors were changed elsewhere while you were editing. This form now has the latest version with your edits kept. Check them and save again.",
       removedElsewhere:
         "This actor was removed elsewhere while you were editing, so these edits can't be saved.",
       cancel: "Cancel",
       discardTitle: "Discard changes?",
-      discardBody: "What you typed here won't be saved.",
+      discardBody:
+        "What you typed here won't be saved. A document you uploaded is already in the draft and stays there; discard the draft to remove it.",
       discard: "Discard",
       save: "Save to draft",
     },

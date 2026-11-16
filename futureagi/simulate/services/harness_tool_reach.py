@@ -3,68 +3,38 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 import structlog
 
-from simulate.constants.scenario_faults import FAULT_MODES
 from simulate.models import HostedHarnessJob
-from simulate.selectors.environment_documents import contract_data, registration_key
+from simulate.selectors.environment_documents import contract_data
 from simulate.selectors.stage_outputs import stage_output
 from simulate.services.harness_actor_rules import ActorRules, world_actions
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.scenario_faults import (
+    FAULT_BOUNDS,
+    FAULT_DEFAULTS,
+    FaultTarget,
+    fault_modes,
+    scenario_key,
+    target_of,
+)
 
 if TYPE_CHECKING:
     from simulate.models import HarnessEnvironmentVersion
 
 logger = structlog.get_logger(__name__)
 
-
-FAULT_KEYS = {"action", "mode", "on_call", "delay_seconds", "status", "message"}
-
-
-def _fault_problem(fault: Any) -> str | None:
-    """Why one scenario fault would not load in the harness, or None; mirrors its `Fault` model."""
-    if not isinstance(fault, dict):
-        return "a fault must be an object"
-    unknown = sorted(set(fault) - FAULT_KEYS)
-    if unknown:
-        return f"unknown field {unknown[0]}"
-    action = fault.get("action")
-    if not isinstance(action, str) or not action.strip():
-        return "action must name a world action"
-    if fault.get("mode") not in FAULT_MODES:
-        return "mode must be timeout_before_commit, timeout_after_commit, unavailable or error"
-    on_call = fault.get("on_call", 1)
-    if isinstance(on_call, bool) or not isinstance(on_call, int) or on_call < 1:
-        return "on_call must be a whole number from 1"
-    delay = fault.get("delay_seconds", 30)
-    if (
-        isinstance(delay, bool)
-        or not isinstance(delay, (int, float))
-        or not 0 <= delay <= 30
-    ):
-        return "delay_seconds must be between 0 and 30"
-    status = fault.get("status", 500)
-    if (
-        isinstance(status, bool)
-        or not isinstance(status, int)
-        or not 400 <= status <= 599
-    ):
-        return "status must be a whole number from 400 to 599"
-    message = fault.get("message", "")
-    if not isinstance(message, str) or len(message) > 500:
-        return "message must be text of at most 500 characters"
-    return None
+# HTTP methods the world reads as a read when a tool declares no effect, as the harness's door does.
+READ_METHODS = ("GET", "HEAD", "OPTIONS")
 
 
 def door_reach(contract: Any) -> dict[str, bool]:
-    """Whether the world's door can stand in front of each contract tool, by tool name: a tool served by a tools
-    service is behind the tool proxy; a Python agent's module-level callable or method (`import`, `construct`) is
-    behind the door in its own process. Anything else (a closure, a tool of an agent in another language, an
-    unreachable entrypoint) runs where no door stands, so actors cannot take it and faults cannot be set on it. A
-    build that found the door bound to a tool but out of reach (the agent started as a script) says so on the entry
-    (`door_unreached`); an older build's contract has no such word and reads by mode alone."""
+    """Whether the world's door can stand in front of each contract tool, by tool name.
+
+    Only tools-service tools and a Python agent's module-level callables are reachable, unless `door_unreached`."""
     contract = contract if isinstance(contract, dict) else {}
     runtime = (
         contract.get("runtime") if isinstance(contract.get("runtime"), dict) else {}
@@ -205,10 +175,6 @@ def _version_scenarios(
     return [one for one in scenarios or [] if isinstance(one, dict)]
 
 
-def _scenario_key(scenario: dict[str, Any]) -> str:
-    return registration_key(scenario.get("scenario_key") or scenario.get("name"))
-
-
 def blocked_tools(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None = None
 ) -> list[BlockedTool]:
@@ -220,7 +186,7 @@ def blocked_tools(
         return []
     needs: dict[str, list[BlockedScenario]] = {tool: [] for tool in blocked}
     for scenario in _version_scenarios(environment, documents):
-        key = _scenario_key(scenario)
+        key = scenario_key(scenario)
         for tool in needed_production_tools(scenario, blocked):
             needs[tool].append({"key": key, "name": str(scenario.get("name") or key)})
     return [{"tool": tool, "scenarios": needs[tool]} for tool in blocked]
@@ -242,14 +208,12 @@ def run_verdict(
     scenario_keys: list[str] | None,
     hidden: tuple[str, ...] = (),
 ) -> RunVerdict:
-    """The production-only tools a run of ``scenario_keys`` (None: every scenario) meets, each with the selected
-    scenarios that need it; how many selected scenarios need one; and whether the run would start. A run every
-    selected scenario of which needs one is refused, as ``refuse_production_only`` refuses it. ``hidden`` scenarios
-    are those the caller may not read: never selected and never named."""
+    """The production-only tools a run of ``scenario_keys`` (None: all) meets, how many scenarios need one, and
+    whether the run would start. ``hidden`` scenarios are never selected or named."""
     found = blocked_tools(environment, pins)
     if found and scenario_keys is None:
         scenario_keys = [
-            _scenario_key(one)
+            scenario_key(one)
             for one in _version_scenarios(
                 environment, _version_documents(environment, pins)
             )
@@ -316,39 +280,37 @@ NO_WORLD_DOOR = (
 )
 
 
-def faults_problem(faults: Any) -> str | None:
-    """Why a scenario's list of faults would not load in the harness, or None."""
-    if not isinstance(faults, list):
-        return "faults must be a list"
-    for fault in faults:
-        problem = _fault_problem(fault)
-        if problem:
-            return problem
-    return None
-
-
-def require_valid_faults(scenarios: Any) -> None:
-    """Refuse a write whose scenario faults the harness could not load, naming the scenario and the problem, so a
-    broken fault never reaches a saved version and fails its checks later."""
-    for scenario in scenarios if isinstance(scenarios, list) else []:
-        if not isinstance(scenario, dict) or "faults" not in scenario:
-            continue
-        name = scenario.get("scenario_key") or scenario.get("name") or "a scenario"
-        problem = faults_problem(scenario.get("faults"))
-        if problem:
-            raise HostedHarnessError(
-                "scenario_faults_invalid",
-                f"Scenario {name} has a fault the test world cannot apply: {problem}. Ask the builder chat to fix it",
-                status_code=422,
-            )
-
-
 ToolState = Literal["simulated", "in_process", "unsupported", "unknown"]
 DoorProblemCode = Literal["fault_unreachable", "actor_no_door"]
+ToolEffect = Literal["read", "write", "unknown"]
+TABLES_NOT_RECORDED = (
+    "Which tables it reads and changes is not recorded for this environment version"
+)
+
+
+class ToolArgument(TypedDict):
+    name: str
+    type: str | None
+    unit: str | None
+
+
+class ToolReturn(TypedDict):
+    name: str
+    kind: str
+
+
+class ToolTables(TypedDict):
+    """The tables a tool reads and changes, where the contract records them."""
+
+    recorded: bool
+    read: list[str]
+    changed: list[str]
+    label: str
 
 
 class ToolStatus(TypedDict):
-    """Where one contract tool runs in a test, from the contract's own reading of it."""
+    """One contract tool as the Tools card shows it: what it takes and returns, where it runs in a test and what it
+    changes, from the contract's own reading of it."""
 
     tool: str
     # simulated: the world's door stands in front of it; in_process: it runs inside the agent; unsupported: it
@@ -358,17 +320,18 @@ class ToolStatus(TypedDict):
     reset_between_trials: bool | None
     # Where it runs: the agent's callable, or the tools service route; None when the contract names neither.
     runs_at: str | None
-    # It declares a change to records.
+    # It changes records, by the rule the world's door applies (see `_writes`).
     writes: bool
-
-
-class FaultTarget(TypedDict):
-    """A contract tool a scenario's fault can name, by the world action the fault holds."""
-
-    tool: str
-    action: str
-    reachable: bool
-    writes: bool
+    description: str
+    arguments: list[ToolArgument]
+    returns: list[ToolReturn]
+    requires: list[str]
+    refuses: str
+    # What its entrypoint declares; unknown when it declares neither.
+    effect: ToolEffect
+    # What a call changes or clears, in the contract's words.
+    effects: str
+    tables: ToolTables
 
 
 class DoorProblem(TypedDict):
@@ -384,9 +347,20 @@ def _entrypoints(contract: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _writes(entry: dict[str, Any] | None) -> bool:
-    """Whether a tool's entrypoint declares that it changes records."""
-    return bool(entry) and entry.get("effect") == "write"
+def _effect(entry: Mapping[str, Any] | None) -> ToolEffect:
+    effect = str((entry or {}).get("effect") or "")
+    return "read" if effect == "read" else "write" if effect == "write" else "unknown"
+
+
+def _writes(entry: Mapping[str, Any] | None) -> bool:
+    """Whether a tool changes records, as the world's door decides it: its declared effect, else its HTTP method (a
+    read-only method reads; anything else counts as a write)."""
+    if not entry:
+        return False
+    effect = _effect(entry)
+    if effect != "unknown":
+        return effect == "write"
+    return str(entry.get("method") or "POST").upper() not in READ_METHODS
 
 
 def _runs_at(entry: dict[str, Any] | None) -> str | None:
@@ -405,24 +379,62 @@ def _runs_at(entry: dict[str, Any] | None) -> str | None:
     return f"{service} {method} /{endpoint}" if service else f"{method} /{endpoint}"
 
 
-def _tool_names(contract: dict[str, Any]) -> list[str]:
-    names = []
+def _tool_specs(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Each contract tool by name; a tool written as its bare name has nothing else recorded."""
+    specs: dict[str, dict[str, Any]] = {}
     for tool in contract.get("tools") or []:
-        name = tool if isinstance(tool, str) else (tool or {}).get("name")
+        spec = {"name": tool} if isinstance(tool, str) else tool
+        name = spec.get("name") if isinstance(spec, dict) else None
         if isinstance(name, str) and name:
-            names.append(name)
-    return names
+            specs.setdefault(name, spec)
+    return specs
+
+
+def _texts(value: object) -> list[str]:
+    return (
+        [str(one) for one in value if isinstance(one, str)]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def _words(value: object) -> dict[str, str]:
+    return (
+        {str(key): str(one) for key, one in value.items() if isinstance(one, str)}
+        if isinstance(value, dict)
+        else {}
+    )
+
+
+def _tables(spec: Mapping[str, Any]) -> ToolTables:
+    """The tables a tool reads and changes, where its contract entry lists them; said as not recorded otherwise."""
+    if not isinstance(spec.get("tables_read"), list) and not isinstance(
+        spec.get("tables_changed"), list
+    ):
+        return {
+            "recorded": False,
+            "read": [],
+            "changed": [],
+            "label": TABLES_NOT_RECORDED,
+        }
+    read, changed = _texts(spec.get("tables_read")), _texts(spec.get("tables_changed"))
+    return {
+        "recorded": True,
+        "read": read,
+        "changed": changed,
+        "label": f"Reads {', '.join(read) or 'no table'}; changes {', '.join(changed) or 'no table'}",
+    }
 
 
 def tool_status(contract: object) -> list[ToolStatus]:
-    """Each contract tool with where it runs in a test, whether the world resets it between trials, where the contract
-    says it runs and whether it changes records."""
+    """Each contract tool as the Tools card shows it: its arguments, what it returns, when it refuses, where it runs
+    in a test, whether the world resets it between trials and what it changes."""
     contract = contract if isinstance(contract, dict) else {}
     reach = door_reach(contract)
     unsupported = set(production_only(contract))
     entries = {str(entry["tool"]): entry for entry in _entrypoints(contract)}
     statuses: list[ToolStatus] = []
-    for name in _tool_names(contract):
+    for name, spec in _tool_specs(contract).items():
         known = name not in unsupported and name in reach
         status: ToolState
         if name in unsupported:
@@ -431,6 +443,7 @@ def tool_status(contract: object) -> list[ToolStatus]:
             status = "simulated" if reach[name] else "in_process"
         else:
             status = "unknown"
+        types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
         statuses.append(
             {
                 "tool": name,
@@ -438,6 +451,24 @@ def tool_status(contract: object) -> list[ToolStatus]:
                 "reset_between_trials": reach[name] if known else None,
                 "runs_at": _runs_at(entries.get(name)),
                 "writes": _writes(entries.get(name)),
+                "description": str(spec.get("description") or ""),
+                "arguments": [
+                    {
+                        "name": arg,
+                        "type": types.get(arg) or None,
+                        "unit": units.get(arg) or None,
+                    }
+                    for arg in _texts(spec.get("args"))
+                ],
+                "returns": [
+                    {"name": field, "kind": kind}
+                    for field, kind in _words(spec.get("returns")).items()
+                ],
+                "requires": _texts(spec.get("requires")),
+                "refuses": str(spec.get("refuses") or ""),
+                "effect": _effect(entries.get(name)),
+                "effects": str(spec.get("effects") or ""),
+                "tables": _tables(spec),
             }
         )
     return statuses
@@ -453,39 +484,45 @@ def _action_names(contract: dict[str, Any], rules: ActorRules) -> dict[str, str]
     return names
 
 
+def _target(tool: str, action: str, *, reachable: bool, writes: bool) -> FaultTarget:
+    return {
+        "tool": tool,
+        "action": action,
+        "reachable": reachable,
+        "writes": writes,
+        "modes": fault_modes(reachable=reachable, writes=writes),
+        "defaults": FAULT_DEFAULTS,
+        "bounds": FAULT_BOUNDS,
+    }
+
+
 def fault_targets(contract: object, rules: ActorRules) -> list[FaultTarget]:
-    """Each contract tool a fault can name, with whether the world's door stands in front of it and whether it
-    changes records. A tool's action is its world action as the sealed rules name it; a tool with none (it runs
-    inside the agent, or its route is not one an action can be sent to) is named by the tool itself. A contract with
-    no entrypoints offers its tools by name."""
+    """Each contract tool a fault can name, whether the door holds it, whether it writes and its fault modes.
+
+    A tool with no world action is named by the tool itself."""
     contract = contract if isinstance(contract, dict) else {}
     reach = door_reach(contract)
     entries = _entrypoints(contract)
     if entries:
         actions = _action_names(contract, rules)
         return [
-            {
-                "tool": str(entry["tool"]),
-                "action": actions.get(str(entry["tool"]), str(entry["tool"])),
-                "reachable": bool(reach.get(str(entry["tool"]))),
-                "writes": _writes(entry),
-            }
+            _target(
+                str(entry["tool"]),
+                actions.get(str(entry["tool"]), str(entry["tool"])),
+                reachable=bool(reach.get(str(entry["tool"]))),
+                writes=_writes(entry),
+            )
             for entry in entries
         ]
     return [
-        {
-            "tool": name,
-            "action": name,
-            "reachable": bool(reach.get(name)),
-            "writes": False,
-        }
-        for name in _tool_names(contract)
+        _target(name, name, reachable=False, writes=False)
+        for name in _tool_specs(contract)
     ]
 
 
 def door_targets(contract: object, rules: ActorRules) -> list[FaultTarget] | None:
-    """The fault targets a scenario's door problem is judged against, once per page; None when the contract says
-    nothing about the world's door."""
+    """The fault targets a scenario's door problem and its faults are judged against, once per page; None when the
+    contract says nothing about the world's door."""
     contract = contract if isinstance(contract, dict) else {}
     if not door_reach(contract):
         return None
@@ -510,11 +547,9 @@ def door_problem(
     (the contract says nothing about the door) raises neither."""
     if targets is None:
         return None
-    by_action = {one["action"]: one for one in targets}
-    by_tool = {one["tool"]: one for one in targets}
     for fault in faults if isinstance(faults, list) else []:
         action = str(fault.get("action") or "") if isinstance(fault, dict) else ""
-        target = by_action.get(action) or by_tool.get(action)
+        target = target_of(action, targets)
         if target is None:
             logger.warning("scenario_fault_names_no_target", action=action)
             continue

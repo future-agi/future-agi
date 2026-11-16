@@ -6,10 +6,7 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.callActors;
 
-/**
- * The environment's actors: people on the person's side who are not the
- * person. Read-only; they are added, changed and removed through the builder chat.
- */
+// Read-only; actors are edited through the builder chat.
 export default function CallActorsPanel({ callActors }) {
   return (
     <SectionCard title={C.title(callActors.length)} subtitle={C.subtitle}>
@@ -37,7 +34,7 @@ export default function CallActorsPanel({ callActors }) {
                 genderLabel(one.persona?.gender),
                 one.persona?.age_group,
                 one.persona?.accent,
-                C.scenarios(one.scenarios_count ?? 0),
+                C.scenarios(one.scenarios_count),
               ]
                 .filter(Boolean)
                 .join(" · ")}

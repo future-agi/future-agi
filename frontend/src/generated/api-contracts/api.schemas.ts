@@ -19437,6 +19437,51 @@ export const HarnessEnvironmentToolStatusApiStatus = {
   unknown: "unknown",
 } as const;
 
+export interface HarnessToolArgumentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  /**
+   * The unit or format it is written in, where the name does not say.
+   * @minLength 1
+   */
+  unit: string;
+}
+
+/**
+ * Empty when the contract did not record what it returns.
+ */
+export interface HarnessToolReturnApi {
+  /** @minLength 1 */
+  name: string;
+  /** Its type and, where the name does not say, unit or format. */
+  kind: string;
+}
+
+/**
+ * What its entrypoint declares; unknown when it declares neither.
+ */
+export type HarnessEnvironmentToolStatusApiEffect =
+  (typeof HarnessEnvironmentToolStatusApiEffect)[keyof typeof HarnessEnvironmentToolStatusApiEffect];
+
+export const HarnessEnvironmentToolStatusApiEffect = {
+  read: "read",
+  write: "write",
+  unknown: "unknown",
+} as const;
+
+export interface HarnessToolTablesApi {
+  recorded: boolean;
+  read: string[];
+  changed: string[];
+  /**
+   * What the Changes line says.
+   * @minLength 1
+   */
+  label: string;
+}
+
 export interface HarnessEnvironmentToolStatusApi {
   /** @minLength 1 */
   tool: string;
@@ -19449,8 +19494,56 @@ export interface HarnessEnvironmentToolStatusApi {
    * @minLength 1
    */
   runs_at: string;
-  /** The tool declares a change to records. */
+  /** It changes records, as the world's door decides: its declared effect, else its HTTP method. */
   writes: boolean;
+  description: string;
+  arguments: HarnessToolArgumentApi[];
+  /** Empty when the contract did not record what it returns. */
+  returns: HarnessToolReturnApi[];
+  /** Tools that must have run before it stops refusing. */
+  requires: string[];
+  /** When it refuses, in the contract's words. */
+  refuses: string;
+  /** What its entrypoint declares; unknown when it declares neither. */
+  effect: HarnessEnvironmentToolStatusApiEffect;
+  /** What a call changes or clears, in the contract's words. */
+  effects: string;
+  tables: HarnessToolTablesApi;
+}
+
+export type HarnessFaultModeApiMode =
+  (typeof HarnessFaultModeApiMode)[keyof typeof HarnessFaultModeApiMode];
+
+export const HarnessFaultModeApiMode = {
+  timeout_before_commit: "timeout_before_commit",
+  timeout_after_commit: "timeout_after_commit",
+  unavailable: "unavailable",
+  error: "error",
+} as const;
+
+/**
+ * The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.
+ */
+export interface HarnessFaultModeApi {
+  mode: HarnessFaultModeApiMode;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface HarnessFaultDefaultsApi {
+  on_call: number;
+  delay_seconds: number;
+  status: number;
+}
+
+export interface HarnessFaultRangeApi {
+  min: number;
+  max: number;
+}
+
+export interface HarnessFaultBoundsApi {
+  delay_seconds: HarnessFaultRangeApi;
+  status: HarnessFaultRangeApi;
 }
 
 export interface HarnessEnvironmentFaultTargetApi {
@@ -19465,6 +19558,10 @@ export interface HarnessEnvironmentFaultTargetApi {
   reachable: boolean;
   /** It changes records, so a timeout after the change commits means something. */
   writes: boolean;
+  /** The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes. */
+  modes: HarnessFaultModeApi[];
+  defaults: HarnessFaultDefaultsApi;
+  bounds: HarnessFaultBoundsApi;
 }
 
 export type HarnessEnvironmentEndConditionsApiClock =
@@ -19670,6 +19767,11 @@ export interface HarnessEnvironmentScenarioActorActionApi {
   action: string;
   arguments?: HarnessEnvironmentScenarioActorActionApiArguments;
   trigger?: HarnessEnvironmentCallActorTriggerApi;
+  /**
+   * When the world takes the action, as a sentence.
+   * @minLength 1
+   */
+  when_label: string;
 }
 
 export type HarnessEnvironmentScenarioCallActorApiSide =
@@ -19937,8 +20039,6 @@ export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 
 export type HarnessActorListApiChannels = { [key: string]: string };
 
-export type HarnessActorListApiLoudness = { [key: string]: unknown };
-
 export type HarnessActorApiSide =
   (typeof HarnessActorApiSide)[keyof typeof HarnessActorApiSide];
 
@@ -20154,6 +20254,16 @@ export interface HarnessWorldActionApi {
   description: string;
 }
 
+export interface HarnessActorLoudnessApi {
+  channels: string[];
+  /** @maxItems 2 */
+  automatic: number[];
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+}
+
 export interface HarnessActorKnowledgeSourcesApi {
   files: string[];
   records: HarnessActorRecordSourceApi[];
@@ -20166,6 +20276,14 @@ export interface HarnessActorUnresolvedApi {
   actor?: string;
 }
 
+export type HarnessActorChannelOptionApiCapField =
+  (typeof HarnessActorChannelOptionApiCapField)[keyof typeof HarnessActorChannelOptionApiCapField];
+
+export const HarnessActorChannelOptionApiCapField = {
+  max_turns: "max_turns",
+  max_lines: "max_lines",
+} as const;
+
 export interface HarnessActorChannelOptionApi {
   /** @minLength 1 */
   channel: string;
@@ -20174,6 +20292,7 @@ export interface HarnessActorChannelOptionApi {
   loudness: boolean;
   trigger_kinds: string[];
   required_fields: string[];
+  cap_field: HarnessActorChannelOptionApiCapField;
 }
 
 export type HarnessActorLimitFieldApiKind =
@@ -20189,6 +20308,9 @@ export interface HarnessActorLimitFieldApi {
   /** @minLength 1 */
   key: string;
   kind: HarnessActorLimitFieldApiKind;
+  default: number;
+  /** @minLength 1 */
+  default_label: string;
 }
 
 export interface HarnessActorSideDefaultApi {
@@ -20201,6 +20323,30 @@ export interface HarnessActorSideDefaultsApi {
   world: HarnessActorSideDefaultApi;
 }
 
+export interface HarnessActorFieldOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface HarnessActorFieldOptionsApi {
+  kind: HarnessActorFieldOptionApi[];
+  play: HarnessActorFieldOptionApi[];
+  fallback_word: HarnessActorFieldOptionApi[];
+  gender: HarnessActorFieldOptionApi[];
+  age_group: HarnessActorFieldOptionApi[];
+  accent: HarnessActorFieldOptionApi[];
+  response_timing: HarnessActorFieldOptionApi[];
+}
+
+export interface HarnessActorUploadApi {
+  formats: string[];
+  max_bytes: number;
+  /** @minLength 1 */
+  max_label: string;
+}
+
 export interface HarnessActorListApi {
   actors: HarnessActorApi[];
   source: HarnessActorListApiSource;
@@ -20208,7 +20354,7 @@ export interface HarnessActorListApi {
   record_schemas: HarnessActorListApiRecordSchemas;
   actions: HarnessWorldActionApi[];
   channels: HarnessActorListApiChannels;
-  loudness: HarnessActorListApiLoudness;
+  loudness: HarnessActorLoudnessApi;
   reserved_ids: string[];
   knowledge_sources: HarnessActorKnowledgeSourcesApi;
   limits?: HarnessActorLimitsApi;
@@ -20220,6 +20366,8 @@ export interface HarnessActorListApi {
   id_hint: string;
   limit_fields: HarnessActorLimitFieldApi[];
   side_defaults: HarnessActorSideDefaultsApi;
+  field_options: HarnessActorFieldOptionsApi;
+  upload: HarnessActorUploadApi;
 }
 
 export interface HarnessActorUnresolvedAcceptApi {
@@ -20248,6 +20396,20 @@ export const HarnessActorChangesApiSide = {
   caller: "caller",
   world: "world",
 } as const;
+
+export type HarnessActorResponseTimingChangeApiKind =
+  (typeof HarnessActorResponseTimingChangeApiKind)[keyof typeof HarnessActorResponseTimingChangeApiKind];
+
+export const HarnessActorResponseTimingChangeApiKind = {
+  immediate: "immediate",
+  delayed: "delayed",
+} as const;
+
+export interface HarnessActorResponseTimingChangeApi {
+  kind: HarnessActorResponseTimingChangeApiKind;
+  /** @minimum 0 */
+  seconds?: number;
+}
 
 export type HarnessActorChangesApiFallbackArguments = {
   [key: string]: unknown;
@@ -20290,7 +20452,7 @@ export interface HarnessActorChangesApi {
   files?: string[];
   records?: HarnessActorRecordSourceApi[];
   style?: string;
-  response_timing?: HarnessActorResponseTimingApi;
+  response_timing?: HarnessActorResponseTimingChangeApi;
   /** @maxItems 200 */
   permitted_actions?: string[];
   /**
@@ -20393,6 +20555,7 @@ export interface HarnessActorSeenApi {
   input: string;
   value: HarnessActorSeenApiValue;
   source: HarnessActorSeenApiSource;
+  text: string;
 }
 
 export interface HarnessActorOthersPrivateApi {
@@ -21414,10 +21577,6 @@ export type HarnessEnvironmentFileUploadedApiChannels = {
   [key: string]: string;
 };
 
-export type HarnessEnvironmentFileUploadedApiLoudness = {
-  [key: string]: unknown;
-};
-
 export interface HarnessEnvironmentFileUploadedApi {
   actors: HarnessActorApi[];
   source: HarnessEnvironmentFileUploadedApiSource;
@@ -21425,7 +21584,7 @@ export interface HarnessEnvironmentFileUploadedApi {
   record_schemas: HarnessEnvironmentFileUploadedApiRecordSchemas;
   actions: HarnessWorldActionApi[];
   channels: HarnessEnvironmentFileUploadedApiChannels;
-  loudness: HarnessEnvironmentFileUploadedApiLoudness;
+  loudness: HarnessActorLoudnessApi;
   reserved_ids: string[];
   knowledge_sources: HarnessActorKnowledgeSourcesApi;
   limits?: HarnessActorLimitsApi;
@@ -21437,6 +21596,8 @@ export interface HarnessEnvironmentFileUploadedApi {
   id_hint: string;
   limit_fields: HarnessActorLimitFieldApi[];
   side_defaults: HarnessActorSideDefaultsApi;
+  field_options: HarnessActorFieldOptionsApi;
+  upload: HarnessActorUploadApi;
   /**
    * Where the file was stored in the environment, as the knowledge sources list it.
    * @minLength 1
@@ -21716,6 +21877,102 @@ export interface HarnessEnvironmentRunEvaluationsApi {
 export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   /** How many of the run's calls were queued for grading. */
   call_execution_count: number;
+}
+
+/**
+ * The row's key, a string or an integer.
+ */
+export type HarnessSeededRowApiKey = { [key: string]: unknown };
+
+/**
+ * The row as the world is seeded with it.
+ */
+export type HarnessSeededRowApiFields = {
+  [key: string]: { [key: string]: unknown };
+};
+
+/**
+ * Other rows of the table the scenario could start from instead, the first few.
+ */
+export interface HarnessSeededRowApi {
+  /** The row's key, a string or an integer. */
+  key: HarnessSeededRowApiKey;
+  /** The row as the world is seeded with it. */
+  fields: HarnessSeededRowApiFields;
+}
+
+export type HarnessStartingRecordApiKey = { [key: string]: unknown };
+
+export type HarnessStartingRecordApiFields = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessStartingRecordApi {
+  /** Where the fact sits in the scenario's fixture, one segment per level (a list position as digits). */
+  path: string[];
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  table: string;
+  /** @minLength 1 */
+  key_field: string;
+  key: HarnessStartingRecordApiKey;
+  fields: HarnessStartingRecordApiFields;
+  /** Other rows of the table the scenario could start from instead, the first few. */
+  alternatives: HarnessSeededRowApi[];
+  /** @minimum 0 */
+  alternatives_total: number;
+}
+
+export type HarnessRowsUnavailableApiCode =
+  (typeof HarnessRowsUnavailableApiCode)[keyof typeof HarnessRowsUnavailableApiCode];
+
+export const HarnessRowsUnavailableApiCode = {
+  no_seed_rows: "no_seed_rows",
+  files_unreadable: "files_unreadable",
+} as const;
+
+/**
+ * Why the world's rows can't be read, or null when they can.
+ */
+export interface HarnessRowsUnavailableApi {
+  code: HarnessRowsUnavailableApiCode;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface HarnessStartingRecordsApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /**
+   * Where the fixture's data comes from: seed, generated or mixed.
+   * @minLength 1
+   */
+  origin: string;
+  /** Whether a choice can be written to this environment's draft. */
+  editable: boolean;
+  records: HarnessStartingRecordApi[];
+  rows_unavailable: HarnessRowsUnavailableApi;
+}
+
+export interface HarnessStartingRecordChoiceApi {
+  /**
+   * The `path` of one of the scenario's starting records.
+   * @minItems 1
+   * @maxItems 32
+   */
+  path: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  table: string;
+  /**
+   * The key of the seeded row to start from instead.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  key: string;
 }
 
 export interface HarnessVerifyCreateApi {
@@ -22640,34 +22897,23 @@ export interface HarnessScenarioCoverageApi {
   overlay_intensity?: string;
 }
 
-export type HarnessScenarioFaultApiMode =
-  (typeof HarnessScenarioFaultApiMode)[keyof typeof HarnessScenarioFaultApiMode];
-
-export const HarnessScenarioFaultApiMode = {
-  timeout_before_commit: "timeout_before_commit",
-  timeout_after_commit: "timeout_after_commit",
-  unavailable: "unavailable",
-  error: "error",
-} as const;
-
 export interface HarnessScenarioFaultApi {
-  /** @minLength 1 */
   action: string;
-  mode: HarnessScenarioFaultApiMode;
-  /** @minimum 1 */
-  on_call?: number;
   /**
-   * @minimum 0
-   * @maximum 30
+   * The contract tool it names; null when it names none.
+   * @minLength 1
    */
-  delay_seconds?: number;
-  /**
-   * @minimum 400
-   * @maximum 599
-   */
-  status?: number;
-  /** @maxLength 500 */
-  message?: string;
+  tool: string;
+  /** One of the fault modes, as stored. */
+  mode: string;
+  mode_label: string;
+  on_call: number;
+  /** For a timeout. */
+  delay_seconds: number;
+  /** For an error. */
+  status: number;
+  /** For an error. */
+  message: string;
 }
 
 /**
@@ -27109,6 +27355,8 @@ export interface BlockedCallApi {
   method?: string;
   /** The tool that made it, when known. */
   tool?: string;
+  /** How many calls to this host were refused; absent on older trials (one). */
+  count?: number;
 }
 
 export interface TrialStateChangeApi {
@@ -27146,6 +27394,48 @@ export interface DuplicateCommitApi {
   repeat_action_id?: string;
 }
 
+export type TrialRecordChangeApiKind =
+  (typeof TrialRecordChangeApiKind)[keyof typeof TrialRecordChangeApiKind];
+
+export const TrialRecordChangeApiKind = {
+  added: "added",
+  changed: "changed",
+  removed: "removed",
+} as const;
+
+/**
+ * The record's key as the table holds it: one value, or several.
+ */
+export type TrialRecordChangeApiKey = { [key: string]: unknown };
+
+/**
+ * Its values before; null when added.
+ */
+export type TrialRecordChangeApiBefore = {
+  [key: string]: { [key: string]: unknown };
+};
+
+/**
+ * Its values after; null when removed.
+ */
+export type TrialRecordChangeApiAfter = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface TrialRecordChangeApi {
+  /** @minLength 1 */
+  table: string;
+  /** The record's key as the table holds it: one value, or several. */
+  key: TrialRecordChangeApiKey;
+  kind: TrialRecordChangeApiKind;
+  /** Its values before; null when added. */
+  before: TrialRecordChangeApiBefore;
+  /** Its values after; null when removed. */
+  after: TrialRecordChangeApiAfter;
+  /** The fields a change changed; empty when added or removed. */
+  fields: string[];
+}
+
 export interface RecordSkippedApi {
   /** @minLength 1 */
   table: string;
@@ -27153,13 +27443,11 @@ export interface RecordSkippedApi {
   why: string;
 }
 
-export type TrialRecordsApiChangesItem = { [key: string]: unknown };
-
 /**
- * The records the trial changed, before and after.
+ * The records the trial changed, before and after; absent when they could not be read.
  */
 export interface TrialRecordsApi {
-  changes: TrialRecordsApiChangesItem[];
+  changes: TrialRecordChangeApi[];
   skipped?: RecordSkippedApi[];
   /** Changes past the cap, counted, not listed. */
   truncated?: number;
@@ -27175,11 +27463,24 @@ export const TrialStartApiState = {
 } as const;
 
 /**
+ * What the start was compared with; absent on trials from before it was said.
+ */
+export type TrialStartApiAgainst =
+  (typeof TrialStartApiAgainst)[keyof typeof TrialStartApiAgainst];
+
+export const TrialStartApiAgainst = {
+  sealed_seed: "sealed_seed",
+  first_trial: "first_trial",
+} as const;
+
+/**
  * Whether the trial started from the seeded records, as every trial should.
  */
 export interface TrialStartApi {
   state: TrialStartApiState;
   tables?: string[];
+  /** What the start was compared with; absent on trials from before it was said. */
+  against?: TrialStartApiAgainst;
 }
 
 export type ActorDecisionApiPlay =
@@ -27196,6 +27497,17 @@ export const ActorDecisionApiPlay = {
 } as const;
 
 /**
+ * For an approval: what the actor decided; null when it decided none or the trial predates verdicts.
+ */
+export type ActorDecisionApiVerdict =
+  (typeof ActorDecisionApiVerdict)[keyof typeof ActorDecisionApiVerdict];
+
+export const ActorDecisionApiVerdict = {
+  approved: "approved",
+  refused: "refused",
+} as const;
+
+/**
  * What it sent: for a pre-run message (`history`), the message itself.
  */
 export type ActorDecisionApiArguments = { [key: string]: string };
@@ -27204,13 +27516,9 @@ export type ActorDecisionApiArguments = { [key: string]: string };
  * What actors did or chose during the trial; messages written before it are in pre_run.
  */
 export interface ActorDecisionApi {
-  /** @minLength 1 */
   actor: string;
-  /**
-   * The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.
-   * @minLength 1
-   */
-  name?: string;
+  /** The actor's name, or its id when the trial did not name it. */
+  name: string;
   play: ActorDecisionApiPlay;
   /** @minLength 1 */
   action?: string;
@@ -27229,11 +27537,7 @@ export interface ActorDecisionApi {
   why?: string;
   status?: number;
   timeout_seconds?: number;
-  /**
-   * silent, decline, one of the actor's own actions, or the id of the actor who answers instead
-   * @minLength 1
-   */
-  fallback?: string;
+  fallback: HarnessActorFallbackApi;
   /**
    * For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
    * @minLength 1
@@ -27244,6 +27548,47 @@ export interface ActorDecisionApi {
    * @minLength 1
    */
   action_outcome?: string;
+  /** For an approval: what the actor decided; null when it decided none or the trial predates verdicts. */
+  verdict: ActorDecisionApiVerdict;
+  /** The agent committed a write after this actor refused it; false on a trial that predates verdicts. */
+  committed_after_refusal: boolean;
+}
+
+export interface ApprovalRequestApi {
+  /** @minLength 1 */
+  action: string;
+  /** Epoch seconds the world logged it. */
+  at: number;
+  /** @minLength 1 */
+  action_id: string;
+}
+
+/**
+ * Null when it decided none or the trial predates verdicts.
+ */
+export type ApprovalDecisionApiVerdict =
+  (typeof ApprovalDecisionApiVerdict)[keyof typeof ApprovalDecisionApiVerdict];
+
+export const ApprovalDecisionApiVerdict = {
+  approved: "approved",
+  refused: "refused",
+} as const;
+
+export interface ApprovalDecisionApi {
+  /** @minLength 1 */
+  by: string;
+  /** Null when it decided none or the trial predates verdicts. */
+  verdict: ApprovalDecisionApiVerdict;
+  /**
+   * Who decided, by display name; their id when nameless; null when nobody did.
+   * @minLength 1
+   */
+  name: string;
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  outcome: string;
+  at: number;
 }
 
 export interface ApprovalWriteApi {
@@ -27253,16 +27598,27 @@ export interface ApprovalWriteApi {
   outcome: string;
 }
 
-export type ApprovalLineApiRequest = { [key: string]: string };
+/**
+ * Null on a trial that predates verdicts.
+ */
+export type ApprovalLineApiVerdict =
+  (typeof ApprovalLineApiVerdict)[keyof typeof ApprovalLineApiVerdict];
 
-export type ApprovalLineApiDecision = { [key: string]: string };
+export const ApprovalLineApiVerdict = {
+  approved: "approved",
+  refused: "refused",
+} as const;
 
 export interface ApprovalLineApi {
-  request: ApprovalLineApiRequest;
-  decision: ApprovalLineApiDecision;
+  request: ApprovalRequestApi;
+  decision: ApprovalDecisionApi;
   before_decision: ApprovalWriteApi[];
   after_decision: ApprovalWriteApi[];
   acted_before_decision: boolean;
+  /** Null on a trial that predates verdicts. */
+  verdict: ApprovalLineApiVerdict;
+  /** The agent committed a write after the refusal; false on a trial that predates verdicts. */
+  committed_after_refusal: boolean;
 }
 
 export interface ActorUsageApi {
@@ -27305,7 +27661,7 @@ export interface ActorUsageTotalApi {
  */
 export interface TrialNoticeApi {
   /**
-   * fault_not_applied, fault_not_triggered, start_differs or changed_outside_world
+   * fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs or changed_outside_world
    * @minLength 1
    */
   code: string;
@@ -27317,43 +27673,39 @@ export interface TrialNoticeApi {
   action?: string;
   on_call?: number;
   mode?: string;
+  /** For evidence_incomplete. */
+  count?: number;
 }
 
-/**
- * The actor limits this trial ran with; null is no limit.
- */
-export type TrialStateApiLimits = { [key: string]: string };
-
 export interface TrialStateApi {
-  state_changes?: TrialStateChangeApi[];
+  state_changes: TrialStateChangeApi[];
   /** Writes the world committed twice after the agent's answer was lost; the trial fails on them. */
-  duplicates?: DuplicateCommitApi[];
+  duplicates: DuplicateCommitApi[];
   /** False when World changes are not recorded for this agent: its tools run inside it. */
   recorded?: boolean;
   /** Why they were not recorded. */
   why?: string;
   /** True when what changed in the world could not be read; checks that needed it read Unmeasured. */
-  unreadable?: boolean;
+  unreadable: boolean;
   records?: TrialRecordsApi;
   start?: TrialStartApi;
   /** What actors did or chose during the trial; messages written before it are in pre_run. */
-  decisions?: ActorDecisionApi[];
+  decisions: ActorDecisionApi[];
   /** Messages actors wrote before the run: the trial's starting point, not a change made during it. */
-  pre_run?: ActorDecisionApi[];
-  approvals?: ApprovalLineApi[];
+  pre_run: ActorDecisionApi[];
+  approvals: ApprovalLineApi[];
   /**
    * The world's records at the trial's end and its action log, kept for grading it again.
    * @minLength 1
    */
   end_state_url?: string;
-  usage?: ActorUsageApi[];
+  usage: ActorUsageApi[];
   /** Actors' model use summed per actor and model. */
-  usage_summary?: ActorUsageLineApi[];
+  usage_summary: ActorUsageLineApi[];
   usage_total?: ActorUsageTotalApi;
-  /** The actor limits this trial ran with; null is no limit. */
-  limits?: TrialStateApiLimits;
+  limits?: HarnessActorLimitsApi;
   /** How the trial ran that the person should know, e.g. a scenario fault that did not take effect. */
-  notices?: TrialNoticeApi[];
+  notices: TrialNoticeApi[];
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -27506,6 +27858,8 @@ export interface CallExecutionV3DetailResponseApi {
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
   call_actors: CallCallActorApi[];
+  /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
+  has_customer: boolean;
   trial_state: TrialStateApi;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;

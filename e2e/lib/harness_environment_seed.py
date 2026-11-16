@@ -1,25 +1,6 @@
-"""Seed one built, versioned Environment the way production gets one, with no sandbox.
+"""Seed one built, versioned Environment without a sandbox, as a finished build plus the versions backfill leave it.
 
-``e2e/lib/simulate-seed.ts`` copies this file into the stack's backend container and
-runs it there. The stack starts no simulation runner, so an Environment cannot be
-built for real. Instead this does what a finished build leaves behind and what the
-versions backfill reads, as the backend tests build one
-(``simulate/tests/test_harness_versioning_backfill.py::_legacy``):
-
-1. a hosted job, its attempt and its provisioned scenarios
-   (``create_hosted_job`` -> ``register_attempt`` -> ``provision_scenarios``),
-2. its authoring archive in object storage, the job marked completed,
-3. ``backfill_environment``, which records the agent, environment and suite versions,
-   the suite members and, for a sealed archive, the certified bundle of that pairing.
-
-A ``certified`` archive carries the sealed bundle a build certifies: a certificate
-whose checks all passed, and per-tool and per-action certification files. Without it
-the pairing has no bundle, so its first check is a validation. ``production_only``
-names a tool the contract says reaches production. ``failed_check`` names an action
-an uncertified pairing's last validation failed on: its bundle is left failed by that
-check, as a validation leaves it (``validation._settle_bundle``).
-
-Every row belongs to the given organization and workspace. Prints one JSON line.
+Run inside the backend container by ``e2e/lib/simulate-seed.ts``; prints one JSON line.
 """
 
 import json
@@ -148,11 +129,75 @@ ACTOR_TRIAL_STATE = {
         },
     ],
 }
+# The same trial when the refund's answer was lost to a timeout and the agent issued it again: the world committed it
+# twice, and the trial fails on it.
+DUPLICATE_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "duplicates": [
+        {
+            "action": "issue_refund",
+            "name": "issue_refund",
+            "arguments": {"order_id": "A-100", "amount_cents": 2500},
+            "first_action_id": "act-1",
+            "repeat_action_id": "act-2",
+        }
+    ],
+    "state_changes": [
+        {
+            **TRIAL_STATE["state_changes"][0],
+            "attempted": 3,
+            "committed": 2,
+            "duplicate": 1,
+            "committed_actions": ["issue_refund", "issue_refund"],
+        }
+    ],
+}
+# The same trial when the agent asked Dana Brooks to approve the refund, she refused, and the agent issued it anyway.
+REFUSED_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "approvals": [
+        {
+            "request": {"action": "approvals.request", "by": "agent"},
+            "decision": {"action": "approvals.put", "by": WORLD_ACTOR["id"]},
+            "before_decision": [],
+            "after_decision": [{"action": "issue_refund", "outcome": "committed"}],
+            "acted_before_decision": False,
+        }
+    ],
+    "decisions": [
+        {
+            "play": "live",
+            "actor": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "action": "approvals.put",
+            "status": 200,
+            "outcome": "committed",
+            "arguments": {"kind": "refund", "status": "refused"},
+            "verdict": "refused",
+            "committed_after_refusal": True,
+        }
+    ],
+    "state_changes": [
+        TRIAL_STATE["state_changes"][0],
+        {
+            "who": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["approvals.put"],
+        },
+    ],
+}
 TRIAL_STATES = {
     True: TRIAL_STATE,
     "read_write": TRIAL_STATE,
     "fault": FAULTED_TRIAL_STATE,
     "actor": ACTOR_TRIAL_STATE,
+    "duplicate": DUPLICATE_TRIAL_STATE,
+    "refused": REFUSED_TRIAL_STATE,
 }
 
 
@@ -315,10 +360,8 @@ def seed_environment(
     trial=False,
     tool_detail=False,
 ):
-    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; with ``actors`` its refunds
-    include a world actor with no channel, with ``trial`` one finished trial whose World changes hold a committed
-    write and a read (``"fault"``: the refund faulted by a test condition; ``"actor"``: the world actor's approval
-    committed during the call too)."""
+    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
+    ``TRIAL_STATES`` variant for its finished trial."""
     from simulate.models import (
         AgentDefinition,
         AgentVersion,

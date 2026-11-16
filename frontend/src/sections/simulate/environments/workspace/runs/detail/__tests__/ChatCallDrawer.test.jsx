@@ -137,7 +137,14 @@ describe("ChatCallDrawer World state", () => {
             committed_actions: ["issue_refund"],
           },
         ],
+        duplicates: [],
         decisions: [],
+        pre_run: [],
+        approvals: [],
+        usage: [],
+        usage_summary: [],
+        notices: [],
+        unreadable: false,
       },
     };
     render(

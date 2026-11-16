@@ -16,7 +16,9 @@ from simulate.services.harness_actor_merge import (
     id_from,
     merged_record,
     replaced_record,
+    touched_fields,
 )
+from simulate.services.harness_actor_options import option_problems
 from simulate.services.harness_actor_reads import Cast, cast_view
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
@@ -30,6 +32,7 @@ from simulate.services.harness_actor_rules import (
     actor_rules,
     agent_modality,
     cast_records,
+    read_json,
     scenarios_using,
     stored_limits,
     unresolved_points,
@@ -39,15 +42,18 @@ from simulate.services.harness_actor_validation import (
     ACTOR_RECORD_MAX_CHARS,
     PermissionConflict,
     Problem,
+    actor_invalid,
     actor_problems,
     conflict_error,
     in_use_problem,
     joins_fixed_problem,
+    limits_invalid,
     new_choice_problems,
     permission_conflicts,
     problem,
     record_over_by,
     removal_problems,
+    same_name_problems,
 )
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.drafts import DraftRef
@@ -101,34 +107,46 @@ def write_actor_limits(
 ) -> Cast:
     """Set the environment's actor limits in the draft, as one whole block: each a positive number or null for no
     limit, `model` one of the models its sealed rules list; a field left out of the block takes the channel's default.
-    Refuses `limits_invalid` (400)."""
+    Refuses `limits_invalid` (400) with `problems`, one per limit."""
     refs, environment_files, suite_files = draft_read(environment, expected_revision)
     rules = actor_rules(environment_files)
     models = actor_models(rules)
-    problems = []
+    problems: list[Problem] = []
     clean: dict[str, Any] = {}
     for key, value in (limits or {}).items():
         kind = LIMIT_FIELDS.get(key)
         if kind is None:
-            problems.append(f"{key} is not an actor limit")
+            problems.append(problem(key, "This is not an actor limit."))
         elif value is None:
             clean[key] = None
         elif kind is str:
             if value not in models:
-                problems.append(f"model is one of {', '.join(models)}")
+                problems.append(problem(key, f"Pick one of: {', '.join(models)}."))
             else:
                 clean[key] = value
         elif (
             isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
         ):
-            problems.append(f"{key} is a positive number, or null for no limit")
+            problems.append(
+                problem(
+                    key,
+                    "Enter a whole number of 1 or more, or leave it empty for no limit."
+                    if kind is int
+                    else "Enter a number above 0, or leave it empty for no limit.",
+                )
+            )
         elif kind is int and value != int(value):
             # Counts are whole: int(0.5) would store 0, which the harness refuses.
-            problems.append(f"{key} is a whole number, or null for no limit")
+            problems.append(
+                problem(
+                    key,
+                    "Enter a whole number of 1 or more, or leave it empty for no limit.",
+                )
+            )
         else:
             clean[key] = kind(value)
     if problems:
-        raise HostedHarnessError("limits_invalid", "; ".join(problems), status_code=400)
+        raise limits_invalid(problems)
     return written_cast(
         environment,
         _with_cast(
@@ -200,13 +218,20 @@ def _with_cast(
     limits: dict[str, Any] | None = None,
     unresolved: list[UnresolvedPoint] | None = None,
 ) -> dict[str, bytes]:
-    """The environment's files with this cast, keeping its limits and unresolved points (or these new ones)."""
+    """The environment's files with this cast, keeping its limits and unresolved points (or these new ones), and every
+    other top-level key the stored file holds (a later release's, such as `actor_share`) as it is."""
     kept = stored_limits(environment_files) if limits is None else limits
     points = unresolved_points(environment_files) if unresolved is None else unresolved
+    stored = read_json(environment_files, ACTORS_FILE)
+    others = {
+        key: value
+        for key, value in (stored if isinstance(stored, dict) else {}).items()
+        if key not in _OWNED_KEYS
+    }
     files = dict(environment_files)
-    # No actors and no limits means no file, so removing the only actor leaves nothing to review.
+    # No actors, no limits and nothing else kept means no file, so removing the only actor leaves nothing to review.
     files.pop(ACTORS_FILE, None)
-    if actors or kept:
+    if actors or kept or others:
         body: dict[str, Any] = {
             "schema": rules["formats"][ACTORS_FILE],
             "actors": actors,
@@ -215,8 +240,14 @@ def _with_cast(
             body["limits"] = kept
         if points:
             body["unresolved"] = points
-        files[ACTORS_FILE] = (json.dumps(body, indent=2) + "\n").encode("utf-8")
+        files[ACTORS_FILE] = (json.dumps({**body, **others}, indent=2) + "\n").encode(
+            "utf-8"
+        )
     return files
+
+
+# The top-level keys of the actors file this writer builds; any other is a release's own and kept as stored.
+_OWNED_KEYS = ("schema", "actors", "limits", "unresolved")
 
 
 class ActorValidation(TypedDict):
@@ -342,20 +373,37 @@ def _verdict(
             for one in removal_problems(actors, actor_id, rules, before)
         ]
         return verdict
-    problems = actor_problems(actors, actor_id, rules, new_id=op == "create")
+    stored_record = (
+        next((one for one in before if one.get("id") == actor_id), None)
+        if op == "replace"
+        else None
+    )
+    edited_record = next(one for one in actors if one.get("id") == actor_id)
+    problems = actor_problems(
+        actors,
+        actor_id,
+        rules,
+        new_id=op == "create",
+        before=stored_record,
+        touched=touched_fields(changes) if changes is not None else set(body or {}),
+    )
     # The choices are read only from a record of the right shape: a list of numbers is a type to fix first.
     problems = problems or [
-        problem(None, one)
-        for one in new_choice_problems(
-            next((one for one in before if one.get("id") == actor_id), None),
-            next(one for one in actors if one.get("id") == actor_id),
-            environment_files,
-            rules,
-            suite_files,
-            agent_modality(environment_files),
-            world_stores(environment),
-        )
+        *(
+            problem(None, one)
+            for one in new_choice_problems(
+                stored_record,
+                edited_record,
+                environment_files,
+                rules,
+                suite_files,
+                agent_modality(environment_files),
+                world_stores(environment),
+            )
+        ),
+        *option_problems(stored_record, edited_record, rules),
     ]
+    problems += same_name_problems(actors, actor_id, stored_record)
     if over_by:
         problems.append(
             problem(None, f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters.")
@@ -388,10 +436,9 @@ def check_actor_edit(
     changes: ActorChanges | None = None,
     new_id: str | None = None,
 ) -> ActorValidation:
-    """What `write_actor_edit` would say about this edit, writing nothing: its problems (a refusal included), the
-    actions it would share that `share_actions` does not confirm, the id a create would get and how far the record
-    is over its bound. Refuses as a write does only when there is nothing to check: `actor_not_found` (404),
-    `draft_changed` (409), `actor_id_missing` and `actor_id_mismatch` (400)."""
+    """What `write_actor_edit` would say about this edit, writing nothing.
+
+    Refuses only when there is nothing to check: `actor_not_found`, `draft_changed`, `actor_id_missing/mismatch`."""
     verdict = _verdict(
         environment,
         op=op,
@@ -436,14 +483,7 @@ def write_actor_edit(
 ) -> Cast:
     """Create, replace or delete one actor in the environment draft and return the cast after it.
 
-    The edit is a whole record (`body`), or a patch (`changes`) merged into the stored record; a create made from a
-    patch without `new_id` gets an id made from its name. `expected_revision` is the draft revision the caller read;
-    an edit made elsewhere since is refused with `draft_changed` (409). Also refuses `actor_exists`, `actor_in_use`
-    (409), `actor_not_found` (404) and `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400),
-    `permission_conflict` (409, with each conflict) when the edit gives an actor an action only one other actor holds
-    and `share_actions` does not confirm it, and retires the builder chat's runtime once the draft is written.
-    `actor_id` is the id in the address, if any; a create may give it in the body instead.
-    """
+    A stale `expected_revision` is refused `draft_changed`; an unconfirmed shared action `permission_conflict`."""
     verdict = _verdict(
         environment,
         op=op,
@@ -458,11 +498,7 @@ def write_actor_edit(
     if verdict["refusal"] is not None:
         raise verdict["refusal"]
     if verdict["problems"]:
-        raise HostedHarnessError(
-            "actor_invalid",
-            " ".join(one["message"] for one in verdict["problems"]),
-            status_code=400,
-        )
+        raise actor_invalid(verdict["problems"])
     if verdict["conflicts"]:
         raise conflict_error(verdict["conflicts"])
     return written_cast(

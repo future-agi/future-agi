@@ -3,7 +3,6 @@ import { Box } from "@mui/material";
 import CallActorsPanel from "./CallActorsPanel";
 import WorldActorsPanel from "./WorldActorsPanel";
 
-// The environment says how the tab shows: the cast edited here (`edit`), or its actors listed read-only (`list`).
 export default function ActorsTab({ env, locked = false }) {
   if (env.actorsTab === "edit")
     return <WorldActorsPanel envId={env.id} locked={locked} />;

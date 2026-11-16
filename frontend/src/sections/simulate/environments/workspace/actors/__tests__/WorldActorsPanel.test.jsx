@@ -16,10 +16,10 @@ const refetch = vi.fn();
 let editState;
 let actorsData;
 let actorsState;
-// The server's answer to the form's check, fixed per step (undefined: still being asked), and the last request asked.
+// The form check's answer per step; undefined is still being asked.
 let answer;
 let asked;
-// The save tests run the real hooks against a mocked axios; the rest drive the panel through these stand-ins.
+// Save tests use the real hooks over a mocked axios; the rest use these stand-ins.
 let realHooks = false;
 let viewState;
 
@@ -66,7 +66,7 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       viewState ?? {
         data: {
           sees: [
-            { input: "actor.goal", value: "Approve fast" },
+            { input: "actor.goal", value: "Approve fast", text: "Approve fast" },
             {
               input: "actor.constraints",
               value: {
@@ -75,14 +75,17 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
                 escalate_when: [],
                 stop_when: [],
               },
+              text: "",
             },
             {
               input: "actor.knowledge",
               value: [{ kind: "facts", text: "The limit is 25%" }],
+              text: "The limit is 25%",
             },
             {
               input: "actor.behaviour",
               value: { response_timing: { kind: "delayed", seconds: 5 } },
+              text: "Answers after 5 s",
             },
           ],
           never_sees: {
@@ -109,7 +112,6 @@ const MANAGER = typedActor({
   permitted_actions: ["crm.approve_discount"],
 });
 
-// Open an MUI select by its label and pick an option by its text.
 const choose = (label, option) => {
   fireEvent.mouseDown(screen.getByLabelText(label));
   fireEvent.click(screen.getByRole("option", { name: option }));
@@ -128,7 +130,6 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     statusCode: 409,
   };
   const OPENED = cast([MANAGER]);
-  // Saves go to `save` and uploads to `upload`; a check is answered with nothing to fix.
   const save = vi.fn();
   const upload = vi.fn();
   const VALIDATION =
@@ -212,7 +213,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     save.mockResolvedValueOnce({ data: elsewhere });
     fireEvent.click(saveButton());
     await waitFor(() => expect(screen.queryByText("Save to draft")).toBeNull());
-    // Only the edited field goes: the goal written elsewhere stays as the server has it.
+    // Only the edited field goes.
     expect(body(1)).toEqual({
       changes: { role: "regional manager" },
       expected_revision: 4,
@@ -318,7 +319,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       },
     });
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
-    // Sent at the revision the form opened at.
+    // Sent at the revision the form shows.
     expect(upload.mock.calls[0][0].get("expected_revision")).toBe("3");
     await screen.findByText("knowledge/policy-2.md");
     await waitFor(() => expect(saveButton()).toBeEnabled(), {
@@ -355,6 +356,65 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       expect(await screen.findByText(shown)).toBeInTheDocument();
     },
   );
+
+  it("moves the form onto the fresh record when an upload finds the draft moved, and uploads at its revision", async () => {
+    await openEdit();
+    const elsewhere = cast(
+      [{ ...MANAGER, goal: "Approve only large discounts" }],
+      { revision: 5 },
+    );
+    upload.mockRejectedValueOnce(DRAFT_CHANGED);
+    axios.get.mockResolvedValue({ data: elsewhere });
+    const file = () =>
+      new File(["# Policy"], "policy.md", { type: "text/markdown" });
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: [file()] },
+    });
+    await screen.findByText(/changed elsewhere while you were editing/);
+    await screen.findByText(/Wants: Approve only large discounts/);
+    // What was typed stays.
+    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+      "regional manager",
+    );
+    upload.mockResolvedValueOnce({
+      data: cast([{ ...MANAGER, goal: "Approve only large discounts" }], {
+        revision: 6,
+        knowledge_sources: { files: ["knowledge/policy.md"], records: [] },
+        uploaded_path: "knowledge/policy.md",
+      }),
+    });
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: [file()] },
+    });
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    expect(upload.mock.calls[1][0].get("expected_revision")).toBe("5");
+    await screen.findByText("knowledge/policy.md");
+    await waitFor(() => expect(saveButton()).toBeEnabled(), {
+      timeout: 5000,
+    });
+    save.mockResolvedValueOnce({ data: cast([MANAGER], { revision: 7 }) });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(body(0).expected_revision).toBe(6);
+  });
+
+  it("names who reads a file of the same name and keeps the form's files as they were", async () => {
+    upload.mockRejectedValueOnce({
+      error: "upload_exists",
+      message:
+        "This environment already has a file named policy.md, which Dana Brooks reads; rename the file to upload it",
+      readers: ["Dana Brooks"],
+      statusCode: 409,
+    });
+    await openEdit();
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: [new File(["# New"], "policy.md")] },
+    });
+    expect(
+      await screen.findByText(/policy.md, which Dana Brooks reads/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("knowledge/policy.md")).toBeNull();
+  });
 
   it("says so and won't save when the actor was removed elsewhere", async () => {
     await openEdit();
@@ -577,6 +637,21 @@ describe("WorldActorsPanel", () => {
     expect(within(container).queryByText("Save limits to draft")).toBeNull();
   });
 
+  it("keeps limits typed but not saved when another change moves the cast", () => {
+    const { rerender } = render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Limits" }));
+    fireEvent.change(screen.getByLabelText("How many at once on a call"), {
+      target: { value: "3" },
+    });
+    actorsData = cast([MANAGER, typedActor({ id: "ops", name: "Ops" })], {
+      revision: 4,
+    });
+    rerender(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByLabelText("How many at once on a call")).toHaveValue(
+      "3",
+    );
+  });
+
   it("says there is no caller only when the cast says so and has actors", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText(/no caller record yet/)).toBeInTheDocument();
@@ -602,9 +677,7 @@ describe("WorldActorsPanel", () => {
       screen.getByText("What they know: The limit is 25%"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "How they behave: response timing: delayed · seconds: 5",
-      ),
+      screen.getByText("How they behave: Answers after 5 s"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Grader material: solution, sub goals"),
@@ -910,7 +983,6 @@ describe("WorldActorsPanel", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Jordan" },
     });
-    // Automatic by default; switching it off fixes a share, set on a slider.
     const automatic = screen.getByRole("checkbox", {
       name: /Automatic: each call picks between 33% and 67%/,
     });
@@ -919,7 +991,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByRole("slider")).toHaveValue("0.5");
     expect(screen.getByText("50% of the caller's voice")).toBeInTheDocument();
     choose("Gender", "Female");
-    choose("Age", "50 to 59");
+    choose("Age", "60+");
     fireEvent.click(saveButton());
     expect(sent().id).toBe("colleague");
     expect(sent().changes).toEqual({
@@ -928,7 +1000,7 @@ describe("WorldActorsPanel", () => {
       channel: "audio_mix",
       loudness_ratio: 0.5,
       gender: "female",
-      age_group: "50-59",
+      age_group: "60+",
     });
   });
 
@@ -952,13 +1024,14 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    // A stored age the server no longer offers still reads as stored.
     expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
-    choose("Accent", "British");
+    choose("Accent", "Indian");
     fireEvent.click(saveButton());
     expect(sent()).toMatchObject({
       op: "replace",
       actorId: "colleague",
-      changes: { accent: "British" },
+      changes: { accent: "Indian" },
     });
   });
 
@@ -1151,7 +1224,7 @@ describe("WorldActorsPanel", () => {
   });
 
   it("lists a server problem on a field not on screen above Save, so Save is never off without a reason", () => {
-    // A world actor's cap is Most turns; a problem on its lines cap has no field showing.
+    // A world actor shows no lines-cap field, so that problem goes above Save.
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     answer = {

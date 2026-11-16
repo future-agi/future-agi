@@ -21,7 +21,8 @@ import {
   subTasksToText,
 } from "./scenarioEditor.constants";
 import TestConditionsEditor from "./TestConditionsEditor";
-import { TEST_CONDITIONS_COPY } from "./testConditions.constants";
+import StartingRecords from "./StartingRecords";
+import { TEST_CONDITIONS_COPY, fileFault } from "./testConditions.constants";
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
@@ -41,8 +42,8 @@ export default function ScenarioEditor({
   levelLabels = {},
   env,
 }) {
-  // The server's refusal of a test condition, shown in the editor; the drawer stays open to fix it.
   const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const editableFields = useMemo(
     () => scenarioEditing?.editable_fields ?? [],
     [scenarioEditing],
@@ -145,11 +146,12 @@ export default function ScenarioEditor({
     ) {
       setField("background_noise", noiseValue(draft.backgroundNoise));
     }
+    const filed = (faults) => (faults || []).map(fileFault);
     if (
       canEdit("faults") &&
-      JSON.stringify(draft.faults || []) !== JSON.stringify(base.faults || [])
+      JSON.stringify(filed(draft.faults)) !== JSON.stringify(filed(base.faults))
     ) {
-      setField("faults", draft.faults || []);
+      setField("faults", filed(draft.faults));
     }
 
     // Persona: one set_persona op carrying only the changed, writable fields.
@@ -193,19 +195,18 @@ export default function ScenarioEditor({
     setDraft((d) => ({ ...d, persona: { ...(d.persona || {}), [k]: v } }));
 
   const save = async () => {
-    if (!changes.length) return;
+    if (!changes.length || saving) return;
     setSaveError("");
-    // The parent answers with the refusals of the save, if any; a refused test condition keeps the editor open.
+    setSaving(true);
+    // A refusal or failed save keeps the editor open with the edits in it.
     const answer = await onSave({ changes, rework });
-    const refused =
-      (answer?.refused || []).find((one) => one.field === "faults") ||
-      answer?.error;
+    setSaving(false);
+    const refused = answer.refused.find((one) => one.field === "faults");
     if (refused) {
-      setSaveError(
-        refused.why || refused.message || TEST_CONDITIONS_COPY.refused,
-      );
+      setSaveError(refused.why);
       return;
     }
+    if (answer.failed) return;
     onClose();
   };
 
@@ -372,6 +373,7 @@ export default function ScenarioEditor({
             disabled={!canEdit("faults")}
             error={saveError}
           />
+          {env?.id && <StartingRecords envId={env.id} scenarioKey={row.scenarioKey} />}
 
           {(canEdit("max_turns") || canEdit("background_noise")) && (
             <>
@@ -467,7 +469,7 @@ export default function ScenarioEditor({
             variant="contained"
             color="primary"
             size="small"
-            disabled={!changes.length}
+            disabled={!changes.length || saving}
             onClick={save}
           >
             {EDITOR_COPY.save}
@@ -482,7 +484,7 @@ ScenarioEditor.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,
-  // Receives { changes, rework } — the amend ops for the changed writable fields.
+  // ({ changes, rework }) => Promise<{ refused, failed }>
   onSave: PropTypes.func,
   // The server's editability block; gates which fields are writable.
   scenarioEditing: PropTypes.shape({
@@ -494,7 +496,6 @@ ScenarioEditor.propTypes = {
   // Background-noise choices from the server field catalogue (values the agent uses).
   noiseOptions: PropTypes.arrayOf(PropTypes.string),
   levelLabels: PropTypes.object,
-  // The environment: which tools a test condition can name, and whether the world's door holds each.
   env: PropTypes.object,
 };
 

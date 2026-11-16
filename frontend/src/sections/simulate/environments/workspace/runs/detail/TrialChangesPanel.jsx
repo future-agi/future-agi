@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Link, Stack, Typography } from "@mui/material";
+import TrialDecisions from "./TrialDecisions";
 import { TRIAL_CHANGES_COPY as C } from "./trialChanges.constants";
 
 const quiet = {
@@ -8,7 +9,6 @@ const quiet = {
   wordBreak: "break-word",
 };
 
-// A record's values as one short line, for the before and after columns.
 const values = (row) =>
   row
     ? Object.entries(row)
@@ -19,8 +19,7 @@ const values = (row) =>
         .join(", ")
     : "";
 
-// The records the trial added, changed or removed, each with its values before and after. When the agent committed
-// changes yet no record of the test world changed, the server's notice says why in place of "no record changed".
+// `outside` replaces "no record changed" when the agent committed changes outside the test world.
 function RecordsSection({ records, outside }) {
   const changes = records?.changes || [];
   return (
@@ -85,12 +84,15 @@ RecordsSection.propTypes = {
   }),
 };
 
-// Whether the trial started from the seeded records, said first; one that did not is among the notices.
-const startLine = (start) =>
-  start && start.state !== "differs" ? C.start[start.state] : null;
+// A start that differs is reported among the notices instead.
+const startLine = (start) => {
+  if (!start || start.state === "differs") return null;
+  return start.state === "seeded" && start.against === "first_trial"
+    ? C.start.seededAgainstFirst
+    : C.start[start.state];
+};
 
-// A trial's World state per participant (the agent and each actor), and what each actor chose. Kept apart:
-// attempted, refused and committed are never summed into one number. A trial with no record says why.
+// Attempted, refused and committed are never summed into one number.
 export default function TrialChangesPanel({ trialState }) {
   if (!trialState)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
@@ -104,26 +106,21 @@ TrialChangesPanel.propTypes = {
 };
 
 function WorldState({ trialState }) {
-  const changes = trialState?.state_changes || [];
-  const decisions = trialState?.decisions || [];
-  // Messages written before the run: the trial's starting point, shown apart from what actors chose in it.
-  const preRun = trialState?.pre_run || [];
-  const approvals = trialState?.approvals || [];
-  const usage = trialState?.usage_summary || [];
-  const duplicates = trialState?.duplicates || [];
-  const started = startLine(trialState?.start);
-  // How the trial ran that the reader must know, said first: a fault that did not take effect, a start that differed.
-  // Changes the agent made outside the test world are said where the records are.
-  const allNotices = trialState?.notices || [];
+  const changes = trialState.state_changes;
+  const decisions = trialState.decisions;
+  const preRun = trialState.pre_run;
+  const approvals = trialState.approvals;
+  const usage = trialState.usage_summary;
+  const duplicates = trialState.duplicates;
+  const started = startLine(trialState.start);
+  // `changed_outside_world` shows with the records, not with the other notices.
+  const allNotices = trialState.notices;
   const outside = allNotices.find(
     (one) => one.code === "changed_outside_world",
   );
   const notices = allNotices.filter((one) => one !== outside);
-  const unreadable = trialState?.unreadable || trialState?.records?.unreadable;
-  const records =
-    trialState?.records && !trialState.records.unreadable
-      ? trialState.records
-      : null;
+  const { unreadable } = trialState;
+  const records = !unreadable && trialState.records ? trialState.records : null;
   const noticeList = notices.length > 0 && (
     <Box>
       <Typography
@@ -146,7 +143,7 @@ function WorldState({ trialState }) {
           {C.unreadable}
         </Typography>
       )}
-      {trialState?.end_state_url && (
+      {trialState.end_state_url && (
         <Typography sx={quiet}>
           {C.endStateLead}{" "}
           <Link
@@ -170,19 +167,6 @@ function WorldState({ trialState }) {
         {records && <RecordsSection records={records} outside={outside} />}
       </Stack>
     );
-  const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
-  const name = (id) => names[id] || id;
-  const timing = (one) => {
-    if (one.play === "waiting") return C.waited(one, name);
-    if (one.play === "problem") return C.problems[one.problem] || one.why;
-    if (one.play !== "timeout") return null;
-    if (one.outcome === "fallback_not_committed")
-      return C.outcomes.fallback_not_committed(
-        C.actionOutcomes[one.action_outcome],
-      );
-    const said = C.outcomes[one.outcome];
-    return typeof said === "function" ? said(name(one.fallback)) : said;
-  };
   return (
     <Stack spacing={1.5} sx={{ p: 2 }}>
       <Box>
@@ -220,9 +204,9 @@ function WorldState({ trialState }) {
               {C.answerLost(one.answer_lost_actions)}
             </Typography>
           )}
-          {(one.blocked || []).map((call, index) => (
+          {(one.blocked || []).map((call) => (
             <Typography
-              key={`blocked-${index}`}
+              key={`blocked-${call.host}`}
               sx={quiet}
               data-testid="blocked-call"
             >
@@ -243,43 +227,12 @@ function WorldState({ trialState }) {
           <Typography sx={quiet}>{C.preRunAbout}</Typography>
           {preRun.map((one, index) => (
             <Typography key={`pre-${index}`} sx={quiet}>
-              {`${one.name || name(one.actor)}: ${one.arguments?.text || one.action}`}
+              {`${one.name}: ${one.arguments?.text || one.action}`}
             </Typography>
           ))}
         </Box>
       )}
-      {approvals.length > 0 && (
-        <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {C.approvalsHeading}
-          </Typography>
-          {approvals.map((one, index) => (
-            <Typography key={`approval-${index}`} sx={quiet}>
-              {`${C.approval(one, name)} · ${one.acted_before_decision ? C.actedBefore : C.waitedFor}`}
-            </Typography>
-          ))}
-        </Box>
-      )}
-      {decisions.length > 0 && (
-        <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {C.decisionsHeading}
-          </Typography>
-          {decisions.map((one, index) => (
-            <Typography key={`${one.actor}-${index}`} sx={quiet}>
-              {[
-                names[one.actor] || one.actor,
-                C.plays[one.play] || one.play,
-                timing(one) || one.action || C.nothing,
-                one.play !== "timeout" && C.actionOutcomes[one.outcome],
-                one.why,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
-          ))}
-        </Box>
-      )}
+      <TrialDecisions approvals={approvals} decisions={decisions} />
       {usage.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -318,7 +271,6 @@ WorldState.propTypes = {
     decisions: PropTypes.arrayOf(PropTypes.object),
     pre_run: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
-    // Actors' model use summed per actor and model, and in all.
     usage_summary: PropTypes.arrayOf(
       PropTypes.shape({
         actor: PropTypes.string,

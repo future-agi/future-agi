@@ -14,46 +14,26 @@ import Iconify from "src/components/iconify";
 import {
   TEST_CONDITIONS_COPY,
   TEST_CONDITION_HINTS,
-  TEST_CONDITION_MODES,
   TIMEOUT_MODES,
-  modesFor,
+  fileFault,
   testConditionLine,
   testConditionRoute,
 } from "./testConditions.constants";
 
 const EMPTY = {
   action: "",
-  mode: "timeout_before_commit",
-  on_call: 1,
-  delay_seconds: 30,
-  status: 500,
+  mode: "",
+  on_call: "",
+  delay_seconds: "",
+  status: "",
   message: "",
 };
+const NUMBERS = ["on_call", "delay_seconds", "status"];
 
-// A number as typed, an emptied one as null.
 const asNumber = (typed) =>
   String(typed).trim() === "" ? null : Number(typed);
 
-// The fault as the scenario file keeps it: only the fields its mode reads, the numbers as typed. The server checks
-// their bounds and its refusal is shown on the test conditions.
-function asFault(form) {
-  const fault = {
-    action: form.action,
-    mode: form.mode,
-    on_call: asNumber(form.on_call),
-  };
-  if (TIMEOUT_MODES.includes(form.mode)) {
-    fault.delay_seconds = asNumber(form.delay_seconds);
-  }
-  if (form.mode === "error") {
-    fault.status = asNumber(form.status);
-    if (form.message) fault.message = form.message;
-  }
-  return fault;
-}
-
-// A scenario's test conditions in the editor: the list with remove, and a form to add one. A tool the world's door
-// cannot stand in front of is listed but cannot be chosen.
+// An in-process tool is listed but cannot be chosen; the server validates the rest.
 export default function TestConditionsEditor({
   faults,
   onChange,
@@ -65,18 +45,33 @@ export default function TestConditionsEditor({
   const targets = env?.faultTargets;
   const set = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
-  const modes = modesFor(
-    form && targets?.find((one) => one.action === form.action),
-  );
-  // Another tool may not offer the mode picked for the last one: the first it offers is taken instead.
+  const target = form && targets?.find((one) => one.action === form.action);
+  const modes = target ? target.modes : [];
+  const bound = (key) => target?.bounds[key] || {};
+  // Falls back to the new tool's first mode when it lacks the picked one.
   const pickTool = (event) => {
-    const target = targets.find((one) => one.action === event.target.value);
-    const offered = modesFor(target);
+    const picked = targets.find((one) => one.action === event.target.value);
+    const offered = picked.modes.map((one) => one.mode);
     setForm((current) => ({
       ...current,
-      action: event.target.value,
-      mode: offered.includes(current.mode) ? current.mode : offered[0],
+      ...Object.fromEntries(
+        NUMBERS.filter((key) => current[key] === "").map((key) => [
+          key,
+          picked.defaults[key] ?? "",
+        ]),
+      ),
+      action: picked.action,
+      mode: offered.includes(current.mode) ? current.mode : offered[0] || "",
     }));
+  };
+  const add = () => {
+    const fault = fileFault({
+      ...form,
+      ...Object.fromEntries(NUMBERS.map((key) => [key, asNumber(form[key])])),
+    });
+    const label = modes.find((one) => one.mode === form.mode)?.label;
+    onChange([...faults, { ...fault, tool: target.tool, mode_label: label }]);
+    setForm(null);
   };
 
   return (
@@ -95,11 +90,11 @@ export default function TestConditionsEditor({
         >
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography sx={{ typography: "s1" }}>
-              {testConditionLine(fault, env)}
+              {testConditionLine(fault)}
             </Typography>
-            {testConditionRoute(fault, env) && (
+            {testConditionRoute(fault) && (
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                {testConditionRoute(fault, env)}
+                {testConditionRoute(fault)}
               </Typography>
             )}
           </Box>
@@ -150,17 +145,17 @@ export default function TestConditionsEditor({
             onChange={pickTool}
             inputProps={{ "data-testid": "test-condition-tool" }}
           >
-            {targets?.map((target) => (
+            {targets?.map((one) => (
               <MenuItem
-                key={target.action}
-                value={target.action}
-                disabled={!target.reachable}
+                key={one.action}
+                value={one.action}
+                disabled={!one.reachable}
               >
-                {target.reachable ? (
-                  target.tool
+                {one.reachable ? (
+                  one.tool
                 ) : (
                   <Tooltip title={TEST_CONDITIONS_COPY.inProcess} describeChild>
-                    <span>{target.tool}</span>
+                    <span>{one.tool}</span>
                   </Tooltip>
                 )}
               </MenuItem>
@@ -172,11 +167,12 @@ export default function TestConditionsEditor({
             label={TEST_CONDITIONS_COPY.whatHappens}
             value={form.mode}
             onChange={set("mode")}
+            disabled={!target}
             helperText={TEST_CONDITION_HINTS[form.mode]}
           >
-            {modes.map((mode) => (
-              <MenuItem key={mode} value={mode}>
-                {TEST_CONDITION_MODES[mode]}
+            {modes.map((one) => (
+              <MenuItem key={one.mode} value={one.mode}>
+                {one.label}
               </MenuItem>
             ))}
           </TextField>
@@ -196,7 +192,7 @@ export default function TestConditionsEditor({
                 label={TEST_CONDITIONS_COPY.delay}
                 value={form.delay_seconds}
                 onChange={set("delay_seconds")}
-                inputProps={{ min: 0, max: 30 }}
+                inputProps={bound("delay_seconds")}
               />
             )}
             {form.mode === "error" && (
@@ -206,7 +202,7 @@ export default function TestConditionsEditor({
                 label={TEST_CONDITIONS_COPY.status}
                 value={form.status}
                 onChange={set("status")}
-                inputProps={{ min: 400, max: 599 }}
+                inputProps={bound("status")}
               />
             )}
           </Stack>
@@ -226,11 +222,8 @@ export default function TestConditionsEditor({
             <Button
               size="small"
               variant="contained"
-              disabled={!form.action}
-              onClick={() => {
-                onChange([...faults, asFault(form)]);
-                setForm(null);
-              }}
+              disabled={!form.action || !form.mode}
+              onClick={add}
             >
               {TEST_CONDITIONS_COPY.add}
             </Button>
@@ -245,13 +238,16 @@ TestConditionsEditor.propTypes = {
   faults: PropTypes.arrayOf(PropTypes.object).isRequired,
   onChange: PropTypes.func.isRequired,
   env: PropTypes.shape({
-    // The tools a test condition can name: {tool, action, reachable, writes}.
     faultTargets: PropTypes.arrayOf(
       PropTypes.shape({
         tool: PropTypes.string,
         action: PropTypes.string,
         reachable: PropTypes.bool,
-        writes: PropTypes.bool,
+        modes: PropTypes.arrayOf(
+          PropTypes.shape({ mode: PropTypes.string, label: PropTypes.string }),
+        ),
+        defaults: PropTypes.object,
+        bounds: PropTypes.object,
       }),
     ),
   }),

@@ -147,8 +147,9 @@ def test_a_list_row_carries_the_same_door_problem(organization, workspace):
     job = _environment(organization, workspace, "d-row")
     row = HostedHarnessScenario.no_workspace_objects.get(job=job, scenario_key="held")
 
+    targets = door_targets(CONTRACT, actor_rules({}))
     problem = scenario_row(
-        row, targets=door_targets(CONTRACT, actor_rules({})), actor_cast=[]
+        row, targets=targets, fault_targets=targets or [], actor_cast=[]
     )["door_problem"]
 
     assert problem["code"] == "fault_unreachable"

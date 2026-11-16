@@ -32,7 +32,6 @@ const SECTION_HEAD = {
 
 export default function ScenarioDrawer({
   row,
-  env,
   onClose,
   onEdit,
   locked = false,
@@ -78,7 +77,7 @@ export default function ScenarioDrawer({
             )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} env={env} />
+            <ScenarioSheet row={row} />
           </Box>
         </Stack>
       )}
@@ -88,16 +87,14 @@ export default function ScenarioDrawer({
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ faultTargets: PropTypes.array }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
 };
 
-function ScenarioSheet({ row, env }) {
+function ScenarioSheet({ row }) {
   const persona = row.persona?.name ? row.persona : null;
   const goals = normaliseSubTasks(row.subTasks);
-  // Why the scenario cannot work as set, as the server says it: under its actors or its test conditions.
   const problem = row.doorProblem;
   const problemLine = (code) =>
     problem?.code === code && (
@@ -202,11 +199,10 @@ function ScenarioSheet({ row, env }) {
                   className="sd-val"
                   sx={{ color: "text.secondary" }}
                 >
-                  {ACTORS_COPY.scenarioActions.takes(step.action)}
-                  {step.trigger?.kind === "after_seconds" &&
-                  step.trigger?.seconds
-                    ? ACTORS_COPY.scenarioActions.after(step.trigger.seconds)
-                    : ""}
+                  {ACTORS_COPY.scenarioActions.takes(
+                    step.action,
+                    step.when_label,
+                  )}
                 </Typography>
               ))}
             </Box>
@@ -221,14 +217,14 @@ function ScenarioSheet({ row, env }) {
           row.faults.map((fault, index) => (
             <Box key={`${fault.action}-${index}`}>
               <Typography className="sd-val">
-                {testConditionLine(fault, env)}
+                {testConditionLine(fault)}
               </Typography>
-              {testConditionRoute(fault, env) && (
+              {testConditionRoute(fault) && (
                 <Typography
                   className="sd-val"
                   sx={{ typography: "s2", color: "text.subtitle" }}
                 >
-                  {testConditionRoute(fault, env)}
+                  {testConditionRoute(fault)}
                 </Typography>
               )}
             </Box>
@@ -272,7 +268,6 @@ function ScenarioSheet({ row, env }) {
 
 ScenarioSheet.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ faultTargets: PropTypes.array }),
 };
 
 function Row({ label, children }) {

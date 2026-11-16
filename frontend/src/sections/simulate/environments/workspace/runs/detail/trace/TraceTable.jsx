@@ -115,7 +115,6 @@ const clampSx = {
   wordBreak: "break-word",
 };
 
-// What a check was decided from, in plain words: "from the world and the transcript".
 const EVIDENCE_WORDS = {
   world_state: "the world",
   tool_calls: "the agent's calls",
@@ -339,7 +338,6 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
-              {/* On its own line, so a long reason never squeezes the status. */}
               {t.outcomeReason && (
                 <Typography
                   sx={{
@@ -387,7 +385,13 @@ export default function TraceTable({
                             {evidenceLabel(goal.evidence)}
                           </Typography>
                         )}
-                        {goal.passed == null ? (
+                        {goal.result === "unmeasured" && goal.reason ? (
+                          <Typography
+                            sx={{ typography: "s3", color: verdict.color }}
+                          >
+                            {goal.reason}
+                          </Typography>
+                        ) : goal.passed == null ? (
                           <CustomTooltip
                             show={!!goal.reason}
                             size="small"

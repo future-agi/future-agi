@@ -1018,11 +1018,24 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
+def _json_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def call_actor_delivery(took_part: Mapping[str, Any]) -> CallActorDelivery:
-    """How far an actor got in one call; a summary from before `drawn` counts as drawn."""
-    if (took_part.get("delivered") or 0) > 0:
+    """How far an actor got in one call, by the same rule `_DELIVERY_SQL` applies in the database, malformed values
+    included: only a number above 0 delivers; any `triggered` other than false, null, 0 or "" is a drop. A summary
+    from before `drawn` counts as drawn."""
+    delivered = took_part.get("delivered")
+    if _json_number(delivered) and delivered > 0:
         return "delivered"
-    if took_part.get("triggered"):
+    triggered = took_part.get("triggered", None)
+    if not (
+        triggered is None
+        or triggered is False
+        or triggered == ""
+        or (_json_number(triggered) and triggered == 0)
+    ):
         return "dropped"
     if took_part.get("drawn") is False:
         return "not_drawn"

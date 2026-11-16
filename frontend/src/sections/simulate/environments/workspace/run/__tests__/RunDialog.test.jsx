@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "src/utils/test-utils";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // Each hook is stubbed; tests set what the server answered.
@@ -10,7 +10,6 @@ const state = {
   members: {},
   drafts: null,
 };
-// A plan with nothing blocked, as the run plan always answers it.
 const PLAN_OK = {
   warnings: [],
   blocked_tools: [],
@@ -168,7 +167,6 @@ describe("RunDialog", () => {
         "Blocked: issue_refund reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it. Scenarios that use it: Refund a late ride.",
       ),
     ).toBeVisible();
-    // The plan says the rest can still run.
     expect(screen.queryByTestId("run-blocked")).toBeNull();
     expect(runButton()).toBeEnabled();
   });
@@ -866,7 +864,7 @@ describe("RunDialog", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
   });
 
-  it("sends the seed typed in, and refuses one that is not a whole number", async () => {
+  it("sends the seed as typed, with no check of its own", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog();
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -875,20 +873,50 @@ describe("RunDialog", () => {
         "The same seed draws the same personas and variations again",
       ),
     ).toBeInTheDocument();
-    await user.type(screen.getByTestId("run-seed"), "-4");
-    expect(
-      screen.getByText(
-        "A seed is a whole number from 0 to 9223372036854775807",
-      ),
-    ).toBeInTheDocument();
-    // A seed that can't be read stays open, so its message shows.
-    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    await user.type(screen.getByTestId("run-seed"), " 9223372036854775808 ");
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      "9223372036854775808",
+    );
+  });
+
+  it("shows the server's refusal of a seed under the seed, and lets the run go again once the seed changes", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const refused = {
+      statusCode: 400,
+      code: "invalid_seed",
+      attr: "seed",
+      message: "seed: A seed is a whole number from 0 to 2^63 - 1.",
+      details: { seed: ["A seed is a whole number from 0 to 2^63 - 1."] },
+    };
+    render(
+      <RunDialog
+        open
+        env={ENV}
+        scenarioIds={["k1", "k2"]}
+        trials={1}
+        initialSeed="-4"
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        error={refused}
+      />,
+    );
+    const seed = screen.getByTestId("run-seed");
+    expect(seed).toBeVisible();
+    expect(seed).toHaveAccessibleDescription(
+      "A seed is a whole number from 0 to 2^63 - 1.",
+    );
+    // Said once, under the seed, never as the dialog's own error.
+    expect(screen.queryByText(/^seed: /)).toBeNull();
     expect(runButton()).toBeDisabled();
-    await user.clear(screen.getByTestId("run-seed"));
-    await user.type(screen.getByTestId("run-seed"), "9223372036854775808");
-    expect(runButton()).toBeDisabled();
-    await user.clear(screen.getByTestId("run-seed"));
-    await user.type(screen.getByTestId("run-seed"), "42");
+    await user.clear(seed);
+    await user.type(seed, "42");
+    expect(seed).not.toHaveAccessibleDescription(/2\^63/);
+    await waitFor(() => expect(runButton()).toBeEnabled());
     await user.click(runButton());
     expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, "42");
   });

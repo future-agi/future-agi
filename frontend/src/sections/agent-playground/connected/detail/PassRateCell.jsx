@@ -1,34 +1,10 @@
 import PropTypes from "prop-types";
 import React from "react";
 import { Box, Stack, Typography } from "@mui/material";
-import { paths } from "src/routes/paths";
 import { rateTone } from "./format";
+import { isRunning, unratedOf } from "./runFacts";
 
-// TestExecution.ExecutionStatus: pending, running, evaluating, cancelling,
-// completed, failed, cancelled.
-const IN_PROGRESS = ["pending", "running", "evaluating", "cancelling"];
-
-export const isRunning = (run) => IN_PROGRESS.includes(run.status);
-
-export const runPath = (run) =>
-  run.kind === "environment" && run.environment
-    ? paths.dashboard.simulate.environments.execution(
-        run.environment.id,
-        run.runTestId,
-        run.testExecutionId,
-      )
-    : `${paths.dashboard.simulate.test}/${run.runTestId}/${run.testExecutionId}`;
-
-// Calls left out of the rate (errored, or no score), so a rate over few measured calls is never read alone.
-export const unratedOf = (run) => {
-  const parts = [
-    run.errored ? `${run.errored} errored` : null,
-    run.noScore ? `${run.noScore} no score` : null,
-  ].filter(Boolean);
-  return parts.join(", ");
-};
-
-export function PassRateCell({ run }) {
+export default function PassRateCell({ run }) {
   const rate = isRunning(run) ? null : run.passRate;
   const unrated = isRunning(run) ? "" : unratedOf(run);
   return (

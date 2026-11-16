@@ -30,7 +30,7 @@ from simulate.types import ScenarioCallActor
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord
-    from simulate.services.harness_tool_reach import FaultTarget
+    from simulate.services.scenario_faults import FaultTarget
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -1267,13 +1267,16 @@ def scenario_row(
     row: HostedHarnessScenario,
     *,
     targets: list[FaultTarget] | None,
+    fault_targets: list[FaultTarget],
     actor_cast: list[ActorRecord],
 ) -> dict[str, Any]:
     """One list row. Safe on a scenario indexed before any call was made. Its actors are resolved against the
-    environment's cast, and a scenario that cannot work on this agent as set says why."""
+    environment's cast, its faults against ``fault_targets`` as the harness applies them, and a scenario that cannot
+    work on this agent as set says why (``targets`` is ``door_targets``)."""
     # Imported here: harness_tool_reach loads hosted_harness, whose import chain reaches back to this module.
     from simulate.services.harness_actor_labels import resolved_scenario_actors
     from simulate.services.harness_tool_reach import door_problem
+    from simulate.services.scenario_faults import resolved_faults
 
     persona = row.persona or {}
     actors = call_actor_entries(row.actors) or []
@@ -1296,7 +1299,7 @@ def scenario_row(
                 actors, resolved_scenario_actors(actors, actor_cast), strict=True
             )
         ],
-        "faults": row.faults or [],
+        "faults": resolved_faults(row.faults, fault_targets),
         "door_problem": door_problem(faults=row.faults, actors=actors, targets=targets),
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,

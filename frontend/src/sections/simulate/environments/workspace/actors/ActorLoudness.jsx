@@ -11,10 +11,9 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const F = ACTORS_COPY.worldActors.form;
 
-// How loud a voice beside the caller is: automatic (each call picks within the release's range) or a fixed share.
-export default function ActorLoudness({ value, automatic, onChange }) {
+export default function ActorLoudness({ value, bounds, problem, onChange }) {
   const fixed = typeof value === "number";
-  const [low, high] = automatic;
+  const [low, high] = bounds.automatic;
   const percent = (ratio) => `${Math.round(ratio * 100)}%`;
   return (
     <Box>
@@ -26,11 +25,7 @@ export default function ActorLoudness({ value, automatic, onChange }) {
           <Switch
             checked={!fixed}
             onChange={(event) =>
-              onChange(
-                event.target.checked
-                  ? null
-                  : Math.round(((low + high) / 2) * 20) / 20,
-              )
+              onChange(event.target.checked ? null : bounds.default)
             }
           />
         }
@@ -41,9 +36,9 @@ export default function ActorLoudness({ value, automatic, onChange }) {
           <Slider
             aria-label={F.loudness}
             value={value}
-            min={0.05}
-            max={1}
-            step={0.05}
+            min={bounds.min}
+            max={bounds.max}
+            step={bounds.step}
             valueLabelDisplay="auto"
             valueLabelFormat={percent}
             onChange={(_, next) => onChange(next)}
@@ -53,13 +48,25 @@ export default function ActorLoudness({ value, automatic, onChange }) {
           </Typography>
         </Stack>
       )}
+      {problem && (
+        <Typography sx={{ typography: "s3", color: "error.main" }}>
+          {problem}
+        </Typography>
+      )}
     </Box>
   );
 }
 
 ActorLoudness.propTypes = {
-  // A fixed share of the caller's voice, or null for automatic.
+  // Null for automatic.
   value: PropTypes.number,
-  automatic: PropTypes.arrayOf(PropTypes.number).isRequired,
+  bounds: PropTypes.shape({
+    automatic: PropTypes.arrayOf(PropTypes.number).isRequired,
+    min: PropTypes.number.isRequired,
+    max: PropTypes.number.isRequired,
+    step: PropTypes.number.isRequired,
+    default: PropTypes.number.isRequired,
+  }).isRequired,
+  problem: PropTypes.string,
   onChange: PropTypes.func,
 };

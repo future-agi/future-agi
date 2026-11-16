@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
-import { CHANNEL_OPTIONS, CLEAN, typedActor } from "./castFixtures";
+import { CHANNEL_OPTIONS, CLEAN, cast, typedActor } from "./castFixtures";
 
 let verdict;
 vi.mock("src/api/simulate-environments/versions", () => ({
@@ -16,24 +16,26 @@ vi.mock("src/api/simulate-environments/versions", () => ({
 
 const { default: ActorForm } = await import("../ActorForm");
 
-const CONTEXT = {
-  actions: [],
-  channelOptions: CHANNEL_OPTIONS,
-  loudnessRange: [0.333, 0.667],
-  idHint: "1 to 64 lowercase letters.",
-  actorModels: [],
-  knowledgeSources: { files: [], records: [] },
-  others: [],
-};
+const contextOf = (data) => ({
+  actions: data.actions,
+  channelOptions: data.channel_options,
+  fieldOptions: data.field_options,
+  loudness: data.loudness,
+  uploadRules: data.upload,
+  idHint: data.id_hint,
+  actorModels: data.actor_models,
+  knowledgeSources: data.knowledge_sources,
+  others: data.actors,
+});
 
-const renderForm = (actor) =>
+const renderForm = (actor, { data = cast([]), onSave = vi.fn() } = {}) =>
   render(
     <ActorForm
       envId="env-1"
       actor={actor}
-      context={CONTEXT}
+      context={contextOf(data)}
       onClose={vi.fn()}
-      onSave={vi.fn()}
+      onSave={onSave}
     />,
   );
 
@@ -47,7 +49,6 @@ describe("ActorForm", () => {
         kind: "approver",
       }),
     );
-    // The saved kind reads as its label, and the list offers it beside the others.
     expect(screen.getByText("An approver")).toBeInTheDocument();
     fireEvent.mouseDown(screen.getByText("An approver"));
     expect(
@@ -79,6 +80,97 @@ describe("ActorForm", () => {
     expect(
       screen.queryByRole("option", { name: "When the agent says a word" }),
     ).toBeNull();
+  });
+
+  it("labels an actor's own cap by the field the chosen way of joining uses, as the cast says", () => {
+    verdict = CLEAN;
+    // The cap field follows the cast, not a rule in the form.
+    const data = cast([], {
+      channel_options: CHANNEL_OPTIONS.map((one) =>
+        one.channel === null ? { ...one, cap_field: "max_lines" } : one,
+      ),
+    });
+    renderForm(typedActor({ id: "ops", name: "Ops", max_lines: 3 }), { data });
+    expect(
+      screen.getByLabelText("Most lines in a call (optional)"),
+    ).toHaveValue(3);
+    expect(screen.queryByLabelText("Most turns in a call (optional)")).toBeNull();
+  });
+
+  it("offers the voice choices the cast lists, with Any for none", () => {
+    verdict = CLEAN;
+    renderForm({ side: "caller", channel: "audio_mix" });
+    fireEvent.mouseDown(screen.getByLabelText("Age"));
+    expect(
+      screen.getAllByRole("option").map((one) => one.textContent),
+    ).toEqual(["Any", "18-25", "60+"]);
+  });
+
+  it("names a nameless actor's form by its id", () => {
+    verdict = CLEAN;
+    renderForm(typedActor({ id: "ops_bot", name: "" }));
+    expect(screen.getByText("Edit ops_bot")).toBeInTheDocument();
+  });
+
+  it("shows the id the server will give in a cleared id field", () => {
+    verdict = { ...CLEAN, suggested_id: "sam_lee" };
+    renderForm({ side: "world" });
+    const id = screen.getByLabelText("Id");
+    expect(id).toHaveValue("sam_lee");
+    fireEvent.change(id, { target: { value: "" } });
+    expect(id).toHaveValue("");
+    expect(id).toHaveAttribute("placeholder", "sam_lee");
+  });
+
+  it("sends an emptied optional number as null and lets the edit save when the server finds nothing", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    renderForm(typedActor({ id: "ops", name: "Ops", timeout: 30 }), {
+      onSave,
+    });
+    fireEvent.change(screen.getByLabelText("Waits, in seconds (optional)"), {
+      target: { value: "" },
+    });
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(onSave.mock.calls[0][0].changes).toEqual({ timeout_seconds: null });
+  });
+
+  it("shows a server problem under the field it names, in the server's words, never a request path", () => {
+    renderForm(typedActor({ id: "ops", name: "Ops" }));
+    verdict = {
+      ...CLEAN,
+      problems: [
+        { field: "trigger", message: "Pick the agent turn they come in on." },
+        { field: "name", message: "Another actor is called Ops Lead." },
+      ],
+    };
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Ops Lead" },
+    });
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(
+      "Another actor is called Ops Lead.",
+    );
+    expect(screen.getByLabelText("Comes in")).toHaveAccessibleDescription(
+      "Pick the agent turn they come in on.",
+    );
+    expect(screen.queryByTestId("actor-problems")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+  });
+
+  it("says Discard keeps an uploaded document in the draft", () => {
+    verdict = CLEAN;
+    renderForm(typedActor({ id: "ops", name: "Ops" }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Ops Lead" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Escape" });
+    expect(
+      screen.getByText(/A document you uploaded is already in the draft/),
+    ).toBeInTheDocument();
   });
 
   it("shows a problem the server has no field for above Save, and keeps Save off", () => {

@@ -3179,3 +3179,74 @@
 
 - the faulted trial reads 1 faulted and No change, never Committed: issue_refund
 - the actor trial names Dana Brooks, her committed approvals.put and her decision
+
+### SIM-E2E-020 — giving an actor an action only another actor holds is flagged before saving
+
+**Goal:** A developer adding an actor sees, before saving, that an action they give it is held only by another actor, and saves only once they confirm both should have it
+
+**Spec:** `flows/simulate/actor-permission-conflict.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose world actor alone may take approvals.put (e2e/lib/harness_environment_seed.py)
+2. check a new actor given approvals.put (POST actor-validation)
+3. open the Actors tab and add an actor in the world
+4. name it and give it approvals.put
+5. tick Both should have it
+
+**Backend state verified:**
+
+- the check names Dana Brooks as the only holder of approvals.put and writes nothing
+
+**Browser observations:**
+
+- the form says approvals.put is held only by Dana Brooks before anything is saved
+- Save to draft stays off until Both should have it is ticked
+
+### SIM-E2E-021 — World state flags a write committed twice
+
+**Goal:** A developer sees that the world committed the agent's refund twice after its first answer was lost, said apart from a single commit
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund the world committed twice (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's World state lists issue_refund among the writes committed twice
+
+**Browser observations:**
+
+- World state reads "Committed twice: issue_refund" and counts 1 duplicate
+
+### SIM-E2E-022 — World state says an approval was refused and the agent committed anyway
+
+**Goal:** A developer reads that an approver refused the agent's request and that the agent committed the change after the refusal, never that the agent waited for the decision and stopped
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:48`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial where Dana Brooks refused the refund and the agent issued it anyway (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's decision by Dana Brooks is refused and flagged committed after the refusal
+
+**Browser observations:**
+
+- her decision reads Refused
+- a line says the agent committed the change after Dana Brooks refused it
+- the approval names the refund the agent wrote after the decision

@@ -322,7 +322,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     {
       key: "pass_rate",
       label: "Calls passed",
-      // A rate the server marks no_score had nothing to score, which is not missing data.
+      // no_score means nothing to score, not missing data.
       value: passRate?.no_score
         ? STATUS_META.no_score.label
         : format(passRate?.value, "percent"),

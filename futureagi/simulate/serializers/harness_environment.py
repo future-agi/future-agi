@@ -375,15 +375,26 @@ class HarnessEnvironmentScenarioCallActorSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         allow_blank=True, required=False, trim_whitespace=False
     )
-    # What the actor is given to read in this scenario, each entry kept as the runtime wrote it: usually
-    # `{"kind": "facts", "text"}`, `{"kind": "files", "paths"}` or `{"kind": "records", "store", "collection", "where"?}`,
-    # but any object, with or without a `kind`, is valid.
+    # Kept as the runtime wrote it; any object is valid, with or without a `kind`.
     knowledge = serializers.ListField(child=JsonObjectRequestField(), required=False)
     # Absent or null: the actor comes in the way its own activation says.
     trigger = HarnessEnvironmentCallActorTriggerSerializer(
         required=False, allow_null=True
     )
     actions = HarnessEnvironmentScenarioActorActionSerializer(many=True, required=False)
+
+
+class HarnessEnvironmentResolvedScenarioActorActionSerializer(
+    HarnessEnvironmentScenarioActorActionSerializer
+):
+    """A scenario actor's world action as a scenario row shows it, with when the world takes it. Response only."""
+
+    when_label = serializers.CharField(
+        help_text="When the world takes the action, as a sentence."
+    )
+
+    class Meta:
+        ref_name = "HarnessEnvironmentScenarioActorAction"
 
 
 class HarnessEnvironmentResolvedScenarioActorSerializer(
@@ -413,6 +424,9 @@ class HarnessEnvironmentResolvedScenarioActorSerializer(
         allow_null=True,
         help_text="How long it waits and what then happens; null when it never waits.",
     )
+    actions = HarnessEnvironmentResolvedScenarioActorActionSerializer(
+        many=True, required=False
+    )
 
 
 class HarnessEnvironmentDoorProblemSerializer(serializers.Serializer):
@@ -422,8 +436,34 @@ class HarnessEnvironmentDoorProblemSerializer(serializers.Serializer):
     message = serializers.CharField()
 
 
+class HarnessToolArgumentSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    type = serializers.CharField(allow_null=True)
+    unit = serializers.CharField(
+        allow_null=True,
+        help_text="The unit or format it is written in, where the name does not say.",
+    )
+
+
+class HarnessToolReturnSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    kind = serializers.CharField(
+        allow_blank=True,
+        help_text="Its type and, where the name does not say, unit or format.",
+    )
+
+
+class HarnessToolTablesSerializer(serializers.Serializer):
+    """The tables a tool reads and changes, where the contract records them."""
+
+    recorded = serializers.BooleanField()
+    read = serializers.ListField(child=serializers.CharField())
+    changed = serializers.ListField(child=serializers.CharField())
+    label = serializers.CharField(help_text="What the Changes line says.")
+
+
 class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
-    """Where one contract tool runs in a test."""
+    """One contract tool as the Tools card shows it, from the contract's own reading of it."""
 
     tool = serializers.CharField()
     status = serializers.ChoiceField(
@@ -440,8 +480,52 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
         help_text="The agent's callable or the tools service's method and route.",
     )
     writes = serializers.BooleanField(
-        help_text="The tool declares a change to records."
+        help_text="It changes records, as the world's door decides: its declared effect, else its HTTP method."
     )
+    description = serializers.CharField(allow_blank=True)
+    arguments = HarnessToolArgumentSerializer(many=True)
+    returns = HarnessToolReturnSerializer(
+        many=True, help_text="Empty when the contract did not record what it returns."
+    )
+    requires = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Tools that must have run before it stops refusing.",
+    )
+    refuses = serializers.CharField(
+        allow_blank=True, help_text="When it refuses, in the contract's words."
+    )
+    effect = serializers.ChoiceField(
+        choices=("read", "write", "unknown"),
+        help_text="What its entrypoint declares; unknown when it declares neither.",
+    )
+    effects = serializers.CharField(
+        allow_blank=True,
+        help_text="What a call changes or clears, in the contract's words.",
+    )
+    tables = HarnessToolTablesSerializer()
+
+
+class HarnessFaultModeSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(choices=FAULT_MODES)
+    label = serializers.CharField()
+
+
+class HarnessFaultDefaultsSerializer(serializers.Serializer):
+    """What a fault that leaves a value out gets."""
+
+    on_call = serializers.IntegerField()
+    delay_seconds = serializers.FloatField()
+    status = serializers.IntegerField()
+
+
+class HarnessFaultRangeSerializer(serializers.Serializer):
+    min = serializers.FloatField()
+    max = serializers.FloatField()
+
+
+class HarnessFaultBoundsSerializer(serializers.Serializer):
+    delay_seconds = HarnessFaultRangeSerializer()
+    status = HarnessFaultRangeSerializer()
 
 
 class HarnessEnvironmentFaultTargetSerializer(serializers.Serializer):
@@ -457,6 +541,13 @@ class HarnessEnvironmentFaultTargetSerializer(serializers.Serializer):
     writes = serializers.BooleanField(
         help_text="It changes records, so a timeout after the change commits means something."
     )
+    modes = HarnessFaultModeSerializer(
+        many=True,
+        help_text="The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the "
+        "change only when it writes.",
+    )
+    defaults = HarnessFaultDefaultsSerializer()
+    bounds = HarnessFaultBoundsSerializer()
 
 
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
@@ -734,14 +825,23 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
 
 
 class HarnessScenarioFaultSerializer(serializers.Serializer):
-    """One test condition: what the world does to one of the agent's calls in the scenario."""
+    """One test condition as the harness applies it: what the world does to one of the agent's calls in the scenario.
+    A value its mode never reads is null; a test condition stored in a shape the harness cannot load shows its
+    action and mode as stored, with null values."""
 
-    action = serializers.CharField()
-    mode = serializers.ChoiceField(choices=FAULT_MODES)
-    on_call = serializers.IntegerField(required=False, min_value=1)
-    delay_seconds = serializers.FloatField(required=False, min_value=0, max_value=30)
-    status = serializers.IntegerField(required=False, min_value=400, max_value=599)
-    message = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    action = serializers.CharField(allow_blank=True)
+    tool = serializers.CharField(
+        allow_null=True,
+        help_text="The contract tool it names; null when it names none.",
+    )
+    mode = serializers.CharField(
+        allow_blank=True, help_text="One of the fault modes, as stored."
+    )
+    mode_label = serializers.CharField(allow_blank=True)
+    on_call = serializers.IntegerField(allow_null=True)
+    delay_seconds = serializers.FloatField(allow_null=True, help_text="For a timeout.")
+    status = serializers.IntegerField(allow_null=True, help_text="For an error.")
+    message = serializers.CharField(allow_blank=True, help_text="For an error.")
 
 
 class HarnessScenarioPersonaSerializer(serializers.Serializer):

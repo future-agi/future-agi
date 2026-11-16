@@ -57,19 +57,22 @@ def _by_tool(rows):
 def test_each_tool_says_where_it_runs():
     rows = _by_tool(tool_status(CONTRACT))
 
-    assert rows["issue_refund"] == {
+    where = ("tool", "status", "reset_between_trials", "runs_at", "writes", "effect")
+    assert {key: rows["issue_refund"][key] for key in where} == {
         "tool": "issue_refund",
         "status": "simulated",
         "reset_between_trials": True,
         "runs_at": "orders POST /orders/refund/",
         "writes": True,
+        "effect": "write",
     }
-    assert rows["lookup_order"] == {
+    assert {key: rows["lookup_order"][key] for key in where} == {
         "tool": "lookup_order",
         "status": "in_process",
         "reset_between_trials": False,
         "runs_at": None,
         "writes": False,
+        "effect": "read",
     }
     # Reaching someone else's API wins over being behind the door.
     assert rows["notify"]["status"] == "unsupported"
@@ -99,13 +102,14 @@ def test_a_contract_that_is_not_one_has_no_tools():
 def test_fault_targets_name_the_route_as_the_world_action():
     targets = _by_tool(fault_targets(CONTRACT, RULES))
 
-    assert targets["issue_refund"] == {
+    named = ("tool", "action", "reachable", "writes")
+    assert {key: targets["issue_refund"][key] for key in named} == {
         "tool": "issue_refund",
         "action": "orders.refund",
         "reachable": True,
         "writes": True,
     }
-    assert targets["lookup_order"] == {
+    assert {key: targets["lookup_order"][key] for key in named} == {
         "tool": "lookup_order",
         "action": "lookup_order",
         "reachable": False,
@@ -116,10 +120,10 @@ def test_fault_targets_name_the_route_as_the_world_action():
 def test_without_entrypoints_the_tools_are_offered_by_name():
     contract = {"tools": [{"name": "a"}, "b"], "tool_entrypoints": []}
 
-    assert fault_targets(contract, RULES) == [
-        {"tool": "a", "action": "a", "reachable": False, "writes": False},
-        {"tool": "b", "action": "b", "reachable": False, "writes": False},
-    ]
+    assert [
+        (one["tool"], one["action"], one["reachable"], one["writes"], one["modes"])
+        for one in fault_targets(contract, RULES)
+    ] == [("a", "a", False, False, []), ("b", "b", False, False, [])]
 
 
 def test_a_fault_on_a_tool_inside_the_agent_cannot_work():

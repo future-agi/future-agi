@@ -37,6 +37,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
@@ -1514,29 +1515,30 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                 call_execution=call_execution
             ).exists()
         ):
-            created = CallTranscript.objects.bulk_create(
+            store_transcript(
                 [
-                    CallTranscript.spoken(
-                        call_execution=call_execution,
-                        speaker_role=seg["speaker_role"],
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call_execution,
+                            speaker_role=seg["speaker_role"],
+                            content=seg["content"],
+                            start_time_ms=seg.get("start_time_ms") or 0,
+                            end_time_ms=seg.get("end_time_ms") or 0,
+                            confidence_score=(
+                                seg["confidence_score"]
+                                if seg.get("confidence_score") is not None
+                                else 1.0
+                            ),
+                        ),
                         speaker_name=(
                             seg.get("speaker_name") or ""
                             if seg["speaker_role"] == CallTranscript.SpeakerRole.ACTOR
                             else ""
                         ),
-                        content=seg["content"],
-                        start_time_ms=seg.get("start_time_ms") or 0,
-                        end_time_ms=seg.get("end_time_ms") or 0,
-                        confidence_score=(
-                            seg["confidence_score"]
-                            if seg.get("confidence_score") is not None
-                            else 1.0
-                        ),
                     )
                     for seg in segments
                 ]
             )
-            CallTranscript.create_actor_turns(created)
             call_execution.transcript_available = True
 
         _apply_conversation_metrics(call_execution)

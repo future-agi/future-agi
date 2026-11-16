@@ -180,7 +180,6 @@ const pieLabel = (label) =>
 export function Donut({ data, onOpen }) {
   const theme = useTheme();
   if (!data?.total) return <NoMeasurement />;
-  // The server picks the headline, a run with no pass or fail included.
   const { headline } = data;
   const emptyHeadline = Boolean(headline) && headline.share == null;
   return (

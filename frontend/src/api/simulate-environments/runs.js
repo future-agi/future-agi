@@ -62,14 +62,12 @@ export function executionToRun(raw) {
   return {
     id: raw?.id,
     executionId: raw?.id,
-    // The run's verdict, as the server rules it: running, cancelled, passed, failed or no_score.
     status: raw.outcome_status,
-    // Passed over passed plus failed, 0-100; null when nothing was scored.
+    // 0-100; null when nothing was scored.
     passRate: raw.pass_rate,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    // A lifecycle the Status column has no key for reads as the run's verdict, never as blank.
-    runState: runStateFor(raw?.status) ?? raw.outcome_status,
+    runState: runStateFor(raw.status),
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
     // Its evals are being graded. `runState` reads this as running, like a run
@@ -80,7 +78,6 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    // The pass rate's base: calls with a pass or a fail.
     scored: raw.scored,
     errored,
     skipped,

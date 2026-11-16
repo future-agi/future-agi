@@ -117,7 +117,6 @@ export default function ChatCallDrawer({
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
-  // Every trial has World state: what changed, or why it was not recorded.
   const showChanges = artifact === "world_changes";
 
   // The header and chips paint from the already-loaded row immediately, then
@@ -270,7 +269,7 @@ export default function ChatCallDrawer({
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
             {showChanges && isLoading ? (
-              // Until the call detail arrives there is nothing to say yet, not "not recorded".
+              // Loading, not "not recorded".
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
               </Stack>
@@ -302,6 +301,8 @@ export default function ChatCallDrawer({
               <ChatTranscriptPane
                 turns={turns}
                 customerName={callDetail?.persona}
+                callActors={callDetail?.callActors || []}
+                hasCustomer={callDetail?.hasCustomer}
               />
             )}
           </Box>

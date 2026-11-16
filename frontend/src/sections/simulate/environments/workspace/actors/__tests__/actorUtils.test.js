@@ -7,9 +7,8 @@ import {
   hasEdits,
   initialFields,
   parsedArguments,
-  readable,
-  seenValue,
   whereProblem,
+  withStart,
 } from "../actorUtils";
 import { typedActor } from "./castFixtures";
 
@@ -217,30 +216,14 @@ describe("input hints", () => {
   });
 });
 
-describe("what an actor sees", () => {
-  it("reads a view value as words, never raw JSON", () => {
-    expect(readable(null)).toBe("");
-    expect(readable(0)).toBe("0");
-    expect(readable(["a", "", "b"])).toBe("a; b");
-    expect(readable({ kind: "facts", text: "The limit is 25%" })).toBe(
-      "The limit is 25%",
-    );
-    expect(
-      readable({
-        kind: "records",
-        response_timing: { kind: "delayed", seconds: 5 },
-      }),
-    ).toBe("records · response timing: delayed · seconds: 5");
-  });
-
-  it("reads a persona as its values beside its own label, any other field keeping its name", () => {
-    expect(
-      seenValue("actor.persona", {
-        gender: "female",
-        age_group: "32-49",
-        occupation: "Engineer",
-      }),
-    ).toBe("Female · 32-49 · occupation: Engineer");
-    expect(seenValue("actor.goal", "Approve")).toBe("Approve");
+describe("withStart", () => {
+  it("keeps a stored value the options don't list, so a select never goes blank on it", () => {
+    const options = [{ value: "person", label: "A person" }];
+    expect(withStart(options, "person")).toBe(options);
+    expect(withStart(options, "robot", "Robot")).toEqual([
+      ...options,
+      { value: "robot", label: "Robot" },
+    ]);
+    expect(withStart(options, "")).toBe(options);
   });
 });

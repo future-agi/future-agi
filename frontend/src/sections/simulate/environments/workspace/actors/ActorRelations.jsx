@@ -10,10 +10,6 @@ const quiet = {
   wordBreak: "break-word",
 };
 
-/**
- * The relationship view: who can contact whom, each actor's role and when it comes in. Read-only, as the cast states
- * it: `reaches` names the actors each one's actions reach, and `when_label` when it comes in.
- */
 export default function ActorRelations({ cast }) {
   if (!cast.length) return null;
   const names = Object.fromEntries(

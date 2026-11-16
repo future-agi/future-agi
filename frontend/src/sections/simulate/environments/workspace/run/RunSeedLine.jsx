@@ -10,13 +10,9 @@ import {
 } from "@mui/material";
 import { RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 
-/**
- * The run's seed folded to one line: "New seed" or the seed, with Edit to type one. A seed that can't be read stays
- * open, so its message shows.
- */
-export default function RunSeedLine({ seed, value, invalid, onChange }) {
+export default function RunSeedLine({ seed, value, error, onChange }) {
   const [editing, setEditing] = useState(false);
-  const open = editing || invalid;
+  const open = editing || Boolean(error);
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1}>
@@ -32,7 +28,7 @@ export default function RunSeedLine({ seed, value, invalid, onChange }) {
         <Button
           size="small"
           color="inherit"
-          disabled={invalid}
+          disabled={Boolean(error)}
           onClick={() => setEditing((shown) => !shown)}
         >
           {open ? COPY.done : COPY.edit}
@@ -45,8 +41,8 @@ export default function RunSeedLine({ seed, value, invalid, onChange }) {
           label={COPY.seed}
           value={seed}
           onChange={(event) => onChange(event.target.value)}
-          error={invalid}
-          helperText={invalid ? COPY.seedInvalid : COPY.seedHelp}
+          error={Boolean(error)}
+          helperText={error || COPY.seedHelp}
           inputProps={{ inputMode: "numeric", "data-testid": "run-seed" }}
           sx={{ mt: 1 }}
         />
@@ -56,10 +52,9 @@ export default function RunSeedLine({ seed, value, invalid, onChange }) {
 }
 
 RunSeedLine.propTypes = {
-  // The seed as typed.
   seed: PropTypes.string.isRequired,
-  // The seed the run would send, as decimal text; null for a new one.
+  // Null for a new seed.
   value: PropTypes.string,
-  invalid: PropTypes.bool,
+  error: PropTypes.string,
   onChange: PropTypes.func.isRequired,
 };

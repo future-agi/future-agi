@@ -2,6 +2,22 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
+const tool = (name, description, writes) => ({
+  tool: name,
+  status: "simulated",
+  reset_between_trials: true,
+  runs_at: null,
+  writes,
+  description,
+  arguments: [],
+  returns: [],
+  requires: [],
+  refuses: "",
+  effect: writes ? "write" : "read",
+  effects: "",
+  tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
+});
+
 // A voice environment with two tools, two hard rules and a seeded table —
 // enough to exercise the world (capability graph), the internals (tables +
 // tools) and the run-end card.
@@ -16,26 +32,13 @@ const voiceEnv = {
     "Never disclose another caller's data.",
     "Only refund verified callers.",
   ],
-  // The world's own tables and each tool's status, as the environment's detail states them.
   worldTables: [
     { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
   ],
   worldTotalRows: 240,
   toolStatus: [
-    {
-      tool: "lookup_account",
-      status: "simulated",
-      reset_between_trials: true,
-      runs_at: null,
-      writes: false,
-    },
-    {
-      tool: "issue_refund",
-      status: "simulated",
-      reset_between_trials: true,
-      runs_at: null,
-      writes: true,
-    },
+    tool("lookup_account", "Reads the caller's account.", false),
+    tool("issue_refund", "Refunds a charge.", true),
   ],
 };
 
@@ -143,7 +146,7 @@ describe("RlContractPanel", () => {
       },
     });
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no place it runs, so it carries no invented location.
+    // lookup_account has no location, so none is invented.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 

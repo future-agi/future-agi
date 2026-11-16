@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
+import PropTypes from "prop-types";
 import ChatTranscriptPane from "../ChatTranscriptPane";
+
+function Pane(props) {
+  return <ChatTranscriptPane callActors={[]} hasCustomer {...props} />;
+}
+Pane.propTypes = { callActors: PropTypes.array, hasCustomer: PropTypes.bool };
 
 const plainChat = [
   { role: "customer", text: "One ride please" },
@@ -13,8 +19,11 @@ const tabLabels = () =>
 describe("ChatTranscriptPane", () => {
   it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName="Maya"
+        callActors={[
+          { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
+        ]}
         turns={[
           ...plainChat,
           {
@@ -39,8 +48,17 @@ describe("ChatTranscriptPane", () => {
 
   it("lists no customer on a run started by an actor's message, where no customer spoke", () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName="Oliver"
+        hasCustomer={false}
+        callActors={[
+          {
+            id: "manager",
+            name: "Alex Vance",
+            role: "Sales Manager",
+            channel: "chat_message",
+          },
+        ]}
         turns={[
           {
             role: "actor",
@@ -61,12 +79,13 @@ describe("ChatTranscriptPane", () => {
 
   it("falls back to All when Others was picked and the next call has none", async () => {
     const { rerender } = render(
-      <ChatTranscriptPane
+      <Pane
+        callActors={[{ id: "friend", channel: "chat_message" }]}
         turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );
     await userEvent.click(screen.getByRole("tab", { name: "Others" }));
-    rerender(<ChatTranscriptPane turns={plainChat} />);
+    rerender(<Pane turns={plainChat} />);
     expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
       "All",
     );
@@ -75,24 +94,25 @@ describe("ChatTranscriptPane", () => {
 
   it("shows just Someone for an actor an older call kept no name for", () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );
-    expect(screen.getAllByText("Someone")).toHaveLength(2);
+    expect(screen.getAllByText("Someone")).toHaveLength(1);
     expect(screen.queryByText(/undefined/)).toBeNull();
   });
 
   it("renders a chat with only the customer and the agent as before", () => {
-    render(<ChatTranscriptPane customerName="Maya" turns={plainChat} />);
+    render(<Pane customerName="Maya" turns={plainChat} />);
     expect(tabLabels()).toEqual(["All", "Assistant", "Customer"]);
     expect(screen.queryByText("On the call:")).toBeNull();
   });
 
   it("labels a scenario's own task as the task, with no customer", () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName={null}
+        hasCustomer={false}
         turns={[
           { role: "task", text: "Nightly reconciliation: post deal 9." },
           { role: "agent", text: "Posted." },
@@ -106,7 +126,7 @@ describe("ChatTranscriptPane", () => {
 
   it("names a world actor with their role and shows their action as an event", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         turns={[
           { role: "customer", text: "Can I get a discount?" },
           {
@@ -135,7 +155,7 @@ describe("ChatTranscriptPane", () => {
 
   it("opens a world action's fold when a search matched inside it", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         turns={[
           {
             role: "world_actor",

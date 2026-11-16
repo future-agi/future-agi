@@ -13,15 +13,12 @@ import { ACTORS_COPY } from "./actors.constants";
 const F = ACTORS_COPY.worldActors.form;
 const recordLabel = (one) => `${one.store}.${one.collection}`;
 
-/**
- * What an actor can read beyond its facts: the environment's files (with a document uploaded on the spot) and the
- * world's record collections, each picked from what the cast offers. A server problem on either shows under it.
- */
 export default function ActorKnowledgeFields({
   files,
   records,
   sources,
   upload,
+  uploadRules,
   problems,
   onChange,
 }) {
@@ -58,7 +55,7 @@ export default function ActorKnowledgeFields({
             <input
               hidden
               type="file"
-              accept=".md,.txt,.json,.csv"
+              accept={uploadRules.formats.join(",")}
               onChange={async (event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
@@ -82,7 +79,8 @@ export default function ActorKnowledgeFields({
               color: uploadError ? "error.main" : "text.secondary",
             }}
           >
-            {uploadError || F.uploadHelp}
+            {uploadError ||
+              F.uploadHelp(uploadRules.formats, uploadRules.max_label)}
           </Typography>
         </Box>
       )}
@@ -120,14 +118,16 @@ const RECORD = PropTypes.shape({
 ActorKnowledgeFields.propTypes = {
   files: PropTypes.arrayOf(PropTypes.string).isRequired,
   records: PropTypes.arrayOf(RECORD).isRequired,
-  // What the cast offers to read.
   sources: PropTypes.shape({
     files: PropTypes.arrayOf(PropTypes.string).isRequired,
     records: PropTypes.arrayOf(RECORD).isRequired,
   }).isRequired,
-  // Uploads a document into the draft and resolves to where it was stored; absent when the environment is locked.
+  // Resolves to the stored path; absent when the environment is locked.
   upload: PropTypes.func,
-  // The server's problem on `files` or `records`, by field.
+  uploadRules: PropTypes.shape({
+    formats: PropTypes.arrayOf(PropTypes.string).isRequired,
+    max_label: PropTypes.string.isRequired,
+  }).isRequired,
   problems: PropTypes.objectOf(PropTypes.string).isRequired,
   // (field, next value)
   onChange: PropTypes.func.isRequired,

@@ -14,7 +14,9 @@ from simulate.services.harness_actor_fields import (
     typed_fields,
 )
 from simulate.services.harness_actor_labels import (
+    CapField,
     FallbackView,
+    cap_field,
     editable_trigger,
     fallback_of,
     side_of,
@@ -23,9 +25,18 @@ from simulate.services.harness_actor_labels import (
     trigger_of,
     when_label,
 )
+from simulate.services.harness_actor_options import (
+    FieldOptions,
+    LimitField,
+    LoudnessView,
+    UploadView,
+    field_options,
+    limit_fields,
+    loudness_view,
+    upload_view,
+)
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
-    LIMIT_FIELDS,
     ActorLimits,
     ActorRecord,
     ActorRules,
@@ -100,11 +111,8 @@ class ChannelOption(TypedDict):
     loudness: bool
     trigger_kinds: list[str]
     required_fields: list[str]
-
-
-class LimitField(TypedDict):
-    key: str
-    kind: Literal["whole", "seconds", "model"]
+    # The actor's own cap that counts when it joins this way.
+    cap_field: CapField
 
 
 class SideDefault(TypedDict):
@@ -124,7 +132,7 @@ class Cast(TypedDict):
     record_schemas: dict[str, dict[str, Any]]
     actions: list[WorldAction]
     channels: dict[str, str]
-    loudness: dict[str, Any]
+    loudness: LoudnessView
     reserved_ids: list[str]
     knowledge_sources: KnowledgeSources
     # The environment's actor limits; a key set to null is no limit, a missing key the channel's default.
@@ -140,6 +148,8 @@ class Cast(TypedDict):
     id_hint: str
     limit_fields: list[LimitField]
     side_defaults: SideDefaults
+    field_options: FieldOptions
+    upload: UploadView
 
 
 def _actor_row(
@@ -209,6 +219,7 @@ def _channel_options(
             "loudness": channel in loud,
             "trigger_kinds": trigger_kinds(rules, channel),
             "required_fields": required_fields(rules, channel),
+            "cap_field": cap_field(channel),
         }
         for channel, about in ways
     ]
@@ -251,7 +262,7 @@ def cast_view(
         "record_schemas": rules["records"],
         "actions": actions,
         "channels": channels,
-        "loudness": rules.get("loudness") or {},
+        "loudness": loudness_view(rules),
         "reserved_ids": list(rules.get("reserved_ids") or []),
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),
         "limits": typed_limits(stored_limits(environment_files)),
@@ -265,30 +276,21 @@ def cast_view(
                 (rules["records"][ACTORS_FILE].get("properties") or {}).get("id") or {}
             ).get("description")
         ),
-        "limit_fields": [
-            {
-                "key": key,
-                "kind": "whole"
-                if kind is int
-                else "seconds"
-                if kind is float
-                else "model",
-            }
-            for key, kind in LIMIT_FIELDS.items()
-        ],
+        "limit_fields": limit_fields(rules, agent_modality(environment_files)),
         # Someone on the caller's side speaks on the first way the agent can be reached; the world's acts in it.
         "side_defaults": {
             "caller": {"channel": next(iter(channels), None)},
             "world": {"channel": None},
         },
+        "field_options": field_options(rules),
+        "upload": upload_view(),
     }
 
 
 def read_actors(environment: HostedHarnessJob) -> Cast:
     """The cast the next run would use (the draft's, else the saved version's) and what an actor can be given.
 
-    Raises `actors_unreadable` (409) when an actor file is not valid JSON.
-    """
+    Raises `actors_unreadable` (409) when an actor file is not valid JSON."""
     sides = drafts.edit_sides(environment)
     draft = drafts.fresh_draft(environment, "environment")
     return cast_view(

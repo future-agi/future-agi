@@ -113,9 +113,9 @@ def _with_manager_in_a_scenario(user, workspace, key, actors=None):
                 "where": {"status": "late", "count": 2},
             },
             None,
-            'Once a orders record with status "late", count 2 exists',
+            'Once a record in orders with status "late", count 2 exists',
         ),
-        ({"kind": "conditional"}, None, "Once a record record exists"),
+        ({"kind": "conditional"}, None, "Once a record exists"),
         (
             {"kind": "probability", "p": 0.125},
             "audio_mix",
@@ -599,8 +599,11 @@ def test_the_cast_carries_what_the_server_decides_about_each_actor(
         "after_seconds",
     ]
     assert cast["id_hint"] == "1 to 64 lowercase letters, digits or underscores"
-    assert {"key": "actor_seconds_per_call", "kind": "seconds"} in cast["limit_fields"]
-    assert {"key": "max_active", "kind": "whole"} in cast["limit_fields"]
+    kinds = {one["key"]: one["kind"] for one in cast["limit_fields"]}
+    assert (kinds["actor_seconds_per_call"], kinds["max_active"]) == (
+        "seconds",
+        "whole",
+    )
 
 
 def test_a_create_from_changes_gets_an_id_from_its_name_unique_and_not_reserved(
@@ -610,7 +613,8 @@ def test_a_create_from_changes_gets_an_id_from_its_name_unique_and_not_reserved(
     url = f"{BASE}/{environment.id}/actors/"
 
     first = auth_client.post(url, {"changes": {"name": "Agent"}}, format="json")
-    second = auth_client.post(url, {"changes": {"name": "Agent"}}, format="json")
+    # Another name that makes the same id: two actors never share a name.
+    second = auth_client.post(url, {"changes": {"name": "Agent!"}}, format="json")
     given = auth_client.post(
         url, {"changes": {"name": "Sam"}, "id": "rep_1"}, format="json"
     )
@@ -804,7 +808,11 @@ def test_limits_are_typed_and_a_wrong_type_is_still_refused_as_limits_invalid(
         "model": None,
     }
     assert (wrong.status_code, wrong.json()["error"]) == (400, "limits_invalid")
-    assert wrong.json()["message"].startswith("limits.max_active:")
+    # Said on the limit's own field, in the editor's words, never as the request's path.
+    assert wrong.json()["problems"] == [
+        {"field": "max_active", "message": "This must be a whole number."}
+    ]
+    assert "limits." not in wrong.json()["message"]
 
 
 def test_limits_written_elsewhere_read_as_their_types_and_a_wrong_one_is_left_out():
@@ -932,7 +940,7 @@ def test_a_read_entry_sent_back_whole_with_one_edit_keeps_everything_a_read_neve
     environment, stored = _with_stored_manager(user, workspace, "actor-edits-roundtrip")
     [entry] = auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]
     entry["goal"] = "Hold the price"
-    entry["persona"] = {**entry["persona"], "accent": "Scottish"}
+    entry["persona"] = {**entry["persona"], "accent": "Indian"}
 
     resent = auth_client.put(
         f"{BASE}/{environment.id}/actors/manager/", {"actor": entry}, format="json"
@@ -945,7 +953,7 @@ def test_a_read_entry_sent_back_whole_with_one_edit_keeps_everything_a_read_neve
         "goal": "Hold the price",
         "persona": {
             "name": "Priya Raman",
-            "accent": "Scottish",
+            "accent": "Indian",
             "metadata": {"crm_id": 7},
         },
     }

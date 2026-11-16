@@ -16,25 +16,19 @@ import { words } from "./actorUtils";
 
 const L = ACTORS_COPY.limits;
 
-// What the form shows for a limit: its number, "" for the channel's default, "none" for no limit.
+// "" is the channel's default, "none" is no limit.
 const shown = (limits, key) => {
   if (!(key in limits)) return "";
   return limits[key] === null ? L.none : String(limits[key]);
 };
 
-// A typed limit as the request sends it: "none" is no limit, a number goes as a number and anything else as typed,
-// so the server's refusal names what is wrong with it.
+// Non-numbers go as typed so the server's refusal names what is wrong.
 const asLimit = (typed) => {
   if (typed.toLowerCase() === L.none) return null;
   const number = Number(typed);
   return Number.isFinite(number) ? number : typed;
 };
 
-/**
- * The environment's actor limits and the model actors are played on, edited in its draft. Every limit is a setting:
- * empty is the channel's default, "none" is no limit; a scenario can set its own. Which limits there are, and how each
- * is typed (a whole number, seconds or a model), is the cast's `limit_fields`.
- */
 export default function ActorLimits({
   limits,
   fields: limitFields,
@@ -62,10 +56,18 @@ export default function ActorLimits({
   }
   if (value("model")) parsed.model = value("model");
   const changed = Object.keys(fields).length > 0;
+  const problems = error?.error === "limits_invalid" ? error.problems : [];
+  const problemOf = (key) =>
+    problems
+      .filter((one) => one.field === key)
+      .map((one) => one.message)
+      .join(" ");
+  const keys = new Set(limitFields.map((one) => one.key));
+  const unplaced = problems.filter((one) => !keys.has(one.field));
   return (
     <SectionCard title={L.title} subtitle={L.subtitle}>
       <Stack spacing={1.5} sx={{ maxWidth: 520, px: 1.5, py: 1.25 }}>
-        {numbers.map(({ key, kind }) => (
+        {numbers.map(({ key, kind, default_label: defaultLabel }) => (
           <TextField
             key={key}
             size="small"
@@ -73,7 +75,9 @@ export default function ActorLimits({
             value={value(key)}
             onChange={put(key)}
             disabled={locked}
-            placeholder={L.defaults[key]}
+            placeholder={defaultLabel || undefined}
+            error={Boolean(problemOf(key))}
+            helperText={problemOf(key) || undefined}
             inputProps={{ inputMode: kind === "whole" ? "numeric" : "decimal" }}
           />
         ))}
@@ -86,7 +90,8 @@ export default function ActorLimits({
             onChange={put("model")}
             disabled={locked}
             SelectProps={{ displayEmpty: true }}
-            helperText={L.modelHelp}
+            error={Boolean(problemOf("model"))}
+            helperText={problemOf("model") || L.modelHelp}
           >
             <MenuItem value="">{L.callerModel}</MenuItem>
             {models.map((one) => (
@@ -96,8 +101,13 @@ export default function ActorLimits({
             ))}
           </TextField>
         )}
-        {error && (
+        {error && problems.length === 0 && (
           <Alert severity="error">{refusalText(error, L.saveFailed)}</Alert>
+        )}
+        {unplaced.length > 0 && (
+          <Alert severity="error">
+            {unplaced.map((one) => one.message).join(" ")}
+          </Alert>
         )}
         <Box>
           <Button
@@ -118,13 +128,13 @@ export default function ActorLimits({
 }
 
 ActorLimits.propTypes = {
-  // Each limit typed, null for no limit; a limit left out takes the channel's default.
+  // Null is no limit; a missing one takes the channel's default.
   limits: PropTypes.object.isRequired,
-  // How each limit is typed, in the order they are shown.
   fields: PropTypes.arrayOf(
     PropTypes.shape({
       key: PropTypes.string.isRequired,
       kind: PropTypes.oneOf(["whole", "seconds", "model"]).isRequired,
+      default_label: PropTypes.string,
     }),
   ).isRequired,
   models: PropTypes.arrayOf(PropTypes.string),

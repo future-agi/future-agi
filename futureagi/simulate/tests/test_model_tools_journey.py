@@ -190,7 +190,10 @@ def test_a_test_condition_the_world_cannot_apply_is_refused_with_why_and_the_sui
         )
 
     receipt = response.json()["receipts"][0]
-    assert receipt["outcome"] == "refused" and "mode must be" in receipt["why"]
+    assert (
+        receipt["outcome"] == "refused"
+        and "choose what happens to the call" in receipt["why"]
+    )
     environment.refresh_from_db()
     assert environment.suite_version_id == before
 
