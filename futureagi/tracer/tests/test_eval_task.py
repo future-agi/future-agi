@@ -6,16 +6,29 @@ Tests for /tracer/eval-task/ endpoints.
 
 import json
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
+from tfc.temporal.eval_tasks import client as workflow_client
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
-from tracer.models.observation_span import EvalLogger
+from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.observation_span import (
+    EvalEntryStatus,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
+from tracer.selectors.eval_tasks.stranded import (
+    automatic_recovery_eligibility,
+    find_stranded_tasks,
+)
+from tracer.services.eval_tasks.recovery import recover_task
 from tracer.views import eval_task as eval_task_views
 from tracer.views.eval_task import EvalTaskView
 
@@ -996,6 +1009,190 @@ class TestEvalTaskUpdateAPI:
         eval_task.refresh_from_db()
         assert eval_task.name == "Renamed Inline Task"
         assert eval_task.status == EvalTaskStatus.COMPLETED
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEvalTaskDetailPatchRecoveryEligibility:
+    """Generic PATCH preserves NULL activation; writable status is not acceptance."""
+
+    @pytest.fixture
+    def workflow_calls(self, monkeypatch):
+        calls = {"described": [], "started": []}
+
+        def describe(task_id):
+            calls["described"].append(task_id)
+            return workflow_client.WF_ABSENT
+
+        def start(task, **kwargs):
+            calls["started"].append((task.pk, kwargs))
+
+        monkeypatch.setattr(
+            workflow_client, "describe_eval_task_workflow_sync", describe
+        )
+        monkeypatch.setattr(workflow_client, "start_eval_task_workflow_sync", start)
+        monkeypatch.setattr(eval_task_views, "start_eval_task_workflow_sync", start)
+        return calls
+
+    def _add_stale_backlog(self, task, custom_eval_config, trace):
+        # PG-only, fixture-owned data: no CH seeding or global cleanup needed.
+        span = ObservationSpan.objects.create(
+            id=f"detail-patch-{uuid.uuid4().hex}",
+            project=task.project,
+            trace=trace,
+            name="synthetic PATCH backlog",
+            observation_type="llm",
+        )
+        entry = EvalLogger.objects.create(
+            observation_span=span,
+            trace=trace,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=str(task.pk),
+            target_type=EvalTargetType.SPAN,
+            status=EvalEntryStatus.RUNNING,
+        )
+        EvalLogger.all_objects.filter(pk=entry.pk).update(
+            updated_at=task.created_at - timedelta(days=2)
+        )
+
+    def _snapshot(self, task):
+        return (
+            EvalTask.all_objects.using("default").filter(pk=task.pk).values().get(),
+            list(
+                EvalLogger.all_objects.using("default")
+                .filter(eval_task_id=str(task.pk))
+                .order_by("pk")
+                .values()
+            ),
+            list(task.evals.using("default").order_by("pk").values_list("pk", flat=True)),
+        )
+
+    def _assert_unstamped_and_unrecovered(self, task, expected, workflow_calls):
+        assert self._snapshot(task) == expected
+        task.refresh_from_db()
+        assert task.start_time is None
+        # Check the exact row as well as the real capped backlog/idle selector;
+        # other tests' rows must not be deleted or hidden to make this pass.
+        assert not (
+            EvalTask.no_workspace_objects.using("default")
+            .filter(automatic_recovery_eligibility(), pk=task.pk)
+            .exists()
+        )
+        assert task.pk not in {
+            candidate.pk for candidate in find_stranded_tasks(limit=1000)
+        }
+        outcome = recover_task(task, stale_running_seconds=7200)
+        assert outcome["skipped"] and not outcome["restarted"], outcome
+        assert (outcome["requeued"], outcome["failed"]) == (0, 0)
+        assert workflow_calls == {"described": [], "started": []}
+        assert self._snapshot(task) == expected
+
+    @pytest.mark.parametrize("stored_last_run", ["before_creation", "at_creation"])
+    @pytest.mark.parametrize("incoming_start_time", ["past", "future"])
+    @pytest.mark.parametrize(
+        "requested_status",
+        [EvalTaskStatus.RUNNING, EvalTaskStatus.PAUSED, EvalTaskStatus.PENDING],
+    )
+    @pytest.mark.parametrize("incoming_last_run", ["past", "future"])
+    @pytest.mark.parametrize("with_backlog", [False, True], ids=["idle", "backlog"])
+    def test_detail_patch_cannot_activate_a_new_unstamped_continuous_task(
+        self,
+        auth_client,
+        eval_task,
+        custom_eval_config,
+        trace,
+        monkeypatch,
+        workflow_calls,
+        stored_last_run,
+        incoming_start_time,
+        requested_status,
+        incoming_last_run,
+        with_backlog,
+    ):
+        created = eval_task.created_at
+        initial_last_run = (
+            created - timedelta(seconds=1)
+            if stored_last_run == "before_creation"
+            else created
+        )
+        EvalTask.all_objects.filter(pk=eval_task.pk).update(last_run=initial_last_run)
+        if with_backlog:
+            self._add_stale_backlog(eval_task, custom_eval_config, trace)
+        expected = self._snapshot(eval_task)
+        assert (
+            expected[0]["run_type"],
+            expected[0]["status"],
+            expected[0]["start_time"],
+            expected[0]["continuous_cursor"],
+        ) == (RunType.CONTINUOUS, EvalTaskStatus.PENDING, None, None)
+        assert expected[0]["last_run"] <= created
+        now = created + timedelta(seconds=10)
+        monkeypatch.setattr(timezone, "now", lambda: now)
+        supplied_start = created + timedelta(
+            days=-1 if incoming_start_time == "past" else 1
+        )
+        supplied_last_run = created + timedelta(
+            days=-1 if incoming_last_run == "past" else 1
+        )
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.pk}/",
+            {
+                "start_time": supplied_start.isoformat(),
+                "status": requested_status,
+                "last_run": supplied_last_run.isoformat(),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        # Pin the landed writable fields, not new API ownership rules: a past
+        # last_run persists; a future one is clamped to the locked stored value.
+        # Neither it nor a client-written RUNNING status proves activation.
+        expected[0].update(
+            status=requested_status,
+            last_run=(
+                supplied_last_run if incoming_last_run == "past" else initial_last_run
+            ),
+            updated_at=now,
+        )
+        self._assert_unstamped_and_unrecovered(eval_task, expected, workflow_calls)
+
+    @pytest.mark.parametrize("with_backlog", [False, True], ids=["idle", "backlog"])
+    def test_detail_metadata_patch_leaves_legacy_running_task_unstamped(
+        self,
+        auth_client,
+        eval_task,
+        custom_eval_config,
+        trace,
+        monkeypatch,
+        workflow_calls,
+        with_backlog,
+    ):
+        now = timezone.now()
+        old = now - timedelta(days=30)
+        EvalTask.all_objects.filter(pk=eval_task.pk).update(
+            status=EvalTaskStatus.RUNNING,
+            created_at=old,
+            last_run=old,
+            start_time=None,
+            continuous_cursor=None,
+        )
+        if with_backlog:
+            self._add_stale_backlog(eval_task, custom_eval_config, trace)
+        expected = self._snapshot(eval_task)
+        monkeypatch.setattr(timezone, "now", lambda: now)
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.pk}/",
+            {"name": "renamed unstamped legacy task"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        expected[0].update(name="renamed unstamped legacy task", updated_at=now)
+        self._assert_unstamped_and_unrecovered(eval_task, expected, workflow_calls)
 
 
 @pytest.mark.integration
