@@ -17952,6 +17952,7 @@ export type AgentFixEngineReportApiStep =
   (typeof AgentFixEngineReportApiStep)[keyof typeof AgentFixEngineReportApiStep];
 
 export const AgentFixEngineReportApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",
@@ -18108,6 +18109,7 @@ export const AgentFixRunApiState = {
   out_of_budget: "out_of_budget",
   stopped: "stopped",
   failed: "failed",
+  too_few_cases: "too_few_cases",
 } as const;
 
 /**
@@ -18117,11 +18119,14 @@ export type AgentFixRunApiStep =
   (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
 
 export const AgentFixRunApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",
   done: "done",
 } as const;
+
+export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
   target_scenario_keys: string[];
@@ -18132,6 +18137,8 @@ export interface AgentFixRequestApi {
   locked_paths: string[];
   budget_credits: number;
   max_minutes: number;
+  variations_pending?: boolean;
+  variation_parents?: AgentFixRequestApiVariationParents;
 }
 
 export interface AgentFixReportApi {
@@ -18347,6 +18354,9 @@ export interface AgentFixLaunchLimitsApi {
   budget_credits_max: number;
   max_minutes_max: number;
   scenarios_min: number;
+  cases_min: number;
+  variations_per_case: number;
+  verified_cases_min: number;
   scenarios_max: number;
 }
 
@@ -18360,6 +18370,7 @@ export interface AgentFixLaunchOptionsApi {
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
   blocked: AgentFixFailureApi;
+  variations_blocked: AgentFixFailureApi;
 }
 
 export type AgentFixRunDetailApiState =
@@ -18375,6 +18386,7 @@ export const AgentFixRunDetailApiState = {
   out_of_budget: "out_of_budget",
   stopped: "stopped",
   failed: "failed",
+  too_few_cases: "too_few_cases",
 } as const;
 
 /**
@@ -18384,6 +18396,7 @@ export type AgentFixRunDetailApiStep =
   (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
 
 export const AgentFixRunDetailApiStep = {
+  variations: "variations",
   reproduce: "reproduce",
   search: "search",
   verify: "verify",

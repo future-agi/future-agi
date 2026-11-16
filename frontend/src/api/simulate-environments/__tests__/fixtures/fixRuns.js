@@ -535,9 +535,14 @@ export function fixtureLaunchOptions(sourceRunId) {
     limits: {
       budget_credits_max: 50000,
       max_minutes_max: 1440,
+      scenarios_min: 3,
+      cases_min: 12,
+      variations_per_case: 3,
+      verified_cases_min: 6,
       scenarios_max: 200,
     },
     blocked: null,
+    variations_blocked: null,
   };
 }
 
@@ -576,7 +581,10 @@ export function fixtureLaunch(envId, body) {
 
 // One check run's calls as the run-results calls endpoint returns them: raw
 // rows, paged.
-export function fixtureRunCalls(testExecutionId, { page = 1, page_size = 200 } = {}) {
+export function fixtureRunCalls(
+  testExecutionId,
+  { page = 1, page_size = 200 } = {},
+) {
   const rows = fixtureRunTasks(testExecutionId).map((t) => ({
     id: t.id,
     source_scenario_key: t.sourceScenarioKey,
@@ -606,6 +614,9 @@ export function fixtureRetry(fixId) {
     created_at: new Date().toISOString(),
     started_at: null,
   };
-  store = [created, ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f))];
+  store = [
+    created,
+    ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f)),
+  ];
   return clone(created);
 }
