@@ -309,7 +309,10 @@ def test_environment_create_request_with_no_prompt_takes_the_documents_prompt(
     assert response.status_code == 200, response.content
     version = AgentVersion.objects.get(agent_definition=_definition(job))
     assert version.description == "You are the booking assistant for Harbor Hotels."
-    assert version.configuration_snapshot["description"] == "You are the booking assistant for Harbor Hotels."
+    assert (
+        version.configuration_snapshot["description"]
+        == "You are the booking assistant for Harbor Hotels."
+    )
     assert version.configuration_snapshot["observability_enabled"] is True
 
 

@@ -91,9 +91,7 @@ def store_commit_archive(
     try:
         with transaction.atomic():
             existing = (
-                CodeArchive._base_manager.select_for_update()
-                .filter(**identity)
-                .first()
+                CodeArchive._base_manager.select_for_update().filter(**identity).first()
             )
             if existing is None:
                 CodeArchive.all_objects.create(**identity, **contents)

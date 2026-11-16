@@ -72,7 +72,10 @@ def test_a_run_with_no_prompt_gets_one_active_version_with_the_documents_prompt(
     version = AgentVersion.objects.get(agent_definition=definition)
     assert version.status == "active"
     assert version.description == "You are the booking assistant for Harbor Hotels."
-    assert version.configuration_snapshot["description"] == "You are the booking assistant for Harbor Hotels."
+    assert (
+        version.configuration_snapshot["description"]
+        == "You are the booking assistant for Harbor Hotels."
+    )
     assert stored_agent(version.id)["name"] == "harbor_hotels"
 
 

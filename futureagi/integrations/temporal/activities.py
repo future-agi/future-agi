@@ -31,9 +31,7 @@ def poll_active_integrations():
             status=ConnectionStatus.ACTIVE,
             deleted=False,
         )
-        .exclude(
-            platform__in=[IntegrationPlatform.SLACK, IntegrationPlatform.GITHUB]
-        )
+        .exclude(platform__in=[IntegrationPlatform.SLACK, IntegrationPlatform.GITHUB])
         .filter(
             Q(last_synced_at__isnull=True)
             | Q(last_synced_at__lte=now - timedelta(seconds=60))
