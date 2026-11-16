@@ -249,26 +249,27 @@ export default function SourcesSection({
             const choosing = pd.has && !pd.choice;
             /* A file that needs something from you says what, and where to
                click, on its own line (#99) — not only in the State cell. */
+            /* A file that needs something (#99): a short state that says
+               what, the fix on hover; clicking the row opens it there. */
             const problem =
               s.status === "needs-attention"
                 ? {
-                    say: `${s.statusNote || "Some rows were rejected"} — see which and why`,
-                    label: "See rejected rows",
-                    go: () => setOpen(s.id, "preview"),
+                    short:
+                      s.statusNote?.replace(/ of \d+ rows/, " rows") ||
+                      "Needs attention",
+                    hint: "Open it to see which rows and why.",
                   }
                 : s.status === "unreadable"
                   ? {
-                      say:
+                      short: "Can't read",
+                      hint:
                         s.statusNote ||
-                        "No text to read — upload a text version instead",
-                      label: "Remove",
-                      go: () => setOpen(s.id, "remove"),
+                        "No text to read — upload a text version instead.",
                     }
                   : s.status === "unsupported"
                     ? {
-                        say: `${s.statusNote || "This file type can't be read."} Export it as PDF or DOCX and upload that.`,
-                        label: "Remove",
-                        go: () => setOpen(s.id, "remove"),
+                        short: "Not supported",
+                        hint: `${s.statusNote || "This file type can't be read."} Export it as PDF or DOCX and upload that.`,
                       }
                     : null;
             return (
@@ -319,24 +320,32 @@ export default function SourcesSection({
                       {s.visibility ? visibilityLabel(s.visibility) : "—"}
                     </Typography>
                   </Tooltip>
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s2",
-                      color:
-                        s.status === "ready" && !s.revoked
-                          ? "text.primary"
-                          : "status.warning.fg",
-                    }}
-                  >
-                    {s.revoked
-                      ? "Access revoked"
-                      : s.inEnv
-                        ? STATUS[s.status]
-                        : s.status === "ready"
-                          ? "Not saved yet"
-                          : STATUS[s.status]}
-                  </Typography>
+                  <Tooltip arrow title={problem?.hint || ""}>
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s2",
+                        color:
+                          s.status === "ready" && !s.revoked
+                            ? "text.primary"
+                            : "status.warning.fg",
+                        ...(problem && {
+                          textDecoration: "underline dotted",
+                          textUnderlineOffset: "3px",
+                        }),
+                      }}
+                    >
+                      {s.revoked
+                        ? "Access revoked"
+                        : problem
+                          ? problem.short
+                          : s.inEnv
+                            ? STATUS[s.status]
+                            : s.status === "ready"
+                              ? "Not saved yet"
+                              : STATUS[s.status]}
+                    </Typography>
+                  </Tooltip>
                   <Typography
                     sx={{
                       typography: "s2",
@@ -386,7 +395,7 @@ export default function SourcesSection({
                     <span />
                   )}
                 </Box>
-                {(refresh || s.revoked || choosing || problem) && (
+                {(refresh || s.revoked || choosing) && (
                   <Stack
                     spacing={0.5}
                     sx={{ px: 2, pb: 1 }}
@@ -429,25 +438,6 @@ export default function SourcesSection({
                         )}
                       </Stack>
                     )}
-                    {problem && (
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Typography
-                          sx={{ typography: "s3", color: "status.warning.fg" }}
-                        >
-                          {problem.say}
-                        </Typography>
-                        {!readOnly && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={problem.go}
-                            sx={{ flexShrink: 0 }}
-                          >
-                            {problem.label}
-                          </Button>
-                        )}
-                      </Stack>
-                    )}
                     {choosing && (
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Typography
@@ -480,51 +470,37 @@ export default function SourcesSection({
                 borderColor: "divider",
               }}
             >
-              {/* How it's decided (#96): each file's Who reads it, set from
-                  its role when it's added and changeable on the file — a
-                  setting, not something worked out per upload. */}
+              {/* One line (#96): who gets which files, the detail and how
+                  it's decided on hover — the column above already says it
+                  per file. */}
               <Tooltip
                 arrow
                 placement="top-start"
-                title="From each file's Who reads it, set by its role when it's added: policies and records reach the agent only through the world's tools, reference material is in the agent's context, hidden answers are the evaluator's only. Change it on the file."
+                title={[
+                  ...[
+                    ["agent", "Agent"],
+                    ["caller", "Caller"],
+                    ["evaluator", "Evaluator"],
+                  ].map(
+                    ([k, label]) =>
+                      `${label}: ${views[k].length ? views[k].map((v) => `${v.source.name} (${v.how.toLowerCase()})`).join(", ") : "none"}`,
+                  ),
+                  "From each file's Who reads it — set by its role, changeable on the file.",
+                ].join("\n")}
+                componentsProps={{
+                  tooltip: { sx: { whiteSpace: "pre-line" } },
+                }}
               >
                 <Typography
                   sx={{
                     typography: "s3",
                     color: "text.tertiary",
-                    mb: 0.5,
                     width: "fit-content",
-                    borderBottom: "1px dashed",
-                    borderColor: "divider",
                   }}
                 >
-                  Who sees what in a run
+                  {`In a run · agent ${views.agent.length} · caller ${views.caller.length} · evaluator ${views.evaluator.length} ${views.evaluator.length === 1 ? "file" : "files"}`}
                 </Typography>
               </Tooltip>
-              {[
-                ["agent", "Agent under test"],
-                ["caller", "Simulated caller"],
-                ["evaluator", "Evaluator"],
-              ].map(([k, label]) => (
-                <Stack key={k} direction="row" spacing={2} sx={{ py: 0.25 }}>
-                  <Typography
-                    sx={{ typography: "s3", width: 136, flexShrink: 0 }}
-                  >
-                    {label}
-                  </Typography>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary" }}
-                  >
-                    {views[k].length
-                      ? views[k]
-                          .map(
-                            (v) => `${v.source.name} (${v.how.toLowerCase()})`,
-                          )
-                          .join(" · ")
-                      : "None of these files"}
-                  </Typography>
-                </Stack>
-              ))}
             </Box>
           )}
         </Box>
