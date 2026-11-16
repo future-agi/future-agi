@@ -33,7 +33,13 @@ vi.mock("src/utils/axios", () => ({
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
+let access = { canDelete: true };
+vi.mock("../../hooks/useCanEditAgent", () => ({
+  default: () => access,
+}));
+
 beforeEach(() => {
+  access = { canDelete: true };
   axios.get.mockReset();
   axios.delete.mockReset();
   enqueueSnackbar.mockReset();
@@ -320,11 +326,10 @@ describe("ConnectedAgentsView", () => {
     });
   });
 
-  it("will not delete while a ticked agent is still used in an environment", async () => {
+  it("will not delete when every ticked agent is still used in an environment", async () => {
     renderView();
     await screen.findByText("Customer support line");
     tickRow("Customer support line");
-    tickRow("Clinic receptionist");
 
     expect(deleteButton()).toBeDisabled();
     expect(
@@ -334,15 +339,49 @@ describe("ConnectedAgentsView", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the server's refusal once when the delete is refused", async () => {
-    const message =
-      "Clinic receptionist is tested by 1 environment. Delete those environments first.";
-    axios.delete.mockRejectedValue({
-      statusCode: 409,
-      code: "agent_in_use",
-      message,
-      result: message,
+  it("deletes the idle agents of a mixed selection and says which were kept", async () => {
+    const busy = CONNECTED_AGENTS_FIXTURE.find(
+      (agent) => agent.agent_name === "Customer support line",
+    );
+    axios.delete.mockResolvedValue({
+      data: {
+        message: "ok",
+        agents_updated: 1,
+        versions_updated: 1,
+        skipped_agent_ids: [busy.id],
+      },
     });
+    renderView();
+    await screen.findByText("Customer support line");
+    tickRow("Customer support line");
+    tickRow("Clinic receptionist");
+
+    expect(deleteButton()).toBeEnabled();
+    fireEvent.click(deleteButton());
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Delete Clinic receptionist?"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "This deletes Clinic receptionist with all its versions. Customer support line is still used in environments and stays.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "1 agent deleted. Customer support line is still used in environments, so it was kept.",
+        { variant: "success" },
+      ),
+    );
+    expect(axios.delete).toHaveBeenCalledWith("/simulate/agent-definitions/", {
+      data: { agent_ids: expect.arrayContaining([busy.id, "ca-03"]) },
+    });
+  });
+
+  it("shows one error when the delete fails", async () => {
+    axios.delete.mockRejectedValue({ statusCode: 500, message: "boom" });
     renderView();
     await screen.findByText("Clinic receptionist");
     tickRow("Clinic receptionist");
@@ -350,10 +389,99 @@ describe("ConnectedAgentsView", () => {
     confirmDelete();
 
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
-        variant: "error",
-      }),
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Couldn't delete the selected agents",
+        { variant: "error" },
+      ),
     );
     expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("will not let someone without delete rights delete, and says why", async () => {
+    access = { canDelete: false };
+    renderView();
+    await screen.findByText("Clinic receptionist");
+    tickRow("Clinic receptionist");
+
+    expect(deleteButton()).toBeDisabled();
+    expect(
+      screen.getByLabelText("You don't have permission to delete agents."),
+    ).toBeInTheDocument();
+    expect(axios.delete).not.toHaveBeenCalled();
+  });
+
+  it("sends one delete however fast Delete is clicked twice", async () => {
+    let finish;
+    axios.delete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () =>
+            resolve({
+              data: { agents_updated: 1, versions_updated: 1, message: "ok" },
+            });
+        }),
+    );
+    renderView();
+    await screen.findByText("Clinic receptionist");
+    tickRow("Clinic receptionist");
+
+    fireEvent.click(deleteButton());
+    const dialog = screen.getByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(axios.delete).toHaveBeenCalled());
+    fireEvent.click(confirm);
+    finish();
+
+    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalled());
+    expect(axios.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Clear filters when nothing matches, and it brings the list back", async () => {
+    renderView();
+    await screen.findByText("1–25 of 37");
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
+      target: { value: "zzzz" },
+    });
+    const clear = await screen.findByRole(
+      "button",
+      { name: "Clear filters" },
+      { timeout: 2000 },
+    );
+
+    fireEvent.click(clear);
+
+    await waitFor(
+      () => expect(screen.getByText("1–25 of 37")).toBeInTheDocument(),
+      { timeout: 2000 },
+    );
+    expect(screen.getByPlaceholderText("Search")).toHaveValue("");
+  });
+
+  it("retries a list that failed to load", async () => {
+    axios.get.mockReset();
+    axios.get.mockRejectedValueOnce({ message: "Network Error" });
+    axios.get.mockImplementation((_, { params }) =>
+      Promise.resolve({ data: connectedAgentsPage(params) }),
+    );
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Clinic receptionist")).toBeInTheDocument();
+  });
+
+  it("drops the ticks when the search changes", async () => {
+    renderView();
+    await screen.findByText("Clinic receptionist");
+    tickRow("Clinic receptionist");
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
+      target: { value: "receptionist" },
+    });
+
+    expect(screen.queryByText("1 selected")).toBeNull();
   });
 });

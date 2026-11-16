@@ -56514,6 +56514,20 @@ export const getSimulateAgentDefinitionsListUrl = (
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = [
+      "agent_type",
+      "source",
+      "environments",
+      "observe",
+    ];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? "null" : v.toString());
+      });
+      return;
+    }
+
     if (Array.isArray(value)) {
       value
         .filter((item) => item !== undefined && item !== null)
@@ -56556,11 +56570,6 @@ export type simulateAgentDefinitionsDeleteResponse400 = {
   status: 400;
 };
 
-export type simulateAgentDefinitionsDeleteResponse409 = {
-  data: ApiErrorWithDetailsResponseApi;
-  status: 409;
-};
-
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56568,7 +56577,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56577,7 +56586,6 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
-  | simulateAgentDefinitionsDeleteResponse409
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {

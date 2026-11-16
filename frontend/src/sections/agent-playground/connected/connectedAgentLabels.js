@@ -98,8 +98,20 @@ export const usedInLabel = ({ environments, environmentCount }) => {
 
 const agentsCount = (count) => `${count} agent${count === 1 ? "" : "s"}`;
 
-export const deleteResultMessage = (deleted) =>
-  `${agentsCount(deleted)} deleted.`;
+const usedIn = (agents) =>
+  agents.reduce((sum, agent) => sum + (agent.environmentCount ?? 1), 0) === 1
+    ? "an environment"
+    : "environments";
+
+const keptSentence = (agents) =>
+  `${agentNames(agents)} ${agents.length === 1 ? "is" : "are"} still used in ${usedIn(
+    agents,
+  )}, so ${agents.length === 1 ? "it was" : "they were"} kept.`;
+
+export const deleteResultMessage = (deleted, skipped = []) =>
+  skipped.length
+    ? `${agentsCount(deleted)} deleted. ${keptSentence(skipped)}`
+    : `${agentsCount(deleted)} deleted.`;
 
 export const agentNames = (agents) => {
   const names = agents.map((agent) => agent.name);
@@ -110,10 +122,15 @@ export const agentNames = (agents) => {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 };
 
-export const deleteConfirmText = (agents) =>
-  `This deletes ${agentNames(agents)} with all ${
+export const deleteConfirmText = (agents, kept = []) => {
+  const deletes = `This deletes ${agentNames(agents)} with all ${
     agents.length === 1 ? "its" : "their"
   } versions.`;
+  if (!kept.length) return deletes;
+  return `${deletes} ${agentNames(kept)} ${
+    kept.length === 1 ? "is" : "are"
+  } still used in ${usedIn(kept)} and ${kept.length === 1 ? "stays" : "stay"}.`;
+};
 
 export const deleteBlockedReason = (agents) => {
   const environments = agents.reduce(

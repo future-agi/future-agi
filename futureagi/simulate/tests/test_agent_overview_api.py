@@ -93,6 +93,17 @@ def _environment(agent, minutes, kind="github"):
     return _job(_run_test(agent, f"suite-{minutes}"), minutes=minutes, kind=kind)
 
 
+def _pinned_environment(agent, minutes):
+    version = agent.create_version(
+        description="p", commit_message=f"v{minutes}", status="active"
+    )
+    job = _job(_run_test(agent, f"pinned-{minutes}"), minutes=minutes)
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        run_test=None, agent_version=version
+    )
+    return job
+
+
 def _execution(run_test, minutes, **fields):
     execution = TestExecution.objects.create(
         run_test=run_test,
@@ -270,17 +281,86 @@ def test_list_filters_by_type_source_environments_and_observe_project(
 
 
 @pytest.mark.django_db
-def test_list_rejects_a_filter_value_it_does_not_know(auth_client):
-    response = auth_client.get(AGENTS, {"environments": "sometimes"})
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"environments": "sometimes"},
+        {"source": "not-a-source"},
+        {"source": ["vapi", "not-a-source"]},
+        {"observe": "maybe"},
+        {"agent_type": "fax"},
+    ],
+)
+def test_list_rejects_a_filter_value_it_does_not_know(auth_client, filters):
+    response = auth_client.get(AGENTS, filters)
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
 
 
 @pytest.mark.django_db
-def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
+def test_the_livekit_source_covers_bridged_livekit_agents(
+    auth_client, organization, workspace
+):
+    _agent(organization, workspace, "Direct", provider="livekit")
+    _agent(organization, workspace, "Bridged", provider="livekit_bridge")
+    _agent(organization, workspace, "Hosted")
+
+    assert _names(auth_client, source="livekit") == ["Bridged", "Direct"]
+
+
+@pytest.mark.django_db
+def test_an_environment_without_a_test_yet_still_holds_its_agent(
+    auth_client, organization, workspace
+):
+    pinned = _agent(organization, workspace, "Pinned")
+    _pinned_environment(pinned, 1)
+    _agent(organization, workspace, "Idle")
+
+    assert _names(auth_client, environments="with") == ["Pinned"]
+    assert _names(auth_client, environments="without") == ["Idle"]
+    assert _rows(auth_client)["Pinned"]["environment_count"] == 1
+
+    response = auth_client.delete(
+        AGENTS, {"agent_ids": [str(pinned.id)]}, format="json"
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["skipped_agent_ids"] == [str(pinned.id)]
+    pinned.refresh_from_db()
+    assert pinned.deleted is False
+
+
+@pytest.mark.django_db
+def test_a_filtered_list_counts_and_pages_only_the_matching_agents(
+    auth_client, organization, workspace
+):
+    for index in range(5):
+        _agent(organization, workspace, f"Retell {index}", provider="retell")
+    for index in range(3):
+        _agent(organization, workspace, f"Vapi {index}")
+
+    pages = [
+        auth_client.get(AGENTS, {"source": "retell", "limit": 2, "page": page})
+        for page in (1, 2, 3)
+    ]
+
+    for response in pages:
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.json()["count"] == 5
+    names = [row["agent_name"] for page in pages for row in page.json()["results"]]
+    assert sorted(names) == [f"Retell {index}" for index in range(5)]
+    assert len(set(names)) == 5
+    assert [len(page.json()["results"]) for page in pages] == [2, 2, 1]
+
+
+@pytest.mark.django_db
+def test_bulk_delete_skips_agents_still_used_in_an_environment(
     auth_client, organization, workspace
 ):
     tested = _agent(organization, workspace, "Northwind")
+    tested_version = tested.create_version(
+        description="p", commit_message="v1", status="active"
+    )
     _environment(tested, 1)
     _environment(tested, 2)
     also_tested = _agent(organization, workspace, "Harbor Hotels")
@@ -292,20 +372,40 @@ def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
 
     response = auth_client.delete(
         AGENTS,
-        {"agent_ids": [str(idle.id), str(tested.id), str(also_tested.id)]},
+        {"agent_ids": [str(tested.id), str(idle.id), str(also_tested.id)]},
         format="json",
     )
 
-    assert response.status_code == status.HTTP_409_CONFLICT, response.content
-    assert response.json()["code"] == "agent_in_use"
-    assert response.json()["error"] == (
-        "Northwind is tested by 2 environments and Harbor Hotels by 1 environment."
-        " Delete those environments first."
-    )
-    for row in (tested, also_tested, idle, idle_version):
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    assert (body["agents_updated"], body["versions_updated"]) == (1, 1)
+    assert body["skipped_agent_ids"] == [str(tested.id), str(also_tested.id)]
+    for row in (idle, idle_version):
+        row.refresh_from_db()
+        assert row.deleted is True
+    for row in (tested, tested_version, also_tested):
         row.refresh_from_db()
         assert row.deleted is False
-    assert _names(auth_client) == ["Harbor Hotels", "Northwind", "Spare"]
+    assert _names(auth_client) == ["Harbor Hotels", "Northwind"]
+
+
+@pytest.mark.django_db
+def test_bulk_delete_of_only_tested_agents_deletes_nothing(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "Northwind")
+    _environment(tested, 1)
+
+    response = auth_client.delete(
+        AGENTS, {"agent_ids": [str(tested.id)]}, format="json"
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    assert (body["agents_updated"], body["versions_updated"]) == (0, 0)
+    assert body["skipped_agent_ids"] == [str(tested.id)]
+    tested.refresh_from_db()
+    assert tested.deleted is False
 
 
 @pytest.mark.django_db
@@ -331,7 +431,7 @@ def test_bulk_delete_removes_idle_agents_with_their_versions(
     assert response.status_code == status.HTTP_200_OK, response.content
     body = response.json()
     assert (body["agents_updated"], body["versions_updated"]) == (2, 1)
-    assert "skipped_agent_ids" not in body
+    assert body["skipped_agent_ids"] == []
     for row in (free, free_version, left_behind):
         row.refresh_from_db()
         assert row.deleted is True

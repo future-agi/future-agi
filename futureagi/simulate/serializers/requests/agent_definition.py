@@ -10,6 +10,7 @@ from simulate.models.agent_definition import (
 from simulate.services.agent_overview import (
     AGENT_ENVIRONMENT_FILTERS,
     AGENT_OBSERVE_FILTERS,
+    AGENT_SOURCE_FILTERS,
 )
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
@@ -416,6 +417,8 @@ class AgentDefinitionBulkDeleteRequestSerializer(serializers.Serializer):
 
 
 class OneOrManyField(serializers.ListField):
+    swagger_collection_format = "multi"
+
     def to_internal_value(self, data):
         if isinstance(data, str):
             data = [data]
@@ -434,7 +437,10 @@ class AgentDefinitionFilterSerializer(serializers.Serializer):
         ),
         required=False,
     )
-    source = OneOrManyField(child=serializers.CharField(), required=False)
+    source = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_SOURCE_FILTERS),
+        required=False,
+    )
     environments = OneOrManyField(
         child=serializers.ChoiceField(choices=AGENT_ENVIRONMENT_FILTERS),
         required=False,

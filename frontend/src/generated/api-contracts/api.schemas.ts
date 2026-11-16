@@ -16593,6 +16593,7 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly message?: string;
   readonly agents_updated?: number;
   readonly versions_updated?: number;
+  readonly skipped_agent_ids?: readonly string[];
 }
 
 /**
@@ -40207,7 +40208,7 @@ export type SdkApiV1SimulationRunsListParams = {
 export type SimulateAgentDefinitionsListParams = {
   search?: string;
   agent_type?: SimulateAgentDefinitionsListAgentTypeItem[];
-  source?: string[];
+  source?: SimulateAgentDefinitionsListSourceItem[];
   environments?: SimulateAgentDefinitionsListEnvironmentsItem[];
   observe?: SimulateAgentDefinitionsListObserveItem[];
   agent_definition_id?: string;
@@ -40227,6 +40228,19 @@ export type SimulateAgentDefinitionsListAgentTypeItem =
 export const SimulateAgentDefinitionsListAgentTypeItem = {
   voice: "voice",
   text: "text",
+} as const;
+
+export type SimulateAgentDefinitionsListSourceItem =
+  (typeof SimulateAgentDefinitionsListSourceItem)[keyof typeof SimulateAgentDefinitionsListSourceItem];
+
+export const SimulateAgentDefinitionsListSourceItem = {
+  github: "github",
+  archive: "archive",
+  livekit: "livekit",
+  vapi: "vapi",
+  retell: "retell",
+  bland: "bland",
+  eleven_labs: "eleven_labs",
 } as const;
 
 export type SimulateAgentDefinitionsListEnvironmentsItem =

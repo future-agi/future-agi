@@ -27168,7 +27168,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "array",
               items: {
                 type: "string",
-                minLength: 1,
+                enum: [
+                  "github",
+                  "archive",
+                  "livekit",
+                  "vapi",
+                  "retell",
+                  "bland",
+                  "eleven_labs",
+                ],
               },
             },
           },
@@ -27249,9 +27257,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentDefinitionBulkDeleteResponse",
           },
           400: {
-            $ref: "#/definitions/ApiErrorWithDetailsResponse",
-          },
-          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -50041,6 +50046,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         versions_updated: {
           title: "Versions updated",
           type: "integer",
+          readOnly: true,
+        },
+        skipped_agent_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
           readOnly: true,
         },
       },

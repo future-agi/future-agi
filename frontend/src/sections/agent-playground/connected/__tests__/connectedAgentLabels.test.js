@@ -145,6 +145,17 @@ describe("deleteResultMessage", () => {
     expect(deleteResultMessage(1)).toBe("1 agent deleted.");
     expect(deleteResultMessage(3)).toBe("3 agents deleted.");
   });
+
+  it("names the agents it kept because an environment still uses them", () => {
+    expect(deleteResultMessage(1, [{ name: "Clinic" }])).toBe(
+      "1 agent deleted. Clinic is still used in an environment, so it was kept.",
+    );
+    expect(
+      deleteResultMessage(0, [{ name: "Clinic" }, { name: "Billing" }]),
+    ).toBe(
+      "0 agents deleted. Clinic and Billing are still used in environments, so they were kept.",
+    );
+  });
 });
 
 describe("agentNames", () => {
@@ -167,6 +178,9 @@ describe("agentNames", () => {
     );
     expect(deleteConfirmText(agents("Clinic", "Billing"))).toBe(
       "This deletes Clinic and Billing with all their versions.",
+    );
+    expect(deleteConfirmText(agents("Clinic"), agents("Billing"))).toBe(
+      "This deletes Clinic with all its versions. Billing is still used in an environment and stays.",
     );
   });
 

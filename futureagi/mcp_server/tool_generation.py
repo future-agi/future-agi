@@ -90,6 +90,15 @@ def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
             )
             if key in parameter
         }
+    if (
+        parameter.get("in") == "query"
+        and schema.get("type") == "array"
+        and isinstance(schema.get("items"), dict)
+    ):
+        default = schema.pop("default", None)
+        schema = {"anyOf": [copy.deepcopy(schema["items"]), schema, {"type": "null"}]}
+        if default is not None:
+            schema["default"] = default
     if parameter.get("description") and "description" not in schema:
         schema["description"] = parameter["description"]
     return schema

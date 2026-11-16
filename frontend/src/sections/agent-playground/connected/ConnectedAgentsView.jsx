@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { useQueryClient } from "@tanstack/react-query";
@@ -34,6 +34,10 @@ import {
 } from "./connectedAgentLabels";
 import ListToolbar from "src/components/list-toolbar/ListToolbar";
 import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
+import useCanEditAgent from "../hooks/useCanEditAgent";
+
+const DELETE_DENIED = "You don't have permission to delete agents.";
 
 const PAGE_SIZE_DEFAULT = 25;
 const MONO = "ui-monospace, Menlo, monospace";
@@ -181,20 +185,29 @@ export default function ConnectedAgentsView({ onConnect }) {
   const search = useDebounce(query.trim(), 500);
   const activeFilterCount = filters ? Object.keys(filters).length : 0;
 
-  const { data, isLoading, isError } = useConnectedAgents({
-    page,
-    pageSize,
-    search,
-    filters,
-  });
+  const { data, isLoading, isError, isPlaceholderData, refetch } =
+    useConnectedAgents({
+      page,
+      pageSize,
+      search,
+      filters,
+    });
+  const { canDelete } = useCanEditAgent();
   const items = useMemo(() => data?.items ?? [], [data]);
   const total = data?.total ?? 0;
   // One-line rows: the name only.
   const rowHeight = ROW_HEIGHT.default;
 
-  const [selected, setSelected] = useState([]);
+  const [picked, setPicked] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteAgents = useDeleteConnectedAgents();
+  const deleting = useRef(false);
+  const latest = useRef({ page, pageSize, total });
+  latest.current = { page, pageSize, total };
+  const selected = useMemo(() => {
+    const fresh = new Map(items.map((agent) => [agent.id, agent]));
+    return picked.map((agent) => fresh.get(agent.id) ?? agent);
+  }, [items, picked]);
   const rowSelection = useMemo(() => {
     const ids = new Set(selected.map((agent) => agent.id));
     return Object.fromEntries(
@@ -204,40 +217,72 @@ export default function ConnectedAgentsView({ onConnect }) {
     );
   }, [items, selected]);
   const inUse = selected.filter((agent) => agent.environmentCount > 0);
+  const deletable = selected.filter((agent) => !(agent.environmentCount > 0));
+  const refreshing = isPlaceholderData;
+  const deleteBlocked = !canDelete
+    ? DELETE_DENIED
+    : selected.length > 0 && deletable.length === 0
+      ? deleteBlockedReason(inUse)
+      : undefined;
 
-  useEffect(() => {
-    setSelected([]);
-  }, [page, pageSize, search, filters]);
+  const goToPage = (next) => {
+    setPicked([]);
+    setPage(next);
+  };
+  const changeSearch = (value) => {
+    setPicked([]);
+    setQuery(value);
+    setPage(0);
+  };
+  const changeFilters = (next) => {
+    setPicked([]);
+    setFilters(next);
+    setPage(0);
+  };
+  const clearSearchAndFilters = () => {
+    setPicked([]);
+    setQuery("");
+    setFilters(null);
+    setPage(0);
+  };
+  const closeConfirm = () => {
+    if (!deleting.current) setConfirmDelete(false);
+  };
 
   const handleDelete = () => {
+    if (deleting.current || !canDelete) return;
+    deleting.current = true;
     deleteAgents.mutate(
       selected.map((agent) => agent.id),
       {
         onSuccess: ({ data: result }) => {
           const deleted = result.agents_updated ?? 0;
+          const skippedIds = new Set(result.skipped_agent_ids ?? []);
+          const skipped = selected.filter((agent) => skippedIds.has(agent.id));
+          const now = latest.current;
           const lastPage = Math.max(
             0,
-            Math.ceil((total - deleted) / pageSize) - 1,
+            Math.ceil((now.total - deleted) / now.pageSize) - 1,
           );
-          const pageGone = page > lastPage;
+          const pageGone = now.page > lastPage;
           if (pageGone) setPage(lastPage);
           queryClient.invalidateQueries({
             queryKey: ["agents", "connected"],
             refetchType: pageGone ? "none" : "active",
           });
-          enqueueSnackbar(deleteResultMessage(deleted), {
+          enqueueSnackbar(deleteResultMessage(deleted, skipped), {
             variant: deleted ? "success" : "warning",
           });
-          setSelected([]);
+          setPicked([]);
           setConfirmDelete(false);
         },
-        onError: (error) => {
-          enqueueSnackbar(
-            error?.statusCode === 409 && error?.message
-              ? error.message
-              : "Couldn't delete the selected agents",
-            { variant: "error" },
-          );
+        onError: () => {
+          enqueueSnackbar("Couldn't delete the selected agents", {
+            variant: "error",
+          });
+        },
+        onSettled: () => {
+          deleting.current = false;
         },
       },
     );
@@ -284,10 +329,7 @@ export default function ConnectedAgentsView({ onConnect }) {
       <ListToolbar>
         <FormSearchField
           searchQuery={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setPage(0);
-          }}
+          onChange={(e) => changeSearch(e.target.value)}
           size="small"
           placeholder="Search"
           sx={{ width: 250 }}
@@ -295,25 +337,21 @@ export default function ConnectedAgentsView({ onConnect }) {
         <FilterButton
           fields={CONNECTED_AGENT_FILTER_FIELDS}
           value={filterRows}
-          onChange={(rows) => {
-            setFilters(rowsToFilters(rows));
-            setPage(0);
-          }}
+          onChange={(rows) => changeFilters(rowsToFilters(rows))}
           showQueryTab={false}
         />
         <Box sx={{ flex: 1 }} />
         {selected.length > 0 ? (
           <SelectionBar
             count={selected.length}
-            onCancel={() => setSelected([])}
+            onCancel={() => setPicked([])}
             actions={[
               {
                 label: "Delete",
                 icon: "solar:trash-bin-trash-linear",
                 onClick: () => setConfirmDelete(true),
-                disabled: inUse.length > 0,
-                tooltip:
-                  inUse.length > 0 ? deleteBlockedReason(inUse) : undefined,
+                disabled: Boolean(deleteBlocked) || refreshing,
+                tooltip: deleteBlocked,
               },
             ]}
           />
@@ -323,50 +361,65 @@ export default function ConnectedAgentsView({ onConnect }) {
           </Typography>
         )}
       </ListToolbar>
-      <DataTable
-        columns={columns}
-        data={items}
-        isLoading={isLoading}
-        rowCount={total}
-        getRowId={(r) => r.id}
-        rowHeight={rowHeight}
-        enableSelection
-        rowSelection={rowSelection}
-        onRowSelectionChange={(selection) =>
-          setSelected(items.filter((_, index) => selection[index]))
-        }
-        onRowClick={(r) => navigate(`${CONNECTED_AGENTS_PATH}/${r.id}`)}
-        emptyMessage={
-          isError
-            ? "Couldn't load connected agents"
-            : "No agents match your search or filters"
-        }
-      />
+      {isError && !items.length ? (
+        <ErrorState
+          title="Couldn't load connected agents"
+          onRetry={() => refetch()}
+          sx={{ flex: 1 }}
+        />
+      ) : !isLoading && !refreshing && total === 0 ? (
+        <EmptyState
+          variant="no-results"
+          icon="solar:magnifer-linear"
+          title="No agents match your search or filters"
+          description="Try a different search, or clear the filters to see every connected agent."
+          onClearFilters={clearSearchAndFilters}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          data={items}
+          isLoading={isLoading || refreshing}
+          rowCount={total}
+          getRowId={(r) => r.id}
+          rowHeight={rowHeight}
+          enableSelection
+          rowSelection={rowSelection}
+          onRowSelectionChange={(selection) =>
+            setPicked(items.filter((_, index) => selection[index]))
+          }
+          onRowClick={(r) => navigate(`${CONNECTED_AGENTS_PATH}/${r.id}`)}
+          emptyMessage="No agents match your search or filters"
+        />
+      )}
       <DataTablePagination
         page={page}
         pageSize={pageSize}
         total={total}
-        onPageChange={setPage}
+        onPageChange={goToPage}
         onPageSizeChange={(size) => {
+          setPicked([]);
           setPageSize(size);
           setPage(0);
         }}
       />
       <ConfirmDialog
         open={confirmDelete}
-        onClose={() => setConfirmDelete(false)}
+        onClose={closeConfirm}
+        closeDisabled={deleteAgents.isPending}
         title={
-          selected.length === 1
-            ? `Delete ${selected[0].name}?`
-            : `Delete ${selected.length} agents?`
+          deletable.length === 1
+            ? `Delete ${deletable[0].name}?`
+            : `Delete ${deletable.length} agents?`
         }
-        content={deleteConfirmText(selected)}
+        content={deleteConfirmText(deletable, inUse)}
         action={
           <LoadingButton
             variant="contained"
             color="error"
             size="small"
             loading={deleteAgents.isPending}
+            disabled={Boolean(deleteBlocked)}
             onClick={handleDelete}
           >
             Delete

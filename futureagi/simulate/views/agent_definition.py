@@ -53,7 +53,6 @@ from simulate.services.agent_overview import (
     observability_on,
     recent_agent_runs,
 )
-from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -63,7 +62,6 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -85,13 +83,6 @@ from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
-
-
-def _conflict(exc: HostedHarnessError) -> Response:
-    return Response(
-        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
-        status=exc.status_code,
-    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -220,7 +211,6 @@ class AgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionBulkDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
-            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -232,7 +222,7 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            updated_agents, updated_versions = delete_agents(
+            updated_agents, updated_versions, skipped = delete_agents(
                 getattr(request, "organization", None) or request.user.organization,
                 agent_ids,
             )
@@ -241,13 +231,12 @@ class AgentDefinitionView(APIView):
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
+                "skipped_agent_ids": skipped,
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
-        except HostedHarnessError as exc:
-            return _conflict(exc)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to delete agents: {str(e)}"
