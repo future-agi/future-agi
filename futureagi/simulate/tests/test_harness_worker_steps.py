@@ -1,4 +1,6 @@
-from simulate.services.harness_worker_steps import worker_steps
+from datetime import UTC, datetime
+
+from simulate.services.harness_worker_steps import served_record, worker_steps
 
 
 def at(second):
@@ -359,14 +361,9 @@ class TestWorkerSteps:
         assert result["steps"][0]["started_at"] == "2026-11-01T10:00:01+00:00"
 
     def test_an_empty_record_has_no_steps(self):
-        assert worker_steps([]) == {
-            "steps": [],
-            "turns": [],
-            "depth": 0,
-            "parallel": 0,
-            "overlap_unknown": False,
-            "worker_depths": {},
-        }
+        result = worker_steps([])
+        assert (result["steps"], result["turns"], result["depth"]) == ([], [], 0)
+        assert result["counts"]["hand_offs"] == 0 and not result["beyond_boundary"]
 
     def test_a_return_without_an_id_is_never_given_to_the_hand_off_still_open(
         self,
@@ -589,9 +586,9 @@ class TestWorkerStepsByTurn:
         result = worker_steps(
             events, [said("agent", 2, "hello"), said("user", 4, "hi")]
         )
-        assert result["turns"] == [
-            {"turn": 0, "request": None, "response": {"text": "hello", "at": at(2)}},
-        ]
+        [only] = result["turns"]
+        assert (only["turn"], only["request"]) == (0, None)
+        assert only["response"]["text"] == "hello"
 
     def test_a_turn_whose_reply_never_came_has_no_response(self):
         events = [{"seq": 1, "type": "delegated", "worker_id": "a", "at": at(2)}]
@@ -607,7 +604,8 @@ class TestWorkerStepsByTurn:
         ]
         result = worker_steps(events, [said("user", 1, "q"), said("agent", 3, "r")])
         assert [(s["key"], s["turn"]) for s in result["steps"]] == [(1, 1), (2, None)]
-        assert result["turns"][-1] == {"turn": None, "request": None, "response": None}
+        last = result["turns"][-1]
+        assert (last["turn"], last["request"], last["response"]) == (None, None, None)
 
     def test_a_step_after_the_last_message_a_cut_record_kept_has_no_turn(self):
         events = [
@@ -823,3 +821,112 @@ def test_a_hand_off_recorded_inside_one_that_opens_later_sits_under_it():
     steps = {s["key"]: s for s in worker_steps(events)["steps"]}
     assert (steps[1]["parent"], steps[1]["relationship"]) == (4, "observed")
     assert steps[2]["parent"] == 1
+
+
+class TestWorkerRecordAsServed:
+    def test_a_hand_off_that_never_returned_reads_no_return_unless_the_record_was_cut(
+        self,
+    ):
+        events = [HOTELS, FLIGHTS, answer(3, "B", "two flights")]
+        whole = handoffs(worker_steps(events)["steps"])
+        cut = handoffs(worker_steps(events, cut_off=True)["steps"])
+        assert [one["end"] for one in whole] == ["no_return", "finished"]
+        # A record not kept whole can't say the missing return never came.
+        assert [one["end"] for one in cut] == ["cut_off", "finished"]
+
+    def test_a_return_with_an_error_reads_failed_and_a_control_pass_reads_passed(self):
+        failed = {**answer(3, "A", "boom"), "status": "error"}
+        passed = {**HOTELS, "type": "transferred"}
+        assert [
+            one["end"] for one in handoffs(worker_steps([HOTELS, failed])["steps"])
+        ] == ["failed"]
+        assert [one["end"] for one in handoffs(worker_steps([passed])["steps"])] == [
+            "passed"
+        ]
+        broken = {**call(2, "A"), "status": "error"}
+        assert [
+            one["end"] for one in handoffs(worker_steps([passed, broken])["steps"])
+        ] == ["failed"]
+
+    def test_the_counts_add_up_to_the_hand_offs_shown(self):
+        events = [HOTELS, FLIGHTS, answer(3, "B", "two flights")]
+        result = worker_steps(events)
+        counts = result["counts"]
+        shown = handoffs(result["steps"])
+        assert counts["hand_offs"] == len(shown)
+        assert counts["finished"] + counts["did_not_finish"] == len(shown)
+        assert counts["workers"] == len({one["worker_id"] for one in shown})
+
+    def test_each_hand_off_names_the_steps_directly_under_it(self):
+        events = [HOTELS, call(2, "A"), answer(3, "A", "three hotels"), call(4)]
+        result = worker_steps(events)
+        [hotels] = handoffs(result["steps"])
+        under = [
+            one["key"] for one in result["steps"] if one["parent"] == hotels["key"]
+        ]
+        assert hotels["children"] == under and under
+        top = [one["key"] for one in result["steps"] if one["parent"] is None]
+        assert [key for turn in result["turns"] for key in turn["children"]] == top
+
+    def test_a_turn_counts_the_tool_calls_made_outside_every_hand_off(self):
+        events = [HOTELS, call(2, "A"), call(3), call(4)]
+        turns = worker_steps(events, [said("user", 0, "book it")])["turns"]
+        assert [one["calls_outside"] for one in turns] == [2]
+
+    def test_work_two_levels_deep_or_in_parallel_is_beyond_the_boundary(self):
+        assert not worker_steps([HOTELS])["beyond_boundary"]
+        assert worker_steps([HOTELS, FLIGHTS])["beyond_boundary"]
+        nested = {
+            **FLIGHTS,
+            "at": at(2),
+            "by": "searcher",
+            "parent_delegation_id": "A",
+        }
+        assert worker_steps([HOTELS, nested])["beyond_boundary"]
+
+    def test_an_answer_that_is_data_is_marked_so_and_prose_is_not(self):
+        events = [
+            HOTELS,
+            answer(3, "A", '{"hotels": 3}'),
+            FLIGHTS,
+            answer(4, "B", "[sorry] none left"),
+        ]
+        shown = [
+            one["returned"]["result_shown"]
+            for one in handoffs(worker_steps(events)["steps"])
+        ]
+        assert shown[0]["format"] == "code" and '"hotels": 3' in shown[0]["text"]
+        assert shown[1] == {"format": "text", "text": "[sorry] none left"}
+
+    def test_a_record_kept_before_times_carried_a_zone_still_serves(self):
+        old = {
+            "workers": [],
+            "events": [HOTELS, answer(3, "A", "three hotels")],
+            "events_omitted": 0,
+            "coordinator": None,
+            "spans_received": True,
+            "started_at": at(0),
+            "collected_at": "2026-11-01T10:01:00+00:00",
+        }
+        now = datetime(2026, 11, 1, 11, tzinfo=UTC)
+        served = served_record(old, now)
+        stamps = [served["started_at"], *(one["at"] for one in served["events"])]
+        assert all(datetime.fromisoformat(one).tzinfo is not None for one in stamps)
+        assert [one["end"] for one in handoffs(served["steps"])] == ["finished"]
+        # No later read was scheduled for it, so nothing is pending.
+        assert served["pending"] is False
+
+    def test_a_record_with_a_later_read_due_is_pending_until_that_read_has_run(self):
+        record = {
+            "workers": [],
+            "events": [HOTELS],
+            "events_omitted": 0,
+            "coordinator": None,
+            "spans_received": True,
+            "started_at": None,
+            "next_read_at": "2026-11-01T10:10:00+00:00",
+        }
+        before = datetime(2026, 11, 1, 10, 5, tzinfo=UTC)
+        long_after = datetime(2026, 11, 2, tzinfo=UTC)
+        assert served_record(record, before)["pending"] is True
+        assert served_record(record, long_after)["pending"] is False

@@ -1137,12 +1137,14 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if limit is not None:
+            params["limit"] = int(limit)
         select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id"
-            + (f" LIMIT {int(limit)}" if limit is not None else ""),
+            + (" LIMIT %(limit)s" if limit is not None else ""),
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
