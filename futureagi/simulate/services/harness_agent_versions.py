@@ -72,6 +72,7 @@ _OWN_PAYLOAD_KEYS = (
     "requested_at",
     "created_for_environment",
     "discarded_by",
+    "prompt_from_parent",
     OFFERED_KEY,
 )
 _PROVIDER_ALIASES = {
