@@ -50,6 +50,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
+from simulate.tasks.alk_sim import dispatch_worker_read
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -3153,12 +3154,10 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
         completed_at=now,
         **({"ended_reason": message} if message else {}),
     )
-    from simulate.services.hosted_harness_ingestion import _dispatch_worker_read
-
     # A call cut short keeps what its workers did before the end.
     for call_id in ended:
         transaction.on_commit(
-            lambda call_id=call_id: _dispatch_worker_read(call_id), robust=True
+            lambda call_id=call_id: dispatch_worker_read(call_id), robust=True
         )
     execution_status = {
         HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,

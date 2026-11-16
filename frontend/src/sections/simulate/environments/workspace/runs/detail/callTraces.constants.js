@@ -85,13 +85,14 @@ export const CALL_WORKERS_COPY = {
   resultColumn: "Result",
   showRow: (name) => `Show raw data for ${name}`,
   hideRow: (name) => `Hide raw data for ${name}`,
+  // The API's counts of how the call's hand-offs ended.
   handOffSummary: ({
-    handOffs,
+    hand_offs: handOffs,
     workers,
     finished,
-    didNotFinish,
+    did_not_finish: didNotFinish,
     passed,
-    cutOff,
+    cut_off: cutOff,
   }) => {
     const ends = [
       finished && `${finished} finished`,
@@ -107,12 +108,21 @@ export const CALL_WORKERS_COPY = {
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
     no_return: "no return before the call ended",
-    deadline_passed: "past its action deadline",
+    deadline_passed: "past deadline",
     cancel_requested: "cancel requested",
     cancelled: "cancelled",
     infrastructure: "infrastructure fault",
   },
   workersCutShort: (list) => `Cut short: ${list}`,
+  // Each failed or unsure check on the step its evidence points to, or why it is on none.
+  placedChecks: "Failed and unsure checks",
+  checkStatus: { failed: "Failed", inconclusive: "Unsure" },
+  placedOn: (worker, tool) => `on ${worker}'s ${tool} call`,
+  untied: {
+    no_moment: () =>
+      "Not tied to a step: the check doesn't point to a moment in the call",
+    never_called: (tool) => `Not tied to a step: ${tool} was never called`,
+  },
   // A cut-short worker seen only through its tool calls: its hand-off span had not ended.
   cutShortToolCallsOnly:
     "seen only through its tool calls; its hand-off was still open",

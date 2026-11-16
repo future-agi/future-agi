@@ -146,6 +146,10 @@ class TrialStateChangeSerializer(serializers.Serializer):
     )
     # What the world refused, with its code and why; a worker's attempt outside its permissions is one.
     refused_actions = TrialRefusedActionSerializer(many=True, required=False)
+    worker_id = serializers.CharField(
+        required=False,
+        help_text="The worker this participant is; absent for the agent and the actors.",
+    )
 
 
 class ActorDecisionSerializer(serializers.Serializer):

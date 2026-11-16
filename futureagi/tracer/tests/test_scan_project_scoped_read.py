@@ -98,7 +98,9 @@ def test_list_by_trace_ids_limits_rows_only_when_asked():
     _reader_with(client).list_by_trace_ids(["t1"])
     assert "LIMIT" not in client.sql
     _reader_with(client).list_by_trace_ids(["t1"], limit=5001)
-    assert client.sql.endswith("ORDER BY trace_id, start_time, id LIMIT 5001")
+    # Bound as a parameter, never put into the SQL text.
+    assert client.sql.endswith("ORDER BY trace_id, start_time, id LIMIT %(limit)s")
+    assert client.params["limit"] == 5001
 
 
 def test_list_by_trace_ids_lean_stubs_fat_columns():

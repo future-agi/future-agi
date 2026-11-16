@@ -31,6 +31,7 @@ from simulate.selectors.call_detail import (
     has_customer,
     participants,
     tagged_function_calls,
+    tool_call_count,
     transcript_turns,
     trial_state,
 )
@@ -42,14 +43,26 @@ from simulate.serializers.call_detail_v3 import (
     FunctionCallSerializer,
     TrialStateSerializer,
 )
+from simulate.serializers.call_workers_v3 import (
+    CallWorkersPendingSerializer,
+    CallWorkersQuerySerializer,
+    CallWorkersResponseSerializer,
+)
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
-from simulate.services.harness_worker_steps import worker_steps
-from simulate.services.harness_workers import WORKERS_KEY, served_workers
+from simulate.services.harness_worker_steps import served_record
+from simulate.services.harness_workers import (
+    first_read_due,
+    kept_metadata,
+    read_pending,
+    served_workers,
+    stopped_by_user,
+    stored_record,
+)
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -57,6 +70,7 @@ from simulate.services.run_results_v3 import (
     build_evaluation_catalog,
     function_calls,
     receipt_sub_goal_names,
+    receipt_sub_goals,
 )
 from simulate.services.run_results_v3_page import (
     page_calls,
@@ -357,6 +371,10 @@ class SubGoalResultSerializer(serializers.Serializer):
     )
     # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
     subject = serializers.CharField(required=False)
+    subject_kind = serializers.ChoiceField(choices=("task", "worker"), default="task")
+    worker_id = serializers.CharField(
+        required=False, help_text="The worker whose own check this is."
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -632,160 +650,6 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     trends = TrendSerializer(many=True)
 
 
-class CleanupSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(
-        choices=("stopped", "stopped_with_sandbox", "still_running", "unknown")
-    )
-    at = serializers.CharField(allow_null=True)
-
-
-class CallWorkerSerializer(serializers.Serializer):
-    worker_id = serializers.CharField()
-    id = serializers.CharField()
-    name = serializers.CharField()
-    # Declared names are not proof: true only when the worker's own spans or tool calls arrived.
-    observed = serializers.BooleanField()
-    undeclared = serializers.BooleanField()
-    instance_ids = serializers.ListField(child=serializers.CharField())
-    # The model the worker's own model calls used, and the tokens they spent, when the app sent traces.
-    model = serializers.CharField(required=False)
-    tokens = serializers.IntegerField(required=False)
-    # How it ended; absent on a timeline read before end states were recorded.
-    state = serializers.ChoiceField(
-        choices=[
-            "completed",
-            "failed",
-            "no_return",
-            "deadline_passed",
-            "cancel_requested",
-            "cancelled",
-            "infrastructure",
-            "not_observed",
-        ],
-        required=False,
-    )
-    # Seen only through its tool calls in a trial cut short: its hand-off was still open.
-    seen = serializers.ChoiceField(choices=["tool_calls_only"], required=False)
-    # When the harness ended this worker's own process past its deadline.
-    stopped_at = serializers.FloatField(required=False)
-    # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
-    cleanup = CleanupSerializer(required=False)
-
-
-class CallWorkerEventSerializer(serializers.Serializer):
-    seq = serializers.IntegerField()
-    type = serializers.ChoiceField(
-        choices=("delegated", "transferred", "tool_call", "returned")
-    )
-    worker_id = serializers.CharField(allow_null=True)
-    by = serializers.CharField(allow_null=True, required=False)
-    delegation_id = serializers.CharField(required=False)
-    task = serializers.CharField(allow_null=True, required=False)
-    result = serializers.CharField(allow_null=True, required=False)
-    tool = serializers.CharField(required=False)
-    status = serializers.ChoiceField(choices=("ok", "error"), required=False)
-    # The span and trace this step was read from, for opening it in Traces; absent for the sandbox's own record.
-    span_id = serializers.CharField(required=False)
-    trace_id = serializers.CharField(required=False)
-    # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
-    input = JsonValueField(allow_null=True, required=False)
-    output = JsonValueField(allow_null=True, required=False)
-    # True when the record's size limit was reached before this step, so that part was not kept.
-    input_omitted = serializers.BooleanField(required=False)
-    output_omitted = serializers.BooleanField(required=False)
-    # Why the world refused this call (`not_permitted`, `deadline_passed`), as its action log coded it.
-    refusal_code = serializers.CharField(required=False)
-    # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
-    relationship = serializers.ChoiceField(
-        choices=("observed", "unknown"), required=False
-    )
-    # `async` for a hand-off to a background job, placed under the tool call that launched it.
-    launch = serializers.ChoiceField(choices=("async",), required=False)
-    at = serializers.CharField(allow_null=True)
-    attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
-
-
-# Its own definition, because drf-yasg emits one per serializer and `CallWorkerEvent` is also the never-null event.
-class CallWorkerEventOrNullSerializer(CallWorkerEventSerializer):
-    """A hand-off or its return, null when the record did not see it."""
-
-    class Meta:
-        ref_name = "CallWorkerEventOrNull"
-        swagger_schema_fields = {"x-nullable": True}
-
-
-class CallWorkerCoordinatorSerializer(serializers.Serializer):
-    name = serializers.CharField()
-
-
-class CallWorkerTurnSerializer(serializers.Serializer):
-    text = serializers.CharField(allow_null=True)
-    at = serializers.CharField(allow_null=True)
-
-
-class CallWorkerStepSerializer(serializers.Serializer):
-    """A row of the tab in reading order; `parent` is the `key` of the hand-off it sits under, null at the top."""
-
-    kind = serializers.ChoiceField(choices=("handoff", "tool_call"))
-    key = serializers.IntegerField()
-    # A declared field, not DRF's `Field.parent`: the serializer's metaclass takes it off the class.
-    parent: Any = serializers.IntegerField(allow_null=True)
-    depth = serializers.IntegerField()
-    worker_id = serializers.CharField(allow_null=True)
-    # Hand-off rows: the hand-off and its return (null when not seen), its span, and whether a sibling overlapped it.
-    transfer = serializers.BooleanField(required=False)
-    handoff = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
-    returned = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
-    started_at = serializers.CharField(allow_null=True, required=False)
-    ended_at = serializers.CharField(allow_null=True, required=False)
-    parallel = serializers.BooleanField(required=False)
-    # Tool-call rows: the call itself.
-    call = CallWorkerEventSerializer(required=False)
-    # The call's turn this row happened in: turn n starts at the caller's nth message, 0 is before they spoke; null
-    # when the record does not say (no time, or after the last message the record kept).
-    turn = serializers.IntegerField(allow_null=True)
-    # Position within its turn, from 1, in reading order.
-    order = serializers.IntegerField()
-    # `unknown` when the record does not say which hand-off this step belongs to: it stays at the top, never guessed.
-    relationship = serializers.ChoiceField(choices=("observed", "unknown"))
-
-
-class CallWorkerRoundSerializer(serializers.Serializer):
-    """One turn that had steps: the caller's message that opened it and the agent's reply after its last step; turn
-    null holds the steps whose turn the record does not say."""
-
-    turn = serializers.IntegerField(allow_null=True)
-    request = CallWorkerTurnSerializer(allow_null=True)
-    response = CallWorkerTurnSerializer(allow_null=True)
-
-
-class CallWorkersResponseSerializer(serializers.Serializer):
-    workers = CallWorkerSerializer(many=True)
-    events = CallWorkerEventSerializer(many=True)
-    # Steps past the record's limit, left out after the ones shown.
-    events_omitted = serializers.IntegerField(required=False)
-    # Each is null when it was not seen: the timeline shows it as Unknown.
-    coordinator = CallWorkerCoordinatorSerializer(allow_null=True, required=False)
-    started_at = serializers.CharField(allow_null=True, required=False)
-    spans_received = serializers.BooleanField(required=False)
-    collected_at = serializers.CharField()
-    # `no_evidence`: the app declares workers but this read found nothing for the call; each worker reads not observed.
-    # `partial`: the call had more spans than one read keeps; `unavailable`: its spans could not be read.
-    collection = serializers.ChoiceField(
-        choices=("complete", "partial", "unavailable", "no_evidence"), required=False
-    )
-    steps = CallWorkerStepSerializer(many=True)
-    turns = CallWorkerRoundSerializer(many=True)
-    # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
-    depth = serializers.IntegerField()
-    parallel = serializers.IntegerField()
-    # Hand-offs to background jobs, placed under the tool call that launched each.
-    asynchronous = serializers.IntegerField(required=False)
-    overlap_unknown = serializers.BooleanField()
-    # The level each worker was first handed work at.
-    worker_depths = serializers.DictField(child=serializers.IntegerField())
-
-
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -799,6 +663,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    tool_call_count = serializers.IntegerField(
+        help_text="The agent's tool calls in the transcript and function calls; a world actor's action is not one, "
+        "and a hand-off to another agent is a Participants step, not one of them."
+    )
     call_actors = CallCallActorSerializer(many=True)
     participants = CallParticipantSerializer(
         many=True,
@@ -834,6 +702,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "tool_call_count",
             "call_actors",
             "participants",
             "has_customer",
@@ -1121,6 +990,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": calls,
+            "tool_call_count": tool_call_count(data["transcript"], calls),
             "call_actors": actors,
             "participants": participants(call.call_metadata, data["transcript"], calls),
             "has_customer": has_customer(data["transcript"]),
@@ -1184,27 +1054,41 @@ class CallExecutionV3WorkersView(APIView):
     permission_classes = [IsAuthenticated]
 
     @validated_request(
+        query_serializer=CallWorkersQuerySerializer,
         responses={
             200: CallWorkersResponseSerializer,
-            204: "No hand-off to other agents was seen in this call, or its record is still arriving",
+            202: CallWorkersPendingSerializer,
+            204: "No hand-off to other agents was seen in this call, or the earlier attempt asked for kept none",
         },
         operation_id="simulate_v3_call_execution_workers",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
         call = _call_for_request(request, call_execution_id)
-        timeline = (call.call_metadata or {}).get(WORKERS_KEY)
-        if not timeline:
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        steps = worker_steps(
-            timeline.get("events", []),
-            timeline.get("messages", []),
-            turns_cut=bool(timeline.get("messages_omitted")),
-        )
-        return Response(
-            CallWorkersResponseSerializer(
-                {**served_workers(call, timeline), **steps}
-            ).data
-        )
+        attempt = request.validated_query_data.get("attempt")
+        metadata = kept_metadata(call, attempt)
+        timeline = stored_record(metadata)
+        now = timezone.now()
+        if timeline:
+            return Response(
+                CallWorkersResponseSerializer(
+                    served_record(
+                        served_workers(call, timeline),
+                        now,
+                        receipt_sub_goals(metadata),
+                        stopped_by_user=stopped_by_user(call, attempt),
+                    )
+                ).data
+            )
+        due = first_read_due(call) if attempt is None else None
+        if due is not None and read_pending(due, now):
+            # The first read has not run yet: the client checks again rather than reading "no workers".
+            return Response(
+                CallWorkersPendingSerializer(
+                    {"pending": True, "next_read_at": due}
+                ).data,
+                status=status.HTTP_202_ACCEPTED,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class RunAnalyticsV3View(APIView):

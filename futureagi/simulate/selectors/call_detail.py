@@ -9,12 +9,19 @@ import structlog
 
 from simulate.models import CallExecution, HostedHarnessArtifact
 from simulate.services.harness_actor_labels import FallbackView, fallback_of
+from simulate.services.harness_workers import stopped_workers_of
 from simulate.services.hosted_harness_ingestion import (
     TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
     get_object_url,
 )
 from simulate.services.run_results_v3_queries import call_actor_delivery
+from simulate.types import (
+    SharedRecord,
+    SharedRecordAction,
+    StoppedWorker,
+    worker_subject_id,
+)
 from simulate.utils.stored_transcript_roles import call_actor_label
 
 logger = structlog.get_logger(__name__)
@@ -83,6 +90,12 @@ class BlockedCall(TypedDict, total=False):
 APPROVAL_MISSING = "approval_missing"
 
 
+class RefusedAction(TypedDict):
+    action: str
+    code: str
+    reason: str
+
+
 class StateChange(TypedDict, total=False):
     """What one participant attempted in the trial and what the world made of it, as the harness counts it."""
 
@@ -98,6 +111,9 @@ class StateChange(TypedDict, total=False):
     read_actions: list[str]
     no_change: bool
     blocked: list[BlockedCall]
+    refused_actions: list[RefusedAction]
+    # The worker this participant is, when it is one of the agent's workers.
+    worker_id: str
 
 
 class ActorDecision(TypedDict):
@@ -241,8 +257,8 @@ class TrialState(TypedDict):
     limits: NotRequired[dict[str, int | float | str | None]]
     end_state_url: NotRequired[str]
     # A multi-agent trial's records two or more participants named, and the workers the harness stopped.
-    shared_records: NotRequired[list[dict[str, object]]]
-    stopped_workers: NotRequired[list[dict[str, object]]]
+    shared_records: NotRequired[list[SharedRecord]]
+    stopped_workers: NotRequired[list[StoppedWorker]]
 
 
 def call_actors(metadata: object) -> list[dict[str, str]]:
@@ -305,6 +321,23 @@ def _actor_turn(row: dict[str, Any], actor: Mapping[str, str]) -> dict[str, Any]
         "channel": actor.get("channel") or "",
         "content": "\n".join(text.removeprefix(label) for text in texts),
     }
+
+
+def tool_call_count(
+    transcript: Sequence[Mapping[str, object]], calls: Sequence[Mapping[str, object]]
+) -> int:
+    """The agent's tool calls in the transcript and the tagged function calls; a world actor's action is not one, and a
+    hand-off to another agent is a Participants step, not a tool call."""
+    made: list[object] = [
+        one for one in calls if one.get("kind") != "world_actor_action"
+    ]
+    for turn in transcript:
+        listed = turn.get("tool_calls")
+        if isinstance(listed, list):
+            made.extend(listed)
+    return sum(
+        1 for one in made if not (isinstance(one, Mapping) and one.get("delegated_to"))
+    )
 
 
 def transcript_turns(
@@ -787,6 +820,17 @@ def _approval_notices(calls: Sequence[Mapping[str, Any]]) -> list[TrialNotice]:
     ]
 
 
+def _state_change(entry: dict[str, Any]) -> StateChange:
+    change = cast(
+        StateChange,
+        {**entry, "name": AGENT_NAME} if entry.get("who") == AGENT else dict(entry),
+    )
+    worker = worker_subject_id(entry.get("who"))
+    if worker is not None:
+        change["worker_id"] = worker
+    return change
+
+
 def trial_state(
     call: CallExecution, *, calls: Sequence[Mapping[str, Any]] = ()
 ) -> TrialState | None:
@@ -806,13 +850,7 @@ def trial_state(
     raw_records = state.get("records")
     records = raw_records if isinstance(raw_records, dict) else {}
     unreadable = state.get("unreadable") is True or records.get("unreadable") is True
-    changes = [
-        cast(
-            StateChange,
-            {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one,
-        )
-        for one in _entries(state.get("state_changes"))
-    ]
+    changes = [_state_change(one) for one in _entries(state.get("state_changes"))]
     decisions = _entries(state.get("decisions"))
     names = {
         one["id"]: one["name"]
@@ -876,22 +914,23 @@ def trial_state(
             _shared_record(one, names) for one in _entries(state["shared_records"])
         ]
     if isinstance(state.get("stopped_workers"), list):
-        shown["stopped_workers"] = _entries(state["stopped_workers"])
+        shown["stopped_workers"] = stopped_workers_of(state)
     url = _end_state_url(call, metadata, state)
     if url:
         shown["end_state_url"] = url
     return shown
 
 
-def _shared_record(
-    record: Mapping[str, Any], names: Mapping[str, str]
-) -> dict[str, object]:
+def _shared_record(record: Mapping[str, Any], names: Mapping[str, str]) -> SharedRecord:
     """A record two or more participants named, each call with its participant's name as the state changes give it."""
     actions = [
-        {**one, "name": names.get(str(one.get("who")), str(one.get("who") or ""))}
+        cast(
+            SharedRecordAction,
+            {**one, "name": names.get(str(one.get("who")), str(one.get("who") or ""))},
+        )
         for one in _entries(record.get("actions"))
     ]
-    return {**record, "actions": actions}
+    return cast(SharedRecord, {**record, "actions": actions})
 
 
 def has_customer(turns: Sequence[Mapping[str, Any]]) -> bool:

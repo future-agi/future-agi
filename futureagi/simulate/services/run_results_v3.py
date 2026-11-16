@@ -7,9 +7,9 @@ import json
 import math
 import re
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, cast, get_args
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -61,6 +61,12 @@ from simulate.services.scoring_status import (
     derive_call_scoring,
     normalize_eval_entry,
     scoring_input_from_call,
+)
+from simulate.types import (
+    SubGoalEntry,
+    SubGoalUnscored,
+    is_worker_subject,
+    worker_subject_id,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
@@ -226,10 +232,7 @@ def call_outcome(
             call.eval_outputs, set(live_eval_configs)
         )
         # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
-        if not (
-            isinstance(data, dict)
-            and str(data.get("subject") or "").startswith("worker:")
-        )
+        if not (isinstance(data, dict) and is_worker_subject(data.get("subject")))
         and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
@@ -487,6 +490,45 @@ def eval_rows(
     return rows
 
 
+def sub_goal_entries(raw_sub_goals: Iterable[object]) -> list[SubGoalEntry]:
+    """The call's sub-goals as the results list them, each with its verdict and whose check it is."""
+    entries: list[SubGoalEntry] = []
+    for item in raw_sub_goals:
+        name = item.get("name") if isinstance(item, dict) else item
+        if not name:
+            continue
+        result = sub_goal_result(item) if isinstance(item, dict) else None
+        entry: SubGoalEntry = {
+            "name": str(name),
+            "passed": SUB_GOAL_PASSED.get(result),
+            "subject_kind": "task",
+        }
+        if isinstance(item, dict):
+            if result in get_args(SubGoalUnscored):
+                entry["result"] = cast(SubGoalUnscored, result)
+                entry["reason"] = str(item.get("reason") or "")
+            if isinstance(item.get("evidence"), list):
+                # What it was decided from: world_state, tool_calls, transcript, recording.
+                entry["evidence"] = [str(one) for one in item["evidence"]]
+            if item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
+            worker = worker_subject_id(item.get("subject"))
+            if worker is not None:
+                entry["subject_kind"] = "worker"
+                entry["worker_id"] = worker
+        entries.append(entry)
+    return entries
+
+
+def receipt_sub_goals(metadata: Mapping[str, object] | None) -> list[SubGoalEntry]:
+    """The judged sub-goals a call's metadata holds, its receipt's first."""
+    receipt = (metadata or {}).get("hosted_harness_receipt")
+    raw = (receipt.get("sub_goals") if isinstance(receipt, dict) else None) or (
+        metadata or {}
+    ).get("sub_goals")
+    return sub_goal_entries(raw if isinstance(raw, list) else [])
+
+
 def receipt_sub_goal_names(metadata: Any) -> set[str]:
     receipt = (
         metadata.get("hosted_harness_receipt") if isinstance(metadata, dict) else None
@@ -675,7 +717,7 @@ _UNSCORED_RESULTS = (
 
 
 def _unscored_reason(
-    outcome: str, sub_goal_results: list[dict[str, Any]]
+    outcome: str, sub_goal_results: Sequence[SubGoalEntry]
 ) -> str | None:
     """What a call with no pass or fail has instead, counted by sub-goal result: "2 not applicable, 1 inconclusive";
     None for any other outcome, or when no sub-goal says."""
@@ -800,24 +842,7 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
-        sub_goal_results = []
-        for item in raw_sub_goals:
-            name = item.get("name") if isinstance(item, dict) else item
-            if not name:
-                continue
-            result = sub_goal_result(item) if isinstance(item, dict) else None
-            entry: dict[str, Any] = {
-                "name": str(name),
-                "passed": SUB_GOAL_PASSED.get(result),
-            }
-            if result in ("not_applicable", "inconclusive", "unmeasured"):
-                entry.update(result=result, reason=str(item.get("reason") or ""))
-            if isinstance(item, dict) and isinstance(item.get("evidence"), list):
-                # What it was decided from: world_state, tool_calls, transcript, recording.
-                entry["evidence"] = [str(one) for one in item["evidence"]]
-            if isinstance(item, dict) and item.get("subject") not in (None, "task"):
-                entry["subject"] = str(item["subject"])
-            sub_goal_results.append(entry)
+        sub_goal_results = sub_goal_entries(raw_sub_goals)
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")

@@ -105,7 +105,7 @@ export default function VoiceCallDrawer({
   );
 
   const callTraces = useCallTraces(executionId, task.id);
-  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  const hasWorkers = useHasWorkers(task.id, task.status);
   // Held here because the panel unmounts while the next call's detail loads.
   const [chosenTab, setChosenTab] = useState("transcript");
   const [openStep, setOpenStep] = useState(null);
@@ -131,8 +131,7 @@ export default function VoiceCallDrawer({
             testExecutionId={executionId}
             isError={callTraces.isError}
             onMountedChange={onTracePanelMountedChange}
-            openTraceId={openStep?.traceId ?? null}
-            openSpanId={openStep?.spanId ?? null}
+            openTrace={openStep}
           />
         ),
       },
@@ -246,7 +245,6 @@ VoiceCallDrawer.propTypes = {
   task: PropTypes.shape({
     id: PropTypes.string,
     status: PropTypes.string,
-    completedAt: PropTypes.string,
     outcomeReason: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,

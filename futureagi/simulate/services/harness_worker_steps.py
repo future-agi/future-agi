@@ -2,24 +2,48 @@
 
 from __future__ import annotations
 
+import json
+import re
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Literal, cast
 
+from simulate.services.harness_workers import read_pending
 from simulate.types import (
     CallTurn,
+    CallWorkersRecord,
+    FailurePlacement,
+    HandOffCounts,
+    HandOffEnd,
+    HarnessWorker,
+    ShownText,
+    SubGoalEntry,
     TurnSummary,
     WorkerEvent,
+    WorkerRelationship,
+    WorkerState,
     WorkerStep,
     WorkerSteps,
+    WorkerTimeline,
     WorkerTurn,
 )
 
 _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
+# A worker's end when the trial stopped it before it returned; one that returned or never ran has none.
+_CUT_SHORT: frozenset[WorkerState] = frozenset(
+    {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
+)
+# The design's rule: a check named "Call <tool>" (or `call_<tool>`) is about that tool's call.
+_CALL_CHECK = re.compile(r"^call[\s_]+(\S+)$", re.IGNORECASE)
+# A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
+_PRINTED_DICT = re.compile(r"^\{\s*(?:(['\"]).*?\1|\w+)\s*:")
+_PRINTED_LIST = re.compile(
+    r"^\[\s*(?:['\"{\[]|(?:-?\d[\d.]*|True|False|None)\s*(?:,|\]$)|\]$)"
+)
 
 
-def _seconds(at: Any) -> float | None:
+def _seconds(at: object) -> float | None:
     """Epoch seconds of a stored timestamp, read as UTC when it carries no zone."""
     if not isinstance(at, str) or not at:
         return None
@@ -32,6 +56,45 @@ def _seconds(at: Any) -> float | None:
 
 def _iso(seconds: float | None) -> str | None:
     return None if seconds is None else datetime.fromtimestamp(seconds, UTC).isoformat()
+
+
+def _aware(at: str | None) -> str | None:
+    # Records kept before timestamps carried their zone are served with it.
+    moment = _seconds(at)
+    return at if moment is None else _iso(moment)
+
+
+def _shown(text: str | None) -> ShownText | None:
+    """A text as data (JSON indented, or a printed dict or list as it came) or as prose."""
+    if not text:
+        return None
+    body = text.strip()
+    if body[:1] not in ("[", "{"):
+        return {"format": "text", "text": text}
+    try:
+        return {
+            "format": "code",
+            "text": json.dumps(json.loads(body), indent=2, ensure_ascii=False),
+        }
+    except ValueError:
+        printed = body[-1] in "}]…" and bool(
+            _PRINTED_DICT.match(body) or _PRINTED_LIST.match(body)
+        )
+    return (
+        {"format": "code", "text": body}
+        if printed
+        else {"format": "text", "text": text}
+    )
+
+
+def _served(event: WorkerEvent) -> WorkerEvent:
+    """An event as the client reads it: its time with its zone, and its task and answer marked as data or prose."""
+    out: WorkerEvent = {**event, "at": _aware(event.get("at"))}
+    if event["type"] in _HAND_OFF_TYPES:
+        out["task_shown"] = _shown(event.get("task"))
+    if event["type"] == "returned":
+        out["result_shown"] = _shown(event.get("result"))
+    return out
 
 
 class _Block:
@@ -61,8 +124,7 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
     blocks: list[_Block] = []
 
     by_id: dict[str, _Block] = {}
-    # A step names its hand-off by id; it may come before the hand-off opens (no time) or after it returns (another
-    # clock), so it waits for that hand-off and joins it whatever the order.
+    # A step may name its hand-off before it opens or after it returns (another clock), so it waits to join it.
     events = list(events)
     named = {
         str(event["delegation_id"])
@@ -202,15 +264,33 @@ def _mark_parallel(node: _Block) -> bool:
 
 def _relationship(
     event: WorkerEvent | None, key: int, unknown: set[int]
-) -> Literal["observed", "unknown"]:
+) -> WorkerRelationship:
     """`unknown` when the record does not say where this step belongs; otherwise `observed`."""
     if key in unknown or (event is not None and event.get("relationship") == "unknown"):
         return "unknown"
     return "observed"
 
 
+def _end(block: _Block, cut_off: bool) -> HandOffEnd:
+    """A return decides it, even after a tool failed; a control pass never returns, so only a failed tool marks it."""
+    if block.returned is not None:
+        return "failed" if block.returned.get("status") == "error" else "finished"
+    if block.handoff is not None and block.handoff.get("type") == "transferred":
+        failed = any(
+            not isinstance(item, _Block) and item.get("status") == "error"
+            for item in block.items
+        )
+        return "failed" if failed else "passed"
+    # A record cut at its limit, or read only in part, can't say a missing return never came.
+    return "cut_off" if cut_off else "no_return"
+
+
 def _flatten(
-    node: _Block, parent: int | None, out: list[WorkerStep], unknown: set[int]
+    node: _Block,
+    parent: int | None,
+    out: list[WorkerStep],
+    unknown: set[int],
+    cut_off: bool,
 ) -> None:
     for item in node.items:
         if isinstance(item, _Block):
@@ -223,17 +303,23 @@ def _flatten(
                     "worker_id": item.worker_id,
                     "transfer": item.handoff is not None
                     and item.handoff.get("type") == "transferred",
-                    "handoff": item.handoff,
-                    "returned": item.returned,
+                    "handoff": _served(item.handoff)
+                    if item.handoff is not None
+                    else None,
+                    "returned": _served(item.returned)
+                    if item.returned is not None
+                    else None,
                     "started_at": _iso(item.start),
                     "ended_at": _iso(item.end),
                     "parallel": item.parallel,
+                    "end": _end(item, cut_off),
+                    "children": [],
                     "relationship": _relationship(
                         item.handoff or item.returned, item.key, unknown
                     ),
                 }
             )
-            _flatten(item, item.key, out, unknown)
+            _flatten(item, item.key, out, unknown, cut_off)
         else:
             out.append(
                 {
@@ -242,10 +328,24 @@ def _flatten(
                     "parent": parent,
                     "depth": node.depth,
                     "worker_id": item.get("worker_id"),
-                    "call": item,
+                    "call": _served(item),
                     "relationship": _relationship(item, item.get("seq", -1), unknown),
                 }
             )
+
+
+def _counts(steps: list[WorkerStep]) -> HandOffCounts:
+    ends = [step.get("end") for step in steps if step["kind"] == "handoff"]
+    return {
+        "hand_offs": len(ends),
+        "workers": len(
+            {step["worker_id"] for step in steps if step["kind"] == "handoff"}
+        ),
+        "finished": ends.count("finished"),
+        "did_not_finish": ends.count("failed") + ends.count("no_return"),
+        "passed": ends.count("passed"),
+        "cut_off": ends.count("cut_off"),
+    }
 
 
 def _step_time(step: WorkerStep) -> float | None:
@@ -258,12 +358,8 @@ def _step_time(step: WorkerStep) -> float | None:
 def _by_turn(
     steps: list[WorkerStep], turns: Iterable[CallTurn], *, cut: bool = False
 ) -> list[WorkerTurn]:
-    """Give each step the turn it happened in and return each turn's request and reply.
-
-    Turn n starts at the caller's nth message; turn 0 is anything before the caller first spoke. A top-level step
-    takes the turn its start falls in, and everything under it stays with it even when it runs past the next
-    message. A step with no time, or one after the last message kept when the record's messages were `cut`, has
-    no turn (null): the record does not say which it was.
+    """Each step's turn (n starts at the caller's nth message, 0 before they spoke; a step's children keep its turn;
+    null with no time or past the last message kept when `cut`), and each turn's request, reply and top-level steps.
     """
     said = [one for one in turns if isinstance(one, Mapping)]
     asked = [
@@ -299,8 +395,11 @@ def _by_turn(
         if moment is not None:
             latest[turn] = max(latest.get(turn, moment), moment)
 
-    def summary(one: Mapping) -> TurnSummary:
-        return {"text": one.get("text"), "at": one.get("at")}
+    def summary(one: CallTurn) -> TurnSummary:
+        text = one.get("text")
+        return {"text": text, "at": _aware(one.get("at")), "shown": _shown(text)}
+
+    top = [step for step in steps if step["parent"] is None]
 
     rounds: list[WorkerTurn] = []
     known = sorted({step["turn"] for step in steps if step["turn"] is not None})
@@ -320,10 +419,26 @@ def _by_turn(
                 "turn": turn,
                 "request": summary(asked[turn - 1][1]) if turn else None,
                 "response": summary(reply) if reply is not None else None,
+                "children": [],
+                "calls_outside": 0,
             }
         )
     if any(step["turn"] is None for step in steps):
-        rounds.append({"turn": None, "request": None, "response": None})
+        rounds.append(
+            {
+                "turn": None,
+                "request": None,
+                "response": None,
+                "children": [],
+                "calls_outside": 0,
+            }
+        )
+    of_turn = {one["turn"]: one for one in rounds}
+    for step in top:
+        held = of_turn[step["turn"]]
+        held["children"].append(step["key"])
+        # A tool call outside every hand-off has no table row of its own.
+        held["calls_outside"] += step["kind"] == "tool_call"
     return rounds
 
 
@@ -332,30 +447,139 @@ def worker_steps(
     turns: Iterable[CallTurn] = (),
     *,
     turns_cut: bool = False,
+    cut_off: bool = False,
 ) -> WorkerSteps:
-    """The events as steps in reading order, each hand-off with its parent, depth, span and parallel flag, and each
-    step's turn with that turn's request and reply; `turns_cut` when the record kept only its first messages."""
+    """The events as steps in reading order, each hand-off with its parent, children, depth, span, end and parallel
+    flag, and each turn with its request, reply and top-level steps; `cut_off` when the record is not whole."""
     root, blocks, unknown = _tree(events)
     _close(root)
     overlap_unknown = _mark_parallel(root)
     steps: list[WorkerStep] = []
-    _flatten(root, None, steps, unknown)
+    _flatten(root, None, steps, unknown, cut_off)
+    held = {step["key"]: step for step in steps if step["kind"] == "handoff"}
+    for step in steps:
+        if step["parent"] is not None and step["parent"] in held:
+            held[step["parent"]]["children"].append(step["key"])
     rounds = _by_turn(steps, turns, cut=turns_cut)
     depth_of: dict[str, int] = {}
     for block in blocks:
         if block.worker_id is not None:
             depth_of.setdefault(block.worker_id, block.depth)
+    depth = max((block.depth for block in blocks), default=0)
+    parallel = sum(1 for block in blocks if block.parallel)
+    # Hand-offs to background jobs, which outlive the call that launched them.
+    asynchronous = sum(
+        1
+        for block in blocks
+        if block.handoff is not None and block.handoff.get("launch") == "async"
+    )
     return {
         "steps": steps,
         "turns": rounds,
-        "depth": max((block.depth for block in blocks), default=0),
-        "parallel": sum(1 for block in blocks if block.parallel),
-        # Hand-offs to background jobs, which outlive the call that launched them.
-        "asynchronous": sum(
-            1
-            for block in blocks
-            if block.handoff is not None and block.handoff.get("launch") == "async"
-        ),
+        "depth": depth,
+        "parallel": parallel,
+        "asynchronous": asynchronous,
         "overlap_unknown": overlap_unknown,
         "worker_depths": depth_of,
+        "counts": _counts(steps),
+        "cut_off": cut_off,
+        # The supported boundary is one level of sequential hand-offs from the coordinator, each back within the call.
+        "beyond_boundary": depth > 1 or parallel > 0 or asynchronous > 0,
+    }
+
+
+def _with_ends(
+    steps: list[WorkerStep], workers: Iterable[Mapping[str, object]]
+) -> None:
+    """Each hand-off that did not come back takes its worker's end state when the trial's end cut it short."""
+    states = {str(one.get("worker_id")): one.get("state") for one in workers}
+    for step in steps:
+        state = states.get(str(step["worker_id"]))
+        if step.get("end") in ("no_return", "cut_off") and state in _CUT_SHORT:
+            step["end_state"] = cast("WorkerState", state)
+
+
+def failure_placements(
+    steps: Sequence[WorkerStep], sub_goals: Iterable[SubGoalEntry]
+) -> list[FailurePlacement]:
+    """Each failed or unsure sub-goal on the step and worker its evidence points to, else not tied, with the reason."""
+    placements: list[FailurePlacement] = []
+    for goal in sub_goals:
+        if goal["passed"] is False:
+            status: Literal["failed", "inconclusive"] = "failed"
+        elif goal.get("result") == "inconclusive":
+            status = "inconclusive"
+        else:
+            continue
+        placement: FailurePlacement = {
+            "name": goal["name"],
+            "status": status,
+            "step": None,
+            "worker_id": goal.get("worker_id"),
+            "untied": None,
+        }
+        named = _CALL_CHECK.match(goal["name"].strip())
+        if named is None:
+            # No recorded check names a moment in the call yet, so nothing else can be placed without guessing.
+            placement["untied"] = "no_moment"
+        else:
+            tool = named.group(1)
+            placement["tool"] = tool
+            calls = [
+                step
+                for step in steps
+                if step["kind"] == "tool_call"
+                and step.get("call", {}).get("tool") == tool
+            ]
+            failed = [
+                step for step in calls if step.get("call", {}).get("status") == "error"
+            ]
+            hits = failed or calls
+            if not hits:
+                placement["untied"] = "never_called"
+            else:
+                # The step's own worker, which is Unknown (null) when the record does not say.
+                placement["step"] = hits[0]["key"]
+                placement["worker_id"] = hits[0]["worker_id"]
+        placements.append(placement)
+    return placements
+
+
+def served_record(
+    timeline: WorkerTimeline,
+    now: datetime,
+    sub_goals: Iterable[SubGoalEntry] = (),
+    *,
+    stopped_by_user: bool = False,
+) -> CallWorkersRecord:
+    """A kept record as the client reads it, old records included: its steps, each worker's end, where each failed
+    check sits, times with their zone, and whether a later read is still due."""
+    cut_off = bool(timeline.get("events_omitted")) or timeline.get("collection") in (
+        "partial",
+        "unavailable",
+    )
+    steps = worker_steps(
+        timeline.get("events", []),
+        timeline.get("messages", []),
+        turns_cut=bool(timeline.get("messages_omitted")),
+        cut_off=cut_off,
+    )
+    _with_ends(steps["steps"], timeline["workers"])
+    workers: list[HarnessWorker] = []
+    for one in timeline["workers"]:
+        served = one.copy()
+        # Past its deadline is told apart: the world refused its later calls, it was not stopped.
+        served["cut_short"] = (
+            one.get("state") in _CUT_SHORT and one.get("state") != "deadline_passed"
+        )
+        workers.append(served)
+    return {
+        **timeline,
+        **steps,
+        "workers": workers,
+        "placements": failure_placements(steps["steps"], sub_goals),
+        "stopped_by_user": stopped_by_user,
+        "events": [_served(one) for one in timeline.get("events", [])],
+        "started_at": _aware(timeline.get("started_at")),
+        "pending": read_pending(timeline.get("next_read_at"), now),
     }

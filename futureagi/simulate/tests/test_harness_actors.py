@@ -1926,6 +1926,10 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
 
 
 def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recorded_it():
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
     from simulate.views.run_results_v3 import TrialStateSerializer
 
     worker = {
@@ -1945,8 +1949,13 @@ def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recor
             }
         ],
     }
-    served = TrialStateSerializer({"state_changes": [worker]}).data
-    assert served["state_changes"][0]["refused_actions"] == worker["refused_actions"]
+    call = SimpleNamespace(
+        id="c1", call_metadata={TRIAL_STATE_KEY: {"state_changes": [worker]}}
+    )
+    [served] = TrialStateSerializer(trial_state(call)).data["state_changes"]
+    assert served["refused_actions"] == worker["refused_actions"]
+    # The worker is named by the API, so no client parses `worker:` itself.
+    assert served["worker_id"] == "order_lookup"
 
 
 def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor_reads(

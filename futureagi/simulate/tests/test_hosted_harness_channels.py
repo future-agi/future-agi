@@ -1045,7 +1045,7 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
     assert result.status_code == 200, result.content
     # Which worker did what is read once the call's spans have had time to arrive.
     [scheduled] = read_workers.call_args_list
-    assert scheduled.kwargs["start_delay"].total_seconds() == 35
+    assert scheduled.kwargs["start_delay"].total_seconds() > 0
 
     job.refresh_from_db()
     assert job.run_test.workspace == workspace

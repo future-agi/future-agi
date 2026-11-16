@@ -2,7 +2,63 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, Required, TypedDict
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal, NotRequired, Required, TypedDict
+
+WorkerEventType = Literal["delegated", "transferred", "tool_call", "returned"]
+WorkerStatus = Literal["ok", "error"]
+WorkerRelationship = Literal["observed", "unknown"]
+WorkerAttribution = Literal["reported", "unattributed"]
+WorkerCollection = Literal["complete", "partial", "unavailable", "no_evidence"]
+WorkerStepKind = Literal["handoff", "tool_call"]
+# How a hand-off ended: a return decides it; a control pass that never returns is `passed` unless a tool it ran failed.
+HandOffEnd = Literal["finished", "failed", "passed", "no_return", "cut_off"]
+# `code`: the text is data (JSON, shown indented, or a printed dict or list); `text`: prose or markdown.
+TextFormat = Literal["code", "text"]
+# How a worker ended in one call.
+WorkerState = Literal[
+    "completed",
+    "failed",
+    "no_return",
+    "deadline_passed",
+    "cancel_requested",
+    "cancelled",
+    "infrastructure",
+    "not_observed",
+]
+# Why the world refused a call, as its action log codes it.
+RefusalCode = Literal["not_permitted", "deadline_passed", "approval_missing"]
+# A worker's own check or world change is named `worker:<id>`; the task's and the agent's are not.
+WORKER_SUBJECT_PREFIX = "worker:"
+
+
+def worker_subject_id(subject: object) -> str | None:
+    """The worker id a `worker:<id>` subject names; None for any other subject."""
+    text = str(subject or "")
+    return text[len(WORKER_SUBJECT_PREFIX) :] if text.startswith(WORKER_SUBJECT_PREFIX) else None
+
+
+def is_worker_subject(subject: object) -> bool:
+    return worker_subject_id(subject) is not None
+
+
+@dataclass(frozen=True)
+class CallWorkersRead:
+    """The worker-record activity's payload; `attempt` is the call's last reset when the read was scheduled."""
+
+    call_execution_id: str
+    second_read: bool = False
+    attempt: str | None = None
+
+    @classmethod
+    def parse(cls, payload: Mapping[str, object]) -> CallWorkersRead:
+        attempt = payload.get("attempt")
+        return cls(
+            call_execution_id=str(payload["call_execution_id"]),
+            second_read=bool(payload.get("second_read")),
+            attempt=None if attempt is None else str(attempt),
+        )
 
 
 class WorkerSpan(TypedDict):
@@ -13,12 +69,40 @@ class WorkerSpan(TypedDict):
     start_time: str | None
     end_time: str | None
     status: str
-    input: NotRequired[Any]
-    output: NotRequired[Any]
+    input: NotRequired[object]
+    output: NotRequired[object]
     attributes: dict[str, str]
     trace_id: NotRequired[str]
     model: NotRequired[str]
     tokens: NotRequired[int]
+
+
+class SealedToolCall(TypedDict, total=False):
+    """One row of `provider_call_data.livekit.tool_calls` as the sandbox sealed it; times are epoch seconds."""
+
+    name: str
+    arguments: object
+    result: object
+    error: object
+    ok: bool
+    refused: bool
+    # Why the world refused it, as its action log coded it.
+    refusal_code: str
+    at: float
+    ended_at: float
+    start_time_ms: float
+    worker_id: str
+    worker_label: str
+    delegated_to: str
+    kind: str
+    relationship: str
+    parent_span_id: str
+    span_id: str
+    runtime_ids: dict[str, str]
+    task_label: str
+    task_id: str
+    input_omitted: bool
+    output_omitted: bool
 
 
 class DeclaredWorker(TypedDict):
@@ -32,14 +116,70 @@ class CallTurn(TypedDict):
     at: str
 
 
+class ShownText(TypedDict):
+    format: TextFormat
+    text: str
+
+
 class TurnSummary(TypedDict):
     text: str | None
     at: str | None
+    shown: NotRequired[ShownText | None]
+
+
+# A sub-goal with no pass or fail: why it has none.
+SubGoalUnscored = Literal["not_applicable", "inconclusive", "unmeasured"]
+
+
+class SubGoalEntry(TypedDict):
+    """One sub-goal of a call as the results list it; `worker_id` names the worker whose own check it is."""
+
+    name: str
+    passed: bool | None
+    result: NotRequired[SubGoalUnscored]
+    reason: NotRequired[str]
+    evidence: NotRequired[list[str]]
+    subject: NotRequired[str]
+    subject_kind: Literal["task", "worker"]
+    worker_id: NotRequired[str]
+
+
+# `stopped`: the harness ended the worker's own process (a worker the app serves alone) when its deadline passed.
+WorkerCleanupStatus = Literal["stopped", "stopped_with_sandbox", "still_running", "unknown"]
+
+
+class StoppedWorker(TypedDict):
+    """A worker whose own process the harness ended past its deadline, as the trial records it."""
+
+    worker: str
+    process: str
+    # Seconds since the epoch.
+    at: float
+    reason: str
+
+
+class SharedRecordAction(TypedDict):
+    who: str
+    name: str
+    tool: str
+    outcome: str
+    # False for a read, true for a write, None when nothing says.
+    write: bool | None
+
+
+class SharedRecord(TypedDict):
+    """A record two or more participants named in one trial, as argument=value."""
+
+    key: str
+    argument: str
+    value: str
+    actions: list[SharedRecordAction]
+    committed_writes: int
+    truncated: bool
 
 
 class WorkerCleanup(TypedDict):
-    # `stopped`: the harness ended the worker's own process (a worker the app serves alone) when its deadline passed.
-    status: Literal["stopped", "stopped_with_sandbox", "still_running", "unknown"]
+    status: WorkerCleanupStatus
     at: str | None
 
 
@@ -53,43 +193,35 @@ class HarnessWorker(TypedDict):
     model: NotRequired[str]
     tokens: NotRequired[int]
     # How the worker ended in this call; absent on a timeline read before end states were recorded.
-    state: NotRequired[
-        Literal[
-            "completed",
-            "failed",
-            "no_return",
-            "deadline_passed",
-            "cancel_requested",
-            "cancelled",
-            "infrastructure",
-            "not_observed",
-        ]
-    ]
+    state: NotRequired[WorkerState]
     # `tool_calls_only`: seen only through its tool calls (its hand-off was still open when the trial was cut short).
     seen: NotRequired[Literal["tool_calls_only"]]
     # When the harness ended this worker's own process past its deadline; absent for a worker it did not stop.
     stopped_at: NotRequired[float]
-    # A cut-short worker's cleanup, added when served and never stored.
+    # Served only: a cut-short worker's cleanup, and whether the trial's end stopped it before it returned.
     cleanup: NotRequired[WorkerCleanup | None]
+    cut_short: NotRequired[bool]
 
 
 class WorkerEvent(TypedDict, total=False):
     seq: int
-    type: Required[Literal["delegated", "transferred", "tool_call", "returned"]]
+    type: Required[WorkerEventType]
     worker_id: Required[str | None]
     by: str | None
     delegation_id: str
     task: str | None
     result: str | None
+    task_shown: ShownText | None
+    result_shown: ShownText | None
     tool: str
     span_id: str
     trace_id: str
-    status: Literal["ok", "error"]
-    input: Any
-    output: Any
+    status: WorkerStatus
+    input: object
+    output: object
     input_omitted: bool
     output_omitted: bool
-    relationship: Literal["observed", "unknown"]
+    relationship: WorkerRelationship
     parent_delegation_id: str
     # A hand-off to a background job, placed under the tool call that launched it.
     launch: Literal["async"]
@@ -99,13 +231,13 @@ class WorkerEvent(TypedDict, total=False):
     # Internal: the sealed row this event came from or that a span showed, to join reads; never sent to the client.
     row: int
     at: Required[str | None]
-    attribution: Required[Literal["reported", "unattributed"]]
+    attribution: Required[WorkerAttribution]
 
 
 class WorkerStep(TypedDict, total=False):
     """One row of the Participants tab: a hand-off (with its return) or a tool call, under its parent hand-off."""
 
-    kind: Required[Literal["handoff", "tool_call"]]
+    kind: Required[WorkerStepKind]
     key: Required[int]
     parent: Required[int | None]
     depth: Required[int]
@@ -116,11 +248,16 @@ class WorkerStep(TypedDict, total=False):
     started_at: str | None
     ended_at: str | None
     parallel: bool
+    end: HandOffEnd
+    # The worker's end state, on a hand-off that did not come back and that the trial's end cut short.
+    end_state: WorkerState
+    # The keys of the steps directly under this hand-off, in reading order.
+    children: list[int]
     call: WorkerEvent
     # None when the record does not say which turn the step was in.
     turn: int | None
     order: int
-    relationship: Literal["observed", "unknown"]
+    relationship: WorkerRelationship
 
 
 class WorkerTurn(TypedDict):
@@ -129,6 +266,18 @@ class WorkerTurn(TypedDict):
     turn: int | None
     request: TurnSummary | None
     response: TurnSummary | None
+    # The keys of the top-level steps in this turn, in reading order.
+    children: list[int]
+    calls_outside: int
+
+
+class HandOffCounts(TypedDict):
+    hand_offs: int
+    workers: int
+    finished: int
+    did_not_finish: int
+    passed: int
+    cut_off: int
 
 
 class WorkerSteps(TypedDict):
@@ -139,6 +288,9 @@ class WorkerSteps(TypedDict):
     asynchronous: int
     overlap_unknown: bool
     worker_depths: dict[str, int]
+    counts: HandOffCounts
+    cut_off: bool
+    beyond_boundary: bool
 
 
 class Coordinator(TypedDict):
@@ -156,14 +308,35 @@ class WorkerTimeline(TypedDict):
     started_at: str | None
     # The caller's and the agent's messages on the steps' clock, so the steps can be grouped by turn.
     messages: NotRequired[list[CallTurn]]
-    collection: NotRequired[
-        Literal["complete", "partial", "unavailable", "no_evidence"]
-    ]
+    collection: NotRequired[WorkerCollection]
     # How many of the call's messages were left out past the first ones kept.
     messages_omitted: NotRequired[int]
     collected_at: NotRequired[str]
     # False when the read lacked a trace's top-level span or stopped at the span bound; that read is read again.
     tree_complete: NotRequired[bool]
+    # When the later read is due; absent once no later read is scheduled.
+    next_read_at: NotRequired[str]
+
+
+class FailurePlacement(TypedDict):
+    """A failed or unsure sub-goal on the step its evidence points to; `untied` says why it is on none."""
+
+    name: str
+    status: Literal["failed", "inconclusive"]
+    # The step's key; null when the evidence points to no step.
+    step: int | None
+    # Null when the record does not say which worker: shown as Unknown, never guessed.
+    worker_id: str | None
+    untied: Literal["no_moment", "never_called"] | None
+    tool: NotRequired[str]
+
+
+class CallWorkersRecord(WorkerTimeline, WorkerSteps):
+    """The `/workers/` response: the kept record with its steps; `pending` while a read is still due."""
+
+    pending: bool
+    placements: list[FailurePlacement]
+    stopped_by_user: bool
 
 
 class CallActorTrigger(TypedDict, total=False):

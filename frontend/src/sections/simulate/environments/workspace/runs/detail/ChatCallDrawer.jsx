@@ -120,7 +120,7 @@ export default function ChatCallDrawer({
     setOpenStep({ traceId, spanId });
     setChosenArtifact("traces");
   };
-  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  const hasWorkers = useHasWorkers(task.id, task.status);
   // Stays on Participants while the next call's record is unread; a call known to have none falls back.
   const artifact =
     chosenArtifact === "workers" && hasWorkers === false
@@ -320,8 +320,7 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
-                  openTraceId={openStep?.traceId ?? null}
-                  openSpanId={openStep?.spanId ?? null}
+                  openTrace={openStep}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (
@@ -514,7 +513,6 @@ ChatCallDrawer.propTypes = {
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
     provider: PropTypes.string,
-    completedAt: PropTypes.string,
     evalResults: PropTypes.array,
     outcomeReason: PropTypes.string,
   }).isRequired,

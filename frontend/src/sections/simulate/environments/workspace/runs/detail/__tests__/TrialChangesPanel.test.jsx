@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { cleanup, render, screen } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import TrialChangesPanelView from "../TrialChangesPanel";
+import { TRIAL_CHANGES_COPY } from "../trialChanges.constants";
 
 const EVERY_LIST = {
   state_changes: [],
@@ -405,6 +406,7 @@ describe("TrialChangesPanel", () => {
           state_changes: [
             {
               who: "worker:order_lookup",
+              worker_id: "order_lookup",
               name: "order_lookup",
               attempted: 2,
               committed: 1,
@@ -425,9 +427,11 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText("Worker · order_lookup")).toBeInTheDocument();
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.worker("order_lookup")),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("refused-attempts")).toHaveTextContent(
-      "update_order_status: orders.update_status is not permitted for order_lookup",
+      "update_order_status",
     );
   });
 

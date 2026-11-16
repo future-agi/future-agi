@@ -397,7 +397,7 @@ def test_receipt_ingest_can_skip_the_usage_replay(
     # Other after-commit work (the worker read) may run; only the usage replay is what charges.
     with (
         patch("simulate.services.harness_usage.replay_harness_usage") as replay,
-        patch("simulate.services.hosted_harness_ingestion._dispatch_worker_read"),
+        patch("simulate.services.hosted_harness_ingestion.dispatch_worker_read"),
     ):
         with django_capture_on_commit_callbacks(execute=True):
             _, created = ingest_result_receipt(attempt, body, replay_usage=False)

@@ -57,6 +57,7 @@ from simulate.services.run_results_v3_scoring import (
     score_tokens,
 )
 from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
+from simulate.types import WORKER_SUBJECT_PREFIX
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -656,7 +657,7 @@ SELECT ce.id, ce.status, ce.duration_seconds,
       chr(30))
     FROM jsonb_each(ce.eval_outputs) e
     -- A worker's own check is shown beside the task's verdict, never part of the call's outcome.
-    WHERE left(COALESCE(e.value ->> 'subject', ''), 7) <> 'worker:'), '')
+    WHERE left(COALESCE(e.value ->> 'subject', ''), {worker_prefix_length}) <> '{worker_prefix}'), '')
   ELSE ce.eval_outputs::text END,
   NULLIF(s.metadata ->> 'use_case', ''), NULLIF(s.metadata ->> 'goal', ''), s.name
 FROM (
@@ -788,6 +789,8 @@ def scan_call_values(
                 calls_table=_CALLS_TABLE,
                 scenarios_table=Scenarios._meta.db_table,
                 call_filter="" if call_ids is None else _CALL_FILTER,
+                worker_prefix=WORKER_SUBJECT_PREFIX,
+                worker_prefix_length=len(WORKER_SUBJECT_PREFIX),
             ),
             params,
         )
