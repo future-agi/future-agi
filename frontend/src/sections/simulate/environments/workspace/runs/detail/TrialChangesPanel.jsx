@@ -182,7 +182,7 @@ function WorldState({ trialState }) {
       {changes.map((one) => (
         <Box key={one.who}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {one.who?.startsWith("worker:") ? C.worker(one.name) : one.name}
+            {one.worker_id ? C.worker(one.name) : one.name}
           </Typography>
           <Typography sx={quiet}>{C.counts(one)}</Typography>
           {one.committed_actions?.length > 0 && (

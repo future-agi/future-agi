@@ -9,7 +9,12 @@ import pytest
 from django.db import connection
 
 from simulate.models import CallExecution
-from simulate.services.run_results_v3 import _eval_outcome, call_outcome, eval_rows
+from simulate.services.run_results_v3 import (
+    _eval_outcome,
+    call_outcome,
+    eval_rows,
+    sub_goal_entries,
+)
 from simulate.services.run_results_v3_queries import (
     _configured_eval_verdict,
     run_calls_queryset,
@@ -378,3 +383,14 @@ def test_a_worker_s_own_failed_check_never_fails_the_call(harness_status):
         eval_outputs=checks,
     )
     assert call_outcome(call, {}) == "passed"
+
+
+def test_a_worker_s_own_check_names_its_worker_and_the_task_s_does_not():
+    task, own = sub_goal_entries(
+        [
+            {"name": "refund_issued", "verdict": "fail"},
+            {"name": "read_only", "verdict": "fail", "subject": "worker:order_lookup"},
+        ]
+    )
+    assert (task["subject_kind"], task.get("worker_id")) == ("task", None)
+    assert (own["subject_kind"], own["worker_id"]) == ("worker", "order_lookup")

@@ -15,6 +15,7 @@ from simulate.services.hosted_harness_ingestion import (
     get_object_url,
 )
 from simulate.services.run_results_v3_queries import call_actor_delivery
+from simulate.types import worker_subject_id
 from simulate.utils.stored_transcript_roles import call_actor_label
 
 logger = structlog.get_logger(__name__)
@@ -83,6 +84,12 @@ class BlockedCall(TypedDict, total=False):
 APPROVAL_MISSING = "approval_missing"
 
 
+class RefusedAction(TypedDict):
+    action: str
+    code: str
+    reason: str
+
+
 class StateChange(TypedDict, total=False):
     """What one participant attempted in the trial and what the world made of it, as the harness counts it."""
 
@@ -98,6 +105,9 @@ class StateChange(TypedDict, total=False):
     read_actions: list[str]
     no_change: bool
     blocked: list[BlockedCall]
+    refused_actions: list[RefusedAction]
+    # The worker this participant is, when it is one of the agent's workers.
+    worker_id: str
 
 
 class ActorDecision(TypedDict):
@@ -799,6 +809,17 @@ def _approval_notices(calls: Sequence[Mapping[str, Any]]) -> list[TrialNotice]:
     ]
 
 
+def _state_change(entry: dict[str, Any]) -> StateChange:
+    change = cast(
+        StateChange,
+        {**entry, "name": AGENT_NAME} if entry.get("who") == AGENT else dict(entry),
+    )
+    worker = worker_subject_id(entry.get("who"))
+    if worker is not None:
+        change["worker_id"] = worker
+    return change
+
+
 def trial_state(
     call: CallExecution, *, calls: Sequence[Mapping[str, Any]] = ()
 ) -> TrialState | None:
@@ -818,13 +839,7 @@ def trial_state(
     raw_records = state.get("records")
     records = raw_records if isinstance(raw_records, dict) else {}
     unreadable = state.get("unreadable") is True or records.get("unreadable") is True
-    changes = [
-        cast(
-            StateChange,
-            {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one,
-        )
-        for one in _entries(state.get("state_changes"))
-    ]
+    changes = [_state_change(one) for one in _entries(state.get("state_changes"))]
     decisions = _entries(state.get("decisions"))
     names = {
         one["id"]: one["name"]
