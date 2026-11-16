@@ -61973,7 +61973,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   .string()
                   .min(1)
                   .describe(
-                    "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
+                    "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced",
                   ),
                 message: zod
                   .string()
@@ -61986,6 +61986,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   .number()
                   .optional()
                   .describe("For evidence_incomplete."),
+                workers: zod.array(zod.string().min(1)).optional(),
               })
               .describe(
                 "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -61993,6 +61994,64 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           )
           .describe(
             "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+          ),
+        shared_records: zod
+          .array(
+            zod
+              .object({
+                key: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "What the calls named, as argument=value; never a database identity.",
+                  ),
+                argument: zod.string().min(1),
+                value: zod.string().min(1),
+                actions: zod.array(
+                  zod.object({
+                    who: zod.string().min(1),
+                    name: zod
+                      .string()
+                      .min(1)
+                      .describe(
+                        "The participant's name, as the state changes give it.",
+                      ),
+                    tool: zod.string(),
+                    outcome: zod.string().min(1),
+                    write: zod.boolean(),
+                  }),
+                ),
+                committed_writes: zod.number(),
+                truncated: zod.boolean(),
+              })
+              .describe(
+                "Records two or more participants named in this trial, and what the world made of each call.",
+              ),
+          )
+          .optional()
+          .describe(
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+        stopped_workers: zod
+          .array(
+            zod
+              .object({
+                worker: zod.string().min(1),
+                process: zod.string().min(1),
+                at: zod
+                  .number()
+                  .describe(
+                    "When the harness ended it, seconds since the epoch.",
+                  ),
+                reason: zod.string().min(1),
+              })
+              .describe(
+                "Workers whose own process the harness ended when their deadline passed.",
+              ),
+          )
+          .optional()
+          .describe(
+            "Workers whose own process the harness ended when their deadline passed.",
           ),
       }),
     }),
