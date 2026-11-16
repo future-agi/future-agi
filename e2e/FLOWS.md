@@ -3072,9 +3072,9 @@
 
 ### SIM-E2E-012 — a case the builder adds is validated with the unsaved changes, saved Active, and runs
 
-**Goal:** A builder validates a case the chat just added from its own drawer, saves the validated versions under a name, and the case is Active and runs
+**Goal:** A builder validates a case the chat just added from its own drawer and Activates the validated versions there under a name, and the case is Active and runs
 
-**Spec:** `flows/simulate/draft-case-validate.spec.ts:22`
+**Spec:** `flows/simulate/draft-case-validate.spec.ts:23`
 
 **Tags:** —
 
@@ -3084,7 +3084,7 @@
 2. open the Scenarios tab and the added case
 3. click Validate in the case drawer
 4. stand in for the validation sandbox: record every case proved on the candidate pairing as the gateway records a proofs file, and certify it (e2e/lib/harness_review_seed.py prove_candidates)
-5. name the version in the draft bar and Save
+5. name the version in the case drawer and click Activate
 6. read the Scenarios list and the run readiness for the added case
 
 **Backend state verified:**
@@ -3097,4 +3097,5 @@
 **Browser observations:**
 
 - the added case reads as an unsaved change with a Validate that validates the unsaved changes
-- the draft bar reads "Validated. Name this version to save it." once the validation is ready
+- the drawer reads "Validated. Name this version to save it." once the validation is ready
+- the drawer names the version and Activates the validated versions

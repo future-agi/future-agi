@@ -8,10 +8,11 @@ const ENVIRONMENTS = '/simulate/api/harness-environments';
 const JOBS = '/simulate/api/harness-jobs';
 const UI_READY = 60_000;
 // Copy pinned from frontend/src/sections/simulate/environments/workspace/scenarios/scenarios.constants.js
-// (SCENARIOS_COPY.validateDrafts) and workspace.constants.js (DRAFTS_COPY.validation.ready, versionName, save).
+// (SCENARIOS_COPY.validateDrafts, activate) and workspace.constants.js (DRAFTS_COPY.validation.ready, versionName).
 const VALIDATE_DRAFTS = 'Validate with the unsaved changes';
 const READY_NOTE = 'Validated. Name this version to save it.';
 const VERSION_NAME = 'Name this version';
+const ACTIVATE = 'Activate';
 
 interface Candidates { environment_version_id: string; suite_version_id: string }
 interface Drafts { validation: { state: string } | null; candidates: Candidates | null }
@@ -23,15 +24,15 @@ test('SIM-E2E-012: a case the builder adds is validated with the unsaved changes
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'SIM-E2E-012', area: 'simulate',
-    userGoal: 'A builder validates a case the chat just added from its own drawer, saves the validated versions '
-      + 'under a name, and the case is Active and runs',
+    userGoal: 'A builder validates a case the chat just added from its own drawer and Activates the validated '
+      + 'versions there under a name, and the case is Active and runs',
     steps: ['seed a built, versioned Environment and a case the builder chat added to the suite draft in answer to a '
               + 'message (e2e/lib/simulate-seed.ts; no builder sandbox runs in this harness)',
             'open the Scenarios tab and the added case',
             'click Validate in the case drawer',
             'stand in for the validation sandbox: record every case proved on the candidate pairing as the gateway '
               + 'records a proofs file, and certify it (e2e/lib/harness_review_seed.py prove_candidates)',
-            'close the case drawer, name the version in the draft bar and Save',
+            'name the version in the case drawer and click Activate',
             'read the Scenarios list and the run readiness for the added case'],
     backendChecks: ['the drawer Validate posts drafts/validate (202) and never scenarios/validate',
                     'the drafts read reports the candidate validation ready',
@@ -39,7 +40,8 @@ test('SIM-E2E-012: a case the builder adds is validated with the unsaved changes
                     'after Save the default suite is the candidate, its pairing holds the added case proved, '
                       + 'the list reads it Active and a run of it holds nothing back'],
     browserChecks: ['the added case reads as an unsaved change with a Validate that validates the unsaved changes',
-                    'the draft bar reads "Validated. Name this version to save it." once the validation is ready'],
+                    'the drawer reads "Validated. Name this version to save it." once the validation is ready',
+                    'the drawer names the version and Activates the validated versions'],
   }),
 }, async ({ actor, page, probe }, testInfo) => {
   // Three docker exec seeds and two UI round trips.
@@ -88,15 +90,13 @@ test('SIM-E2E-012: a case the builder adds is validated with the unsaved changes
   });
 
   const name = `Partial refunds ${environment.environmentId.slice(0, 8)}`;
-  await test.step('ui: the draft bar saves the validated versions under a name', async () => {
-    // The case drawer covers the bar's name field and Save: the user closes it first.
-    await page.keyboard.press('Escape');
-    const bar = page.getByTestId('draft-bar');
-    await expect(bar.getByRole('status')).toHaveText(READY_NOTE, { timeout: UI_READY });
-    await bar.getByRole('textbox', { name: VERSION_NAME }).fill(name);
+  await test.step('ui: the drawer names the validated versions and Activates them', async () => {
+    const drawer = page.getByTestId('lifecycle-validate-drafts');
+    await expect(drawer.getByRole('status')).toHaveText(READY_NOTE, { timeout: UI_READY });
+    await drawer.getByRole('textbox', { name: VERSION_NAME }).fill(name);
     const [response] = await Promise.all([
       page.waitForResponse((one) => one.url().includes(`${base}/drafts/save/`), { timeout: UI_READY }),
-      bar.getByRole('button', { name: 'Save' }).click(),
+      drawer.getByRole('button', { name: ACTIVATE }).click(),
     ]);
     expect(response.status()).toBe(200);
   }, { timeout: UI_READY * 2 });
