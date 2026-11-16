@@ -5,7 +5,7 @@ import { seedHarnessEnvironment } from '../../lib/simulate-seed';
 // Browser-side waits: one navigation's first paint, or a run request's answer, not a stage.
 const UI_READY = 60_000;
 // The header's tag (frontend/.../runs/detail/RunReadinessTag.jsx): one measured row not Supported, tool routing
-// Blocked as production_only (the same report SIM-E2E-003 pins), and the refund it holds back.
+// Blocked as production_only (the same report SIM-E2E-030 pins), and the refund it holds back.
 const TAG = 'Started with 1 limit';
 const HELD = '1 of 2 cases held back';
 
