@@ -7,9 +7,14 @@ import json
 from datetime import UTC, timedelta
 
 import pytest
+from django.utils import timezone
 
 from accounts.models import Workspace
-from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessConversationEvent,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.tests.test_harness_starting_records import (
     FIXTURE,
     KEY,
@@ -25,6 +30,7 @@ pytestmark = pytest.mark.django_db
 
 PRIYA = {"path": ["identity", "rider_id"], "table": "users", "key": "rdr_priya"}
 Message = HostedHarnessConversationMessage
+Event = HostedHarnessConversationEvent
 
 
 @pytest.fixture(autouse=True)
@@ -106,26 +112,64 @@ def _land(environment, user, *, starts_from, holds=True, proved_at=None):
     )
 
 
+def _turn_ends(environment, message, *, outcome="success", published=True):
+    """The builder's turn ending as the chat records it: the checkpoint it committed, then its end, and once its save
+    lands, that checkpoint published on the environment."""
+    now = timezone.now()
+    for sequence, kind, payload in (
+        (1, "checkpoint_committed", {"digest": "sha256:" + "a" * 64}),
+        (
+            2,
+            "turn_completed",
+            {"command_message_id": str(message.id), "outcome": outcome},
+        ),
+    ):
+        Event.no_workspace_objects.create(
+            event_id=f"{message.id}-{sequence}",
+            conversation_id=message.conversation_id,
+            sequence=sequence,
+            kind=kind,
+            payload=payload,
+            digest="sha256:" + "b" * 64,
+            emitted_at=now,
+        )
+    Message.no_workspace_objects.filter(id=message.id).update(
+        state=Message.State.FAILED if outcome != "success" else Message.State.COMPLETED
+    )
+    if published:
+        environment.refresh_from_db()
+        payload = dict(environment.payload or {})
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "conversation_checkpoints": {str(message.conversation_id): {"sequence": 1}},
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+
+
 @pytest.mark.parametrize(
     "turn, landed, served",
     [
-        (Message.State.STREAMING, None, "pending"),
-        (Message.State.FAILED, None, "refused"),
-        (Message.State.COMPLETED, {"starts_from": "rdr_priya"}, "proven"),
-        (
-            Message.State.COMPLETED,
-            {"starts_from": "rdr_priya", "holds": False},
-            "refused",
-        ),
+        (None, None, "pending"),
+        ({"outcome": "failure"}, None, "refused"),
+        # The turn has ended but its save has not landed yet: still the builder's.
+        ({"published": False}, None, "pending"),
+        ({}, {"starts_from": "rdr_priya"}, "proven"),
+        ({}, {"starts_from": "rdr_priya", "holds": False}, "refused"),
         # A proof made before the request is not a proof of the rework.
-        (
-            Message.State.COMPLETED,
-            {"starts_from": "rdr_priya", "stale": True},
-            "refused",
-        ),
-        (Message.State.COMPLETED, {"starts_from": "rdr_arjun"}, "refused"),
+        ({}, {"starts_from": "rdr_priya", "stale": True}, "refused"),
+        ({}, {"starts_from": "rdr_arjun"}, "refused"),
     ],
-    ids=["running", "failed", "proven", "proof fails", "stale proof", "unchanged"],
+    ids=[
+        "running",
+        "failed",
+        "save not landed",
+        "proven",
+        "proof fails",
+        "unproven",
+        "unchanged",
+    ],
 )
 def test_the_served_state_follows_the_builder_s_turn(
     user, workspace, storage, auth_client, turn, landed, served
@@ -139,7 +183,8 @@ def test_the_served_state_follows_the_builder_s_turn(
             timedelta(hours=-1) if stale else timedelta(seconds=1)
         )
         _land(environment, user, **landed, proved_at=made.isoformat())
-    Message.no_workspace_objects.filter(id=message.id).update(state=turn)
+    if turn is not None:
+        _turn_ends(environment, message, **turn)
 
     rework = auth_client.get(_url(environment)).json()["rework"]
 
@@ -169,9 +214,7 @@ def test_proof_times_are_compared_as_times(user, workspace, storage, auth_client
         starts_from="rdr_priya",
         proved_at=later.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
-    Message.no_workspace_objects.filter(id=message.id).update(
-        state=Message.State.COMPLETED
-    )
+    _turn_ends(environment, message)
 
     assert auth_client.get(_url(environment)).json()["rework"]["state"] == "proven"
 
