@@ -276,6 +276,8 @@ func TestResponsesDecisionBFallbackClearsAttemptWarnings(t *testing.T) {
 			srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{
 				plugins: []pipeline.Plugin{logs},
 				configure: func(cfg *config.Config) {
+					// Model fallbacks run through the router, as in the existing bridge fixture.
+					cfg.Routing.DefaultStrategy = "least-latency"
 					cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 3, OnStatusCodes: []int{http.StatusBadGateway}}
 					cfg.Routing.ModelFallbacks = map[string][]string{"gpt-5.6-terra": {"gpt-5.5"}}
 				},
