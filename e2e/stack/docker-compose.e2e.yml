@@ -251,8 +251,8 @@ services:
         ipv4_address: 172.30.91.10
     restart: "no"
 
-  # A separate journal keeps asynchronous harness traffic out of the browser
-  # flow's full-journal assertion when Playwright runs the files in parallel.
+  # Separate listeners identify browser versus Temporal regressions; both
+  # journals must stay empty because the shipped link evaluators are offline.
   link-worker-canary:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
