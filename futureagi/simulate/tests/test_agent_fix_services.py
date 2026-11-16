@@ -3930,7 +3930,12 @@ class TestPullRequestDescription:
                 "source_ids": ["row-1", "row-2", "row-3"],
                 "scenario_keys": ["evidence-1", "evidence-2", "evidence-3"],
             },
-            {"source_kind": "a-kind-from-later", "scenario_keys": ["evidence-4"]},
+            {
+                "import_id": "8f3f0b52-0b7a-4c4e-9a43-2b1a8f0c1d13",
+                "source_kind": "transcript",
+                "source_ids": ["transcript-1"],
+                "scenario_keys": ["evidence-4"],
+            },
         ]
         _, _, body = self._described(
             source_run, diagnosis={"causes": _CAUSES}, evidence=evidence
@@ -3941,11 +3946,28 @@ class TestPullRequestDescription:
             "### Evidence\n\nThis epoch started from imported evidence:\n\n"
             "- 2 sessions from Observe\n"
             "- 3 dataset rows\n"
-            "- 1 imported case"
+            "- 1 transcript"
         ) in body
         # Never an import's id, nor its sources.
         assert "6d1f0b52" not in body and "row-1" not in body
         assert "session-with-a-customer-name" not in body
+
+    def test_an_import_kind_the_body_does_not_know_reads_as_imported_cases(self):
+        # A stored request holds only known kinds (FixEvidence), but a kind added later
+        # must still be counted, not dropped.
+        candidate = SimpleNamespace(
+            fix_run=SimpleNamespace(
+                request={
+                    "evidence": [
+                        {"source_kind": "a-kind-from-later", "scenario_keys": ["e-1"]}
+                    ]
+                }
+            )
+        )
+
+        assert agent_fix_github._evidence_origin(candidate).endswith(
+            "- 1 imported case"
+        )
 
 
 class TestCheckRunReceipts:

@@ -783,12 +783,17 @@ def _ref_head(repository: str, ref: str, branch: str, token: str) -> str | None:
     if name and _COMMIT.fullmatch(name):
         return None
     if ref.startswith("refs/tags/"):
-        return _api("GET", f"/repos/{repository}/commits/{quote(name)}", token).json()[
-            "sha"
-        ]
-    return _api(
+        # A tag ref that names no tag has no commit to compare: as a pinned commit.
+        if not name:
+            return None
+        tag_head: str = _api(
+            "GET", f"/repos/{repository}/commits/{quote(name)}", token
+        ).json()["sha"]
+        return tag_head
+    branch_head: str = _api(
         "GET", f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}", token
     ).json()["object"]["sha"]
+    return branch_head
 
 
 def _pull_request(
