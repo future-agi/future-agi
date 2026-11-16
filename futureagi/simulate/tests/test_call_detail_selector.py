@@ -328,3 +328,18 @@ def test_an_actor_that_acted_in_the_world_without_a_line_is_served_as_acted_not_
         "Acted in the world, said no line",
     )
     assert alex["delivery"] == "dropped"
+
+
+def test_a_trial_on_a_seal_built_before_the_world_door_says_its_world_actions_are_not_known():
+    pre_door = trial_state(_call({"recorded": False, "why": "sealed_without_door"}))
+    in_process = trial_state(_call({"recorded": False, "why": "in_process_tools"}))
+
+    assert pre_door["recorded"] is False
+    assert pre_door["why_label"].startswith(
+        "This environment was built before world actions were recorded"
+    )
+    assert "Rebuild" in pre_door["why_label"]
+    assert "attempted" not in pre_door["why_label"]
+    assert in_process["why_label"].startswith(
+        "World state is not recorded for this agent"
+    )

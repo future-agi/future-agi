@@ -21976,8 +21976,6 @@ export interface HarnessRunCreateApi {
   /**
    * The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.
    * @minLength 1
-   * @maxLength 19
-   * @pattern ^[0-9]+$
    */
   seed?: string;
   agent_version_id?: string | null;
@@ -28029,10 +28027,12 @@ export interface TrialStateApi {
   state_changes: TrialStateChangeApi[];
   /** Writes the world committed twice after the agent's answer was lost; the trial fails on them. */
   duplicates: DuplicateCommitApi[];
-  /** False when World changes are not recorded for this agent: its tools run inside it. */
+  /** False when World changes are not recorded for this trial: its tools ran where the world cannot see. */
   recorded?: boolean;
   /** Why they were not recorded. */
   why?: string;
+  /** Why they were not recorded, in the words World state shows. */
+  why_label?: string;
   /** True when what changed in the world could not be read; checks that needed it read Unmeasured. */
   unreadable: boolean;
   records?: TrialRecordsApi;

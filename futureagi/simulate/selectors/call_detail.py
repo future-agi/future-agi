@@ -239,12 +239,22 @@ class TrialState(TypedDict):
     notices: list[TrialNotice]
     recorded: NotRequired[bool]
     why: NotRequired[str]
+    why_label: NotRequired[str]
     records: NotRequired[TrialRecords]
     start: NotRequired[TrialStart]
     usage_total: NotRequired[UsageTotal]
     limits: NotRequired[dict[str, int | float | str | None]]
     end_state_url: NotRequired[str]
 
+
+# Why a trial's world actions were not recorded, in the words World state shows; an older record says no reason.
+IN_PROCESS_TOOLS = "in_process_tools"
+NOT_RECORDED_LABELS = {
+    IN_PROCESS_TOOLS: "World state is not recorded for this agent: its tools run inside it, where the test world "
+    "cannot see them.",
+    "sealed_without_door": "This environment was built before world actions were recorded, so this trial's are not "
+    "known. Rebuild it to see them.",
+}
 
 # How far each call actor got, in the words the call shows.
 DELIVERY_LABELS: dict[CallActorDelivery, str] = {
@@ -914,6 +924,9 @@ def trial_state(
     if state.get("recorded") is False:
         shown["recorded"] = False
         shown["why"] = str(state.get("why") or "")
+        shown["why_label"] = NOT_RECORDED_LABELS.get(
+            shown["why"], NOT_RECORDED_LABELS[IN_PROCESS_TOOLS]
+        )
     if records and not unreadable:
         shown["records"] = _records(records)
     if isinstance(state.get("start"), dict):

@@ -90,7 +90,11 @@ export default function TrialChangesPanel({ trialState }) {
   if (!trialState)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
   if (trialState.recorded === false)
-    return <Typography sx={{ ...quiet, p: 2 }}>{C.inProcess}</Typography>;
+    return (
+      <Typography sx={{ ...quiet, p: 2 }}>
+        {trialState.why_label || C.inProcess}
+      </Typography>
+    );
   return <WorldState trialState={trialState} />;
 }
 

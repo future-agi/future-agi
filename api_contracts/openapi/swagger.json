@@ -148231,9 +148231,7 @@
                     "description": "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
                     "type": "string",
                     "x-nullable": true,
-                    "minLength": 1,
-                    "pattern": "^[0-9]+$",
-                    "maxLength": 19
+                    "minLength": 1
                 },
                 "agent_version_id": {
                     "title": "Agent version id",
@@ -161641,12 +161639,17 @@
                 },
                 "recorded": {
                     "title": "Recorded",
-                    "description": "False when World changes are not recorded for this agent: its tools run inside it.",
+                    "description": "False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
                     "type": "boolean"
                 },
                 "why": {
                     "title": "Why",
                     "description": "Why they were not recorded.",
+                    "type": "string"
+                },
+                "why_label": {
+                    "title": "Why label",
+                    "description": "Why they were not recorded, in the words World state shows.",
                     "type": "string"
                 },
                 "unreadable": {

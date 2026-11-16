@@ -47965,12 +47965,6 @@ export const simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsDefault = 1;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsMax = 20;
 
-export const simulateApiHarnessEnvironmentsRunBodySeedMax = 19;
-
-export const simulateApiHarnessEnvironmentsRunBodySeedRegExp = new RegExp(
-  "^[0-9]+$",
-);
-
 export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   scenario_ids: zod
     .array(
@@ -47988,8 +47982,6 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   seed: zod
     .string()
     .min(1)
-    .max(simulateApiHarnessEnvironmentsRunBodySeedMax)
-    .regex(simulateApiHarnessEnvironmentsRunBodySeedRegExp)
     .optional()
     .describe(
       "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
@@ -50709,10 +50701,6 @@ export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
 export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
 
-export const simulateApiHarnessJobsRunsBodySeedMax = 19;
-
-export const simulateApiHarnessJobsRunsBodySeedRegExp = new RegExp("^[0-9]+$");
-
 export const SimulateApiHarnessJobsRunsBody = zod.object({
   scenario_ids: zod
     .array(
@@ -50727,8 +50715,6 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
   seed: zod
     .string()
     .min(1)
-    .max(simulateApiHarnessJobsRunsBodySeedMax)
-    .regex(simulateApiHarnessJobsRunsBodySeedRegExp)
     .optional()
     .describe(
       "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
@@ -60994,9 +60980,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .boolean()
       .optional()
       .describe(
-        "False when World changes are not recorded for this agent: its tools run inside it.",
+        "False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
       ),
     why: zod.string().optional().describe("Why they were not recorded."),
+    why_label: zod
+      .string()
+      .optional()
+      .describe("Why they were not recorded, in the words World state shows."),
     unreadable: zod
       .boolean()
       .describe(

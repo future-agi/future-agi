@@ -69737,8 +69737,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
           minLength: 1,
-          pattern: "^[0-9]+$",
-          maxLength: 19,
         },
         agent_version_id: {
           title: "Agent version id",
@@ -98502,12 +98500,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         recorded: {
           title: "Recorded",
           description:
-            "False when World changes are not recorded for this agent: its tools run inside it.",
+            "False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
           type: "boolean",
         },
         why: {
           title: "Why",
           description: "Why they were not recorded.",
+          type: "string",
+        },
+        why_label: {
+          title: "Why label",
+          description:
+            "Why they were not recorded, in the words World state shows.",
           type: "string",
         },
         unreadable: {
