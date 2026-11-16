@@ -14,7 +14,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
-from simulate.models import AgentFixRun
+from simulate.models import AgentFixRun, HostedHarnessScenario
 from simulate.models.harness_versioning import VersionOrigin
 from simulate.selectors.agent_fix import fix_deadline, queue_deadline
 from simulate.services.agent_fix_runs import close_fix_run, drop_variation_rows
@@ -82,22 +82,42 @@ def sweep_lost_fix_runs() -> dict[str, int]:
 def sweep_variation_rows(now: datetime) -> int:
     """Drop the dataset rows a closed fix's variations run left bound, for each recent fix
     that is the newest on its private suite (a retry runs the same variations and owns
-    them). The number of fixes whose rows are still bound."""
+    them). The number of fixes whose rows are still bound.
+
+    Only fixes with rows still bound are batched, oldest first: a fix already clean takes
+    no place, so newer clean fixes never keep an older one's rows from being dropped."""
     newer = AgentFixRun.no_workspace_objects.filter(
         suite_version_id=OuterRef("suite_version_id"),
         created_at__gt=OuterRef("created_at"),
     )
-    fix_runs = (
+    candidates = list(
         AgentFixRun.no_workspace_objects.exclude(state__in=AgentFixRun.ACTIVE_STATES)
         .filter(
             suite_version__origin=VersionOrigin.FIX,
             finished_at__gte=now - CLEANUP_WINDOW,
         )
         .exclude(Exists(newer))
-        .select_related("suite_version", "environment")
-        .order_by("-finished_at")[:_BATCH_LIMIT]
+        .values_list("id", "environment_id", "suite_version__documents__variations")
     )
-    return sum(1 for fix_run in fix_runs if not drop_variation_rows(fix_run))
+    bound = set(
+        HostedHarnessScenario._base_manager.filter(
+            job_id__in={environment for _id, environment, _keys in candidates},
+            scenario_key__in={key for *_ids, keys in candidates for key in keys or {}},
+            scenario__isnull=False,
+        ).values_list("job_id", "scenario_key")
+    )
+    pending = [
+        fix_run_id
+        for fix_run_id, environment, keys in candidates
+        if any((environment, key) in bound for key in keys or {})
+    ]
+    fix_runs = (
+        AgentFixRun.no_workspace_objects.filter(id__in=pending)
+        .select_related("suite_version", "environment")
+        .order_by("finished_at")[:_BATCH_LIMIT]
+    )
+    left = sum(1 for fix_run in fix_runs if not drop_variation_rows(fix_run))
+    return left + max(0, len(pending) - _BATCH_LIMIT)
 
 
 def _ending(fix_run: AgentFixRun, now: datetime) -> Closing | None:

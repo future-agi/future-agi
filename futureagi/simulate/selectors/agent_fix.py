@@ -807,9 +807,10 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         ),
         output_field=money,
     )
-    settled = Q(
-        check_runs__fix_cost_usd__isnull=False,
-        check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES,
+    # A run a retry adopted holds its simulation's bill here; its evals are the retry's.
+    settled = Q(check_runs__fix_cost_usd__isnull=False) & (
+        Q(check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES)
+        | Q(check_runs__graded_for__isnull=False)
     )
     # A graded run settles before its fix has a winner, and the winner's grading runs its
     # evals later. So while the fix goes on, they stay held on top of what it billed.
@@ -847,8 +848,8 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         Value(Decimal(0)),
         output_field=money,
     )
-    # The runs it read again: what their evals billed, and while it goes on, the worst
-    # case of the evals its winner's grading runs on them.
+    # The runs it read again: what their evals billed, and the worst case of the evals its
+    # winner's grading runs on them, while it goes on and while that grading runs.
     adopted = HostedHarnessJob.no_workspace_objects.filter(
         graded_for=OuterRef("pk"), deleted=False
     ).values("graded_for")
@@ -857,21 +858,19 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         Value(Decimal(0)),
         output_field=money,
     )
-    adopted_held = Case(
-        When(
-            state__in=AgentFixRun.ACTIVE_STATES,
-            then=ExpressionWrapper(
-                Coalesce(
-                    Subquery(
-                        adopted.annotate(total=Sum("scenario_count")).values("total")
-                    ),
-                    0,
-                )
-                * (_worst_case(evals) - _worst_case(0)),
-                output_field=money,
-            ),
-        ),
-        default=Value(Decimal(0)),
+
+    def adopted_executions(runs: QuerySet[HostedHarnessJob]) -> Coalesce:
+        return Coalesce(
+            Subquery(runs.annotate(total=Sum("scenario_count")).values("total")), 0
+        )
+
+    grading = adopted.exclude(test_execution__status__in=_SETTLED_RUN_STATUSES)
+    adopted_held = ExpressionWrapper(
+        Case(
+            When(state__in=AgentFixRun.ACTIVE_STATES, then=adopted_executions(adopted)),
+            default=adopted_executions(grading),
+        )
+        * (_worst_case(evals) - _worst_case(0)),
         output_field=money,
     )
     return runs.annotate(
@@ -1385,10 +1384,33 @@ def verified_cases_min() -> int:
     return held + -(-(HELD_BACK_SHARE - 1) * held // (1 + VARIATIONS_PER_CASE))
 
 
+_UNSAVED_WORDS = {"suite": "scenario", "environment": "setup"}
+
+
+def unsaved_changes(pieces: Iterable[str]) -> str | None:
+    """The unsaved changes the given draft pieces hold, in the words the user sees
+    ("scenario", "setup", or both); None when there are none."""
+    held = set(pieces)
+    words = [word for piece, word in _UNSAVED_WORDS.items() if piece in held]
+    return " and ".join(words) or None
+
+
+def fresh_draft_pieces(environment: HostedHarnessJob) -> list[str]:
+    """The pieces with an unsaved draft on the environment's current versions."""
+    from simulate.services.harness_versioning import drafts
+
+    return [
+        piece
+        for piece, ref in drafts.draft_refs(environment).items()
+        if ref.id is not None
+    ]
+
+
 def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | None:
     """What would refuse a fix that first writes variations of its failing cases, on top of
-    launch_blocker; None when nothing would. The environment's builder writes them, on top
-    of any unsaved scenario changes, so those must be saved or discarded first."""
+    launch_blocker; None when nothing would. The environment's builder writes them in its
+    chat's workspace, which holds any unsaved scenario or setup changes, so those must be
+    saved or discarded first: the variations are written from the run's cases only."""
     from simulate.services.harness_versioning import drafts
 
     environment = source_run.environment
@@ -1421,11 +1443,11 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
         drafts.require_no_rebuild(environment, piece="suite")
     except HostedHarnessError as exc:
         return exc
-    if drafts.fresh_draft(environment, "suite") is not None:
+    if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
         return HostedHarnessError(
-            "fix_suite_draft_open",
-            "Save or discard the environment's unsaved scenario changes first: the epoch"
-            " writes its variations of the failing cases on top of them",
+            "fix_draft_open",
+            f"This environment has unsaved {unsaved} changes. Save or discard them,"
+            " then run Epoch.",
             status_code=409,
         )
     return None
