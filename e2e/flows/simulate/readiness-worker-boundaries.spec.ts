@@ -15,10 +15,10 @@ interface Report { workers: WorkerRow[] }
 
 const byId = (report: Report) => Object.fromEntries(report.workers.map((one) => [one.worker_id, one]));
 
-test('SIM-E2E-007: run readiness shows each worker\'s tools as Allowed, Blocked or Not enforced, never Supported', {
+test('SIM-E2E-033: run readiness shows each worker\'s tools as Allowed, Blocked or Not enforced, never Supported', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-007', area: 'simulate',
+    id: 'SIM-E2E-033', area: 'simulate',
     userGoal: 'A developer testing a multi-agent app sees, per worker, which tools the test world holds it to, '
       + 'and is told to rebuild an environment sealed before worker limits',
     steps: ['seed a certified Environment with two separately wired workers and ALK\'s root door.json, '

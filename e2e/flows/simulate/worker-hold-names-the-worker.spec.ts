@@ -14,10 +14,10 @@ interface HeldBy { id: string; count: number; reason: string | null }
 interface Report { workers: WorkerRow[]; selection: { eligible: number; held_by: HeldBy[] } }
 interface Refusal { error: string; message: string }
 
-test('SIM-E2E-021: a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it', {
+test('SIM-E2E-034: a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-021', area: 'simulate',
+    id: 'SIM-E2E-034', area: 'simulate',
     userGoal: 'A developer testing a multi-agent app who selects only the cases a blocked worker holds back is told '
       + 'which worker holds them and why, instead of a refusal that names nothing',
     steps: [`seed a certified Environment with two separately wired workers whose tool service ALK sealed outside the `
