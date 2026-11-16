@@ -17,7 +17,6 @@ in Channels.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 from channels.db import database_sync_to_async
 from django.core.exceptions import ValidationError
@@ -37,10 +36,10 @@ class WorkspaceAccessResult:
     transport-specific error code (e.g. a WS close code).
     """
 
-    workspace: Optional[Workspace]
-    org_id: Optional[str] = None
-    reason: Optional[str] = None
-    message: Optional[str] = None
+    workspace: Workspace | None
+    org_id: str | None = None
+    reason: str | None = None
+    message: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -56,11 +55,12 @@ class WorkspaceAccessGate:
     than anything cached from an earlier point in the connection's lifetime.
     """
 
-    def __init__(self, *, user, workspace_id):
+    def __init__(self, *, user, workspace_id, auth_scope=None):
         self.user = user
         self.workspace_id = workspace_id
+        self.auth_scope = auth_scope
 
-    async def fetch_workspace(self) -> Optional[Workspace]:
+    async def fetch_workspace(self) -> Workspace | None:
         if not self.workspace_id:
             return None
         try:
@@ -83,6 +83,15 @@ class WorkspaceAccessGate:
                 workspace=None, reason=NOT_FOUND, message=message
             )
 
+        if self.auth_scope is not None and str(workspace.organization_id) != str(
+            self.auth_scope.org_id
+        ):
+            return WorkspaceAccessResult(
+                workspace=None,
+                reason=PERMISSION_DENIED,
+                message="You do not have permission to use this workspace.",
+            )
+
         can_access = await database_sync_to_async(self.user.can_access_workspace)(
             workspace
         )
@@ -93,9 +102,11 @@ class WorkspaceAccessGate:
                 message="You do not have permission to use this workspace.",
             )
 
-        return WorkspaceAccessResult(workspace=workspace, org_id=workspace.organization_id)
+        return WorkspaceAccessResult(
+            workspace=workspace, org_id=workspace.organization_id
+        )
 
-    async def resolve_org_for_stop(self) -> Optional[str]:
+    async def resolve_org_for_stop(self) -> str | None:
         """Best-effort org resolution for stop handlers.
 
         Stop is idempotent and best-effort — unlike :meth:`resolve`, this
@@ -103,4 +114,10 @@ class WorkspaceAccessGate:
         workspace exists, letting the caller decide how to handle a miss.
         """
         workspace = await self.fetch_workspace()
+        if (
+            workspace is not None
+            and self.auth_scope is not None
+            and str(workspace.organization_id) != str(self.auth_scope.org_id)
+        ):
+            return None
         return workspace.organization_id if workspace else None

@@ -91,8 +91,8 @@ const WorkbenchLandingPage = () => {
       >
         <Box display={"flex"} flexDirection={"column"} gap={0.5}>
           <Typography
-            variant="l3"
-            fontWeight={"fontWeightMedium"}
+            variant="m1"
+            fontWeight={"fontWeightSemiBold"}
             color="text.primary"
             sx={{ marginBottom: "4px" }}
           >

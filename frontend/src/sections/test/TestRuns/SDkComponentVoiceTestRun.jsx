@@ -1,15 +1,17 @@
 import { Box, Skeleton } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
+import PropTypes from "prop-types";
 import React from "react";
 import { useParams } from "react-router";
 import InstructionCodeCopy from "src/sections/project/NewProject/InstructionCodeCopy";
 import InstructionTitle from "src/sections/project/NewProject/InstructionTitle";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 import axios, { endpoints } from "src/utils/axios";
 
-const SDkComponentVoiceTestRun = () => {
+const SDkComponentVoiceTestRun = ({ agentType }) => {
   const { testId } = useParams();
   const { data: codeData, isLoading } = useQuery({
-    queryKey: ["test-run-sdk-component-voice"],
+    queryKey: ["test-run-sdk-component-voice", testId],
     queryFn: () => axios.get(endpoints.runTests.getVoiceSDKCode(testId)),
     select: (d) => d?.data?.result,
   });
@@ -44,13 +46,27 @@ const SDkComponentVoiceTestRun = () => {
         language={languageTab}
       />
 
-      <InstructionTitle title="Step 2: Create a simulation run" />
+      <InstructionTitle title="Step 2: Copy the run test ID" />
       <InstructionCodeCopy
-        text={getCodeBySection("sdk_code")}
+        text={getCodeBySection("run_test_id")}
         language={languageTab}
       />
+
+      {agentType !== AGENT_TYPES.VOICE && (
+        <>
+          <InstructionTitle title="Step 3: Create a simulation run" />
+          <InstructionCodeCopy
+            text={getCodeBySection("sdk_code")}
+            language={languageTab}
+          />
+        </>
+      )}
     </Box>
   );
+};
+
+SDkComponentVoiceTestRun.propTypes = {
+  agentType: PropTypes.string,
 };
 
 export default SDkComponentVoiceTestRun;

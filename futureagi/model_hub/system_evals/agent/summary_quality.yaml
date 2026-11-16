@@ -17,8 +17,8 @@ criteria: "You are evaluating the quality of a summary against its source materi
   \ comprehensively and accurately represents all main points with good organization.\n\n## Inputs\n\n<input>{{input}}</input>\n\
   \n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Text
+- Summarization
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

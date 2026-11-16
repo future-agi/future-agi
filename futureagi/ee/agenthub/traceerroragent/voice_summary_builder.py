@@ -90,6 +90,7 @@ class VoiceCallData:
     # Span Details
     span_id: Optional[str] = None
 
+
 class VoiceSummaryBuilder:
     """Extracts and formats voice call data from an ObservationSpan."""
 
@@ -125,9 +126,7 @@ class VoiceSummaryBuilder:
         data.recording_mono_assistant = attrs.get(
             f"{rec_prefix}.{ConversationAttributes.MONO_ASSISTANT}"
         )
-        data.has_audio = bool(
-            data.recording_mono_combined or data.recording_stereo
-        )
+        data.has_audio = bool(data.recording_mono_combined or data.recording_stereo)
 
         # --- Turn latencies ---
         data.turn_latencies = _extract_turn_latencies(attrs)
@@ -264,9 +263,7 @@ class VoiceSummaryBuilder:
                 if tl.endpointing_latency is not None:
                     parts.append(f"endpointing={tl.endpointing_latency:.0f}ms")
                 latency_lines.append("  " + " | ".join(parts))
-            sections.append(
-                "### Per-Turn Latencies\n" + "\n".join(latency_lines)
-            )
+            sections.append("### Per-Turn Latencies\n" + "\n".join(latency_lines))
 
         if not sections:
             return "(No metrics available)"
@@ -286,9 +283,7 @@ class VoiceSummaryBuilder:
         if data.workflow_name:
             lines.append(f"- Workflow: {data.workflow_name}")
         if data.workflow_voicemail_detection:
-            lines.append(
-                f"- Voicemail detection: {data.workflow_voicemail_detection}"
-            )
+            lines.append(f"- Voicemail detection: {data.workflow_voicemail_detection}")
         if data.llm_model_name:
             lines.append(f"- LLM model: {data.llm_model_name}")
         if data.llm_provider:
@@ -296,10 +291,10 @@ class VoiceSummaryBuilder:
         if data.total_tokens is not None:
             lines.append(f"- Total tokens: {data.total_tokens}")
         lines.append(f"- Has audio recording: {'Yes' if data.has_audio else 'No'}")
+        lines.append(f"- Has tool calls: {'Yes' if data.has_tool_calls else 'No'}")
         lines.append(
-            f"- Has tool calls: {'Yes' if data.has_tool_calls else 'No'}"
+            f"- Transcript turns: {len(data.transcript) or len(data.provider_transcript)}"
         )
-        lines.append(f"- Transcript turns: {len(data.transcript) or len(data.provider_transcript)}")
 
         return "\n".join(lines) if lines else "(No metadata available)"
 

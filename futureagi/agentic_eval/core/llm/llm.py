@@ -425,9 +425,21 @@ class LLM:
         return DeploymentMode.is_ee() and is_managed_model(model or self.model_name)
 
     def _try_gateway_completion(
-        self, payload: dict, tools: Optional[list] = None
+        self,
+        payload: dict,
+        tools: Optional[list] = None,
+        deadline_monotonic: Optional[float] = None,
     ) -> Optional[Any]:
         """Attempt completion via the Agentcc gateway. Returns response or None on failure."""
+        if deadline_monotonic is not None and self._requires_managed_transport(
+            payload.get("model")
+        ):
+            # The managed transport currently owns a separate 300s request
+            # timeout. A bounded caller must get an explicit refusal instead
+            # of entering that path under a wall it cannot enforce.
+            raise TimeoutError(
+                "bounded tool completion is unavailable for managed transport"
+            )
         managed_response = self._try_managed_ai_completion(payload, tools=tools)
         if managed_response is not None:
             return managed_response
@@ -449,7 +461,22 @@ class LLM:
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
             try:
-                return self._gateway_client.chat.completions.create(**kwargs)
+                gateway_client = self._gateway_client
+                if deadline_monotonic is not None:
+                    remaining = deadline_monotonic - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("tool completion deadline exceeded")
+                    # The shared deadline is more important than the gateway
+                    # client's default retry policy. Keep retries in this loop,
+                    # where every attempt is charged against the same wall.
+                    if callable(getattr(gateway_client, "with_options", None)):
+                        gateway_client = gateway_client.with_options(
+                            timeout=remaining,
+                            max_retries=0,
+                        )
+                    else:
+                        kwargs["timeout"] = remaining
+                return gateway_client.chat.completions.create(**kwargs)
             except Exception as gw_err:
                 logger.warning(
                     "gateway_attempt_failed",
@@ -459,7 +486,15 @@ class LLM:
                     max_attempts=self.GATEWAY_MAX_ATTEMPTS,
                 )
                 if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
-                    time.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+                    delay = self.GATEWAY_RETRY_BACKOFF[attempt]
+                    if deadline_monotonic is not None:
+                        remaining = deadline_monotonic - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError(
+                                "tool completion deadline exceeded"
+                            ) from gw_err
+                        delay = min(delay, remaining)
+                    time.sleep(delay)
         return None
 
     def _try_managed_ai_completion(
@@ -480,7 +515,10 @@ class LLM:
     def _to_openai_like_response(self, value: Any) -> Any:
         if isinstance(value, dict):
             return SimpleNamespace(
-                **{key: self._to_openai_like_response(val) for key, val in value.items()}
+                **{
+                    key: self._to_openai_like_response(val)
+                    for key, val in value.items()
+                }
             )
         if isinstance(value, list):
             return [self._to_openai_like_response(item) for item in value]
@@ -509,7 +547,9 @@ class LLM:
         self, payload: dict, tools: Optional[list] = None
     ) -> Optional[Any]:
         """Async version: attempt completion via Agentcc gateway."""
-        managed_response = await self._try_managed_ai_completion_async(payload, tools=tools)
+        managed_response = await self._try_managed_ai_completion_async(
+            payload, tools=tools
+        )
         if managed_response is not None:
             return managed_response
 
@@ -530,7 +570,9 @@ class LLM:
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
             try:
-                return await self._async_gateway_client.chat.completions.create(**kwargs)
+                return await self._async_gateway_client.chat.completions.create(
+                    **kwargs
+                )
             except Exception as gw_err:
                 logger.warning(
                     "async_gateway_attempt_failed",
@@ -821,6 +863,7 @@ class LLM:
         model: Optional[str] = None,
         tool_choice: Optional[Any] = None,
         drop_params: Optional[bool] = None,
+        timeout_ms: Optional[int] = None,
     ) -> Any:
         """
         Get completion with tool calling support. Returns the full response.
@@ -834,6 +877,8 @@ class LLM:
             tools: List of tool definitions (OpenAI function calling format).
             model: Optional model override.
             drop_params: Whether to drop unsupported params.
+            timeout_ms: Optional shared wall-clock budget for gateway/litellm
+                attempts and retry sleeps.
 
         Returns:
             The full litellm ModelResponse object.
@@ -850,9 +895,23 @@ class LLM:
         payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        deadline_monotonic = (
+            time.monotonic() + (timeout_ms / 1000) if timeout_ms is not None else None
+        )
+
+        def remaining_timeout() -> Optional[float]:
+            if deadline_monotonic is None:
+                return None
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("tool completion deadline exceeded")
+            return remaining
 
         for attempt in range(MAX_RETRIES):
             try:
+                remaining = remaining_timeout()
                 if self.provider == "vertex_ai":
                     payload.pop("max_tokens", None)
 
@@ -870,7 +929,11 @@ class LLM:
                         payload["messages"], self.provider
                     )
 
-                gw_response = self._try_gateway_completion(payload, tools=tools)
+                gw_response = self._try_gateway_completion(
+                    payload,
+                    tools=tools,
+                    deadline_monotonic=deadline_monotonic,
+                )
                 if gw_response is not None:
                     self._set_last_finish_reason_from_response(gw_response)
                     self._update_token_usage(gw_response)
@@ -879,9 +942,11 @@ class LLM:
                         raise ValueError("Empty response from gateway")
                     return gw_response
 
+                remaining = remaining_timeout()
                 response = litellm.completion(
                     **payload,
-                    num_retries=LITELLM_NUM_RETRIES,
+                    **({"timeout": remaining} if remaining is not None else {}),
+                    num_retries=(0 if remaining is not None else LITELLM_NUM_RETRIES),
                     retry_strategy=LITELLM_RETRY_STRATEGY,
                 )
 
@@ -895,6 +960,8 @@ class LLM:
                 return response
 
             except Exception as e:
+                if deadline_monotonic is not None and isinstance(e, TimeoutError):
+                    raise
                 logger.exception(
                     f"{self.provider} API error (tool completion): {str(e)}",
                     attempt=attempt,
@@ -904,7 +971,11 @@ class LLM:
                 if attempt == MAX_RETRIES - 1:
                     raise
 
-                time.sleep(RETRY_DELAY)
+                delay = RETRY_DELAY
+                if deadline_monotonic is not None:
+                    remaining = remaining_timeout()
+                    delay = min(delay, remaining)
+                time.sleep(delay)
 
         raise ValueError("FAILED_TO_PROCESS_TOOL_COMPLETION")
 
@@ -1209,13 +1280,13 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
 
         try:
-            logger.info("Final fallback: attempting Vertex Gemini 2.5 Pro")
+            logger.info(f"Final fallback: attempting {vertex_cfg.model_name}")
             vertex_payload = dict(payload)
             vertex_payload["model"] = vertex_cfg.model_name
             vertex_payload["temperature"] = vertex_cfg.temperature
@@ -1226,6 +1297,8 @@ class LLM:
             vertex_payload["messages"] = preprocess_messages_for_provider(
                 base_messages, vertex_cfg.provider
             )
+            if vertex_cfg.vertex_location:
+                vertex_payload["vertex_location"] = vertex_cfg.vertex_location
             response = await litellm.acompletion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,
@@ -1413,6 +1486,14 @@ class LLM:
                     "content": self._build_protect_flash_prompt(prompt=inp),
                 }
             ]
+
+        # Some Vertex models are served only from a specific endpoint; without this litellm
+        # defaults to us-central1. A customer key that carries its own location still wins,
+        # since that branch overwrites this later.
+        if "vertex_location" not in payload:
+            location = ModelConfigs.get_vertex_location(_model)
+            if location:
+                payload["vertex_location"] = location
 
         return payload
 
@@ -1649,13 +1730,13 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
 
         try:
-            logger.info("Final fallback: attempting Vertex Gemini 2.5 Pro")
+            logger.info(f"Final fallback: attempting {vertex_cfg.model_name}")
             vertex_payload = dict(payload)
             vertex_payload["model"] = vertex_cfg.model_name
             vertex_payload["temperature"] = vertex_cfg.temperature
@@ -1666,6 +1747,8 @@ class LLM:
             vertex_payload["messages"] = preprocess_messages_for_provider(
                 base_messages, vertex_cfg.provider
             )
+            if vertex_cfg.vertex_location:
+                vertex_payload["vertex_location"] = vertex_cfg.vertex_location
             response = litellm.completion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,
@@ -1734,7 +1817,7 @@ class LLM:
                                     },
                                 }
                             )
-                        except:
+                        except Exception:
                             # If conversion fails, keep original format
                             new_content.append(content)
                     elif (
@@ -1750,7 +1833,7 @@ class LLM:
                             new_content.append(
                                 {"type": "image_url", "image_url": {"url": url}}
                             )
-                        except:
+                        except Exception:
                             # If conversion fails, keep original format
                             new_content.append(content)
                     else:
@@ -2078,7 +2161,9 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
+    def call_llm(
+        self, prompt: Messages, provider: str, response_format: dict | None = None
+    ) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -2116,7 +2201,11 @@ class LLM:
                 if gateway is None and managed_transport:
                     raise RuntimeError("Managed gateway client is unavailable")
                 if gateway is not None:
-                    logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
+                    logger.info(
+                        "llm_call_routing",
+                        route="agentcc_gateway",
+                        model=self.model_name,
+                    )
                     gateway_kwargs = {
                         "model": self.model_name,
                         "messages": prompt,
@@ -2231,6 +2320,7 @@ class LLM:
                     break
             # Strip any litellm references from user-facing message
             import re as _re
+
             root_msg = _re.sub(r"litellm\.\w+:\s*", "", root_msg)
             root_msg = _re.sub(r"litellm\.\w+", "", root_msg)
             logger.error(

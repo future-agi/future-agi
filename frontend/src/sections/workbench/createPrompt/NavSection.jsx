@@ -1,4 +1,10 @@
-import { Box, Button, CircularProgress, Stack, useTheme } from "@mui/material";
+import {
+  Button,
+  CircularProgress,
+  Stack,
+  useTheme,
+  IconButton,
+} from "@mui/material";
 import React from "react";
 import Iconify from "src/components/iconify";
 import { useNavigate } from "react-router";
@@ -71,16 +77,13 @@ export default function NavSection() {
             display: "flex",
             alignItems: "center",
             flexDirection: "row",
-            py: theme.spacing(0.5),
-            px: theme.spacing(1.5),
-            borderRadius: "4px",
             "& .MuiButton-startIcon": {
               marginRight: "4px",
             },
           }}
           startIcon={
             <Iconify
-              icon="octicon:chevron-left-24"
+              icon="solar:alt-arrow-left-linear"
               width="16px"
               height="16px"
               sx={{ color: "text.primary" }}
@@ -90,30 +93,22 @@ export default function NavSection() {
           Back
         </Button>
         <CustomTooltip show title="Add New Prompt" arrow size="small">
-          <Box
+          <IconButton
+            size="small"
             sx={{
-              cursor: "pointer",
               border: "1px solid",
               borderColor: "divider",
               color: "text.disabled",
-              borderRadius: theme.spacing(0.5),
-              padding: theme.spacing(0.5),
-              lineHeight: 0,
-              height: "30px",
-              width: "30px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
             }}
             onClick={handleWritePrompt}
           >
             <ShowComponent condition={!isLoadingCreate}>
-              <Iconify icon="eva:plus-fill" width="16px" height="16px" />
+              <Iconify icon="solar:add-linear" width="16px" height="16px" />
             </ShowComponent>
             <ShowComponent condition={isLoadingCreate}>
               <CircularProgress size={16} sx={{ color: "text.primary" }} />
             </ShowComponent>
-          </Box>
+          </IconButton>
         </CustomTooltip>
       </Stack>
     </Stack>

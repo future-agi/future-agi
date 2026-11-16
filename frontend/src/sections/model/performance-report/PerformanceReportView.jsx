@@ -2,7 +2,6 @@ import {
   Box,
   IconButton,
   InputAdornment,
-  LinearProgress,
   Table,
   TableBody,
   TableCell,
@@ -26,6 +25,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const PerformanceReportView = () => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -86,66 +86,70 @@ const PerformanceReportView = () => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-fill" />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
         />
       </Box>
       <Box sx={{ overflow: "auto" }}>
-        {isLoading ? <LinearProgress /> : null}
-        <TableContainer
-          ref={tableRef}
-          sx={{ overflow: "auto", height: "calc(100vh - 210px)" }}
-        >
-          <Table stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell>Report Name</TableCell>
-                <TableCell>Date Created</TableCell>
-                <TableCell>Action</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {reports?.map((report) => (
-                <TableRow
-                  key={report.id}
-                  onClick={() => {
-                    navigate(`/dashboard/models/${id}/performance`, {
-                      state: { report },
-                    });
-                  }}
-                  sx={{
-                    "&:hover": {
-                      cursor: "pointer",
-                      backgroundColor: `${theme.palette.primary.light}11`,
-                    },
-                  }}
-                >
-                  <TableCell>{report.name}</TableCell>
-                  <TableCell>
-                    {format(new Date(report.created_at), "yyyy-MM-dd")}
-                  </TableCell>
-                  <TableCell sx={{ width: "100px" }}>
-                    <IconButton
-                      color="error"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteReport(report.id);
-                      }}
-                      sx={{ display: "flex", flexDirection: "column" }}
-                    >
-                      <Iconify icon="solar:trash-bin-trash-bold" />
-                      <Typography variant="caption" color="text.primary">
-                        Delete
-                      </Typography>
-                    </IconButton>
-                  </TableCell>
+        {isLoading ? (
+          <LoadingScreen compact />
+        ) : (
+          <TableContainer
+            ref={tableRef}
+            sx={{ overflow: "auto", height: "calc(100vh - 210px)" }}
+          >
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Report Name</TableCell>
+                  <TableCell>Date Created</TableCell>
+                  <TableCell>Action</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+              </TableHead>
+              <TableBody>
+                {reports?.map((report) => (
+                  <TableRow
+                    key={report.id}
+                    onClick={() => {
+                      navigate(`/dashboard/models/${id}/performance`, {
+                        state: { report },
+                      });
+                    }}
+                    sx={{
+                      "&:hover": {
+                        cursor: "pointer",
+                        backgroundColor: `${theme.palette.primary.light}11`,
+                      },
+                    }}
+                  >
+                    <TableCell>{report.name}</TableCell>
+                    <TableCell>
+                      {format(new Date(report.created_at), "yyyy-MM-dd")}
+                    </TableCell>
+                    <TableCell sx={{ width: "100px" }}>
+                      <IconButton
+                        className="row-hover-action"
+                        color="error"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteReport(report.id);
+                        }}
+                        sx={{ display: "flex", flexDirection: "column" }}
+                      >
+                        <Iconify icon="solar:trash-bin-trash-bold" />
+                        <Typography variant="caption" color="text.primary">
+                          Delete
+                        </Typography>
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
       </Box>
     </Box>
   );

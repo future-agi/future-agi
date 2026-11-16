@@ -19,6 +19,11 @@ class ValidateCredentialsSerializer(serializers.Serializer):
     ca_certificate = serializers.CharField(required=False, allow_blank=True, default="")
     credentials = serializers.JSONField(required=False, default=dict)
 
+    def validate_platform(self, value):
+        if value == IntegrationPlatform.SLACK:
+            raise serializers.ValidationError("Connect Slack through OAuth.")
+        return value
+
 
 class IntegrationConnectionCreateSerializer(serializers.Serializer):
     """Serializer for creating a new integration connection.
@@ -73,6 +78,11 @@ class IntegrationConnectionCreateSerializer(serializers.Serializer):
 
     # Platform-specific export configuration
     export_config = serializers.JSONField(required=False, default=dict)
+
+    def validate_platform(self, value):
+        if value == IntegrationPlatform.SLACK:
+            raise serializers.ValidationError("Connect Slack through OAuth.")
+        return value
 
 
 class IntegrationConnectionUpdateSerializer(serializers.Serializer):

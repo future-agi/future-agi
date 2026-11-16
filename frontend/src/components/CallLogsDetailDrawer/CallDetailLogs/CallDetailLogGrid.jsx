@@ -1,5 +1,8 @@
-import { Box, Typography } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import EmptyContent from "src/components/empty-content";
+import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
@@ -15,27 +18,12 @@ import {
 } from "./states";
 
 // Custom overlay component for errors
-const CustomErrorOverlay = () => {
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        gap: 2,
-      }}
-    >
-      <Typography typography="s1" fontWeight="fontWeightMedium">
-        No logs available
-      </Typography>
-      <Typography typography="s1" fontWeight="fontWeightRegular">
-        {"The system didn't capture any logs during this interaction."}
-      </Typography>
-    </Box>
-  );
-};
+const CustomErrorOverlay = () => (
+  <EmptyContent
+    title="No logs available"
+    description="The system didn't capture any logs during this interaction."
+  />
+);
 
 const CallDetailLogGrid = forwardRef(
   ({ callLogId, vapiId, module, callLogs }, ref) => {
@@ -248,7 +236,7 @@ const CallDetailLogGrid = forwardRef(
           getRowId={({ data }) => data.id}
           pagination={false}
           suppressScrollOnNewData={true}
-          rowHeight={55}
+          rowHeight={ROW_HEIGHT.twoLine}
           onCellClicked={(params) => {
             setLogDetailDrawerOpen({
               data: params.data,

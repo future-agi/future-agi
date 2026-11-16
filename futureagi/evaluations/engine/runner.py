@@ -48,6 +48,13 @@ class EvalRequest:
     )
     criteria_override: str | None = None  # Override criteria text
 
+    # Internal caller context, not input data or template configuration.
+    # sdk.utils.evaluations._run_protect (SDK v1 / gateway guardrails) opts in.
+    # SDK new-eval (_run_eval) and tracer span/trace/session callers keep False.
+    # Both paths use Protect models and call_type, so those cannot distinguish
+    # runtime verdicts from evaluation grades.
+    protect_runtime: bool = False
+
 
 @dataclass
 class EvalResult:
@@ -72,6 +79,9 @@ class EvalResult:
     # can emit billing events without having to hold the instance themselves).
     cost: dict | None = None
     token_usage: dict | None = None
+    # The evaluator that ran, for callers that bill by evaluator type: a Jev
+    # run bills as Jev whatever model name TypeSafe reports.
+    evaluator: Any = field(default=None, repr=False, compare=False)
 
 
 def run_eval(request: EvalRequest) -> EvalResult:
@@ -160,9 +170,13 @@ def run_eval(request: EvalRequest) -> EvalResult:
 
     run_params = preprocess_inputs(eval_template.name, run_params)
 
-    # 4. Execute
+    # 4. Execute. Caller context chooses an explicit entry point; it never
+    # becomes a mapped input or an override on a reusable evaluator instance.
     start_time = time.time()
-    raw_result = eval_instance.run(**run_params)
+    if eval_type_id == "AgentEvaluator" and request.protect_runtime:
+        raw_result = eval_instance.run_protect_runtime(run_params)
+    else:
+        raw_result = eval_instance.run(**run_params)
     end_time = time.time()
 
     # 5. Extract and format
@@ -171,7 +185,12 @@ def run_eval(request: EvalRequest) -> EvalResult:
     response["end_time"] = end_time
     response["duration"] = end_time - start_time
 
-    value = format_eval_value(response, eval_template)
+    formatter = getattr(eval_instance, "format_result", None)
+    value = (
+        formatter(response, eval_template)
+        if callable(formatter)
+        else format_eval_value(response, eval_template)
+    )
 
     logger.info(
         "eval_executed",
@@ -196,4 +215,5 @@ def run_eval(request: EvalRequest) -> EvalResult:
         duration=end_time - start_time,
         cost=getattr(eval_instance, "cost", None),
         token_usage=getattr(eval_instance, "token_usage", None),
+        evaluator=eval_instance,
     )

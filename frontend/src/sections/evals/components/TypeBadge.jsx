@@ -9,23 +9,7 @@ const TYPE_CONFIG = {
 const TypeBadge = ({ type = "single" }) => {
   const config = TYPE_CONFIG[type] || TYPE_CONFIG.single;
 
-  return (
-    <Chip
-      label={config.label}
-      size="small"
-      variant="outlined"
-      sx={{
-        fontSize: "12px",
-        height: "22px",
-        borderRadius: "4px",
-        borderColor: "divider",
-        color: "text.secondary",
-        "& .MuiChip-label": {
-          px: 1,
-        },
-      }}
-    />
-  );
+  return <Chip label={config.label} size="small" variant="outlined" />;
 };
 
 TypeBadge.propTypes = {
