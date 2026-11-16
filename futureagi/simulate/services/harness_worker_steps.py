@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import re
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Literal, cast
 
-from simulate.services.harness_workers import read_pending
+from simulate.services.harness_workers import check_again_at, read_pending
 from simulate.types import (
     CallTurn,
     CallWorkersRecord,
@@ -23,6 +23,7 @@ from simulate.types import (
     WorkerCheck,
     WorkerEvent,
     WorkerRelationship,
+    WorkersState,
     WorkerState,
     WorkerStep,
     WorkerSteps,
@@ -35,8 +36,8 @@ _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
 _CUT_SHORT: frozenset[WorkerState] = frozenset(
     {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
 )
-# The design's rule: a check named "Call <tool>" (or `call_<tool>`) is about that tool's call.
-_CALL_CHECK = re.compile(r"^call[\s_]+(\S+)$", re.IGNORECASE)
+# The ends that count as a hand-off that did not finish, in the headline count and on its row alike.
+_NOT_FINISHED: frozenset[HandOffEnd] = frozenset({"failed", "no_return"})
 # A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
 _PRINTED_DICT = re.compile(r"^\{\s*(?:(['\"]).*?\1|\w+)\s*:")
 _PRINTED_LIST = re.compile(
@@ -314,6 +315,8 @@ def _flatten(
                     "ended_at": _iso(item.end),
                     "parallel": item.parallel,
                     "end": _end(item, cut_off),
+                    "did_not_finish": _end(item, cut_off) in _NOT_FINISHED,
+                    "first_of_worker": False,
                     "children": [],
                     "relationship": _relationship(
                         item.handoff or item.returned, item.key, unknown
@@ -343,7 +346,7 @@ def _counts(steps: list[WorkerStep]) -> HandOffCounts:
             {step["worker_id"] for step in steps if step["kind"] == "handoff"}
         ),
         "finished": ends.count("finished"),
-        "did_not_finish": ends.count("failed") + ends.count("no_return"),
+        "did_not_finish": sum(1 for end in ends if end in _NOT_FINISHED),
         "passed": ends.count("passed"),
         "cut_off": ends.count("cut_off"),
     }
@@ -422,6 +425,8 @@ def _by_turn(
                 "response": summary(reply) if reply is not None else None,
                 "children": [],
                 "calls_outside": 0,
+                "handoffs": [],
+                "expects_messages": True,
             }
         )
     if any(step["turn"] is None for step in steps):
@@ -432,14 +437,22 @@ def _by_turn(
                 "response": None,
                 "children": [],
                 "calls_outside": 0,
+                "handoffs": [],
+                "expects_messages": False,
             }
         )
+    # Work before the caller spoke has no request of its own, unless that is the whole call.
+    if len(rounds) > 1 and rounds[0]["turn"] == 0:
+        rounds[0]["expects_messages"] = False
     of_turn = {one["turn"]: one for one in rounds}
     for step in top:
         held = of_turn[step["turn"]]
         held["children"].append(step["key"])
         # A tool call outside every hand-off has no table row of its own.
         held["calls_outside"] += step["kind"] == "tool_call"
+    for step in steps:
+        if step["kind"] == "handoff":
+            of_turn[step["turn"]]["handoffs"].append(step["key"])
     return rounds
 
 
@@ -461,6 +474,10 @@ def worker_steps(
     for step in steps:
         if step["parent"] is not None and step["parent"] in held:
             held[step["parent"]]["children"].append(step["key"])
+    seen: set[str | None] = set()
+    for step in held.values():
+        step["first_of_worker"] = step["worker_id"] not in seen
+        seen.add(step["worker_id"])
     rounds = _by_turn(steps, turns, cut=turns_cut)
     depth_of: dict[str, int] = {}
     for block in blocks:
@@ -500,10 +517,9 @@ def _with_ends(
             step["end_state"] = cast("WorkerState", state)
 
 
-def failure_placements(
-    steps: Sequence[WorkerStep], sub_goals: Iterable[SubGoalEntry]
-) -> list[FailurePlacement]:
-    """Each failed or unsure sub-goal on the step and worker its evidence points to, else not tied, with the reason."""
+def failure_placements(sub_goals: Iterable[SubGoalEntry]) -> list[FailurePlacement]:
+    """Each failed or unsure sub-goal, on its worker when it is that worker's own check. No step: neither the sub-goal
+    catalogue nor the receipt records which tool call a check is about, and a check's name is never read for one."""
     placements: list[FailurePlacement] = []
     for goal in sub_goals:
         if goal["passed"] is False:
@@ -512,37 +528,15 @@ def failure_placements(
             status = "inconclusive"
         else:
             continue
-        placement: FailurePlacement = {
-            "name": goal["name"],
-            "status": status,
-            "step": None,
-            "worker_id": goal.get("worker_id"),
-            "untied": None,
-        }
-        named = _CALL_CHECK.match(goal["name"].strip())
-        if named is None:
-            # No recorded check names a moment in the call yet, so nothing else can be placed without guessing.
-            placement["untied"] = "no_moment"
-        else:
-            tool = named.group(1)
-            placement["tool"] = tool
-            calls = [
-                step
-                for step in steps
-                if step["kind"] == "tool_call"
-                and step.get("call", {}).get("tool") == tool
-            ]
-            failed = [
-                step for step in calls if step.get("call", {}).get("status") == "error"
-            ]
-            hits = failed or calls
-            if not hits:
-                placement["untied"] = "never_called"
-            else:
-                # The step's own worker, which is Unknown (null) when the record does not say.
-                placement["step"] = hits[0]["key"]
-                placement["worker_id"] = hits[0]["worker_id"]
-        placements.append(placement)
+        placements.append(
+            {
+                "name": goal["name"],
+                "status": status,
+                "step": None,
+                "worker_id": goal.get("worker_id"),
+                "untied": "no_moment",
+            }
+        )
     return placements
 
 
@@ -552,6 +546,7 @@ def served_record(
     sub_goals: Iterable[SubGoalEntry] = (),
     *,
     stopped_by_user: bool = False,
+    state: WorkersState = "recorded",
 ) -> CallWorkersRecord:
     """A kept record as the client reads it, old records included: its steps, each worker's end, where each failed
     check sits, times with their zone, and whether a later read is still due."""
@@ -577,20 +572,27 @@ def served_record(
             checks.setdefault(goal["worker_id"], []).append(check)
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
-        served = one.copy()
-        served["checks"] = checks.get(one["id"], [])
+        shown = one.copy()
+        shown["checks"] = checks.get(one["id"], [])
         # Past its deadline is told apart: the world refused its later calls, it was not stopped.
-        served["cut_short"] = (
+        shown["cut_short"] = (
             one.get("state") in _CUT_SHORT and one.get("state") != "deadline_passed"
         )
-        workers.append(served)
-    return {
+        workers.append(shown)
+    due = timeline.get("next_read_at")
+    pending = read_pending(due, now)
+    served: CallWorkersRecord = {
         **timeline,
         **steps,
         "workers": workers,
-        "placements": failure_placements(steps["steps"], goals),
+        "placements": failure_placements(goals),
         "stopped_by_user": stopped_by_user,
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),
-        "pending": read_pending(timeline.get("next_read_at"), now),
+        "pending": pending,
+        "state": state,
     }
+    if due and pending:
+        # The client reads again once, at this time; past it, the read has been and the record is final.
+        served["next_read_at"] = check_again_at(due, now)
+    return served

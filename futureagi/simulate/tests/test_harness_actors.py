@@ -999,11 +999,13 @@ def test_every_actor_has_an_id_its_routes_can_reach_and_a_name(
         "The id 'a/b' is not valid; use 1 to 64 lowercase letters, digits or underscores."
         in slash.json()["message"]
     )
-    assert "a/b's name: it cannot be empty." in slash.json()["message"]
+    assert "Give them a name." in slash.json()["message"]
     assert (long.status_code, long.json()["error"]) == (400, "actor_invalid")
     assert "The id 'aaaa" in long.json()["message"]
     assert (unnamed.status_code, unnamed.json()["error"]) == (400, "actor_invalid")
-    assert "sam's name: it cannot be empty." in unnamed.json()["message"]
+    assert unnamed.json()["problems"] == [
+        {"field": "name", "message": "Give them a name."}
+    ]
     assert auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"] == []
 
 
@@ -1076,7 +1078,7 @@ def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
         400,
         "actor_invalid",
     )
-    assert edited_bad.json()["message"] == "Old Id's name: it cannot be empty."
+    assert edited_bad.json()["message"] == "Give them a name."
     renamed = auth_client.put(
         f"{BASE}/{environment.id}/actors/Old Id/",
         {"actor": {"name": "Pat"}},

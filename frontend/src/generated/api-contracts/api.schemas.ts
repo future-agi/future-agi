@@ -19647,8 +19647,6 @@ export const HarnessFaultModeApiFieldsItem = {
  */
 export interface HarnessFaultModeApi {
   mode: HarnessFaultModeApiMode;
-  /** @minLength 1 */
-  label: string;
   /**
    * The line shown under the choice.
    * @minLength 1
@@ -19656,6 +19654,8 @@ export interface HarnessFaultModeApi {
   hint: string;
   /** On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it. */
   approval_options?: HarnessApprovalOptionApi[];
+  /** @minLength 1 */
+  label: string;
   /** The fault values this mode reads; the editor asks for these and no others. */
   fields: HarnessFaultModeApiFieldsItem[];
 }
@@ -21968,7 +21968,7 @@ export interface HarnessRunPlanApi {
   /** Why the run would be refused; null when it is runnable. */
   blocked_code: HarnessRunPlanApiBlockedCode;
   /**
-   * Selected scenarios that need a blocked tool.
+   * Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.
    * @minimum 0
    */
   held_back: number;
@@ -23264,8 +23264,6 @@ export type HarnessScenarioFieldApiChoiceLabels = { [key: string]: string };
 export interface HarnessScenarioFieldApi {
   /** @minLength 1 */
   value: string;
-  /** @minLength 1 */
-  label: string;
   type: HarnessScenarioFieldApiType;
   /** @minLength 1 */
   category: string;
@@ -23274,6 +23272,8 @@ export interface HarnessScenarioFieldApi {
   counts?: HarnessScenarioFieldApiCounts;
   /** The name to show for each value, keyed by the value (actors only). */
   choice_labels?: HarnessScenarioFieldApiChoiceLabels;
+  /** @minLength 1 */
+  label: string;
 }
 
 export interface HarnessScenarioListResponseApi {
@@ -27599,6 +27599,11 @@ export interface SimulateRunV3FunctionCallApi {
   on_behalf_of?: string;
   /** agent_call for the agent's own tool call, world_actor_action for an actor's action in the world. */
   kind?: SimulateRunV3FunctionCallApiKind;
+  /**
+   * How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.
+   * @minLength 1
+   */
+  tool_label?: string;
 }
 
 /**
@@ -28115,6 +28120,15 @@ export interface TrialStateApi {
   stopped_workers?: StoppedWorkerApi[];
 }
 
+export interface EarlierAttemptApi {
+  /** Its id: `/workers/?attempt=` reads its worker record. */
+  attempt: string;
+  rerun_at: string;
+  /** False when it was snapshotted before attempts kept their worker record and trial state. */
+  kept: boolean;
+  trial_state: TrialStateApi;
+}
+
 export interface CallExecutionV3DetailResponseApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -28264,7 +28278,7 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
-  /** The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
+  /** The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them. */
   tool_call_count: number;
   call_actors: CallCallActorApi[];
   /** Who else took part: each actor who spoke, in the order they first spoke, then each world actor who acted. Never an actor planned for the call who did not join. */
@@ -28272,6 +28286,7 @@ export interface CallExecutionV3DetailResponseApi {
   /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
   has_customer: boolean;
   trial_state: TrialStateApi;
+  earlier_attempts: EarlierAttemptApi[];
   /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
   comparable: boolean;
   /** @minLength 1 */
@@ -28293,6 +28308,15 @@ export const CallWorkersResponseApiCollection = {
 } as const;
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
+
+export type CallWorkersResponseApiState =
+  (typeof CallWorkersResponseApiState)[keyof typeof CallWorkersResponseApiState];
+
+export const CallWorkersResponseApiState = {
+  recorded: "recorded",
+  not_kept: "not_kept",
+  unreadable: "unreadable",
+} as const;
 
 export type CallWorkerApiState =
   (typeof CallWorkerApiState)[keyof typeof CallWorkerApiState];
@@ -28637,6 +28661,8 @@ export interface CallWorkerStepApi {
   parallel?: boolean;
   end?: CallWorkerStepApiEnd;
   end_state?: CallWorkerStepApiEndState;
+  did_not_finish?: boolean;
+  first_of_worker?: boolean;
   children?: number[];
   call?: CallWorkerEventApi;
   turn: number;
@@ -28658,6 +28684,8 @@ export interface CallWorkerRoundApi {
   response: CallWorkerTurnApi;
   children: number[];
   calls_outside: number;
+  handoffs: number[];
+  expects_messages: boolean;
 }
 
 export interface HandOffCountsApi {
@@ -28682,7 +28710,6 @@ export type FailurePlacementApiUntied =
 
 export const FailurePlacementApiUntied = {
   no_moment: "no_moment",
-  never_called: "never_called",
 } as const;
 
 export interface FailurePlacementApi {
@@ -28693,8 +28720,6 @@ export interface FailurePlacementApi {
   /** @minLength 1 */
   worker_id: string;
   untied: FailurePlacementApiUntied;
-  /** @minLength 1 */
-  tool?: string;
 }
 
 export interface CallWorkersResponseApi {
@@ -28723,6 +28748,7 @@ export interface CallWorkersResponseApi {
   pending: boolean;
   /** @minLength 1 */
   next_read_at?: string;
+  state: CallWorkersResponseApiState;
 }
 
 export interface CallWorkersPendingApi {
@@ -44065,7 +44091,7 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
 
 export type SimulateV3CallExecutionWorkersParams = {
   /**
-   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.
+   * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.
    */
   attempt?: string;
 };

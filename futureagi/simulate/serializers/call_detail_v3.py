@@ -47,6 +47,11 @@ class FunctionCallSerializer(serializers.Serializer):
         required=False,
         help_text="agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
     )
+    tool_label = serializers.CharField(
+        required=False,
+        help_text="How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to "
+        "another agent or a control pass. Absent on a world actor's action.",
+    )
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
@@ -481,3 +486,16 @@ class TrialStateSerializer(serializers.Serializer):
         required=False,
         help_text="Workers whose own process the harness ended when their deadline passed.",
     )
+
+
+class EarlierAttemptSerializer(serializers.Serializer):
+    """An earlier attempt of the call that a rerun kept, latest first."""
+
+    attempt = serializers.UUIDField(
+        help_text="Its id: `/workers/?attempt=` reads its worker record."
+    )
+    rerun_at = serializers.DateTimeField()
+    kept = serializers.BooleanField(
+        help_text="False when it was snapshotted before attempts kept their worker record and trial state."
+    )
+    trial_state = TrialStateSerializer(allow_null=True)

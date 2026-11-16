@@ -156,6 +156,22 @@ def test_a_picked_value_the_field_does_not_offer_is_a_problem_on_that_field(
     assert [one["field"] for one in write.json()["problems"]] == [field]
 
 
+@pytest.mark.parametrize(
+    "changes", [{}, {"name": ""}, {"name": "   "}], ids=["untouched", "empty", "blank"]
+)
+def test_a_new_actor_without_a_name_is_asked_for_one_on_the_name_field(
+    user, workspace, storage, auth_client, changes
+):
+    environment = _built(user, workspace, "actor-rules-unnamed")
+
+    check = _check(auth_client, environment, op="create", changes=changes)
+
+    assert check.status_code == 200, check.content
+    assert check.json()["problems"] == [
+        {"field": "name", "message": "Give them a name."}
+    ]
+
+
 def test_a_value_stored_before_that_the_field_does_not_offer_is_kept_on_another_edit(
     user, workspace, storage, auth_client
 ):

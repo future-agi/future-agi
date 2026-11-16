@@ -1867,7 +1867,7 @@ describe("useCallWorkers", () => {
     expect(await has("none", { status: 204, data: "" })).toBe(false);
   });
 
-  it("doesn't know whether a call has workers while the record is unread or unreadable", async () => {
+  it("doesn't know whether a call has workers while unread, and shows the tab when the read fails", async () => {
     const { useHasWorkers } = await import("../runDetail");
     const client = new QueryClient();
     const Wrapper = ({ children }) => (
@@ -1890,7 +1890,8 @@ describe("useCallWorkers", () => {
         ]),
       ).toMatchObject({ status: "error" }),
     );
-    expect(result.current).toBeUndefined();
+    // The panel says it couldn't load; a hidden tab would read as a call with no other agents.
+    await waitFor(() => expect(result.current).toBe(true));
   });
 
   it("reads a call's record again once the call ends while open", async () => {
@@ -1921,10 +1922,14 @@ describe("useCallWorkers", () => {
   it("stops checking for a record once a check fails, and leaves the failure to the panel", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { useCallWorkers, WORKERS_POLL_MS } = await import("../runDetail");
+      const { useCallWorkers } = await import("../runDetail");
+      const soon = new Date(Date.now() + 35_000).toISOString();
       axios.get.mockReset();
       axios.get
-        .mockResolvedValueOnce({ status: 202, data: { pending: true } })
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { pending: true, next_read_at: soon },
+        })
         .mockRejectedValue(new Error("forbidden"));
       const client = new QueryClient();
       const Wrapper = ({ children }) => (
@@ -1935,9 +1940,9 @@ describe("useCallWorkers", () => {
         wrapper: Wrapper,
       });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS);
+      await vi.advanceTimersByTimeAsync(35_000);
       await waitFor(() => expect(result.current.isError).toBe(true));
-      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS * 4);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
       expect(axios.get).toHaveBeenCalledTimes(2);
       expect(
         client.getQueryCache().find({
@@ -1949,17 +1954,21 @@ describe("useCallWorkers", () => {
     }
   });
 
-  it("checks again while the API says a read is still due, and stops once it is not", async () => {
+  it("reads again once at the time the API says, and stops once nothing is due", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { useCallWorkers, WORKERS_POLL_MS } = await import("../runDetail");
+      const { useCallWorkers } = await import("../runDetail");
       const record = { workers: [], events: [], pending: false };
+      const at = (seconds) => new Date(Date.now() + seconds * 1000).toISOString();
       axios.get.mockReset();
       axios.get
-        .mockResolvedValueOnce({ status: 202, data: { pending: true } })
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { pending: true, next_read_at: at(35) },
+        })
         .mockResolvedValueOnce({
           status: 200,
-          data: { ...record, pending: true },
+          data: { ...record, pending: true, next_read_at: at(635) },
         })
         .mockResolvedValue({ status: 200, data: record });
       const client = new QueryClient({
@@ -1974,11 +1983,14 @@ describe("useCallWorkers", () => {
       });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data).toBe(null);
-      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS);
+      // Nothing is read before the time the API gave.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
       await waitFor(() => expect(result.current.data).not.toBe(null));
-      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS);
+      await vi.advanceTimersByTimeAsync(600_000);
       await waitFor(() => expect(result.current.data).toEqual(record));
-      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS * 4);
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
       expect(axios.get).toHaveBeenCalledTimes(3);
       expect(axios.get).toHaveBeenCalledWith(
         "/simulate/v3/call-executions/call-2/workers/",

@@ -895,6 +895,59 @@ class TestWorkerRecordAsServed:
         assert counts["finished"] + counts["did_not_finish"] == len(shown)
         assert counts["workers"] == len({one["worker_id"] for one in shown})
 
+    def test_each_row_s_did_not_finish_agrees_with_the_headline_count(self):
+        failed = {**answer(5, "A", "boom"), "status": "error"}
+        passed = {**HOTELS, "seq": 3, "type": "transferred", "delegation_id": "C"}
+        events = [HOTELS, FLIGHTS, passed, failed]
+        for cut_off in (False, True):
+            result = worker_steps(events, cut_off=cut_off)
+            shown = handoffs(result["steps"])
+            assert (
+                sum(one["did_not_finish"] for one in shown)
+                == result["counts"]["did_not_finish"]
+            )
+            assert {one["end"] for one in shown if one["did_not_finish"]} <= {
+                "failed",
+                "no_return",
+            }
+
+    def test_only_a_worker_s_first_hand_off_is_marked_first(self):
+        other = {**FLIGHTS, "seq": 3, "worker_id": "booker", "delegation_id": "C"}
+        shown = handoffs(worker_steps([HOTELS, FLIGHTS, other])["steps"])
+        assert [(one["worker_id"], one["first_of_worker"]) for one in shown] == [
+            ("searcher", True),
+            ("searcher", False),
+            ("booker", True),
+        ]
+
+    def test_each_turn_lists_its_hand_offs_nested_ones_included(self):
+        nested = {
+            **FLIGHTS,
+            "seq": 2,
+            "worker_id": "booker",
+            "by": "searcher",
+            "parent_delegation_id": "A",
+        }
+        result = worker_steps([HOTELS, nested], [said("user", 0, "book it")])
+        [turn] = result["turns"]
+        assert turn["handoffs"] == [one["key"] for one in result["steps"]]
+        assert len(turn["handoffs"]) == 2
+
+    def test_only_work_before_the_caller_spoke_or_in_no_turn_expects_no_messages(
+        self,
+    ):
+        early = {**HOTELS, "at": at(1)}
+        later = {**FLIGHTS, "at": at(5)}
+        untimed = {**FLIGHTS, "seq": 3, "delegation_id": "C", "at": None}
+        turns = worker_steps(
+            [early, later, untimed], [said("agent", 2, "hi"), said("user", 4, "go")]
+        )["turns"]
+        assert [(one["turn"], one["expects_messages"]) for one in turns] == [
+            (0, False),
+            (1, True),
+            (None, False),
+        ]
+
     def test_each_hand_off_names_the_steps_directly_under_it(self):
         events = [HOTELS, call(2, "A"), answer(3, "A", "three hotels"), call(4)]
         result = worker_steps(events)
@@ -998,52 +1051,41 @@ class TestWorkerRecordAsServed:
         assert late["workers"][0]["cut_short"] is False
         assert handoffs(late["steps"])[1]["end_state"] == "deadline_passed"
 
+    def test_a_pending_record_says_when_to_read_again_and_never_a_time_already_past(
+        self,
+    ):
+        record = {
+            "workers": [],
+            "events": [HOTELS],
+            "events_omitted": 0,
+            "coordinator": None,
+            "spans_received": True,
+            "started_at": None,
+            "next_read_at": "2026-11-01T10:10:00+00:00",
+        }
+        before = datetime(2026, 11, 1, 10, 5, tzinfo=UTC)
+        # Due, but the read may still be queued: the client is told to look again soon, once.
+        queued = datetime(2026, 11, 1, 10, 11, tzinfo=UTC)
+        assert served_record(record, before)["next_read_at"] == record["next_read_at"]
+        again = datetime.fromisoformat(served_record(record, queued)["next_read_at"])
+        assert again > queued
+
 
 class TestFailurePlacements:
-    STEPS = [
-        {"kind": "handoff", "key": 1, "worker_id": "searcher"},
-        {
-            "kind": "tool_call",
-            "key": 2,
-            "worker_id": "searcher",
-            "call": {"tool": "book", "status": "ok"},
-        },
-        {
-            "kind": "tool_call",
-            "key": 3,
-            "worker_id": None,
-            "call": {"tool": "book", "status": "error"},
-        },
-    ]
-
-    def place(self, *goals):
-        return failure_placements(self.STEPS, goals)
-
-    def test_a_tool_check_sits_on_the_failed_call_of_that_tool_and_its_worker_reads_unknown_when_unsaid(
-        self,
-    ):
-        [placed] = self.place(
-            {"name": "call_book", "passed": False, "subject_kind": "task"}
+    def test_a_failed_or_unsure_check_is_never_tied_to_a_step_by_its_name(self):
+        # Named after a tool that failed in the call: still not tied, since nothing recorded says it is about it.
+        named, judged = failure_placements(
+            [
+                {"name": "call_book", "passed": False, "subject_kind": "task"},
+                {
+                    "name": "explained",
+                    "passed": None,
+                    "result": "inconclusive",
+                    "subject_kind": "task",
+                },
+            ]
         )
-        assert (placed["step"], placed["worker_id"], placed["untied"]) == (
-            3,
-            None,
-            None,
-        )
-
-    def test_a_tool_never_called_and_a_check_with_no_moment_are_not_tied_to_a_step(
-        self,
-    ):
-        never, judged = self.place(
-            {"name": "Call refund", "passed": False, "subject_kind": "task"},
-            {
-                "name": "explained",
-                "passed": None,
-                "result": "inconclusive",
-                "subject_kind": "task",
-            },
-        )
-        assert (never["step"], never["untied"]) == (None, "never_called")
+        assert (named["step"], named["untied"]) == (None, "no_moment")
         assert (judged["step"], judged["untied"], judged["status"]) == (
             None,
             "no_moment",
@@ -1051,24 +1093,28 @@ class TestFailurePlacements:
         )
 
     def test_a_passed_or_not_applicable_check_is_not_placed(self):
-        assert not self.place(
-            {"name": "call_book", "passed": True, "subject_kind": "task"},
-            {
-                "name": "x",
-                "passed": None,
-                "result": "not_applicable",
-                "subject_kind": "task",
-            },
+        assert not failure_placements(
+            [
+                {"name": "call_book", "passed": True, "subject_kind": "task"},
+                {
+                    "name": "x",
+                    "passed": None,
+                    "result": "not_applicable",
+                    "subject_kind": "task",
+                },
+            ]
         )
 
-    def test_a_worker_s_own_check_keeps_its_worker_when_no_step_is_named(self):
-        [placed] = self.place(
-            {
-                "name": "read_only",
-                "passed": False,
-                "subject_kind": "worker",
-                "worker_id": "searcher",
-            }
+    def test_a_worker_s_own_check_keeps_its_worker(self):
+        [placed] = failure_placements(
+            [
+                {
+                    "name": "read_only",
+                    "passed": False,
+                    "subject_kind": "worker",
+                    "worker_id": "searcher",
+                }
+            ]
         )
         assert (placed["worker_id"], placed["step"]) == ("searcher", None)
 

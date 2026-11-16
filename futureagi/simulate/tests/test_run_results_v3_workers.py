@@ -13,7 +13,8 @@ def test_cancel_requested_is_served_cancelled_once_the_job_is_canceled(
     user, workspace, storage, settings, auth_client
 ):
     from simulate.models import CallExecution, HostedHarnessJob
-    from simulate.services.harness_workers import WORKERS_KEY, worker_timeline
+    from simulate.services.harness_worker_timeline import worker_timeline
+    from simulate.services.harness_workers import WORKERS_KEY
     from simulate.services.scoring_status import locked_call_metadata_update
 
     job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "conf")

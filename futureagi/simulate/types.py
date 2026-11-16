@@ -11,6 +11,8 @@ WorkerStatus = Literal["ok", "error"]
 WorkerRelationship = Literal["observed", "unknown"]
 WorkerAttribution = Literal["reported", "unattributed"]
 WorkerCollection = Literal["complete", "partial", "unavailable", "no_evidence"]
+# What the `/workers/` answer holds: a kept record, an earlier attempt kept before records were, or a failed read.
+WorkersState = Literal["recorded", "not_kept", "unreadable"]
 WorkerStepKind = Literal["handoff", "tool_call"]
 # How a hand-off ended: a return decides it; a control pass that never returns is `passed` unless a tool it ran failed.
 HandOffEnd = Literal["finished", "failed", "passed", "no_return", "cut_off"]
@@ -36,7 +38,11 @@ WORKER_SUBJECT_PREFIX = "worker:"
 def worker_subject_id(subject: object) -> str | None:
     """The worker id a `worker:<id>` subject names; None for any other subject."""
     text = str(subject or "")
-    return text[len(WORKER_SUBJECT_PREFIX) :] if text.startswith(WORKER_SUBJECT_PREFIX) else None
+    return (
+        text[len(WORKER_SUBJECT_PREFIX) :]
+        if text.startswith(WORKER_SUBJECT_PREFIX)
+        else None
+    )
 
 
 def is_worker_subject(subject: object) -> bool:
@@ -77,6 +83,21 @@ class WorkerSpan(TypedDict):
     tokens: NotRequired[int]
 
 
+class SealedWorkerEvent(TypedDict, total=False):
+    """One worker event the harness sealed on a tool-call row; `worker_id` names the runtime's agent, times are epoch."""
+
+    type: str
+    id: str
+    worker_id: str | None
+    by: str | None
+    parent_id: str
+    relationship: str
+    tool: str
+    at: float
+    ended_at: float | None
+    status: str
+
+
 class SealedToolCall(TypedDict, total=False):
     """One row of `provider_call_data.livekit.tool_calls` as the sandbox sealed it; times are epoch seconds."""
 
@@ -103,6 +124,7 @@ class SealedToolCall(TypedDict, total=False):
     task_id: str
     input_omitted: bool
     output_omitted: bool
+    worker_events: list[SealedWorkerEvent]
 
 
 class ContractWorker(TypedDict):
@@ -275,6 +297,10 @@ class WorkerStep(TypedDict, total=False):
     end: HandOffEnd
     # The worker's end state, on a hand-off that did not come back and that the trial's end cut short.
     end_state: WorkerState
+    # The hand-off failed or its worker never came back: counted in `counts.did_not_finish`.
+    did_not_finish: bool
+    # The worker's first hand-off in the call, where its model and tokens (its totals) are shown.
+    first_of_worker: bool
     # The keys of the steps directly under this hand-off, in reading order.
     children: list[int]
     call: WorkerEvent
@@ -293,6 +319,10 @@ class WorkerTurn(TypedDict):
     # The keys of the top-level steps in this turn, in reading order.
     children: list[int]
     calls_outside: int
+    # The keys of every hand-off in this turn, nested ones included, each followed by the ones it made.
+    handoffs: list[int]
+    # False for work before the caller spoke or in no recorded turn: a missing request or reply there is not missed.
+    expects_messages: bool
 
 
 class HandOffCounts(TypedDict):
@@ -351,8 +381,8 @@ class FailurePlacement(TypedDict):
     step: int | None
     # Null when the record does not say which worker: shown as Unknown, never guessed.
     worker_id: str | None
-    untied: Literal["no_moment", "never_called"] | None
-    tool: NotRequired[str]
+    # `no_moment`: nothing recorded ties the check to a step of the call.
+    untied: Literal["no_moment"] | None
 
 
 class CallWorkersRecord(WorkerTimeline, WorkerSteps):
@@ -361,6 +391,7 @@ class CallWorkersRecord(WorkerTimeline, WorkerSteps):
     pending: bool
     placements: list[FailurePlacement]
     stopped_by_user: bool
+    state: WorkersState
 
 
 class CallActorTrigger(TypedDict, total=False):

@@ -442,6 +442,7 @@ export function functionCallTranscriptRows(calls = []) {
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
       tool_calls: actor ? null : [call],
+      tool_label: actor ? null : call.tool_label,
     };
   });
 }
@@ -600,6 +601,7 @@ export function mapCallDetail(raw) {
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
+    toolLabel: t.tool_label ?? null,
   }));
 
   const words = turns.reduce(
@@ -700,38 +702,39 @@ const traceRow = (raw) => ({
   latencyMs: raw.latency_ms ?? null,
 });
 
-// How often a record the API says is still coming is checked again.
-export const WORKERS_POLL_MS = 15000;
-
-/**
- * Which of a multi-agent app's workers did what in one call; null when it has no record yet (202) or none (204).
- * Checked again while the API says a read of it is still due, and when the call's status changes: a call that
- * ends while open has its first read due then.
- */
+/** Which of a multi-agent app's workers did what in one call; null when it has no record yet (202) or none (204). */
 export function useCallWorkers(callExecutionId, callStatus = null) {
   return useQuery({
     queryKey: ["simulation-call-workers-v3", callExecutionId, callStatus],
     queryFn: async () => {
       const response = await simulateV3CallExecutionWorkers(callExecutionId);
       const record = response.status === 200 ? response.data : null;
-      return { record, pending: Boolean(response.data?.pending) };
+      return {
+        record,
+        // The API says when a read still due may change this answer; the tab reads again once, then.
+        readAgainAt: response.data?.pending ? response.data.next_read_at : null,
+      };
     },
     select: (read) => read.record,
     enabled: !!callExecutionId,
     retry: false,
     // The panel says so inline; this tab must not toast about a call the user isn't looking at.
     meta: { errorHandled: true },
-    refetchInterval: (query) =>
-      !query.state.error && query.state.data?.pending ? WORKERS_POLL_MS : false,
+    refetchInterval: (query) => {
+      const at = query.state.data?.readAgainAt;
+      if (query.state.error || !at) return false;
+      return Math.max(Date.parse(at) - Date.now(), 0);
+    },
   });
 }
 
 /**
- * Whether a call has workers to show: false while it has no record (no Participants tab),
- * undefined while the record is unread or couldn't be read.
+ * Whether a call has workers to show: false while it has no record (no Participants tab), undefined while unread.
+ * A failed read shows the tab, so the panel can say it couldn't load.
  */
 export function useHasWorkers(callExecutionId, callStatus = null) {
-  const { data } = useCallWorkers(callExecutionId, callStatus);
+  const { data, isError } = useCallWorkers(callExecutionId, callStatus);
+  if (isError) return true;
   return data === undefined ? undefined : data !== null;
 }
 

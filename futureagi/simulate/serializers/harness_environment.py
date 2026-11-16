@@ -30,6 +30,14 @@ from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
+class _Labelled(serializers.Serializer):
+    """A serializer with a `label` field. `label` is also an attribute every Field has, so the field is added in
+    `get_fields` rather than declared on the class."""
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        return {**super().get_fields(), "label": serializers.CharField()}
+
+
 class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     """Paging for the environments list.
 
@@ -462,7 +470,12 @@ class HarnessToolTablesSerializer(serializers.Serializer):
     recorded = serializers.BooleanField()
     read = serializers.ListField(child=serializers.CharField())
     changed = serializers.ListField(child=serializers.CharField())
-    label = serializers.CharField(help_text="What the Changes line says.")
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        return {
+            **super().get_fields(),
+            "label": serializers.CharField(help_text="What the Changes line says."),
+        }
 
 
 class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
@@ -511,14 +524,12 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
     tables = HarnessToolTablesSerializer()
 
 
-class HarnessApprovalOptionSerializer(serializers.Serializer):
+class HarnessApprovalOptionSerializer(_Labelled):
     value = serializers.CharField()
-    label = serializers.CharField()
 
 
 class HarnessFaultModeSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=FAULT_MODES)
-    label = serializers.CharField()
     hint = serializers.CharField(help_text="The line shown under the choice.")
     approval_options = HarnessApprovalOptionSerializer(
         many=True,
@@ -528,8 +539,9 @@ class HarnessFaultModeSerializer(serializers.Serializer):
     )
 
     def get_fields(self) -> dict[str, serializers.Field]:
-        # `fields` is the name of the Serializer attribute holding them, so this field is added here.
+        # `label` and `fields` are names Serializer attributes have, so these fields are added here.
         fields = super().get_fields()
+        fields["label"] = serializers.CharField()
         fields["fields"] = serializers.ListField(
             child=serializers.ChoiceField(
                 choices=(
@@ -751,10 +763,16 @@ class HarnessEnvironmentWorldTableSerializer(serializers.Serializer):
     note = serializers.CharField(
         allow_null=True, help_text="The store it lives in: capability and engine."
     )
-    fields = HarnessEnvironmentTableFieldSerializer(
-        many=True,
-        help_text="Its fields as the contract's data schema gives them; empty when it gives none.",
-    )
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        # `fields` is the name of the Serializer attribute holding them, so this field is added here.
+        return {
+            **super().get_fields(),
+            "fields": HarnessEnvironmentTableFieldSerializer(
+                many=True,
+                help_text="Its fields as the contract's data schema gives them; empty when it gives none.",
+            ),
+        }
 
 
 class HarnessEnvironmentWorldSerializer(serializers.Serializer):
@@ -999,11 +1017,10 @@ class HarnessScenarioGroupSerializer(serializers.Serializer):
     )
 
 
-class HarnessScenarioFieldSerializer(serializers.Serializer):
+class HarnessScenarioFieldSerializer(_Labelled):
     """A field the list filters on; an enum carries its values counted over the whole filtered suite."""
 
     value = serializers.CharField()
-    label = serializers.CharField()
     type = serializers.ChoiceField(choices=("string", "enum"))
     category = serializers.CharField()
     choices = serializers.ListField(child=serializers.CharField(), required=False)
@@ -1032,9 +1049,8 @@ class HarnessScenarioEditingSerializer(serializers.Serializer):
     rework_fields = serializers.ListField(child=serializers.CharField())
 
 
-class HarnessScenarioGroupingSerializer(serializers.Serializer):
+class HarnessScenarioGroupingSerializer(_Labelled):
     value = serializers.CharField(allow_blank=True)
-    label = serializers.CharField()
 
 
 class HarnessScenarioDraftRefSerializer(serializers.Serializer):
@@ -1369,7 +1385,8 @@ class HarnessRunPlanSerializer(serializers.Serializer):
         help_text="Why the run would be refused; null when it is runnable.",
     )
     held_back = serializers.IntegerField(
-        min_value=0, help_text="Selected scenarios that need a blocked tool."
+        min_value=0,
+        help_text="Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
     )
 
 

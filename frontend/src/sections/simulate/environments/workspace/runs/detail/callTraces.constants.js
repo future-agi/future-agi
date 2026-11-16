@@ -104,6 +104,13 @@ export const CALL_WORKERS_COPY = {
   },
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
+  // Why a call has no record to show, by the state the API serves.
+  states: {
+    unreadable:
+      "This call's participants couldn't be read. Its record may have hand-offs that aren't shown.",
+    not_kept:
+      "This attempt ran before attempts kept their participants, so its record wasn't kept.",
+  },
   workersNotObserved: (names) => `Not observed: ${names}`,
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
@@ -127,11 +134,10 @@ export const CALL_WORKERS_COPY = {
   // Each failed or unsure check on the step its evidence points to, or why it is on none.
   placedChecks: "Failed and unsure checks",
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
-  placedOn: (worker, tool) => `on ${worker}'s ${tool} call`,
+  // Nothing the harness records ties a check to a step yet, so each says so rather than being guessed onto one.
   untied: {
-    no_moment: () =>
-      "Not tied to a step: the check doesn't point to a moment in the call",
-    never_called: (tool) => `Not tied to a step: ${tool} was never called`,
+    no_moment:
+      "Not tied to a step: nothing recorded ties this check to a moment in the call",
   },
   // A cut-short worker seen only through its tool calls: its hand-off span had not ended.
   cutShortToolCallsOnly:
@@ -155,4 +161,28 @@ export const CALL_WORKERS_COPY = {
   // Scoped to the participants: the transcript up to the stop is kept and shown on its own tab.
   stoppedByUserNoEvidence:
     "Stopped by the user before any participant's work was recorded.",
+};
+
+// The Participants tab's layout: how deep a row indents, how fast a fold opens, the JSON button's size.
+// Indent levels in the table's narrow Worker column; deeper rows stay at the last one.
+export const MAX_ROW_INDENT = 3;
+
+export const MOTION_MS = 180;
+export const NO_MOTION_SX = {
+  "@media (prefers-reduced-motion: reduce)": { transition: "none !important" },
+};
+
+export const JSON_BUTTON_SX = {
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 500,
+  height: 20,
+  minHeight: 20,
+  minWidth: 0,
+  px: 0.75,
+  py: 0,
+  borderRadius: "5px",
+  borderColor: "divider",
+  color: "text.secondary",
+  "& .MuiButton-startIcon": { mr: 0.5, ml: 0 },
 };

@@ -14,17 +14,20 @@ export const seconds = (iso) => {
 export const isLong = (text) =>
   text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
 
-/** A text the API marked as data or prose, as the markdown that shows it. */
-export const asMarkdown = (shown) =>
-  shown.format === "code" ? `\`\`\`\n${shown.text}\n\`\`\`` : shown.text;
+/** A text the API marked as data or prose, as the markdown that shows it; the fence outruns any backticks inside. */
+export const asMarkdown = (shown) => {
+  if (shown.format !== "code") return shown.text;
+  const longest = Math.max(
+    0,
+    ...(shown.text.match(/`+/g) ?? []).map((run) => run.length),
+  );
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${shown.text}\n${fence}`;
+};
 
 /** The API's steps by key, so a hand-off's or a turn's `children` name their rows. */
 export const stepsByKey = (data) =>
   Object.fromEntries(data.steps.map((step) => [step.key, step]));
-
-/** A turn's hand-offs, each followed by the ones it made: the API sends steps in that order. */
-export const handOffsOf = (data, turn) =>
-  data.steps.filter((step) => step.kind === "handoff" && step.turn === turn);
 
 const toolEvent = (step, depth, names) => ({
   key: `call-${step.key}`,
@@ -69,7 +72,7 @@ const endEvents = (step, names) => {
         ...base,
         at: step.returned.at,
         type: C.answerStep,
-        bad: step.end === "failed",
+        bad: step.did_not_finish,
         shown: step.returned.result_shown,
         empty: C.noResult,
       },
@@ -80,7 +83,7 @@ const endEvents = (step, names) => {
       : {
           ...base,
           type: C.noReturnStep,
-          bad: true,
+          bad: step.did_not_finish,
           note: C.noReturn(base.actor),
         },
   ];
@@ -113,13 +116,6 @@ const stepsOfKeys = (keys, byKey, names) =>
 export const turnLabel = (round, rounds) =>
   rounds.length > 1 ? `${C.turn(round.turn)} · ` : "";
 
-/**
- * Whether a turn's missing request or reply is left out rather than shown as not seen: work before the caller spoke,
- * and steps whose turn the record does not say, have no message of their own.
- */
-export const noMessages = (round, rounds) =>
-  round.turn === null || (round.turn === 0 && rounds.length > 1);
-
 /** Every step of a call in reading order: each turn's request, its steps, then its reply. */
 export const callEvents = (data, byKey, names) => {
   if (!data.counts.hand_offs)
@@ -130,7 +126,7 @@ export const callEvents = (data, byKey, names) => {
     );
   return data.turns.flatMap((round) => [
     // Work before the caller spoke, or in no recorded turn, has no request to show.
-    ...(noMessages(round, data.turns) && !round.request
+    ...(!round.expects_messages && !round.request
       ? []
       : [
           {
@@ -144,7 +140,7 @@ export const callEvents = (data, byKey, names) => {
           },
         ]),
     ...stepsOfKeys(round.children, byKey, names),
-    ...(noMessages(round, data.turns) && !round.response
+    ...(!round.expects_messages && !round.response
       ? []
       : [
           {

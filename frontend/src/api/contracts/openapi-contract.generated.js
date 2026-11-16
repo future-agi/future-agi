@@ -57099,6 +57099,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "participants",
         "has_customer",
         "trial_state",
+        "earlier_attempts",
         "comparable",
         "not_comparable_reason",
         "scoring_status",
@@ -57578,7 +57579,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tool_call_count: {
           title: "Tool call count",
           description:
-            "The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
+            "The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
           type: "integer",
         },
         call_actors: {
@@ -57603,6 +57604,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trial_state: {
           $ref: "#/definitions/TrialState",
+        },
+        earlier_attempts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EarlierAttempt",
+          },
         },
         comparable: {
           title: "Comparable",
@@ -57824,6 +57831,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "placements",
         "stopped_by_user",
         "pending",
+        "state",
       ],
       type: "object",
       properties: {
@@ -57930,6 +57938,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Next read at",
           type: "string",
           minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["recorded", "not_kept", "unreadable"],
         },
       },
     },
@@ -70077,7 +70090,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         held_back: {
           title: "Held back",
-          description: "Selected scenarios that need a blocked tool.",
+          description:
+            "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
           type: "integer",
           minimum: 0,
         },
@@ -98544,6 +98558,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EarlierAttempt: {
+      required: ["attempt", "rerun_at", "kept", "trial_state"],
+      type: "object",
+      properties: {
+        attempt: {
+          title: "Attempt",
+          description: "Its id: `/workers/?attempt=` reads its worker record.",
+          type: "string",
+          format: "uuid",
+        },
+        rerun_at: {
+          title: "Rerun at",
+          type: "string",
+          format: "date-time",
+        },
+        kept: {
+          title: "Kept",
+          description:
+            "False when it was snapshotted before attempts kept their worker record and trial state.",
+          type: "boolean",
+        },
+        trial_state: {
+          $ref: "#/definitions/TrialState",
+        },
+      },
+    },
     PersonaDetails: {
       required: ["name", "voice", "age", "traits"],
       type: "object",
@@ -98730,6 +98770,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
           type: "string",
           enum: ["agent_call", "world_actor_action"],
+        },
+        tool_label: {
+          title: "Tool label",
+          description:
+            "How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -99211,7 +99258,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     CallWorkerRound: {
-      required: ["turn", "request", "response", "children", "calls_outside"],
+      required: [
+        "turn",
+        "request",
+        "response",
+        "children",
+        "calls_outside",
+        "handoffs",
+        "expects_messages",
+      ],
       type: "object",
       properties: {
         turn: {
@@ -99234,6 +99289,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls_outside: {
           title: "Calls outside",
           type: "integer",
+        },
+        handoffs: {
+          type: "array",
+          items: {
+            type: "integer",
+          },
+        },
+        expects_messages: {
+          title: "Expects messages",
+          type: "boolean",
         },
       },
     },
@@ -99319,6 +99384,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_observed",
           ],
         },
+        did_not_finish: {
+          title: "Did not finish",
+          type: "boolean",
+        },
+        first_of_worker: {
+          title: "First of worker",
+          type: "boolean",
+        },
         children: {
           type: "array",
           items: {
@@ -99372,13 +99445,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         untied: {
           title: "Untied",
           type: "string",
-          enum: ["no_moment", "never_called"],
+          enum: ["no_moment"],
           "x-nullable": true,
-        },
-        tool: {
-          title: "Tool",
-          type: "string",
-          minLength: 1,
         },
       },
     },
@@ -109785,16 +109853,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessScenarioField: {
-      required: ["value", "label", "type", "category"],
+      required: ["value", "type", "category", "label"],
       type: "object",
       properties: {
         value: {
           title: "Value",
-          type: "string",
-          minLength: 1,
-        },
-        label: {
-          title: "Label",
           type: "string",
           minLength: 1,
         },
@@ -109832,6 +109895,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -140184,7 +140252,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessFaultMode: {
       description:
         "The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.",
-      required: ["mode", "label", "hint", "fields"],
+      required: ["mode", "hint", "label", "fields"],
       type: "object",
       properties: {
         mode: {
@@ -140197,11 +140265,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "error",
             "approval_required",
           ],
-        },
-        label: {
-          title: "Label",
-          type: "string",
-          minLength: 1,
         },
         hint: {
           title: "Hint",
@@ -140216,6 +140279,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessApprovalOption",
           },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
         },
         fields: {
           description:
