@@ -983,3 +983,22 @@ class TestWorkerRecordAsServed:
         long_after = datetime(2026, 11, 2, tzinfo=UTC)
         assert served_record(record, before)["pending"] is True
         assert served_record(record, long_after)["pending"] is False
+
+    def test_a_pending_record_says_when_to_read_again_and_never_a_time_already_past(
+        self,
+    ):
+        record = {
+            "workers": [],
+            "events": [HOTELS],
+            "events_omitted": 0,
+            "coordinator": None,
+            "spans_received": True,
+            "started_at": None,
+            "next_read_at": "2026-11-01T10:10:00+00:00",
+        }
+        before = datetime(2026, 11, 1, 10, 5, tzinfo=UTC)
+        # Due, but the read may still be queued: the client is told to look again soon, once.
+        queued = datetime(2026, 11, 1, 10, 11, tzinfo=UTC)
+        assert served_record(record, before)["next_read_at"] == record["next_read_at"]
+        again = datetime.fromisoformat(served_record(record, queued)["next_read_at"])
+        assert again > queued

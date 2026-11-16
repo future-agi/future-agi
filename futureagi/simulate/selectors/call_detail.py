@@ -281,7 +281,7 @@ def tagged_function_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         acted = bool(actor) and actor != AGENT
         one = {**call, "kind": "world_actor_action" if acted else "agent_call"}
         if not acted:
-            one["label"] = _TOOL_ROW_LABELS[_call_kind(call)]
+            one["tool_label"] = _TOOL_ROW_LABELS[_call_kind(call)]
         if acted:
             one["actor_name"] = call.get("actor_name") or actor
             if not one.get("outcome"):

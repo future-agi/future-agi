@@ -16,6 +16,7 @@ from simulate.services.harness_worker_steps import served_record
 from simulate.services.harness_workers import (
     READ_KEY,
     WORKERS_KEY,
+    check_again_at,
     first_read_due,
     read_pending,
 )
@@ -83,5 +84,7 @@ def call_workers(
     due = first_read_due(call)
     if due is not None and read_pending(due, now):
         # The first read has not run yet: the client checks again at `next_read_at` rather than reading "no workers".
-        return WorkersReply(status.HTTP_202_ACCEPTED, next_read_at=due)
+        return WorkersReply(
+            status.HTTP_202_ACCEPTED, next_read_at=check_again_at(due, now)
+        )
     return WorkersReply(status.HTTP_204_NO_CONTENT)
