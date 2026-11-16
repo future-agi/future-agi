@@ -14,7 +14,11 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import Annotations
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.tests.test_auto_annotate_tenant_scope import _payload, _tenant
+from model_hub.tests.test_auto_annotate_tenant_scope import (
+    _annotation_workflow_input,
+    _payload,
+    _tenant,
+)
 from model_hub.utils.auto_annotate import _get_input_values, generate_annotations_task
 from tfc.middleware.workspace_context import clear_workspace_context
 
@@ -72,16 +76,18 @@ def test_categorical_dispatch_reads_inputs_and_persists_model_result():
         own.label.settings["inputs"] = [str(second.id), str(first.id)]
         own.label.save()
         temporal_client = SimpleNamespace(namespace="test", start_workflow=AsyncMock())
-        with patch(
-            "tfc.temporal.common.client.get_client",
-            AsyncMock(return_value=temporal_client),
+        with (
+            patch(
+                "tfc.temporal.common.client.get_client",
+                AsyncMock(return_value=temporal_client),
+            ),
+            patch("ee.usage.services.emitter.emit"),
         ):
             response = own.client.post(
                 "/model-hub/annotations/", _payload(own), format="json"
             )
         assert response.status_code == 200, response.content
-        temporal_client.start_workflow.assert_awaited_once()
-        wire_input = temporal_client.start_workflow.call_args.args[1]
+        wire_input = _annotation_workflow_input(temporal_client.start_workflow)
         assert wire_input.args[2] == str(own.organization.id)
         clear_workspace_context()
 
