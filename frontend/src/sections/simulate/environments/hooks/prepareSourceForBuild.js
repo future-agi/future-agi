@@ -11,6 +11,9 @@ const PROVIDER_SECRET_FIELDS = {
   retell: { apiKey: "RETELL_API_KEY" },
   retell_chat: { apiKey: "RETELL_API_KEY" },
   livekit: { apiKey: "LIVEKIT_API_KEY", apiSecret: "LIVEKIT_API_SECRET" },
+  // Microsoft: the Entra app's client secret, plus the optional Direct Line secret.
+  copilot_studio: { apiKey: "AZURE_CLIENT_SECRET", apiSecret: "COPILOT_DIRECTLINE_SECRET" },
+  foundry: { apiKey: "AZURE_CLIENT_SECRET" },
 };
 
 /**

@@ -68,15 +68,84 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
   ],
   [AGENT_TYPES.CHAT]: [
     {
-      // The only real chat connector today (maps to `retell_chat`); listed first
-      // so it's the default when Chat is selected. The rest are not connectors
-      // yet, so they're surfaced coming-soon (not selectable).
+      // Maps to `retell_chat`; listed first so it's the default when Chat is
+      // selected. Copilot Studio and Foundry follow; the rest are not
+      // connectors yet, so they're surfaced coming-soon (not selectable).
       id: "retell_chat",
       name: "Retell AI",
       icon: "solar:chat-round-line-linear",
       idLabel: "Chat agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "Retell API key",
+    },
+    // Microsoft agents are read through the customer's Entra app, so they take
+    // several fields instead of one ID and one key. `secret` names the source
+    // field the value travels in (`apiKey`/`apiSecret` are never persisted);
+    // every other field is public agent config, keyed by `name`. `agentId`
+    // marks the field that names the environment.
+    {
+      id: "copilot_studio",
+      name: "Copilot Studio",
+      icon: "solar:chat-round-dots-linear",
+      fields: [
+        { name: "tenant_id", label: "Tenant ID", placeholder: "00000000-0000-0000-0000-000000000000", required: true },
+        { name: "client_id", label: "Client ID", placeholder: "00000000-0000-0000-0000-000000000000", required: true },
+        {
+          name: "client_secret",
+          label: "Client secret",
+          placeholder: "Secret value…",
+          secret: "apiKey",
+          required: true,
+          helper: "From your Entra app's Certificates & secrets. Copy the secret's Value.",
+        },
+        {
+          name: "dataverse_url",
+          label: "Dataverse environment URL",
+          placeholder: "https://org123.crm.dynamics.com",
+          required: true,
+          helper: "Power Platform admin center › your environment › Environment URL.",
+        },
+        {
+          name: "agent_id",
+          label: "Agent ID",
+          placeholder: "00000000-0000-0000-0000-000000000000",
+          required: true,
+          agentId: true,
+          helper: "In Copilot Studio: your agent › Settings › Advanced › Metadata.",
+        },
+        {
+          name: "directline_secret",
+          label: "Direct Line secret",
+          placeholder: "Secret 1…",
+          secret: "apiSecret",
+          helper: "Optional. Settings › Security › Web channel security. Only needed to chat with a published agent.",
+        },
+      ],
+    },
+    {
+      id: "foundry",
+      name: "Foundry",
+      icon: "solar:cloud-linear",
+      fields: [
+        { name: "tenant_id", label: "Tenant ID", placeholder: "00000000-0000-0000-0000-000000000000", required: true },
+        { name: "client_id", label: "Client ID", placeholder: "00000000-0000-0000-0000-000000000000", required: true },
+        {
+          name: "client_secret",
+          label: "Client secret",
+          placeholder: "Secret value…",
+          secret: "apiKey",
+          required: true,
+          helper: "From your Entra app's Certificates & secrets. The app needs the Foundry User role on the Foundry resource.",
+        },
+        {
+          name: "project_endpoint",
+          label: "Project endpoint",
+          placeholder: "https://your-resource.services.ai.azure.com/api/projects/your-project",
+          required: true,
+          helper: "On your Foundry project's overview page.",
+        },
+        { name: "agent_name", label: "Agent name", placeholder: "order-assistant", required: true, agentId: true },
+      ],
     },
     {
       id: "openai_assistants",

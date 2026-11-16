@@ -112,3 +112,32 @@ describe("prepareSourceForBuild", () => {
     });
   });
 });
+
+describe("prepareSourceForBuild — Microsoft agents", () => {
+  it("sends the client and Direct Line secrets write-only and keeps the public config", async () => {
+    const { draft, credentialValues } = await prepareSourceForBuild({
+      kind: "platform",
+      provider: "copilot_studio",
+      agentId: "bot-1",
+      apiKey: "client-secret",
+      apiSecret: "dl-secret",
+      providerConfig: { tenant_id: "t", client_id: "c" },
+    });
+    expect(credentialValues).toEqual({
+      AZURE_CLIENT_SECRET: "client-secret",
+      COPILOT_DIRECTLINE_SECRET: "dl-secret",
+    });
+    expect(draft.apiKey).toBeUndefined();
+    expect(draft.apiSecret).toBeUndefined();
+    expect(draft.providerConfig).toEqual({ tenant_id: "t", client_id: "c" });
+  });
+
+  it("Foundry carries only the client secret", async () => {
+    const { credentialValues } = await prepareSourceForBuild({
+      kind: "platform",
+      provider: "foundry",
+      apiKey: "client-secret",
+    });
+    expect(credentialValues).toEqual({ AZURE_CLIENT_SECRET: "client-secret" });
+  });
+});

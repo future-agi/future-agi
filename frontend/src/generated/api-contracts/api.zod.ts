@@ -42132,6 +42132,8 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       "retell_chat",
       "phone",
       "auto",
+      "copilot_studio",
+      "foundry",
     ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
@@ -42482,6 +42484,8 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       "retell_chat",
       "phone",
       "auto",
+      "copilot_studio",
+      "foundry",
     ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])

@@ -55,6 +55,8 @@ export const CONNECTOR_LABEL = {
   vapi: "Vapi",
   retell: "Retell",
   retell_chat: "Retell (chat)",
+  copilot_studio: "Copilot Studio",
+  foundry: "Foundry",
   phone: "Phone",
   auto: "Auto",
 };

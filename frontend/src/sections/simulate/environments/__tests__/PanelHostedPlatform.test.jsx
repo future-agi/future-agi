@@ -347,4 +347,47 @@ describe("PanelHostedPlatform", () => {
     expect(buildBtn()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeInTheDocument();
   });
+
+  it("Copilot Studio asks for the Entra app and agent, and sends only secrets write-only", async () => {
+    preflightHarnessJob.mockResolvedValue(PASS);
+    render(<PanelHostedPlatform />);
+    fireEvent.click(screen.getByText("Chat"));
+    fireEvent.click(screen.getByText("Copilot Studio"));
+
+    expect(screen.queryByPlaceholderText("https://github.com/your-org/your-agent")).toBeNull();
+    const runButton = screen.getByRole("button", { name: "Run preflight" });
+    expect(runButton).toBeDisabled();
+
+    const guids = screen.getAllByPlaceholderText("00000000-0000-0000-0000-000000000000");
+    fireEvent.change(guids[0], { target: { value: "tenant-1" } });
+    fireEvent.change(guids[1], { target: { value: "client-1" } });
+    fireEvent.change(screen.getByPlaceholderText("https://org123.crm.dynamics.com"), {
+      target: { value: "https://org123.crm.dynamics.com" },
+    });
+    fireEvent.change(guids[2], { target: { value: "bot-1" } });
+    expect(runButton).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText("Secret value…"), {
+      target: { value: "client-secret" },
+    });
+    expect(runButton).toBeEnabled();
+
+    runPreflight();
+    await screen.findByText("Ready to build");
+    expect(preflightHarnessJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          connector: "copilot_studio",
+          mode: "connect_only",
+          config: {
+            tenant_id: "tenant-1",
+            client_id: "client-1",
+            dataverse_url: "https://org123.crm.dynamics.com",
+            agent_id: "bot-1",
+          },
+        }),
+        credential_values: { AZURE_CLIENT_SECRET: "client-secret" },
+      }),
+    );
+  });
 });
+
