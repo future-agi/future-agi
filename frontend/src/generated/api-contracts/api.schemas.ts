@@ -28057,6 +28057,18 @@ export interface SharedRecordActionApi {
 }
 
 /**
+ * Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.
+ */
+export type SharedRecordApiTruncation =
+  (typeof SharedRecordApiTruncation)[keyof typeof SharedRecordApiTruncation];
+
+export const SharedRecordApiTruncation = {
+  actions: "actions",
+  records: "records",
+  unknown: "unknown",
+} as const;
+
+/**
  * Records two or more participants named in this trial, and what the world made of each call.
  */
 export interface SharedRecordApi {
@@ -28074,6 +28086,8 @@ export interface SharedRecordApi {
   truncated: boolean;
   /** This record's own actions were cut; null for a trial sealed before the harness said so. */
   actions_truncated?: boolean;
+  /** Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut. */
+  truncation?: SharedRecordApiTruncation;
 }
 
 /**

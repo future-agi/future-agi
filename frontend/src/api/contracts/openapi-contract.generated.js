@@ -124527,6 +124527,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           "x-nullable": true,
         },
+        truncation: {
+          title: "Truncation",
+          description:
+            "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+          type: "string",
+          enum: ["actions", "records", "unknown"],
+          "x-nullable": true,
+        },
       },
     },
     StoppedWorker: {

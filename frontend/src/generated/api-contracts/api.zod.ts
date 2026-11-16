@@ -61469,6 +61469,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .describe(
                 "This record's own actions were cut; null for a trial sealed before the harness said so.",
               ),
+            truncation: zod
+              .enum(["actions", "records", "unknown"])
+              .optional()
+              .describe(
+                "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+              ),
           })
           .describe(
             "Records two or more participants named in this trial, and what the world made of each call.",
@@ -62052,6 +62058,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   .optional()
                   .describe(
                     "This record's own actions were cut; null for a trial sealed before the harness said so.",
+                  ),
+                truncation: zod
+                  .enum(["actions", "records", "unknown"])
+                  .optional()
+                  .describe(
+                    "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
                   ),
               })
               .describe(

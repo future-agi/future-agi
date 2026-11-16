@@ -161680,6 +161680,17 @@
                     "description": "This record's own actions were cut; null for a trial sealed before the harness said so.",
                     "type": "boolean",
                     "x-nullable": true
+                },
+                "truncation": {
+                    "title": "Truncation",
+                    "description": "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+                    "type": "string",
+                    "enum": [
+                        "actions",
+                        "records",
+                        "unknown"
+                    ],
+                    "x-nullable": true
                 }
             }
         },
