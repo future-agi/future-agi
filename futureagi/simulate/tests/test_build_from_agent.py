@@ -7,7 +7,12 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
-from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.models.run_test import RunTest
 from simulate.services.agent_connect import found_check
 from simulate.services.harness_agent_versions import POLICY_KEY
@@ -32,6 +37,8 @@ from simulate.tests.test_harness_versioning_backfill import (
 pytestmark = pytest.mark.django_db
 
 NUDGE = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+PUBLIC_ONLY = "simulate.services.harness_agent_changes.validate_public_github_source"
+INSTALLED = "integrations.services.github_app.installation_connected"
 
 
 @pytest.fixture(autouse=True)
@@ -212,3 +219,66 @@ def test_a_guest_named_agent_never_replaces_the_connected_agent(
     run_test = RunTest.no_workspace_objects.get(id=environment.run_test_id)
     assert run_test.agent_definition_id == agent.id
     assert _agent_state(agent.id) == before
+
+
+def _private(version, installation="9001"):
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=version)
+    runtime.agent_payload = {
+        **(runtime.agent_payload or {}),
+        "source_access": {
+            "kind": "github",
+            "visibility": "private",
+            "installation_id": installation,
+            "repository_id": 42,
+        },
+    }
+    runtime.save(update_fields=["agent_payload"])
+
+
+def test_a_private_repository_agent_builds_with_its_stored_access(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    _private(production)
+
+    with patch(PUBLIC_ONLY) as public_only, patch(INSTALLED, return_value=True):
+        job = _job(_post(client, workspace, _creation(agent)))
+
+    public_only.assert_not_called()
+    scanned = gates.scan.call_args.args[1]["source"]
+    assert scanned["visibility"] == "private"
+    assert scanned["installation_id"] == "9001"
+    assert job.payload["source"]["visibility"] == "private"
+    assert job.payload["source"]["installation_id"] == "9001"
+    assert job.payload["source"]["repository"] == "acme/agent"
+
+
+def test_a_private_repository_agent_needs_its_installation_still_connected(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    _private(production)
+
+    with patch(PUBLIC_ONLY), patch(INSTALLED, return_value=False):
+        response = _post(client, workspace, _creation(agent))
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.json()["error"] == "github_installation_not_connected"
+    gates.start.assert_not_called()
+
+
+def test_a_creation_straight_from_a_repository_keeps_the_public_only_check(
+    client,
+    workspace,
+    gates,
+):
+    with patch(PUBLIC_ONLY, return_value=None) as public_only:
+        _post(client, workspace, _body())
+
+    public_only.assert_called()

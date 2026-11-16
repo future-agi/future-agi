@@ -383,6 +383,27 @@ def check_failure(runtime: HarnessAgentVersionRuntime | None) -> dict[str, Any] 
         }
     if report.get("error"):
         return {"code": str(report["error"]), "message": "", "retryable": True}
+    missing = sorted(str(name) for name in report.get("missing") or [])
+    if missing:
+        return {
+            "code": "credentials_missing",
+            "message": "Missing credentials: " + ", ".join(missing),
+            "retryable": False,
+        }
+    failed = next(
+        (
+            check
+            for check in report.get("checks") or []
+            if isinstance(check, dict) and check.get("status") == "failed"
+        ),
+        None,
+    )
+    if failed is not None:
+        return {
+            "code": f"{failed.get('id') or 'check'}_failed",
+            "message": str(failed.get("label") or ""),
+            "retryable": True,
+        }
     return None
 
 

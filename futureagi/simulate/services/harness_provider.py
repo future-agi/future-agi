@@ -15,12 +15,14 @@ import uuid
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
 from simulate.models import (
+    AgentDefinition,
     HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -109,6 +111,43 @@ def _validate_github_installation(
             " private repository",
             status_code=422,
         )
+
+
+def _connected_build_source(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The source a creation from an agent connected on the Agents page builds:
+    the named version's, else production's, with its stored GitHub access. None
+    for any other creation, which keeps the source it sent."""
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.agent_reading_sandbox import version_source
+    from simulate.services.harness_agent_versions import connected_agent
+
+    metadata = payload.get("metadata") or {}
+    try:
+        definition_id = uuid.UUID(str(metadata.get("agent_definition_id") or ""))
+    except ValueError:
+        return None
+    definition = AgentDefinition.no_workspace_objects.filter(
+        id=definition_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        deleted=False,
+    ).first()
+    if definition is None or not connected_agent(definition.id):
+        return None
+    version_id = metadata.get("agent_version_id") or getattr(
+        definition.active_version or definition.latest_version, "id", None
+    )
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_definition_id=definition.id, agent_version_id=version_id
+    ).first()
+    if runtime is None or runtime.source_kind not in (
+        HarnessAgentVersionRuntime.SourceKind.GITHUB,
+        HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+    ):
+        return None
+    return {**(payload.get("source") or {}), **version_source(runtime)}
 
 
 def get_harness_provider():
@@ -1399,6 +1438,15 @@ class HostedHarnessProvider:
         # Definitive launch validation runs again after vault resolution.
         workspace = request_workspace(request)
         try:
+            connected_source = _connected_build_source(
+                organization.id, getattr(workspace, "id", None), payload
+            )
+        except (ValueError, ValidationError):
+            connected_source = None
+        connected_build = connected_source is not None
+        if connected_build:
+            payload["source"] = connected_source
+        try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
@@ -1409,7 +1457,7 @@ class HostedHarnessProvider:
                 idempotency_key=idempotency_key,
                 workspace=workspace,
             )
-            if replayed is None and versioning_enabled():
+            if replayed is None and versioning_enabled() and not connected_build:
                 from simulate.services.harness_agent_changes import (
                     validate_public_github_source,
                 )
@@ -1467,8 +1515,12 @@ class HostedHarnessProvider:
                     )
 
                     # A replay answers with its job, whatever GitHub says now.
-                    repository_id = validate_public_github_source(
-                        payload, organization_id=organization.id
+                    repository_id = (
+                        None
+                        if connected_build
+                        else validate_public_github_source(
+                            payload, organization_id=organization.id
+                        )
                     )
                     on_create = _environment_agent_maker(
                         organization,
