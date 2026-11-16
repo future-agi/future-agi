@@ -13,6 +13,7 @@ import { MONO } from "../format";
 import FileDiff from "./FileDiff";
 import FileTree from "./FileTree";
 import FileViewer from "./FileViewer";
+import { MIN_CODE_HEIGHT } from "./editorOptions";
 
 const TEMPLATE = "minmax(180px, 260px) minmax(0, 1fr)";
 
@@ -115,18 +116,25 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
         sx={{
           display: "grid",
           gridTemplateColumns: TEMPLATE,
-          minHeight: 360,
-          maxHeight: 640,
+          minHeight: MIN_CODE_HEIGHT,
         }}
       >
-        <Box sx={{ borderRight: "1px solid", borderColor: "divider", p: 1 }}>
-          <FileTree
-            files={tree.data.files}
-            subfolder={tree.data.subfolder}
-            selected={selected}
-            changes={changedBy}
-            onSelect={(path) => set({ file: path })}
-          />
+        <Box
+          sx={{
+            position: "relative",
+            borderRight: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Box sx={{ position: "absolute", inset: 0, overflowY: "auto", p: 1 }}>
+            <FileTree
+              files={tree.data.files}
+              subfolder={tree.data.subfolder}
+              selected={selected}
+              changes={changedBy}
+              onSelect={(path) => set({ file: path })}
+            />
+          </Box>
         </Box>
         <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
           {selected && (
@@ -158,7 +166,7 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
               )}
             </Stack>
           )}
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+          <Box sx={{ flex: 1 }}>
             {showDiff && selected ? (
               <FileDiff
                 agentId={agentId}

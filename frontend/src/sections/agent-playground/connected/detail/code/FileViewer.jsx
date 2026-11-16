@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import { Box, Skeleton, Typography, useTheme } from "@mui/material";
 import { Editor } from "@monaco-editor/react";
-import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
+import { EDITOR_OPTIONS, editorTheme, useContentHeight } from "./editorOptions";
 
 const KIND_TEXT = {
   binary: "This file is binary; nothing to show.",
@@ -12,6 +12,7 @@ const KIND_TEXT = {
 /** One file of a version: text in a read-only editor, else why not. */
 export default function FileViewer({ file, loading }) {
   const mode = useTheme().palette.mode;
+  const [height, track] = useContentHeight();
   if (loading) {
     return (
       <Box sx={{ p: 2 }} data-testid="file-viewer-loading">
@@ -40,9 +41,10 @@ export default function FileViewer({ file, loading }) {
     );
   }
   return (
-    <Box sx={{ height: "100%", minHeight: 320 }} data-testid="file-viewer">
+    <Box data-testid="file-viewer">
       <Editor
-        height="100%"
+        height={height}
+        onMount={(editor) => track(editor)}
         path={file.path}
         language={file.language}
         value={file.content}

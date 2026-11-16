@@ -5,7 +5,7 @@ import { DiffEditor } from "@monaco-editor/react";
 import { useCodeFile } from "src/api/agents/agentDetail";
 import ErrorState from "src/components/error-state";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
+import { EDITOR_OPTIONS, editorTheme, useContentHeight } from "./editorOptions";
 
 // A side that is missing (the file was added or removed) diffs against empty.
 const text = (file) => (file && file.kind === "text" ? file.content : "");
@@ -16,6 +16,7 @@ const text = (file) => (file && file.kind === "text" ? file.content : "");
  */
 export default function FileDiff({ agentId, versionId, againstId, path }) {
   const mode = useTheme().palette.mode;
+  const [height, track] = useContentHeight();
   const current = useCodeFile(agentId, versionId, path);
   const previous = useCodeFile(agentId, againstId, path);
   if (current.isError || previous.isError) {
@@ -62,9 +63,12 @@ export default function FileDiff({ agentId, versionId, againstId, path }) {
     );
   }
   return (
-    <Box sx={{ height: "100%", minHeight: 320 }} data-testid="file-diff">
+    <Box data-testid="file-diff">
       <DiffEditor
-        height="100%"
+        height={height}
+        onMount={(editor) =>
+          track(editor.getOriginalEditor(), editor.getModifiedEditor())
+        }
         language={file.language}
         original={text(previous.data)}
         modified={text(current.data)}
