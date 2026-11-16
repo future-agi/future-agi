@@ -83,7 +83,7 @@ describe("variations", () => {
     const options = {
       blocked: null,
       variations_blocked: {
-        code: "fix_suite_draft_open",
+        code: "fix_draft_open",
         message: "Save first",
       },
       limits: FLOOR,

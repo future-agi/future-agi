@@ -306,21 +306,21 @@ describe("LaunchFixDialog", () => {
         target_scenario_keys: base.suggested.target_scenario_keys.slice(0, 5),
       },
       variations_blocked: {
-        code: "fix_suite_draft_open",
+        code: "fix_draft_open",
         message:
-          "Save or discard the environment's unsaved scenario changes first.",
+          "This environment has unsaved setup changes. Save or discard them, then run Epoch.",
       },
     });
     renderDialog();
     expect(
       await screen.findByText(
-        "Save or discard the environment's unsaved scenario changes first.",
+        "This environment has unsaved setup changes. Save or discard them, then run Epoch.",
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Start improvement" }),
     ).toBeDisabled();
-    // The way out: the environment's Scenarios tab, whose draft bar saves or discards.
+    // The way out: the environment's workspace, whose draft bar saves or discards both.
     await userEvent.click(
       screen.getByRole("button", { name: "Review unsaved changes" }),
     );
@@ -335,9 +335,9 @@ describe("LaunchFixDialog", () => {
     pinOptions({
       ...base,
       variations_blocked: {
-        code: "fix_suite_draft_open",
+        code: "fix_draft_open",
         message:
-          "Save or discard the environment's unsaved scenario changes first.",
+          "This environment has unsaved setup changes. Save or discard them, then run Epoch.",
       },
     });
     renderDialog();

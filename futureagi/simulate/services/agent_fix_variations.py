@@ -43,7 +43,9 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     VARIATIONS_LABEL,
+    fresh_draft_pieces,
     scenario_results,
+    unsaved_changes,
     variations_minutes,
     variations_source_moved,
     written_variations,
@@ -208,12 +210,20 @@ def _write(fix_run: AgentFixRun) -> VariationsStep:
         conversation__job_id=fix_run.environment_id,
         client_request_id=_client_request_id(fix_run),
     ).first()
+    if (
+        command is None
+        or command.state == HostedHarnessConversationMessage.State.QUEUED
+    ):
+        # Until the builder's sandbox takes the message, the workspace it composes would
+        # hold any unsaved changes made since the launch: the variations must not.
+        environment = HostedHarnessJob.no_workspace_objects.get(
+            id=fix_run.environment_id
+        )
+        if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
+            return _end(fix_run, AgentFixRun.State.FAILED, *_draft_opened(unsaved))
     if command is None:
         # The builder writes from the environment as it is now: it must be as it ran.
-        moved = variations_source_moved(
-            HostedHarnessJob.no_workspace_objects.get(id=fix_run.environment_id),
-            fix_run.source_run,
-        )
+        moved = variations_source_moved(environment, fix_run.source_run)
         if moved is not None:
             return _end(fix_run, AgentFixRun.State.FAILED, moved.code, moved.message)
         _ask_builder(fix_run)
@@ -399,6 +409,18 @@ def land(
                 )
             )
             return
+        # The workspace the builder wrote in held unsaved changes (composed over a draft,
+        # or edited by a chat turn before this one): its variations may vary cases or use
+        # setup the run never had.
+        if unsaved := unsaved_changes(
+            _workspace_drafts(locked_environment, conversation)
+        ):
+            transaction.on_commit(
+                partial(
+                    _end, fix_run, AgentFixRun.State.FAILED, *_draft_opened(unsaved)
+                )
+            )
+            return
         version = HarnessSuiteVersion.no_workspace_objects.create(
             job=locked_environment,
             organization_id=locked_environment.organization_id,
@@ -553,6 +575,31 @@ def _with_fields(body: bytes, fields: Mapping[str, Any]) -> bytes:
         if name not in ("scenario_key", "folder") or name in document
     }
     return json.dumps({**document, **kept}, indent=2).encode()
+
+
+def _workspace_drafts(
+    environment: HostedHarnessJob, conversation: HostedHarnessConversation
+) -> list[str]:
+    """The pieces whose unsaved drafts the chat's workspace holds: the drafts it was
+    composed over, as its later saves updated them."""
+    payload = environment.payload or {}
+    checkpoints = (payload.get("metadata") or {}).get("conversation_checkpoints") or {}
+    basis = (checkpoints.get(str(conversation.id)) or {}).get("draft_basis") or {}
+    return [
+        piece
+        for piece in drafts.DRAFT_PIECES
+        if isinstance(basis.get(piece), dict) and basis[piece].get("id")
+    ]
+
+
+def _draft_opened(unsaved: str) -> tuple[str, str]:
+    """The ending of a fix whose variations would have been written over unsaved
+    changes made after its launch."""
+    return (
+        "fix_variations_draft_open",
+        f"The environment got unsaved {unsaved} changes after this epoch started, so its"
+        " variations were not written. Save or discard them, then run Epoch again.",
+    )
 
 
 def _outdate_workspace(

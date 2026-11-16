@@ -14,6 +14,7 @@ from django.utils import timezone
 from model_hub.models.develop_dataset import Row
 from simulate.models import (
     AgentFixRun,
+    HarnessEnvironmentVersion,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessConversationEvent,
@@ -1054,6 +1055,106 @@ class TestARunTheEnvironmentMovedOnFrom:
             None,
         )
         assert fix_run.failure["code"] == "fix_variations_source_moved"
+
+
+def _open_draft(environment, piece):
+    """Unsaved changes to one piece of the environment, on its current version."""
+    environment.refresh_from_db()
+    model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
+    return model.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        status="draft",
+        origin="manual",
+        hash="sha256:" + "d" * 64,
+        archive_object_key=f"drafts/{piece}.tar.gz",
+        archive_sha256="0" * 64,
+        archive_size=1,
+        parent=getattr(environment, f"{piece}_version"),
+    )
+
+
+class TestUnsavedChanges:
+    """The builder writes the variations in its chat's workspace, which holds unsaved
+    changes: the variations must come from the run's cases and setup only."""
+
+    @pytest.mark.parametrize(
+        "pieces, words",
+        [
+            (["suite"], "scenario"),
+            (["environment"], "setup"),
+            (["suite", "environment"], "scenario and setup"),
+        ],
+    )
+    def test_are_refused_variations_at_launch(
+        self, environment, source_run, pieces, words
+    ):
+        for piece in pieces:
+            _open_draft(environment, piece)
+
+        refused = variations_blocker(
+            HostedHarnessJob.no_workspace_objects.get(id=source_run.id)
+        )
+
+        assert (refused.code, refused.status_code) == ("fix_draft_open", 409)
+        assert refused.message == (
+            f"This environment has unsaved {words} changes. Save or discard them,"
+            " then run Epoch."
+        )
+
+    def test_made_after_the_launch_end_the_fix_before_the_builder_is_asked(
+        self, environment, source_run, user
+    ):
+        fix_run = launch_fix_run(
+            source_run,
+            target_scenario_keys=[PARENT],
+            surfaces=[Surface.PROMPT],
+            locked_paths=[],
+            budget_usd=5.0,
+            max_minutes=30,
+            user=user,
+        )
+        _open_draft(environment, "environment")
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        fix_run.refresh_from_db()
+        assert fix_run.failure["code"] == "fix_variations_draft_open"
+        assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            client_request_id=f"fix-{fix_run.id}-variations"
+        ).exists()
+
+    def test_made_while_the_message_waits_withdraw_it(self, environment, fix_run):
+        _open_draft(environment, "suite")
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        fix_run.refresh_from_db()
+        assert fix_run.failure["code"] == "fix_variations_draft_open"
+        assert _command(fix_run).state == HostedHarnessConversationMessage.State.FAILED
+
+    def test_in_the_builder_s_workspace_keep_its_save_from_landing(
+        self, environment, fix_run, storage
+    ):
+        command = _command(fix_run)
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id
+        ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
+        # The sandbox took the message and composed its workspace over a setup draft.
+        draft = _open_draft(environment, "environment")
+        drafts.compose_workspace(environment, command.conversation)
+        draft.delete()
+
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            _land(fix_run, storage, _builder_save(environment))
+
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.suite_version_id) == (
+            AgentFixRun.State.FAILED,
+            None,
+        )
+        assert fix_run.failure["code"] == "fix_variations_draft_open"
 
 
 class TestACaseWithoutVariations:
