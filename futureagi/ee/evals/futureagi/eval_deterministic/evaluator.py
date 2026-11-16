@@ -18,6 +18,7 @@ from agentic_eval.core.utils.functions import detect_input_type
 from agentic_eval.core.utils.model_config import ModelConfig, ModelConfigs
 from agentic_eval.core_evals.fi_evals.eval_type import FutureAgiEvalTypeId
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
+from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
 from agentic_eval.core_evals.fi_utils.fi_model import Model
 
 logger = structlog.get_logger(__name__)
@@ -268,7 +269,7 @@ class DeterministicEvaluator(LLM):
 
         # Validate deterministic rubric inputs.
         if not self.rule_prompt:
-            raise ValueError("Required arguments are missing rule_prompt")
+            raise EvalConfigError("Required arguments are missing rule_prompt")
         if not self.choices:
             self.choices = ["0.0", "0.2", "0.4", "0.6", "0.8", "1.0"]
             self.rule_prompt = f"{self.rule_prompt} "
