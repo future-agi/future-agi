@@ -491,11 +491,12 @@ function runInlineSeed<T>(prefix: string, script: string, opts: { organizationId
 
 /**
  * Seeds a hosted Run that is under way, for the Stop journey: one call in progress and one case the harness already
- * skipped (stored cancelled with `harness_outcome_status: skipped`, as `_call_lifecycle_status` in
- * `futureagi/simulate/services/hosted_harness_ingestion.py` writes it). The Run's job has no attempt, so the user's
- * Stop runs the product's own cancel path to its end on this stack: the workflow signal finds no workflow and
- * `HostedHarnessGateway.cancel` closes the job, the Run and its open call as cancelled. Built through the ORM for the
- * same reason as `seedParticipantsCall`: the sandbox that runs calls is not part of this stack.
+ * skipped (stored cancelled with `harness_outcome_status: skipped` and its skipped receipt, as
+ * `_call_lifecycle_status` in `futureagi/simulate/services/hosted_harness_ingestion.py` writes it). The Run's attempt
+ * has no sandbox, so the user's Stop runs the product's own cancel path to its end on this stack: the workflow signal
+ * finds no workflow and `HostedHarnessGateway.cancel` closes the attempt, the job, the Run and its open call as
+ * cancelled. Built through the ORM for the same reason as `seedParticipantsCall`: the sandbox that runs calls is not
+ * part of this stack.
  */
 export interface StopJourneySeed {
   environmentId: string;
@@ -521,7 +522,15 @@ from django.utils import timezone
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import StatusType
-from simulate.models import AgentDefinition, HostedHarnessJob, RunTest, Scenarios
+from simulate.models import (
+    AgentDefinition,
+    HostedHarnessAttempt,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    RunTest,
+    Scenarios,
+)
 from simulate.models.test_execution import CallExecution, TestExecution
 
 
@@ -586,11 +595,15 @@ def main():
         total_scenarios=2,
         total_calls=2,
     )
-    # The Run's own job, running, with no attempt registered yet.
+    # The Run's own job, running on its first attempt, whose sandbox does not exist on this stack.
     run_job = job(organization, workspace, run_test, f"e2e-stop-env-{suffix}", environment=environment,
                   test_execution=execution)
     HostedHarnessJob.no_workspace_objects.filter(id=run_job.id).update(
-        state=HostedHarnessJob.State.RUNNING, current_stage="running",
+        state=HostedHarnessJob.State.RUNNING, current_stage="running", current_attempt_number=1,
+    )
+    attempt = HostedHarnessAttempt.no_workspace_objects.create(
+        job=run_job, attempt_number=1, token_hash=uuid.uuid4().hex, fence_hash=uuid.uuid4().hex,
+        expires_at=timezone.now() + timedelta(hours=1), state=HostedHarnessAttempt.State.RUNNING,
     )
     ongoing = CallExecution.objects.create(
         test_execution=execution,
@@ -606,6 +619,14 @@ def main():
         simulation_call_type=CallExecution.SimulationCallType.TEXT,
         completed_at=timezone.now(),
         call_metadata={"harness_outcome_status": "skipped"},
+    )
+    # The harness's receipt for the case it skipped, as it posts one before the user stops the Run.
+    registration = HostedHarnessScenario.no_workspace_objects.create(
+        job=run_job, scenario_key=f"skipped-{suffix}", scenario=scenarios["skipped"], call_execution=skipped,
+    )
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job=run_job, attempt=attempt, scenario=registration, attempt_number=1, digest="sha256:" + "0" * 64,
+        status="skipped", body={"scenario_key": registration.scenario_key, "status": "skipped"},
     )
     print(json.dumps({
         "environmentId": str(environment.id),
