@@ -388,6 +388,41 @@ describe("LaunchFixDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("takes a request for more cases to the builder when the run has too few", async () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    const failing = base.scenarios.filter((s) => s.failing_sub_goals.length);
+    const kept = failing.slice(0, 2);
+    pinOptions({
+      ...base,
+      scenarios: kept,
+      suggested: {
+        ...base.suggested,
+        target_scenario_keys: kept.map((s) => s.key),
+      },
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Add cases with the builder",
+      }),
+    );
+    // Leaving the page drops the form, so it asks first.
+    expect(navigate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open the builder" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(
+      `${paths.dashboard.simulate.environments.detail("env-1")}?tab=scenarios`,
+      {
+        state: {
+          builderMessage: expect.stringContaining(
+            `like ${kept[0].key}, ${kept[1].key},`,
+          ),
+        },
+      },
+    );
+  });
+
   it("starts the fix with the contract's fields only and opens its page", async () => {
     const user = userEvent.setup();
     renderDialog();

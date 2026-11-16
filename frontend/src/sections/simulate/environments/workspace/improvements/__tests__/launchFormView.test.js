@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  addCasesMessage,
   heldBackCount,
   countsLine,
   reviewSentence,
@@ -164,5 +165,27 @@ describe("launch checks", () => {
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
   ])("passes a valid pick and refuses the rest %#", (input, message) => {
     expect(launchError(input)).toBe(message);
+  });
+
+  it("asks the builder for more cases only when the run has too few to fix", () => {
+    const scenario = (key, failing) => ({
+      key,
+      failing_sub_goals: failing ? ["escalated"] : [],
+    });
+    const run = (...scenarios) => ({ scenarios, limits: FLOOR });
+    expect(
+      addCasesMessage(
+        run(scenario("refund", true), scenario("eta", true), scenario("ok")),
+      ),
+    ).toBe(
+      "Add more cases like refund, eta, which fail in this run, checking the same sub-goals. Improving the agent needs at least 3 failing cases.",
+    );
+    // Enough to pick from, or nothing to model new cases on.
+    expect(
+      addCasesMessage(
+        run(scenario("a", true), scenario("b", true), scenario("c", true)),
+      ),
+    ).toBeNull();
+    expect(addCasesMessage(run(scenario("ok")))).toBeNull();
   });
 });

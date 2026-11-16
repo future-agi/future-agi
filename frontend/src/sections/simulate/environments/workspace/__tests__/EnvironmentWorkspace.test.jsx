@@ -256,6 +256,28 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
 
+  it("pins a message another page left for the builder", async () => {
+    seedClientEnv(TEMPLATE, {
+      ...emptyEnvState(),
+      agent: { name: "Support agent" },
+      scenarios: [{ id: "s1" }],
+    });
+
+    renderWorkspace({
+      pathname: "/dashboard/simulate/environments/env-1",
+      search: "?tab=scenarios",
+      state: { builderMessage: "Add more cases like refund-over-200" },
+    });
+
+    expect(
+      await screen.findByText("Add more cases like refund-over-200"),
+    ).toBeInTheDocument();
+    // Dropping the state keeps the tab the user was sent to.
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/dashboard/simulate/environments/env-1?tab=scenarios",
+    );
+  });
+
   it("lands ?tab=runs on the Overview while the env has no runs", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
