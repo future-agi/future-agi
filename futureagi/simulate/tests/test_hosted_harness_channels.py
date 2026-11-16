@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -1948,8 +1949,29 @@ def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
         )
         is None
     )
-    linked = _trial_state({"harness_trial_state": {"state_changes": [], **sealed}})
+    run_id = uuid.uuid4()
+    job.payload = {**job.payload, "metadata": {"platform_run_id": str(run_id)}}
+    job.save(update_fields=["payload"])
+
+    def trial(organization_id, workspace_id, test_execution_id=run_id):
+        run_test = SimpleNamespace(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
+        return SimpleNamespace(
+            call_metadata={"harness_trial_state": {"state_changes": [], **sealed}},
+            test_execution_id=test_execution_id,
+            test_execution=SimpleNamespace(run_test=run_test),
+        )
+
+    linked = _trial_state(trial(job.organization_id, job.workspace_id))
     assert linked["end_state_url"] and digest in linked["end_state_url"]
+    # The same digest named by another organisation's, workspace's or run's trial links nothing.
+    for other in (
+        trial(uuid.uuid4(), job.workspace_id),
+        trial(job.organization_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, uuid.uuid4()),
+    ):
+        assert "end_state_url" not in _trial_state(other)
 
 
 @pytest.mark.django_db

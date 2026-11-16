@@ -196,17 +196,24 @@ def test_a_test_condition_the_world_cannot_apply_is_refused_with_why_and_the_sui
 
 
 def test_a_trial_s_world_changes_link_its_kept_end_state_and_an_older_trial_reads_as_before():
+    from types import SimpleNamespace
+
     from simulate.views.run_results_v3 import _trial_state
 
-    kept = {
-        TRIAL_STATE_KEY: FAULTED,
-        "hosted_harness_artifacts": {
-            "world_state": {"url": "http://storage/end-state", "sha256": "a" * 64}
-        },
-    }
+    def call(metadata):
+        return SimpleNamespace(call_metadata=metadata)
+
+    kept = call(
+        {
+            TRIAL_STATE_KEY: FAULTED,
+            "hosted_harness_artifacts": {
+                "world_state": {"url": "http://storage/end-state", "sha256": "a" * 64}
+            },
+        }
+    )
 
     assert _trial_state(kept)["end_state_url"] == "http://storage/end-state"
     assert _trial_state(kept)["state_changes"] == FAULTED["state_changes"]
     # A trial whose end state was not kept, and one from before World changes were recorded, read as they did.
-    assert "end_state_url" not in _trial_state({TRIAL_STATE_KEY: FAULTED})
-    assert _trial_state({}) is None and _trial_state(None) is None
+    assert "end_state_url" not in _trial_state(call({TRIAL_STATE_KEY: FAULTED}))
+    assert _trial_state(call({})) is None and _trial_state(call(None)) is None

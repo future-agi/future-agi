@@ -1201,7 +1201,7 @@ def build_call_execution_detail(
             "function_calls": function_calls(call),
             "call_actors": _call_call_actors(call.call_metadata),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
-            "trial_state": _trial_state(call.call_metadata),
+            "trial_state": _trial_state(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],
@@ -1210,10 +1210,10 @@ def build_call_execution_detail(
     return data
 
 
-def _trial_state(call_metadata: Any) -> dict[str, Any] | None:
+def _trial_state(call: CallExecution) -> dict[str, Any] | None:
     """The trial's World changes, with where its end state is kept (the world's records at its end and its action
-    log) when the harness stored one."""
-    metadata = call_metadata if isinstance(call_metadata, dict) else {}
+    log) when the harness stored one for this call's own run, organisation and workspace."""
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     if not isinstance(state, dict):
         return state
@@ -1230,7 +1230,11 @@ def _trial_state(call_metadata: Any) -> dict[str, Any] | None:
 
         kept = (
             HostedHarnessArtifact.no_workspace_objects.filter(
-                sha256=sealed.removeprefix("sha256:"), kind="world_state"
+                sha256=sealed.removeprefix("sha256:"),
+                kind="world_state",
+                job__payload__metadata__platform_run_id=str(call.test_execution_id),
+                job__organization_id=call.test_execution.run_test.organization_id,
+                job__workspace_id=call.test_execution.run_test.workspace_id,
             )
             .values_list("object_key", flat=True)
             .first()
