@@ -19,6 +19,7 @@ from temporalio.exceptions import ActivityError, CancelledError
 
 # Import types safely (no Django)
 with workflow.unsafe.imports_passed_through():
+    from tfc.temporal.common.evaluation_denials import evaluation_denial_message
     from tfc.temporal.dataset_optimization.types import (
         DatasetOptimizationWorkflowInput,
         DatasetOptimizationWorkflowOutput,
@@ -84,7 +85,11 @@ class DatasetOptimizationWorkflow:
                 isinstance(e, ActivityError) and isinstance(e.cause, CancelledError)
             )
             finalize_status = "cancelled" if is_cancel else "failed"
-            error_msg = "Cancelled by user" if is_cancel else str(e)
+            error_msg = (
+                "Cancelled by user"
+                if is_cancel
+                else (evaluation_denial_message(e) or str(e))
+            )
 
             try:
                 await workflow.execute_activity(
