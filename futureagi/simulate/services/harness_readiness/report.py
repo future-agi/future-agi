@@ -36,11 +36,11 @@ from simulate.services.harness_readiness.catalogue import (
     WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
-    _runs,
     agent_tools,
     certified,
     pair_bundle,
     read_evidence,
+    recent_runs,
 )
 from simulate.services.harness_readiness.release import current_harness_version
 from simulate.services.harness_readiness.rules import (
@@ -79,6 +79,8 @@ class ReadinessReport(TypedDict):
     # One row per declared worker: which of its tools the world holds it to. Never Supported.
     workers: list[WorkerBoundaryView]
     counts: dict[Status, int]
+    # Blocked rows plus blocked workers: what the run plan's header counts as blockers.
+    blockers: int
     catalog_version: str
     rules_version: str
     computed_at: str
@@ -380,6 +382,8 @@ def _computed_report(
     counts: dict[Status, int] = dict.fromkeys(WORST_FIRST, 0)
     for row in found:
         counts[row["status"]] += 1
+    workers = worker_boundaries(pairing, evidence, recent_runs(pairing))
+    blocked_workers = sum(1 for one in workers if one["status"] == "blocked")
     return {
         "pairing": {
             "agent_version": cast("VersionRef | None", refs["agent"]),
@@ -395,11 +399,13 @@ def _computed_report(
             validating=view["state"] == "validating",
             failed=view["state"] == "failed",
             named=bool(failed_actions(bundle)),
+            blocked_workers=blocked_workers,
         ),
         "areas": areas,
         "rows": found,
-        "workers": worker_boundaries(pairing, evidence, _runs(pairing)),
+        "workers": workers,
         "counts": counts,
+        "blockers": counts["blocked"] + blocked_workers,
         "catalog_version": CATALOG_VERSION,
         "rules_version": RULES_VERSION,
         "computed_at": timezone.now().isoformat(),
