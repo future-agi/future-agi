@@ -72,6 +72,13 @@ type RequestContext struct {
 	GuardrailRequest  *ChatCompletionRequest
 	GuardrailResponse *ChatCompletionResponse
 
+	// ServedBy is the provider instance (a providers.Provider) that answered
+	// a chat request, recorded by the chat handlers when the attempt that
+	// served it succeeds. Provider is only its ID, which an org's instance
+	// and the operator's share, and a model fallback can move the request
+	// from one to the other. nil when the handler did not record it.
+	ServedBy any
+
 	// mu serializes writes to Timings and Metadata between the goroutines that
 	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
 	// streaming callbacks.
@@ -89,6 +96,12 @@ type RequestContext struct {
 	// EndpointType identifies the API endpoint: "chat", "embedding", "image",
 	// "speech", "transcription", "rerank", or "decision". Defaults to "chat".
 	EndpointType string
+
+	// ServedPriceTable is the price-table name of the provider instance that
+	// served the request, set by the server where retries and failover can
+	// switch instances; nil when not set. A field, not Metadata, because a
+	// caller can write Metadata.
+	ServedPriceTable *string
 
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
 	GuardrailResults []GuardrailResult
@@ -174,6 +187,7 @@ func (rc *RequestContext) Release() {
 	rc.Model = ""
 	rc.ResolvedModel = ""
 	rc.Provider = ""
+	rc.ServedBy = nil
 	rc.Request = nil
 	rc.Response = nil
 	rc.GuardrailRequest = nil
@@ -183,6 +197,7 @@ func (rc *RequestContext) Release() {
 	rc.UserID = ""
 	rc.Flags = RequestFlags{}
 	rc.EndpointType = ""
+	rc.ServedPriceTable = nil
 	rc.EmbeddingRequest = nil
 	rc.EmbeddingResponse = nil
 	rc.ImageRequest = nil
