@@ -521,25 +521,50 @@ def _cached_files(bundle: HarnessAssembledBundle) -> dict[str, bytes] | None:
 
 def _predates_cast(
     bundle: HarnessAssembledBundle, environment_version: HarnessEnvironmentVersion
-) -> bool:
-    """Whether a cached bundle was sealed without the actors its environment version lists: replayed, its world has no
-    actor list, door or roster, so no actor ever comes in. Found once per row and kept on it."""
-    cast = (environment_version.documents or {}).get("actor_digests") or {}
+) -> str | None:
+    """The environment version's cast, by digest, when a cached bundle was sealed without it: replayed, its world has
+    no actor list, door or roster, so no actor ever comes in. None when it has the cast, has no cast to have, or was
+    already certified again for this cast. Whether it has the cast is found once per row and kept on it."""
+    actors = (environment_version.documents or {}).get("actor_digests") or {}
+    if not any(not str(key).startswith("#") for key in actors):
+        return None
+    cast = canonical_digest(actors)
     certificate = bundle.certificate or {}
-    if not any(not str(key).startswith("#") for key in cast) or certificate.get(
-        "sealed_cast"
-    ):
-        return False
+    if certificate.get("sealed_cast") or certificate.get("recast") == cast:
+        return None
     files = _cached_files(bundle)
     if files is None:
-        return False
+        return None
     if BUNDLE_ROOT + "actors.json" not in files:
-        return True
+        return cast
     bundle.certificate = {**certificate, "sealed_cast": True}
     HarnessAssembledBundle._base_manager.filter(
         id=bundle.id, object_key=bundle.object_key
     ).update(certificate=bundle.certificate, updated_at=timezone.now())
-    return False
+    return None
+
+
+def _recertify(bundle: HarnessAssembledBundle, cast: str) -> bool:
+    """Send a ready row back to be certified for ``cast``, once: of launches racing on one row, only the one whose
+    update lands certifies it. The cast stays on the row through its fill, so it is never certified again for it."""
+    sent = (
+        HarnessAssembledBundle._base_manager.filter(
+            id=bundle.id,
+            object_key=bundle.object_key,
+            state=HarnessAssembledBundle.State.READY,
+        ).update(
+            **{**_RESET, "certificate": {"recast": cast}}, updated_at=timezone.now()
+        )
+        == 1
+    )
+    if sent:
+        logger.info(
+            "harness_bundle_cache",
+            outcome="recertify_for_cast",
+            bundle_id=str(bundle.id),
+            environment_id=str(bundle.job_id),
+        )
+    return sent
 
 
 def is_transient(exc: BaseException) -> bool:
@@ -745,8 +770,12 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     )
     suite_version = HarnessSuiteVersion._base_manager.get(id=job.suite_version_id)
     # Sealed before its environment's actors: certified again once, so later runs replay a bundle that has them.
-    if hit and certify_enabled() and _predates_cast(bundle, environment_version):
-        _reset_missing(bundle, "predates_cast")
+    if (
+        hit
+        and certify_enabled()
+        and (cast := _predates_cast(bundle, environment_version))
+        and _recertify(bundle, cast)
+    ):
         hit, certifies = False, True
 
     def key_for(cached_bundle: HarnessAssembledBundle | None) -> str:
@@ -1082,6 +1111,8 @@ def fill_bundle(
             job.organization_id, bundle.job_id, bundle.assembly_key, body
         )
         archives.put_archive(object_key, body)
+        # The cast a row was certified again for stays on it.
+        recast = (bundle.certificate or {}).get("recast")
         filled = (
             HarnessAssembledBundle._base_manager.filter(id=bundle.id)
             .exclude(state=HarnessAssembledBundle.State.READY)
@@ -1091,7 +1122,7 @@ def fill_bundle(
                 sha256=archives.sha256_hex(body),
                 size=len(body),
                 bundle_digest=digest,
-                certificate=certificate,
+                certificate={**certificate, **({"recast": recast} if recast else {})},
                 warnings=certify_warnings(sandbox),
                 built_by_attempt_id=attempt.id,
                 error=None,

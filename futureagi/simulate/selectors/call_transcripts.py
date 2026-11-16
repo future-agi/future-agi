@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from django.db.models import F, QuerySet, Value
 from django.db.models.functions import Coalesce
-from django_stubs_ext import WithAnnotations
+
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
 
 from simulate.models.test_execution import CallTranscript
 

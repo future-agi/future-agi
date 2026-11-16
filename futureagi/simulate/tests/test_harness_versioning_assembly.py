@@ -718,6 +718,41 @@ class TestCast:
 
         assert assembly.prepare_launch(_run(environment)).hit
 
+    def _uncast(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        return _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+
+    def test_a_bundle_is_certified_again_once_per_cast_even_when_its_new_seal_still_lacks_it(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-twice")
+        first = _run(environment, key="r1")
+        assert not assembly.prepare_launch(first).hit
+        attempt = register_attempt(
+            first.id, endpoint_base_url="https://platform.example.com"
+        ).attempt
+        first.refresh_from_db()
+        # The new seal has no actors.json either.
+        HostedHarnessGateway._sync_authoring_progress(attempt, _fill_sandbox())
+        assert _row(environment).state == "ready"
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).hit
+
+    def test_of_two_launches_on_one_row_only_one_certifies_it_again(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-race")
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+
+        assert assembly._recertify(seen_by_one, "sha256:cast") is True
+        assert assembly._recertify(seen_by_other, "sha256:cast") is False
+
     def test_with_certifying_off_a_bundle_sealed_before_the_cast_is_replayed_and_kept(
         self, user, workspace, storage
     ):
