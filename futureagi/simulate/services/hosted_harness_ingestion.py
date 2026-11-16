@@ -1678,9 +1678,18 @@ def _ingest_hosted_transcript(
             notices = [
                 # A fault's notice names its action, call and mode; evidence_incomplete counts the pieces instead.
                 {
-                    key: one.get(key)
-                    for key in ("code", "message", "action", "on_call", "mode", "count")
-                    if key in one
+                    **{
+                        key: one.get(key)
+                        for key in ("code", "message", "action", "on_call", "mode", "count")
+                        if key in one
+                    },
+                    # The workers a notice names, e.g. a separate worker that bypassed its channel.
+                    **(
+                        {"workers": one["workers"]}
+                        if isinstance(one.get("workers"), list)
+                        and all(isinstance(worker, str) for worker in one["workers"])
+                        else {}
+                    ),
                 }
                 for one in _entries(notices)
                 if isinstance(one.get("message"), str)
