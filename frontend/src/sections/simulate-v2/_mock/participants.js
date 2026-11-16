@@ -177,24 +177,28 @@ const infoOf = (c) => {
   if (/refund/i.test(c.name) && o.amount != null)
     return {
       rank: 5,
+      label: `Refunded $${o.amount}`,
       result: `Refunded $${o.amount} on order${of} to the original payment method.`,
       reply: `I've refunded $${o.amount} to your original payment method.`,
     };
   if (isHandoff(c.name))
     return {
       rank: 4,
+      label: "With a supervisor",
       result: "The caller is with a supervisor, who has the call summary.",
       reply: "I've put you through to a supervisor.",
     };
   if (/label/i.test(c.name))
     return {
       rank: 3,
+      label: "Return label emailed",
       result: `Emailed a return label for order${of}.`,
       reply: "I've emailed you a return label.",
     };
   if (/eligib/i.test(c.name) && o.days_left != null)
     return {
       rank: 3,
+      label: `Returnable · ${o.days_left} days left`,
       result: `Order${of} can be returned — ${o.days_left} days left in the window.`,
       reply: `Your order can be returned — you have ${o.days_left} days left.`,
     };
@@ -209,29 +213,39 @@ const infoOf = (c) => {
             ? " — it arrives tomorrow"
             : ` — it arrives in ${days} days`;
     const line = `Order${of} is ${days != null && days <= 1 ? "out for delivery" : "on its way"}${arrives}.`;
-    return { rank: 3, result: line, reply: line };
+    const label =
+      days == null
+        ? "On its way"
+        : days <= 1
+          ? "Out for delivery"
+          : `Arrives in ${days} days`;
+    return { rank: 3, label, result: line, reply: line };
   }
   if (/address/i.test(c.name))
     return {
       rank: 3,
+      label: "Address changed",
       result: `Changed the delivery address on order${of}.`,
       reply: "I've updated the delivery address.",
     };
   if (/^cancel/i.test(c.name))
     return {
       rank: 3,
+      label: "Order cancelled",
       result: `Cancelled order${of} before it was dispatched.`,
       reply: "I've cancelled your order.",
     };
   if (/lookup|status|find|get/i.test(c.name))
     return {
       rank: 1,
+      label: `Found order${o.items ? ` · ${o.items} ${o.items === 1 ? "item" : "items"}` : ""}`,
       result: `Found order${of}${o.items ? ` with ${o.items} ${o.items === 1 ? "item" : "items"}` : ""}.`,
       reply: "I found your order.",
     };
   const done = didOf(c.name);
   return {
     rank: 2,
+    label: done,
     result: `${done}${order != null ? ` for order ${order}` : ""}.`,
     reply: `I've ${lowerFirst(done)}.`,
   };
@@ -943,6 +957,61 @@ export const fullAnswerOf = (w) => {
     else lines.push(`${didOf(c.name, { attempt: true })} — no response.`);
   });
   return lines.join("\n");
+};
+
+/* ── Short labels for the Participants sequence: a few words per step, with
+   the exact message one click away. A stored label (w.label, w.answerLabel)
+   wins; the prototype derives one from the record. ── */
+
+/** The first clause of a message, cut at a word near n characters. */
+export const shortLineOf = (text, n = 40) => {
+  if (!text) return "";
+  const first = String(text)
+    .split(/(?<=[.?!])\s|\s—\s|\n/)[0]
+    .replace(/[.]$/, "")
+    .trim();
+  if (first.length <= n) return first;
+  const cut = first.slice(0, n);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), n - 12)).trimEnd()}…`;
+};
+
+/** What a hand-off asked for: "Check return eligibility". */
+export const handoffLabelOf = (w) => {
+  if (!w) return "";
+  if (w.label) return w.label;
+  if (w.recorded || !(w.calls || []).length)
+    return w.task ? shortLineOf(w.task) : "Handle the request";
+  const names = [...new Set(w.calls.map((c) => c.name))];
+  const first = capital(askOf(names[0]));
+  if (names.length === 1) return first;
+  const two = `${first} and ${askOf(names[1])}`;
+  return names.length === 2 && two.length <= 40 ? two : `${first} and more`;
+};
+
+/** What came back from a hand-off, in a few words. */
+export const answerLabelOf = (w) => {
+  if (!w) return "";
+  if (w.answerLabel) return w.answerLabel;
+  if (w.state === "unobserved") return "No events";
+  if (w.state === "transferred") return "Took over the call";
+  if (w.state === "timeout" || w.endedAt == null) return "No answer came back";
+  if (w.state === "failed" || w.failed) return "Failed";
+  if (w.recorded) return shortLineOf(w.result) || "Returned nothing";
+  const best = bestCallOf(w);
+  if (best) return best.i.label;
+  if ((w.calls || []).some((c) => c.failed)) return "A tool call failed";
+  return (w.calls || []).some((c) => c.blocked)
+    ? "Blocked"
+    : "Done, no tools needed";
+};
+
+/** A tool call's result in a few words: "Returnable · 12 days left". */
+export const callLabelOf = (c) => {
+  if (!c) return "";
+  if (c.blocked) return "Refused";
+  if (c.failed) return "Failed";
+  if (c.output == null) return c.recorded ? "Done" : "No response";
+  return infoOf(c).label;
 };
 
 /** Milliseconds a call took; null when it never answered. */

@@ -4,6 +4,7 @@ import { voiceFlowOf } from "./voiceFlow";
 import { callerCastOf, subActorsInTrial } from "./subActors";
 import { actorEventsOf } from "./actorEvents";
 import { participantsOf } from "./participants";
+import { varyParticipantsForTrial } from "./participantsTrials";
 import {
   alignParticipantsToCall,
   evalDisplayName,
@@ -426,7 +427,12 @@ export function taskToVoiceData(
      something to plot; a simulated call has no real per-word timing. */
   const sub = subActorsInTrial({ task, env, envState });
   /* A multi-agent app: who handled each turn (null for a single agent). */
-  const multi = participantsOf({ agent: envState?.agent, task });
+  /* A later trial takes its own route (a worker that timed out may answer,
+     or not be asked) — trial 1 is unchanged. */
+  const multi = varyParticipantsForTrial(
+    participantsOf({ agent: envState?.agent, task }),
+    task,
+  );
   let transcript = buildTranscriptWithTools(steps, env, task, sub.lines, {
     events: actorEventsOf({ env, envState, task }),
     callerIds: new Set(callerCastOf(env, envState).map((a) => a.id)),

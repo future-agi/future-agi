@@ -70,6 +70,7 @@ import { trialTaskOf, trialTitleOf, versionLineOf } from "../_mock/callRecord";
 import TrialSwitcher from "./TrialSwitcher";
 import { ExtraEvalsHeading, VerdictHeading } from "./ScoreHeadings";
 import { subGoalResultsOf } from "../_mock/scenarioSubGoals";
+import { subGoalFailuresOf } from "../_mock/participantsSubGoals";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import EditEvalDrawer from "../workspace/evals/EditEvalDrawer";
 import { canEditEval } from "../workspace/evals/canEditEval";
@@ -408,7 +409,49 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   /* Which of the open scenario's trials the drawer shows; each scenario opens
      on its first trial. */
   const [trialIdx, setTrialIdx] = useState(0);
-  useEffect(() => setTrialIdx(0), [openTask?.id]);
+  /* A shared link to a Participants step (?call=&trial=&pane=participants
+     &step=) opens that call's drawer on that trial, tab and step. The link
+     is read once, then taken off the address. */
+  const pendingTrial = useRef(null);
+  const [linked, setLinked] = useState(null);
+  useEffect(() => {
+    setTrialIdx(pendingTrial.current ?? 0);
+    pendingTrial.current = null;
+  }, [openTask?.id]);
+  useEffect(() => {
+    const call = params.get("call");
+    if (!call || openTask) return;
+    const t = (tasks || []).find((x) => x.id === call);
+    if (!t) return;
+    const trial = Math.max(0, (Number(params.get("trial")) || 1) - 1);
+    pendingTrial.current = trial;
+    setLinked({
+      taskId: t.id,
+      trialIdx: trial,
+      pane: params.get("pane"),
+      step: Number(params.get("step")) || null,
+    });
+    setOpenTask(t);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        ["call", "trial", "pane", "step"].forEach((k) => next.delete(k));
+        return next;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+  /* n → a link that opens this run on the open call, trial and step. */
+  const stepLinkOf = (n) => {
+    if (!openTask || typeof window === "undefined") return null;
+    const url = new URL(window.location.href);
+    url.searchParams.set("call", openTask.id);
+    url.searchParams.set("trial", String(trialIdx + 1));
+    url.searchParams.set("pane", "participants");
+    url.searchParams.set("step", String(n));
+    return url.toString();
+  };
   /* Which left pane the call drawer opens on — "trace" from Insights. */
   const [openPane, setOpenPane] = useState(null);
   /* A voice run's call drawer is Observe's; its trace opens on its own. */
@@ -3564,6 +3607,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       {(() => {
         const closeTask = () => {
           setOpenTask(null);
+          setLinked(null);
           setFocusStep(null);
           setEvalFocus(null);
           setOpenPane(null);
@@ -3647,6 +3691,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   >
                     <VoiceDetailDrawerV2
                       key={`${openTask.id}-${evalFocus || ""}`}
+                      initialLeftTab={
+                        linked?.taskId === openTask.id &&
+                        linked.pane === "participants"
+                          ? "handoffs"
+                          : undefined
+                      }
                       /* The verdict and its cause (§4.10.10) ride in the real
                      drawer's Status chip — "Failed · agent". */
                       data={(() => {
@@ -3657,23 +3707,49 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           (envState.runs || []).find((r) => r.id === runId) ||
                           null;
                         /* One call record that every tab reads (drawer audit, 12 Nov). */
-                        const call = taskToVoiceData(trial, {
-                          env,
-                          envState,
-                          voice: true,
-                          provider: envState?.agent?.values?.provider || null,
-                          textRehearsal: isTextRehearsal(env, envState?.agent),
-                          /* The Graph tab draws the scenario's path and where the call left it. */
-                          scenario:
-                            (envState.scenarios || []).find(
-                              (sc) => sc.id === trial.id,
-                            ) || null,
-                          failedGoal:
-                            subGoalResultsOf(trial, env, envState).items.find(
-                              (g) =>
-                                g.status === "failed" && g.mark === "critical",
-                            )?.text || null,
-                        });
+                        const callOf = (t) =>
+                          taskToVoiceData(t, {
+                            env,
+                            envState,
+                            voice: true,
+                            provider: envState?.agent?.values?.provider || null,
+                            textRehearsal: isTextRehearsal(
+                              env,
+                              envState?.agent,
+                            ),
+                            /* The Graph tab draws the scenario's path and where the call left it. */
+                            scenario:
+                              (envState.scenarios || []).find(
+                                (sc) => sc.id === t.id,
+                              ) || null,
+                            failedGoal:
+                              subGoalResultsOf(t, env, envState).items.find(
+                                (g) =>
+                                  g.status === "failed" &&
+                                  g.mark === "critical",
+                              )?.text || null,
+                          });
+                        const call = callOf(trial);
+                        /* Every trial of this scenario, for the Participants
+                           routes strip and side-by-side compare (proposal 8). */
+                        const trialsOfCall = () =>
+                          (openTask.samples || []).length > 1
+                            ? openTask.samples.map((_, i) => {
+                                const t = trialTaskOf(openTask, i);
+                                const c = i === trialIdx ? call : callOf(t);
+                                return {
+                                  idx: i,
+                                  status: t.status,
+                                  participants: c.participants,
+                                  failures: subGoalFailuresOf(
+                                    t,
+                                    c.transcript,
+                                    env,
+                                    envState,
+                                  ),
+                                };
+                              })
+                            : null;
                         return {
                           /* Which trial this call is, as the drawer's header. */
                           simTitle: (
@@ -3806,6 +3882,22 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                                 agent={envState?.agent}
                                 task={trial}
                                 participants={call.participants}
+                                failures={subGoalFailuresOf(
+                                  trial,
+                                  call.transcript,
+                                  env,
+                                  envState,
+                                )}
+                                linkOf={stepLinkOf}
+                                trials={trialsOfCall()}
+                                trialIdx={trialIdx}
+                                onPickTrial={setTrialIdx}
+                                initialStep={
+                                  linked?.taskId === openTask.id &&
+                                  linked.trialIdx === trialIdx
+                                    ? linked.step
+                                    : null
+                                }
                               />
                             ) : null,
                           ...call,

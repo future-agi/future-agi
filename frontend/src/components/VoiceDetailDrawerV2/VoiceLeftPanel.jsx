@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { cloneElement, isValidElement, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import CompactTabs from "./CompactTabs";
@@ -8,6 +8,7 @@ import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/co
 import PathAnalysisView from "./PathAnalysisView";
 import TranscriptView from "./TranscriptView";
 import VoiceAudioBridge from "./VoiceAudioBridge";
+import useVoiceAudioStore from "./voiceAudioStore";
 
 const TABS = {
   TRANSCRIPT: "transcript",
@@ -33,9 +34,20 @@ const TABS = {
  * a hidden container on non-transcript tabs) so seeking via click from
  * a path view keeps the audio player hydrated.
  */
-const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
+const VoiceLeftPanel = ({ data, scenarioId, embedded = false, initialTab }) => {
   const isSimulate = data?.module === "simulate";
-  const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
+  const [currentTab, setCurrentTab] = useState(
+    initialTab && Object.values(TABS).includes(initialTab)
+      ? initialTab
+      : TABS.TRANSCRIPT,
+  );
+  const seekTo = useVoiceAudioStore((st) => st.seekTo);
+  /* Participants (simulate): a step can show its moment in the transcript —
+     the recording jumps there and the transcript highlights that turn. */
+  const showInTranscript = (sec) => {
+    seekTo?.(sec);
+    setCurrentTab(TABS.TRANSCRIPT);
+  };
   /* The Expected steps tab: its list or its graph. */
   const [pathView, setPathView] = useState("checklist");
 
@@ -214,7 +226,11 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
               </Stack>
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.HANDOFFS}>
-              {data?.simHandoffs}
+              {isValidElement(data?.simHandoffs)
+                ? cloneElement(data.simHandoffs, {
+                    onShowInTranscript: showInTranscript,
+                  })
+                : data?.simHandoffs}
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.APPROVALS}>
               {data?.simApprovals}
@@ -249,6 +265,8 @@ VoiceLeftPanel.propTypes = {
   data: PropTypes.object.isRequired,
   scenarioId: PropTypes.string,
   embedded: PropTypes.bool,
+  /* Open on this tab (e.g. "handoffs" from a link to a Participants step). */
+  initialTab: PropTypes.string,
 };
 
 export default VoiceLeftPanel;

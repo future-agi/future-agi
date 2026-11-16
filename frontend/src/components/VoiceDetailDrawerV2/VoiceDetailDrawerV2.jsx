@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
@@ -76,6 +76,7 @@ const VoiceDetailDrawerV2 = ({
   hiddenActionIds = [],
   hideAnnotationTab = false,
   initialTab,
+  initialLeftTab,
   focusEvalName,
   hideEvalRowFix = false,
 }) => {
@@ -83,7 +84,14 @@ const VoiceDetailDrawerV2 = ({
   const { observeId } = useParams();
   const projectId = observeId || data?.project_id;
 
-  const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
+  /* A simulated multi-agent call (it has a Participants tab) opens wider,
+     with more room on the left, so the participants sequence fits without
+     scrolling sideways. Other calls keep the usual size. */
+  const hasParticipants = !!data?.simHandoffs;
+  const sizeOf = (wide) => ({ drawer: wide ? 82 : 60, left: wide ? 62 : 50 });
+  const [leftPanelWidth, setLeftPanelWidth] = useState(
+    () => sizeOf(hasParticipants).left,
+  ); // percentage
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
@@ -91,7 +99,17 @@ const VoiceDetailDrawerV2 = ({
   const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
-  const [drawerWidth, setDrawerWidth] = useState(60);
+  const [drawerWidth, setDrawerWidth] = useState(
+    () => sizeOf(hasParticipants).drawer,
+  );
+  /* Moving between calls with and without participants resets the size;
+     a width dragged by hand stays while the kind of call stays the same. */
+  useEffect(() => {
+    const size = sizeOf(hasParticipants);
+    setDrawerWidth(size.drawer);
+    setLeftPanelWidth(size.left);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasParticipants]);
 
   // ── Saved views (Imagine tabs) ────────────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -461,7 +479,11 @@ const VoiceDetailDrawerV2 = ({
                 borderColor: "divider",
               }}
             >
-              <VoiceLeftPanel data={data} scenarioId={scenarioId} />
+              <VoiceLeftPanel
+                data={data}
+                scenarioId={scenarioId}
+                initialTab={initialLeftTab}
+              />
             </Box>
 
             {/* Resizable divider */}
@@ -639,6 +661,7 @@ VoiceDetailDrawerV2.propTypes = {
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
   initialTab: PropTypes.string,
+  initialLeftTab: PropTypes.string,
   focusEvalName: PropTypes.string,
   hideEvalRowFix: PropTypes.bool,
 };
