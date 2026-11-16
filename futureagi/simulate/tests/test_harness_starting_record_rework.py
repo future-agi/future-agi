@@ -249,7 +249,7 @@ def test_the_served_state_follows_the_builder_s_turn(
         # The line is a short sentence of the server's own; the builder's words come whole, to show apart.
         assert (
             rework["reason"]
-            == "The builder says this scenario can't start from users rdr_priya as seeded."
+            == "The builder didn't rework this scenario to start from users rdr_priya. See its reply."
         )
         assert rework["builder_reply"] == reply and rework["reply_message_id"]
 
@@ -420,15 +420,27 @@ def test_a_rework_waiting_on_the_person_says_so_with_the_chat_message_that_asks(
         blocking_input={"message_id": str(asked.id), "kind": "confirmation_requested"},
     )
 
-    waiting = auth_client.get(_url(environment)).json()["rework"]
+    served = auth_client.get(_url(environment)).json()
+    waiting = served["rework"]
     assert (waiting["state"], waiting["confirm_message_id"]) == (
         "waiting",
         str(asked.id),
+    )
+    # No other record can be asked for while the builder waits on the person, and the panel is told why.
+    assert (served["can_rework"], served["rework_blocked_reason"]) == (
+        False,
+        "The builder is waiting for you to confirm its change.",
     )
 
     # Answered, the builder works on: no longer waiting on the person.
     HostedHarnessConversation.no_workspace_objects.filter(
         id=message.conversation_id
     ).update(state=HostedHarnessConversation.State.RESPONDING, blocking_input=None)
-    working = auth_client.get(_url(environment)).json()["rework"]
+    served = auth_client.get(_url(environment)).json()
+    working = served["rework"]
     assert (working["state"], working["confirm_message_id"]) == ("pending", None)
+    assert served["can_rework"] is False
+
+    # Done, another record can be asked for.
+    _turn_ends(environment, message, outcome="failure")
+    assert auth_client.get(_url(environment)).json()["can_rework"] is True

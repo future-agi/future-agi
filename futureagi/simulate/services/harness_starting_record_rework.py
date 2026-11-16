@@ -297,7 +297,8 @@ def _outcome(
         if _reply(message) is not None:
             return (
                 "refused",
-                f"The builder says this scenario can't start from {wanted['table']} {wanted['key']} as seeded.",
+                f"The builder didn't rework this scenario to start from {wanted['table']} {wanted['key']}. "
+                "See its reply.",
             )
         return (
             "refused",
@@ -318,7 +319,10 @@ def _request(
 ) -> ReworkRequest:
     record = message.payload["_record"]
     asking = _asking(message)
-    state, reason = ("waiting", None) if asking else _outcome(message, files, records)
+    outcome: tuple[Literal["pending", "waiting", "proven", "refused"], str | None] = (
+        ("waiting", None) if asking else _outcome(message, files, records)
+    )
+    state, reason = outcome
     # A refusal the builder explained keeps its own words, to show in full beside the short reason.
     answer = _reply(message) if state == "refused" else None
     return ReworkRequest(

@@ -94,7 +94,7 @@ export default function StartingRecords({ envId, scenarioKey }) {
           envId={envId}
           scenarioKey={scenarioKey}
           record={record}
-          disabled={["pending", "waiting"].includes(data.rework?.state)}
+          disabled={!data.can_rework}
         />
       </Stack>
     ));

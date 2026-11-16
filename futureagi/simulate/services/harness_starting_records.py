@@ -91,6 +91,16 @@ class StartingRecords(TypedDict):
     setup_note: str | None
     rows_unavailable: RowsUnavailable | None
     rework: ReworkRequest | None
+    # Whether another record can be asked for now, and why not when it can't.
+    can_rework: bool
+    rework_blocked_reason: str | None
+
+
+# Why another record can't be asked for while the latest request is open, by its state.
+_REWORK_OPEN = {
+    "pending": "The builder is still working on the last request.",
+    "waiting": "The builder is waiting for you to confirm its change.",
+}
 
 
 @dataclass(frozen=True)
@@ -555,10 +565,14 @@ def starting_records(job: HostedHarnessJob, scenario_key: str) -> StartingRecord
             setup_note=None,
             rows_unavailable=_UNREADABLE,
             rework=None,
+            can_rework=False,
+            rework_blocked_reason=_UNREADABLE["reason"],
         )
     records, unavailable = scenario_records(files)
     fixture = files.document.get("fixture")
     origin = fixture.get("origin") if isinstance(fixture, dict) else None
+    rework = latest_rework(job, files, records)
+    blocked = _REWORK_OPEN.get(rework["state"]) if rework is not None else None
     return StartingRecords(
         scenario_key=str(
             files.document.get("scenario_key") or files.document.get("name") or ""
@@ -567,5 +581,7 @@ def starting_records(job: HostedHarnessJob, scenario_key: str) -> StartingRecord
         records=records,
         setup_note=_SETUP_NOTE if _has_setup(files.document, files.suite) else None,
         rows_unavailable=unavailable,
-        rework=latest_rework(job, files, records),
+        rework=rework,
+        can_rework=blocked is None,
+        rework_blocked_reason=blocked,
     )

@@ -74,7 +74,13 @@ class CallCallActorSerializer(serializers.Serializer):
     delivery = serializers.ChoiceField(
         choices=list(get_args(CallActorDelivery)),
         required=False,
-        help_text="How far they got in the call; absent on a call stored without a summary.",
+        help_text=(
+            "How far they got in the call: delivered (spoke), acted (took part through the world, no line), dropped "
+            "(due, but neither spoke nor acted), not_triggered, not_drawn; absent on a call stored without a summary."
+        ),
+    )
+    delivery_label = serializers.CharField(
+        required=False, help_text="How far they got, in the words the call shows."
     )
 
 

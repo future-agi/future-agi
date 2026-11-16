@@ -37,6 +37,17 @@ describe("OpenAPI runtime contract", () => {
         },
       }),
     ).toMatchObject({ ok: true });
+    // A value over a field's bound reaches the check too, which says so on that field.
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "x".repeat(501), max_turns: 0 },
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts typed Error Feed thresholds in create, update and list contracts", () => {

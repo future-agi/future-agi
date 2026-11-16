@@ -303,3 +303,28 @@ def test_the_agent_s_participant_heading_reads_as_a_heading_and_an_actor_keeps_i
 def test_a_world_state_that_is_not_an_object_reads_as_not_recorded():
     assert trial_state(_call(["not", "an", "object"])) is None
     assert trial_state(SimpleNamespace(id="c1", call_metadata=None)) is None
+
+
+def test_an_actor_that_acted_in_the_world_without_a_line_is_served_as_acted_not_dropped():
+    from simulate.selectors.call_detail import call_actors
+
+    metadata = {
+        "harness_call_actors": {
+            "resolved": [
+                {"id": "coworker", "name": "Jordan"},
+                {"id": "manager", "name": "Alex"},
+            ],
+            "summary": [
+                {"actor": "coworker", "triggered": True, "delivered": 0, "acted": 1},
+                {"actor": "manager", "triggered": True, "delivered": 0, "acted": 0},
+            ],
+        }
+    }
+
+    jordan, alex = call_actors(metadata)
+
+    assert (jordan["delivery"], jordan["delivery_label"]) == (
+        "acted",
+        "Acted in the world, said no line",
+    )
+    assert alex["delivery"] == "dropped"

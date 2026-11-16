@@ -16,6 +16,7 @@ from simulate.services.hosted_harness_ingestion import (
     get_object_url,
 )
 from simulate.services.run_results_v3_queries import call_actor_delivery
+from simulate.types import CallActorDelivery
 from simulate.utils.stored_transcript_roles import call_actor_label
 
 logger = structlog.get_logger(__name__)
@@ -241,6 +242,16 @@ class TrialState(TypedDict):
     end_state_url: NotRequired[str]
 
 
+# How far each call actor got, in the words the call shows.
+DELIVERY_LABELS: dict[CallActorDelivery, str] = {
+    "delivered": "Spoke in the call",
+    "acted": "Acted in the world, said no line",
+    "dropped": "Due, but neither spoke nor acted",
+    "not_triggered": "Never came in",
+    "not_drawn": "Not drawn for this call",
+}
+
+
 def call_actors(metadata: object) -> list[dict[str, str]]:
     """Who each of the call's actors is, how they were heard and how far they got."""
     record = metadata.get("harness_call_actors") if isinstance(metadata, dict) else None
@@ -259,7 +270,10 @@ def call_actors(metadata: object) -> list[dict[str, str]]:
                 if isinstance(one.get(key), str)
             },
             **(
-                {"delivery": deliveries[one["id"]]}
+                {
+                    "delivery": deliveries[one["id"]],
+                    "delivery_label": DELIVERY_LABELS[deliveries[one["id"]]],
+                }
                 if one.get("id") in deliveries
                 else {}
             ),

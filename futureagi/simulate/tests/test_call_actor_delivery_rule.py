@@ -29,6 +29,11 @@ MALFORMED = [
     ({"delivered": -1, "triggered": 1}, "dropped"),
     ({"delivered": None, "drawn": False}, "not_drawn"),
     ({"drawn": "false"}, "not_triggered"),
+    # Took part through the world with no line: acted, never dropped.
+    ({"delivered": 0, "acted": 1, "triggered": True}, "acted"),
+    ({"delivered": 2, "acted": 1, "triggered": True}, "delivered"),
+    ({"delivered": 0, "acted": 0, "triggered": True}, "dropped"),
+    ({"acted": "1", "triggered": True}, "dropped"),
 ]
 
 

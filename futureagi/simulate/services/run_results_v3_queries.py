@@ -1028,11 +1028,15 @@ def _json_number(value: object) -> TypeGuard[int | float]:
 
 def call_actor_delivery(took_part: Mapping[str, Any]) -> CallActorDelivery:
     """How far an actor got in one call, by the same rule `_DELIVERY_SQL` applies in the database, malformed values
-    included: only a number above 0 delivers; any `triggered` other than false, null, 0 or "" is a drop. A summary
-    from before `drawn` counts as drawn."""
+    included: only a number above 0 delivers; with no line, a number above 0 of world actions (`acted`) is taking part
+    in the world; any other `triggered` than false, null, 0 or "" is a drop. A summary from before `drawn` counts as
+    drawn."""
     delivered = took_part.get("delivered")
     if _json_number(delivered) and delivered > 0:
         return "delivered"
+    acted = took_part.get("acted")
+    if _json_number(acted) and acted > 0:
+        return "acted"
     triggered = took_part.get("triggered", None)
     if not (
         triggered is None
@@ -1288,6 +1292,7 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
 _DELIVERY_SQL = """
 CASE
   WHEN jsonb_typeof(e -> 'delivered') = 'number' AND (e ->> 'delivered')::numeric > 0 THEN 'delivered'
+  WHEN jsonb_typeof(e -> 'acted') = 'number' AND (e ->> 'acted')::numeric > 0 THEN 'acted'
   WHEN e -> 'triggered' IS NOT NULL
        AND e -> 'triggered' NOT IN ('false'::jsonb, 'null'::jsonb, '0'::jsonb, '""'::jsonb) THEN 'dropped'
   WHEN e -> 'drawn' = 'false'::jsonb THEN 'not_drawn'
@@ -1351,6 +1356,7 @@ def _actor_facet_values(
             "count": count,
             "label": names[value],
             "delivered": deliveries[value]["delivered"],
+            "acted": deliveries[value]["acted"],
             "dropped": deliveries[value]["dropped"],
             "not_triggered": deliveries[value]["not_triggered"],
         }

@@ -61,7 +61,9 @@ class CallActorTookPart(TypedDict, total=False):
 
 # An actor's part in one call: heard by the agent, triggered with nothing heard, never
 # triggered, or left out by the call's draw.
-CallActorDelivery = Literal["delivered", "dropped", "not_triggered", "not_drawn"]
+CallActorDelivery = Literal[
+    "delivered", "acted", "dropped", "not_triggered", "not_drawn"
+]
 
 
 class CallActorFacetValue(TypedDict):
@@ -71,6 +73,7 @@ class CallActorFacetValue(TypedDict):
     label: str
     count: int
     delivered: int
+    acted: int
     dropped: int
     not_triggered: int
 

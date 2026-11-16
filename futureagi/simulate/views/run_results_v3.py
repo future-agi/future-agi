@@ -413,8 +413,11 @@ class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
     delivered = serializers.IntegerField(
         help_text="Calls where at least one of the actor's lines reached the agent."
     )
+    acted = serializers.IntegerField(
+        help_text="Calls where the actor said no line but took part through the world, by its actions."
+    )
     dropped = serializers.IntegerField(
-        help_text="Calls where the actor was triggered but none of its lines reached the agent."
+        help_text="Calls where the actor was due but neither spoke a line nor acted in the world."
     )
     not_triggered = serializers.IntegerField(
         help_text="Calls the actor was planned for but never triggered in."

@@ -20443,6 +20443,142 @@ export const HarnessActorValidateApiOp = {
   delete: "delete",
 } as const;
 
+export type HarnessActorChangesCheckApiSide =
+  (typeof HarnessActorChangesCheckApiSide)[keyof typeof HarnessActorChangesCheckApiSide];
+
+export const HarnessActorChangesCheckApiSide = {
+  caller: "caller",
+  world: "world",
+} as const;
+
+export interface HarnessActorRecordSourceCheckApi {
+  store: string;
+  /** @minLength 1 */
+  collection: string;
+}
+
+export type HarnessActorResponseTimingChangeCheckApiKind =
+  (typeof HarnessActorResponseTimingChangeCheckApiKind)[keyof typeof HarnessActorResponseTimingChangeCheckApiKind];
+
+export const HarnessActorResponseTimingChangeCheckApiKind = {
+  immediate: "immediate",
+  delayed: "delayed",
+} as const;
+
+export interface HarnessActorResponseTimingChangeCheckApi {
+  kind: HarnessActorResponseTimingChangeCheckApiKind;
+  seconds?: number;
+}
+
+export type HarnessActorTriggerCheckApiKind =
+  (typeof HarnessActorTriggerCheckApiKind)[keyof typeof HarnessActorTriggerCheckApiKind];
+
+export const HarnessActorTriggerCheckApiKind = {
+  always: "always",
+  after_seconds: "after_seconds",
+  on_tool: "on_tool",
+  contacted: "contacted",
+  probability: "probability",
+  mid_journey: "mid_journey",
+  on_keyword: "on_keyword",
+  conditional: "conditional",
+} as const;
+
+export type HarnessActorTriggerCheckApiWhere = { [key: string]: string };
+
+export interface HarnessActorTriggerCheckApi {
+  kind?: HarnessActorTriggerCheckApiKind;
+  seconds?: number;
+  tool?: string;
+  on_call?: number;
+  p?: number;
+  turn?: number;
+  words?: string[];
+  collection?: string;
+  where?: HarnessActorTriggerCheckApiWhere;
+}
+
+export type HarnessActorChangesCheckApiFallbackArguments = {
+  [key: string]: unknown;
+};
+
+export interface HarnessActorChangesCheckApi {
+  name?: string;
+  role?: string;
+  side?: HarnessActorChangesCheckApiSide;
+  channel?: string;
+  gender?: string;
+  age_group?: string;
+  accent?: string;
+  loudness_ratio?: number;
+  /** @minLength 1 */
+  kind?: string;
+  parent?: string;
+  goal?: string;
+  may_agree?: string[];
+  private?: string[];
+  escalate_when?: string[];
+  stop_when?: string[];
+  facts?: string[];
+  files?: string[];
+  records?: HarnessActorRecordSourceCheckApi[];
+  style?: string;
+  response_timing?: HarnessActorResponseTimingChangeCheckApi;
+  permitted_actions?: string[];
+  /** @minLength 1 */
+  play?: string;
+  trigger?: HarnessActorTriggerCheckApi;
+  timeout_seconds?: number;
+  /** @minLength 1 */
+  fallback?: string;
+  fallback_arguments?: HarnessActorChangesCheckApiFallbackArguments;
+  model?: string;
+  max_turns?: number;
+  max_lines?: number;
+}
+
+export interface HarnessActorValidateApi {
+  op: HarnessActorValidateApiOp;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  actor_id?: string;
+  changes?: HarnessActorChangesCheckApi;
+  /** @minLength 1 */
+  id?: string;
+  /** @maxItems 100 */
+  share_actions?: string[];
+}
+
+export interface HarnessActorProblemApi {
+  /** @minLength 1 */
+  field: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessActorConflictApi {
+  /** @minLength 1 */
+  actor: string;
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  holder: string;
+  /** @minLength 1 */
+  holder_name: string;
+}
+
+export interface HarnessActorValidationApi {
+  problems: HarnessActorProblemApi[];
+  conflicts: HarnessActorConflictApi[];
+  /** @minLength 1 */
+  suggested_id: string;
+  over_by: number;
+}
+
+export type HarnessActorWriteApiActor = { [key: string]: unknown };
+
 export type HarnessActorChangesApiSide =
   (typeof HarnessActorChangesApiSide)[keyof typeof HarnessActorChangesApiSide];
 
@@ -20530,48 +20666,6 @@ export interface HarnessActorChangesApi {
   /** @minimum 1 */
   max_lines?: number;
 }
-
-export interface HarnessActorValidateApi {
-  op: HarnessActorValidateApiOp;
-  /**
-   * @minLength 1
-   * @maxLength 64
-   */
-  actor_id?: string;
-  changes?: HarnessActorChangesApi;
-  /** @minLength 1 */
-  id?: string;
-  /** @maxItems 100 */
-  share_actions?: string[];
-}
-
-export interface HarnessActorProblemApi {
-  /** @minLength 1 */
-  field: string;
-  /** @minLength 1 */
-  message: string;
-}
-
-export interface HarnessActorConflictApi {
-  /** @minLength 1 */
-  actor: string;
-  /** @minLength 1 */
-  action: string;
-  /** @minLength 1 */
-  holder: string;
-  /** @minLength 1 */
-  holder_name: string;
-}
-
-export interface HarnessActorValidationApi {
-  problems: HarnessActorProblemApi[];
-  conflicts: HarnessActorConflictApi[];
-  /** @minLength 1 */
-  suggested_id: string;
-  over_by: number;
-}
-
-export type HarnessActorWriteApiActor = { [key: string]: unknown };
 
 export interface HarnessActorWriteApi {
   actor?: HarnessActorWriteApiActor;
@@ -22086,6 +22180,13 @@ export interface HarnessStartingRecordsApi {
   setup_note: string;
   rows_unavailable: HarnessRowsUnavailableApi;
   rework: HarnessStartingRecordReworkApi;
+  /** Whether another record can be asked for now. */
+  can_rework: boolean;
+  /**
+   * Why another record can't be asked for now; null when it can.
+   * @minLength 1
+   */
+  rework_blocked_reason: string;
 }
 
 export interface HarnessStartingRecordReworkWriteApi {
@@ -27490,13 +27591,14 @@ export interface SimulateRunV3FunctionCallApi {
 }
 
 /**
- * How far they got in the call; absent on a call stored without a summary.
+ * How far they got in the call: delivered (spoke), acted (took part through the world, no line), dropped (due, but neither spoke nor acted), not_triggered, not_drawn; absent on a call stored without a summary.
  */
 export type CallCallActorApiDelivery =
   (typeof CallCallActorApiDelivery)[keyof typeof CallCallActorApiDelivery];
 
 export const CallCallActorApiDelivery = {
   delivered: "delivered",
+  acted: "acted",
   dropped: "dropped",
   not_triggered: "not_triggered",
   not_drawn: "not_drawn",
@@ -27511,8 +27613,13 @@ export interface CallCallActorApi {
   role?: string;
   /** The channel id they joined the call on. */
   channel?: string;
-  /** How far they got in the call; absent on a call stored without a summary. */
+  /** How far they got in the call: delivered (spoke), acted (took part through the world, no line), dropped (due, but neither spoke nor acted), not_triggered, not_drawn; absent on a call stored without a summary. */
   delivery?: CallCallActorApiDelivery;
+  /**
+   * How far they got, in the words the call shows.
+   * @minLength 1
+   */
+  delivery_label?: string;
 }
 
 /**
@@ -28834,7 +28941,9 @@ export interface CallActorFacetValueApi {
   label: string;
   /** Calls where at least one of the actor's lines reached the agent. */
   delivered: number;
-  /** Calls where the actor was triggered but none of its lines reached the agent. */
+  /** Calls where the actor said no line but took part through the world, by its actions. */
+  acted: number;
+  /** Calls where the actor was due but neither spoke a line nor acted in the world. */
   dropped: number;
   /** Calls the actor was planned for but never triggered in. */
   not_triggered: number;

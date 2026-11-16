@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from rest_framework import serializers
 from rest_framework.exceptions import ErrorDetail
@@ -446,14 +447,59 @@ class HarnessActorDeleteQuerySerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(required=False, min_value=0)
 
 
+# The bounds a field holds a value to; a check takes any value of the field's type and says what is wrong with it.
+_BOUNDS = ("max_length", "min_length", "max_value", "min_value")
+_relaxed: dict[type[serializers.Serializer], type[serializers.Serializer]] = {}
+
+
+def _built_with(field: serializers.Field) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """The arguments a field was made with, as DRF keeps them to copy fields: whatever each field takes."""
+    state = vars(field)
+    return tuple(state["_args"]), dict(state["_kwargs"])
+
+
+def _relaxed_field(field: serializers.Field) -> serializers.Field:
+    args, built = _built_with(field)
+    kwargs = {key: value for key, value in built.items() if key not in _BOUNDS}
+    if isinstance(field, serializers.ListSerializer) and isinstance(
+        field.child, serializers.Serializer
+    ):
+        kwargs.pop("child", None)
+        return relaxed_serializer(type(field.child))(*args, **{**kwargs, "many": True})
+    if isinstance(field, serializers.Serializer):
+        return relaxed_serializer(type(field))(*args, **kwargs)
+    child = kwargs.get("child")
+    if isinstance(child, serializers.Field):
+        kwargs["child"] = _relaxed_field(child)
+    return type(field)(*args, **kwargs)
+
+
+def relaxed_serializer(
+    serializer_class: type[serializers.Serializer],
+) -> type[serializers.Serializer]:
+    """``serializer_class`` with its fields' types and none of their bounds: what a check of an edit takes, so a value
+    too long or out of range reaches the check, which says what is wrong with it on its field."""
+    if serializer_class not in _relaxed:
+        fields = {
+            name: _relaxed_field(field)
+            for name, field in serializer_class().fields.items()
+        }
+        _relaxed[serializer_class] = type(
+            serializer_class.__name__.replace("Serializer", "CheckSerializer"),
+            (serializers.Serializer,),
+            {**fields, "__doc__": serializer_class.__doc__, "__module__": __name__},
+        )
+    return _relaxed[serializer_class]
+
+
 class HarnessActorValidateSerializer(serializers.Serializer):
     """One edit to check without writing it: a create, a replace or a removal, as its write would send it."""
 
     op = serializers.ChoiceField(choices=("create", "replace", "delete"))
     # The actor a replace or removal is about; a create has none.
     actor_id = serializers.CharField(required=False, max_length=64)
-    # The patch a create or replace would send; a removal sends none.
-    changes = HarnessActorChangesSerializer(required=False)
+    # The patch a create or replace would send; a removal sends none. Taken whatever its values: the check judges them.
+    changes = relaxed_serializer(HarnessActorChangesSerializer)(required=False)
     # On a create only; left out, the id the server would make from the name is checked. Its length is judged by the
     # check itself, never refused before it is sent: judging it is what the check is for.
     id = serializers.CharField(required=False)

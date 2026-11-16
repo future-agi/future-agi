@@ -615,13 +615,20 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if job is None:
             return self._not_found()
         data = request.validated_data
+        changes = data.get("changes")
+        if changes is not None:
+            # Judged against the record's bounds here, so a value out of them is a problem on its field.
+            strict = HarnessActorChangesSerializer(data=request.data.get("changes"))
+            if not strict.is_valid():
+                return _actor_check_refused({"changes": strict.errors})
+            changes = strict.validated_data
         return Response(
             harness_actors.check_actor_edit(
                 job,
                 op=data["op"],
                 actor_id=data.get("actor_id"),
                 body=None,
-                changes=data.get("changes"),
+                changes=changes,
                 new_id=data.get("id"),
                 user=request.user,
                 expected_revision=None,

@@ -103,6 +103,13 @@ class HarnessStartingRecordsSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The latest request to start this scenario from another record, or null if none was made.",
     )
+    can_rework = serializers.BooleanField(
+        help_text="Whether another record can be asked for now."
+    )
+    rework_blocked_reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why another record can't be asked for now; null when it can.",
+    )
 
 
 class HarnessStartingRecordReworkWriteSerializer(serializers.Serializer):
