@@ -1076,6 +1076,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Accurate tokenizer** | Token counting package at [`internal/tokenizer/`](./internal/tokenizer/) |
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
+| **Provider-reported cost** | For OpenRouter, Perplexity and xAI at their official hosts, records the cost the vendor states in its response (`usage.cost`, `usage.cost.total_cost`, `usage.cost_in_usd_ticks`) instead of the catalogue estimate, on chat, Responses, Messages and completions, streamed or not. Org custom pricing still wins; `ignore_provider_cost: true` on a provider turns it off. Each priced row's metadata says `cost_source`: `org_custom`, `provider_reported`, `catalogue` or `unpriced`. A `provider_reported` row also carries `cost_reported_unit` (`openrouter_credits`, `usd` or `usd_ticks`), `cost_catalogue` (what the catalogue would have charged), `cost_is_byok` (`true` on an OpenRouter BYOK call) and `cost_reported_zero` (`true` when the vendor stated 0 for tokens the catalogue prices above 0; the 0 is recorded). Callers cannot set these keys. Trust rule and switch: `config.example.yaml` |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
 | **Clustering** | [`internal/cluster/`](./internal/cluster/) |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
