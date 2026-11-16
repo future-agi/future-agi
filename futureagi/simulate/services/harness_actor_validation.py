@@ -58,6 +58,26 @@ def field_at(path: str) -> str | None:
     return parts[0]
 
 
+# What the editor asks for when a field the record needs is missing or empty, said on that field.
+_ASK_FOR = {"name": "Give them a name.", "id": "Give them an id."}
+
+
+def _missing(
+    error: jsonschema.ValidationError, where: str
+) -> list[tuple[str, Problem]]:
+    """Each field a `required` error names, as a problem on that field in the editor's words."""
+    present = error.instance if isinstance(error.instance, dict) else {}
+    paths = [
+        f"{where}.{name}" if where else str(name)
+        for name in error.validator_value
+        if name not in present
+    ]
+    return [
+        (path, problem(field_at(path), _ASK_FOR.get(path, f"Fill in {path}.")))
+        for path in paths
+    ]
+
+
 def _branch(error: jsonschema.ValidationError) -> jsonschema.ValidationError:
     """An optional field allows null too, so what is wrong is the branch that is not null."""
     branches = [
@@ -126,6 +146,12 @@ def _record_problems(
         where = ".".join(str(part) for part in error.absolute_path)
         # An id never changes, so one already in the cast is kept as it is.
         if where == "id" and not new_id:
+            continue
+        if error.validator == "required":
+            problems.extend(_missing(error, where))
+            continue
+        if where in _ASK_FOR and _branch(error).validator == "minLength":
+            problems.append((where, problem(field_at(where), _ASK_FOR[where])))
             continue
         # A bad id cannot name its own actor, so the sentence names the field instead.
         subject = (
