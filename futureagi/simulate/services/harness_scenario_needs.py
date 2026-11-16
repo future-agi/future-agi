@@ -19,7 +19,6 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteVersion,
 )
-from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_check_reading import CheckReading, read_check
 from simulate.services.hosted_harness import grades_nothing
 
@@ -62,8 +61,6 @@ class CaseNeeds:
     # in the world (scheduled actions, or brought in by one of the agent's calls).
     door: frozenset[str] = frozenset()
     judged: bool = False
-    # The declared workers the case relies on: its worker sub-goals and the workers its scenario gives a budget.
-    workers: frozenset[str] = frozenset()
 
 
 # A case's actor acts in the world: it needs the world's door in front of the agent's tools.
@@ -102,10 +99,8 @@ def case_needs(
     *,
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
-    worker_limits: Mapping[str, Any] | None = None,
 ) -> list[CaseNeeds]:
-    """The suite version's scenarios in number order, each with what it needs; `worker_limits` is the bundle's sealed
-    `worker-limits.json`, which names the workers each scenario relies on.
+    """The suite version's scenarios in number order, each with what it needs.
 
     A suite without members numbers its scenarios in document order. Cached per
     version pair and connect-only reading (the environment's, not the version's).
@@ -116,13 +111,12 @@ def case_needs(
     connect_only = _provider_agent(environment_version.job.payload or {})
     cache_key = (
         f"harness-scenario-needs:{NEEDS_VERSION}:"
-        f"{environment_version.id}:{suite_version.id}:{int(connect_only)}:"
-        f"{canonical_digest(worker_limits) if worker_limits is not None else 'none'}"
+        f"{environment_version.id}:{suite_version.id}:{int(connect_only)}"
     )
     cached: list[CaseNeeds] | None = cache.get(cache_key)
     if cached is not None:
         return cached
-    found = _compute(environment_version, suite_version, connect_only, worker_limits)
+    found = _compute(environment_version, suite_version, connect_only)
     cache.set(cache_key, found, timeout=_CACHE_SECONDS)
     return found
 
@@ -131,7 +125,6 @@ def _compute(
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
     connect_only: bool,
-    worker_limits: Mapping[str, Any] | None,
 ) -> list[CaseNeeds]:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
@@ -141,21 +134,6 @@ def _compute(
         if isinstance(one, Mapping)
     ]
     catalogue = _catalogue(environment_version)
-    declared = _declared_workers(environment_version)
-    sealed = (worker_limits or {}).get("scenarios")
-    relied = (
-        {
-            _scenario_token(key): frozenset(
-                str(one) for one in entry.get("workers") or []
-            )
-            if entry.get("relies_on_worker_limits")
-            else frozenset()
-            for key, entry in sealed.items()
-            if isinstance(entry, Mapping)
-        }
-        if isinstance(sealed, Mapping)
-        else None
-    )
     members = list(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version)
         .order_by("number", "scenario_key")
@@ -170,10 +148,6 @@ def _compute(
                 document,
                 catalogue,
                 connect_only,
-                declared,
-                None
-                if relied is None
-                else relied.get(_scenario_token(_document_key(document)), frozenset()),
             )
             for index, document in enumerate(documents, start=1)
         ]
@@ -189,20 +163,7 @@ def _compute(
         matched = by_token.get(_scenario_token(key)) or by_token.get(
             _scenario_token(content.get("name"))
         )
-        found.append(
-            _needs(
-                key,
-                number,
-                matched,
-                content,
-                catalogue,
-                connect_only,
-                declared,
-                None
-                if relied is None
-                else relied.get(_scenario_token(key), frozenset()),
-            )
-        )
+        found.append(_needs(key, number, matched, content, catalogue, connect_only))
     unmatched = sum(1 for one in found if not one.recorded)
     if unmatched:
         logger.warning(
@@ -236,8 +197,6 @@ def _needs(
     shown: Mapping[str, Any],
     catalogue: Mapping[str, Mapping[str, Any]],
     connect_only: bool,
-    declared: frozenset[str] = frozenset(),
-    relied: frozenset[str] | None = None,
 ) -> CaseNeeds:
     rows = {"start", "message"}
     ungradable = grades_nothing(shown.get("sub_goals"), catalogue)
@@ -287,47 +246,7 @@ def _needs(
         grading_gap=gap,
         ungradable=ungradable,
         judged=any(one.judged for one in readings),
-        # The bundle's own list when it has one; a bundle sealed before it is read from the scenario.
-        workers=(
-            relied
-            if relied is not None
-            else _relied_workers(document, catalogue, declared)
-        ),
     )
-
-
-def _declared_workers(environment_version: HarnessEnvironmentVersion) -> frozenset[str]:
-    contract = (environment_version.documents or {}).get("contract")
-    workers = contract.get("workers") if isinstance(contract, Mapping) else None
-    return frozenset(
-        str(one["id"])
-        for one in workers or []
-        if isinstance(one, Mapping) and one.get("id")
-    )
-
-
-def _relied_workers(
-    document: Mapping[str, Any],
-    catalogue: Mapping[str, Mapping[str, Any]],
-    declared: frozenset[str],
-) -> frozenset[str]:
-    """The workers a case relies on: each sub-goal graded on a worker, and each worker the scenario gives a budget (a
-    bare number budgets every declared worker)."""
-    workers: set[str] = set()
-    for name in _sub_goal_names(document):
-        goal = catalogue.get(name) or {}
-        subject = str(goal.get("subject") or "")
-        worker = goal.get("worker") or (
-            subject.removeprefix("worker:") if subject.startswith("worker:") else ""
-        )
-        if worker:
-            workers.add(str(worker))
-    budget = document.get("worker_budget_seconds")
-    if isinstance(budget, Mapping):
-        workers.update(str(one) for one in budget)
-    elif isinstance(budget, (int, float)) and not isinstance(budget, bool):
-        workers.update(declared)
-    return frozenset(workers)
 
 
 def _persona(value: Any) -> str:

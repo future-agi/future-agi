@@ -13,6 +13,7 @@ from simulate.constants.harness_environment import (
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_RUNNING,
+    WORKER_REASON_CODES,
 )
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.constants.scenario_faults import FAULT_MODES
@@ -1530,7 +1531,6 @@ class WorkerToolSerializer(serializers.Serializer):
 class WorkerBypassSerializer(serializers.Serializer):
     run_id = serializers.CharField()
     call_execution_id = serializers.CharField()
-    tool = serializers.CharField(allow_null=True)
 
 
 class WorkerBoundarySerializer(serializers.Serializer):
@@ -1540,12 +1540,16 @@ class WorkerBoundarySerializer(serializers.Serializer):
     name = serializers.CharField()
     binding = serializers.ChoiceField(choices=("separate", "shared"))
     status = serializers.ChoiceField(choices=_READINESS_STATUSES)
-    reason_code = serializers.CharField()
+    status_label = serializers.CharField(help_text="The status word the row shows.")
+    reason_code = serializers.ChoiceField(choices=WORKER_REASON_CODES)
     reason = serializers.CharField()
     tools = WorkerToolSerializer(many=True)
     bypassed = WorkerBypassSerializer(
         many=True,
-        help_text="Recent calls where the worker reached the world without its own channel.",
+        help_text="The newest recent calls, at most five, where the worker reached the world without its own channel.",
+    )
+    bypassed_count = serializers.IntegerField(
+        min_value=0, help_text="All such recent calls."
     )
     fix = HarnessCapabilityFixSerializer(allow_null=True)
     checked_at = serializers.CharField(allow_null=True)
@@ -1561,7 +1565,6 @@ class HarnessCapabilityReportSerializer(serializers.Serializer):
     rows = HarnessCapabilityRowSerializer(many=True)
     workers = WorkerBoundarySerializer(
         many=True,
-        required=False,
         help_text="One row per declared worker; empty when the contract declares none.",
     )
     counts = HarnessCapabilityCountsSerializer()
@@ -1693,12 +1696,16 @@ class HarnessCapabilityGradingSerializer(serializers.Serializer):
 
 class HarnessCapabilityHeldBySerializer(serializers.Serializer):
     id = serializers.CharField(
-        help_text="The row id, or worker:<id> for a declared worker."
+        help_text=(
+            "The row id, worker:<id> for a declared worker, or worker_limits when the"
+            " sealed hold names no worker."
+        )
     )
     name = serializers.CharField()
     area = serializers.CharField(allow_null=True)
     count = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(allow_null=True)
+    label = serializers.CharField(help_text="What the run dialog shows for it.")
 
 
 class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):

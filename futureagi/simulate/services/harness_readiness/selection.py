@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Literal, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
@@ -35,6 +35,7 @@ from simulate.services.harness_readiness.catalogue import (
     WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
+    Evidence,
     certified,
     pair_bundle,
     read_evidence,
@@ -45,6 +46,14 @@ from simulate.services.harness_readiness.report import (
     readiness_report,
 )
 from simulate.services.harness_readiness.rules import answer
+from simulate.services.harness_readiness.workers import (
+    NO_HOLD,
+    CaseHold,
+    blocked_count,
+    bypassed_workers,
+    case_hold,
+    case_holds,
+)
 from simulate.services.harness_scenario_needs import (
     ACTING,
     TOOL_ROWS,
@@ -68,6 +77,10 @@ NO_DOOR_REASON = (
     "tools service to test this."
 )
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
+# Untested key for a case whose reliance on worker limits ALK sealed no answer for.
+WORKER_LIMITS_UNKNOWN = "worker_limits_not_known"
+# Held-back key for a case ALK holds on worker limits without naming a worker.
+WORKER_LIMITS_HELD = "worker_limits"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
 _MEASURED = tuple(one.id for one in CATALOGUE if one.measured)
@@ -129,6 +142,8 @@ class HeldBy(TypedDict):
     area: str | None
     count: int
     reason: str | None
+    # What the run dialog shows for it, e.g. "Refund worker's limits are not held".
+    label: str
 
 
 class SelectionView(Scope):
@@ -162,6 +177,7 @@ class SelectionReport(TypedDict):
     answer: AnswerView
     areas: list[AreaView]
     rows: list[SelectionRowView]
+    workers: list[WorkerBoundaryView]
     counts: dict[Status, int]
     blockers: int
     catalog_version: str
@@ -195,6 +211,8 @@ class Placed:
     held_by: frozenset[str]
     needed: frozenset[str]
     gradable: NotGradable | None
+    # ALK's sealed hold for the case's worker limits.
+    hold: CaseHold
 
 
 @dataclass(frozen=True)
@@ -217,11 +235,14 @@ def selection_report(
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
     report = readiness_report(pairing)
+    bundle = pair_bundle(pairing)
     placement = _place_all(
         pairing,
         report["rows"],
         keys=keys,
         trials=trials,
+        bundle=bundle,
+        evidence=read_evidence(pairing, bundle),
         workers=report["workers"],
     )
     placed = placement.placed
@@ -246,7 +267,7 @@ def selection_report(
             report["answer"],
             rows,
             placed,
-            blocked_workers=report["blockers"] - report["counts"]["blocked"],
+            blocked_workers=blocked_count(report["workers"]),
         ),
         "rows": rows,
         "selection": {
@@ -269,19 +290,47 @@ def selection_report(
     }
 
 
+def _worker_reasons(
+    placed: list[Placed], workers: list[WorkerBoundaryView]
+) -> dict[str, str]:
+    """Why each `worker:<id>` holding a selected case back holds it: the worker's row reason for a bypass, else ALK's
+    sealed cause for the first case it holds."""
+    bypassed = {
+        f"worker:{one}": reason for one, reason in bypassed_workers(workers).items()
+    }
+    reasons: dict[str, str] = {}
+    for one in placed:
+        if one.bucket != "blocked":
+            continue
+        sealed = _worker_keys(one.hold) if one.hold.held else []
+        for key in one.by:
+            if key in sealed and one.hold.reason:
+                reasons.setdefault(key, one.hold.reason)
+            elif key in bypassed:
+                reasons.setdefault(key, bypassed[key])
+    return reasons
+
+
+def _worker_keys(hold: CaseHold) -> list[str]:
+    """The `worker:<id>` keys a held case is held by; `worker_limits` when ALK named no worker."""
+    return [f"worker:{one}" for one in hold.workers] or [WORKER_LIMITS_HELD]
+
+
 def _held_by(
     rows: list[SelectionRowView],
     workers: list[WorkerBoundaryView],
     placed: list[Placed],
 ) -> list[HeldBy]:
-    """Each blocked row, then each blocked worker, that holds selected cases back, with how many."""
+    """Each blocked row, then each worker, that holds selected cases back, with how many."""
     by_worker = Counter(
-        reason.removeprefix("worker:")
+        key
         for one in placed
         if one.bucket == "blocked"
-        for reason in one.by
-        if reason.startswith("worker:")
+        for key in one.by
+        if key.startswith("worker:") or key == WORKER_LIMITS_HELD
     )
+    reasons = _worker_reasons(placed, workers)
+    names = {f"worker:{one['worker_id']}": one["name"] for one in workers}
     held: list[HeldBy] = [
         {
             "id": row["id"],
@@ -289,20 +338,21 @@ def _held_by(
             "area": row["area"],
             "count": row["affected"]["count"],
             "reason": row["reason"],
+            "label": row["reason"] or row["label"],
         }
         for row in rows
         if row["status"] == "blocked" and row["affected"]["count"] > 0
     ]
     held += [
         {
-            "id": f"worker:{one['worker_id']}",
-            "name": one["name"],
+            "id": key,
+            "name": names.get(key, key.removeprefix("worker:")),
             "area": "workers",
-            "count": by_worker[one["worker_id"]],
-            "reason": one["reason"],
+            "count": count,
+            "reason": reasons.get(key),
+            "label": f"{names.get(key, 'A worker')}'s limits are not held",
         }
-        for one in workers
-        if by_worker[one["worker_id"]] > 0
+        for key, count in sorted(by_worker.items())
     ]
     return held
 
@@ -379,7 +429,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     """
     bundle = pair_bundle(pairing)
     revision = evidence_revision(pairing, bundle)
-    if read_evidence(pairing, bundle).unreadable:
+    evidence = read_evidence(pairing, bundle)
+    if evidence.unreadable:
         raise HostedHarnessError(
             "readiness_unavailable",
             "Couldn't read this pairing's readiness, so no run was created."
@@ -393,6 +444,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         report["rows"],
         keys=keys,
         trials=trials,
+        bundle=bundle,
+        evidence=evidence,
         workers=report["workers"],
     )
     dropped = [
@@ -408,14 +461,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     }
     if NO_DOOR_ROW in by:
         reasons[NO_DOOR_ROW] = NO_DOOR_REASON
-    # A worker is not a row: a case it holds back reads its boundary's reason.
-    reasons.update(
-        {
-            f"worker:{one['worker_id']}": one["reason"]
-            for one in report["workers"]
-            if f"worker:{one['worker_id']}" in by
-        }
-    )
+    # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
+    reasons.update(_worker_reasons(placed, report["workers"]))
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
@@ -450,11 +497,14 @@ def case_page(
         HostedHarnessError: as ``selection_report``.
     """
     report = readiness_report(pairing)
+    bundle = pair_bundle(pairing)
     placed = _place_all(
         pairing,
         report["rows"],
         keys=keys,
         trials=trials,
+        bundle=bundle,
+        evidence=read_evidence(pairing, bundle),
         workers=report["workers"],
     ).placed
     matching = [
@@ -559,15 +609,15 @@ def _place_all(
     *,
     keys: list[str] | None,
     trials: int,
-    workers: list[Mapping[str, Any]] = (),
+    bundle: HarnessAssembledBundle | None,
+    evidence: Evidence,
+    workers: list[WorkerBoundaryView],
 ) -> _Placement:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
-    bundle = pair_bundle(pairing)
     cases = case_needs(
         environment_version=pairing.environment_version,
         suite_version=pairing.suite_version,
-        worker_limits=read_evidence(pairing, bundle).worker_limits,
     )
     selected = _selected(cases, keys)
     dropped_tokens = _dropped_tokens(bundle)
@@ -602,10 +652,8 @@ def _place_all(
     voice = _voice(pairing)
     reach = _door_reach(pairing)
     many = len(kept) > 1 or trials > 1
-    # A case relying on a worker whose limits a run cannot rely on is held until its binding is fixed.
-    blocked_workers = frozenset(
-        str(one.get("worker_id")) for one in workers if one.get("status") == "blocked"
-    )
+    holds = case_holds(pairing, evidence)
+    bypassed = frozenset(bypassed_workers(workers))
     placed = [
         _place(
             case,
@@ -617,7 +665,8 @@ def _place_all(
             pair_failed=pair_failed,
             no_door=_needs_a_missing_door(case, reach),
             judge_failed=judge_failed,
-            blocked_workers=blocked_workers,
+            hold=case_hold(holds, case.key),
+            bypassed=bypassed,
         )
         for case in kept
     ]
@@ -769,7 +818,8 @@ def _place(
     pair_failed: bool,
     no_door: bool = False,
     judge_failed: bool = False,
-    blocked_workers: frozenset[str] = frozenset(),
+    hold: CaseHold = NO_HOLD,
+    bypassed: frozenset[str] = frozenset(),
 ) -> Placed:
     needed = set(case.rows)
     if voice:
@@ -798,13 +848,20 @@ def _place(
         blocked.append("pair_failed")
     if no_door:
         blocked.append(NO_DOOR_ROW)
-    blocked.extend(f"worker:{one}" for one in sorted(case.workers & blocked_workers))
+    if hold.held:
+        # ALK's run would hold it as not graded: the worker limits it relies on are not held.
+        blocked.extend(_worker_keys(hold))
+    elif hold.relies:
+        # It relies on the limits of a worker a recent run saw bypass its channel.
+        blocked.extend(f"worker:{one}" for one in hold.workers if one in bypassed)
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")
     untested = [one for one, status in statuses.items() if status == "untested"]
     if case.unknown:
         untested.append("unknown_need")
+    if hold.held is None:
+        untested.append(WORKER_LIMITS_UNKNOWN)
     order: tuple[tuple[Bucket, list[str]], ...] = (
         (("untested", ["pair_validating"]),)
         if pair_validating
@@ -820,6 +877,7 @@ def _place(
         held_by=held,
         needed=frozenset(needed),
         gradable=_grading(case, statuses, judge_failed=judge_failed),
+        hold=hold,
     )
 
 

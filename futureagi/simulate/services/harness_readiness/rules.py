@@ -94,6 +94,7 @@ def rows(
     bundle: HarnessAssembledBundle | None,
     *,
     agent_tools: list[Mapping[str, Any]] | None = None,
+    runs: list[Any],
 ) -> list[RowView]:
     """One row per capability, first matching rule wins.
 
@@ -127,7 +128,7 @@ def rows(
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
     fresh: dict[str, Status] = {}
-    seen = observed(pairing)
+    seen = observed(pairing, runs)
     for capability in CATALOGUE:
         reading = measured.get(capability.id)
         if not capability.measured and capability.id in seen:

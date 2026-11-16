@@ -49,7 +49,11 @@ from simulate.services.harness_readiness.rules import (
     rows,
     worst,
 )
-from simulate.services.harness_readiness.workers import worker_boundaries
+from simulate.services.harness_readiness.workers import (
+    blocked_count,
+    recent_calls,
+    worker_boundaries,
+)
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.read import (
     _agent_definition_id,
@@ -364,7 +368,8 @@ def _computed_report(
 ) -> ReadinessReport:
     evidence = read_evidence(pairing, bundle)
     tools = agent_tools(pairing)
-    found = rows(pairing, evidence, bundle, agent_tools=tools)
+    runs = recent_runs(pairing)
+    found = rows(pairing, evidence, bundle, agent_tools=tools, runs=runs)
     view = _validation(pairing, bundle)
     refs = version_refs(
         pairing.agent_version, pairing.environment_version, pairing.suite_version
@@ -382,8 +387,8 @@ def _computed_report(
     counts: dict[Status, int] = dict.fromkeys(WORST_FIRST, 0)
     for row in found:
         counts[row["status"]] += 1
-    workers = worker_boundaries(pairing, evidence, recent_runs(pairing))
-    blocked_workers = sum(1 for one in workers if one["status"] == "blocked")
+    workers = worker_boundaries(pairing, evidence, recent_calls(runs))
+    blocked_workers = blocked_count(workers)
     return {
         "pairing": {
             "agent_version": cast("VersionRef | None", refs["agent"]),
@@ -410,6 +415,19 @@ def _computed_report(
         "rules_version": RULES_VERSION,
         "computed_at": timezone.now().isoformat(),
     }
+
+
+def snapshot_as_read(snapshot: Any) -> Any:
+    """A run's kept report as the report reads now: one kept before workers were read has none, and counts only
+    its blocked rows as blockers."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    filled = dict(snapshot)
+    if "workers" not in filled:
+        filled["workers"] = []
+    if "blockers" not in filled:
+        filled["blockers"] = (filled.get("counts") or {}).get("blocked", 0)
+    return filled
 
 
 def store_run_snapshot(
