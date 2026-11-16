@@ -44699,6 +44699,12 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .describe(
         "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
       ),
+    blocking_area: zod
+      .string()
+      .min(1)
+      .describe(
+        "The first area, in report order, that reads blocked: what the run dialog names as holding cases back.",
+      ),
     dropped: zod.array(
       zod.object({
         key: zod.string().min(1),
@@ -45222,6 +45228,12 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         )
         .describe(
           "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+        ),
+      blocking_area: zod
+        .string()
+        .min(1)
+        .describe(
+          "The first area, in report order, that reads blocked: what the run dialog names as holding cases back.",
         ),
       dropped: zod.array(
         zod.object({
