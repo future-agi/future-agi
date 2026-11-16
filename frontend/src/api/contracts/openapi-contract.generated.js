@@ -17675,6 +17675,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -17683,6 +17686,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -25945,6 +25951,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -25953,6 +25962,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -26782,6 +26794,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/SDKErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
           },
@@ -26939,6 +26957,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/SDKErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
@@ -51316,7 +51340,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         step: {
           title: "Step",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           "x-nullable": true,
         },
         plan: {
@@ -51357,6 +51381,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           "x-nullable": true,
+        },
+        flaky_protected: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixFlakyProtected",
+          },
+          default: [],
         },
         lost_models: {
           type: "array",
@@ -51449,6 +51480,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 1440,
           minimum: 1,
         },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
       },
     },
     AgentFixLaunchOptions: {
@@ -51462,6 +51519,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "defaults",
         "limits",
         "blocked",
+        "variations_blocked",
       ],
       type: "object",
       properties: {
@@ -51496,6 +51554,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixLaunchLimits",
         },
         blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
         },
       },
@@ -51593,6 +51654,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "out_of_budget",
             "stopped",
             "failed",
+            "too_few_cases",
           ],
         },
         stage: {
@@ -51604,7 +51666,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Step",
           description: "A finished fix is done, whatever the engine last said.",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           readOnly: true,
           "x-nullable": true,
         },
@@ -51751,6 +51813,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "out_of_budget",
             "stopped",
             "failed",
+            "too_few_cases",
           ],
         },
         stage: {
@@ -51762,7 +51825,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Step",
           description: "A finished fix is done, whatever the engine last said.",
           type: "string",
-          enum: ["reproduce", "search", "verify", "done"],
+          enum: ["variations", "reproduce", "search", "verify", "done"],
           readOnly: true,
           "x-nullable": true,
         },
@@ -51842,6 +51905,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AgentFixEvalWarning",
           },
+          readOnly: true,
+        },
+        eval_grading: {
+          title: "Eval grading",
+          type: "string",
+          enum: ["none", "pending", "done", "incomplete"],
           readOnly: true,
         },
       },
@@ -83400,6 +83469,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SDKEvaluationDenialResponse: {
+      required: ["status", "code"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        errors: {
+          title: "Errors",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        dimension: {
+          title: "Dimension",
+          type: "string",
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+        },
+        completed_results: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        failed_index: {
+          title: "Failed index",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     SDKGetEvalsResponse: {
       required: ["status", "result"],
       type: "object",
@@ -94511,6 +94647,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixFlakyProtected: {
+      required: ["key", "sub_goal", "passed", "runs"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        sub_goal: {
+          title: "Sub goal",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+          minimum: 0,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+    },
     AgentFixPlan: {
       required: [
         "target",
@@ -94611,7 +94778,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
-      required: ["surfaces", "budget_credits", "max_minutes"],
+      required: [
+        "surfaces",
+        "budget_credits",
+        "max_minutes",
+        "allowed_models",
+        "agent_cost_metered",
+        "agent_calls_unmeasured",
+        "reply_latency_margin_pct",
+        "cost_margin_pct",
+      ],
       type: "object",
       properties: {
         surfaces: {
@@ -94627,6 +94803,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_minutes: {
           title: "Max minutes",
+          type: "integer",
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_cost_metered: {
+          title: "Agent cost metered",
+          type: "boolean",
+        },
+        agent_calls_unmeasured: {
+          title: "Agent calls unmeasured",
+          type: "boolean",
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
           type: "integer",
         },
       },
@@ -94657,6 +94856,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "budget_credits_max",
         "max_minutes_max",
         "scenarios_min",
+        "cases_min",
+        "variations_per_case",
+        "verified_cases_min",
         "scenarios_max",
       ],
       type: "object",
@@ -94671,6 +94873,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         scenarios_min: {
           title: "Scenarios min",
+          type: "integer",
+        },
+        cases_min: {
+          title: "Cases min",
+          type: "integer",
+        },
+        variations_per_case: {
+          title: "Variations per case",
+          type: "integer",
+        },
+        verified_cases_min: {
+          title: "Verified cases min",
           type: "integer",
         },
         scenarios_max: {
@@ -94925,6 +95139,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        flaky_protected: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixFlakyProtected",
+          },
+          default: [],
+        },
       },
       "x-nullable": true,
     },
@@ -94990,6 +95211,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         max_minutes: {
           title: "Max minutes",
           type: "integer",
+        },
+        variations_pending: {
+          title: "Variations pending",
+          type: "boolean",
+          default: false,
+        },
+        variation_parents: {
+          title: "Variation parents",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+          default: {},
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        observes_models: {
+          title: "Observes models",
+          type: "boolean",
+          default: false,
+        },
+        meters_agent_cost: {
+          title: "Meters agent cost",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -132998,6 +133266,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
         },
+        parts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTierPart",
+          },
+          default: [],
+        },
+        latency: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
+        cost: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
       },
     },
     AgentPromptOptimiserTrialEvalScore: {
@@ -134890,6 +135171,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Count",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    AgentFixCeilingNumbers: {
+      type: "object",
+      properties: {
+        baseline: {
+          title: "Baseline",
+          type: "number",
+          "x-nullable": true,
+        },
+        candidate: {
+          title: "Candidate",
+          type: "number",
+          "x-nullable": true,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "number",
+          "x-nullable": true,
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixVerdictTierPart: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },

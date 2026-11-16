@@ -56,6 +56,7 @@ type Server struct {
 	registry         *providers.Registry
 	engine           *pipeline.Engine
 	handlers         *Handlers
+	catalogue        *modeldb.Catalogue
 	keyStore         *auth.KeyStore
 	keyHandlers      *KeyHandlers
 	metricsRegistry  *metrics.Registry
@@ -72,18 +73,36 @@ type Server struct {
 	ready            atomic.Bool
 }
 
-// PriceTableName is the name the price table keys a provider's models under,
-// as the provider that served an org's request states it: the org's own
-// instance when the org has one, else the config.yaml provider with that ID.
-func (s *Server) PriceTableName(orgID, providerID string) string {
-	var p providers.Provider
-	if orgID != "" && s.OrgProviderCache != nil {
-		p = s.OrgProviderCache.Get(orgID, providerID)
+// ServedPriceTableName is the name the price table keys the models of the
+// provider that served rc under; see Handlers.servedPriceTableName.
+func (s *Server) ServedPriceTableName(rc *models.RequestContext) string {
+	return s.handlers.servedPriceTableName(rc)
+}
+
+// ReportedCostVendor is the vendor whose own statement of what rc cost the
+// cost plugin may record, judged on the provider instance that served rc, or
+// "" when rc is priced from the catalogue. See providers.ReportedCostVendor
+// for the rule.
+//
+// The instance is the one the chat handlers recorded as answering
+// (rc.ServedBy): an org's instance and the operator's share a provider ID,
+// and a model fallback can move a request from one to the other while the
+// routing markers still describe the first. Routes that record none have no
+// fallback, and are judged the way the handlers resolve them: the org's
+// instance when it served (an internal key never uses it), else the
+// config.yaml provider.
+func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
+	if p, ok := rc.ServedBy.(providers.Provider); ok && p != nil {
+		return providers.ReportedCostVendor(p, rc.Provider)
 	}
-	if p == nil && s.registry != nil {
-		p, _ = s.registry.GetProvider(providerID)
+	if s.handlers == nil {
+		return ""
 	}
-	return providers.PriceTableName(p)
+	p, ok := s.handlers.servingProvider(rc)
+	if !ok {
+		return ""
+	}
+	return providers.ReportedCostVendor(p, rc.Provider)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -298,6 +317,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -392,6 +412,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				if err != nil {
 					return err
 				}
+				recordServedBy(callRC, provider)
 				callRC.Response = resp
 				callRC.ResolvedModel = resp.Model
 				return nil
@@ -561,6 +582,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Admin endpoints (core).
 	router.Handle("POST", "/-/reload", s.reloadHandler)
 	router.Handle("GET", "/-/config", s.configHandler)
+	router.Handle("GET", "/-/model-catalogue/source", s.catalogueSourceHandler)
 	router.Handle("GET", "/-/health/providers", s.providerHealthHandler)
 	router.Handle("GET", "/-/health/providers/{org_id}", s.orgProviderHealthHandler)
 
@@ -588,6 +610,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			if err != nil {
 				return err
 			}
+			recordServedBy(callRC, provider)
 			callRC.Response = resp
 			callRC.ResolvedModel = resp.Model
 			return nil
@@ -1146,6 +1169,29 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		"models_count":    len(s.cfg.ModelMap),
 		"plugins_count":   s.engine.PluginCount(),
 	})
+}
+
+// SetCatalogue gives the server the catalogue that config reloads rebuild
+// from and the source endpoint reports on. Call it before serving.
+func (s *Server) SetCatalogue(c *modeldb.Catalogue) {
+	s.catalogue = c
+	s.handlers.catalogue = c
+}
+
+// catalogueSourceHandler reports which pricing catalogue is loaded.
+func (s *Server) catalogueSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	if s.catalogue == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no model catalogue is managed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(s.catalogue.Info())
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {

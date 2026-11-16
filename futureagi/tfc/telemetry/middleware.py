@@ -54,6 +54,10 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness/github/webhook/",
     # A transcript import carries the raw transcript, before redaction.
     "/simulate/api/harness-environments/*/evidence-imports/",
+    # A builder chat's guest calls carry chat text and tool results.
+    "/simulate/api/harness/conversations/",
+    # The fix engine's model calls and callbacks carry the agent's source and transcripts.
+    "/simulate/api/agent-fix-engine/",
 )
 
 

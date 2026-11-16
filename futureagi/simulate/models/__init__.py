@@ -33,6 +33,7 @@ from .harness_versioning import (
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
     HostedHarnessConversationEvent,
@@ -109,6 +110,7 @@ __all__ = [
     "TrialItemResult",
     "HostedHarnessArtifact",
     "HostedHarnessAttempt",
+    "HostedHarnessBuilderTurnUsage",
     "HostedHarnessCleanupReceipt",
     "HostedHarnessConversation",
     "HostedHarnessConversationEvent",

@@ -64,8 +64,8 @@ MODULES = (
     "humanize",
 )
 # What each optional dependency group (EXTRAS) must make importable; the
-# standard variant installs these seven, the groups that were base
-# dependencies before the image-size split (pyproject.toml).
+# standard variant installs these eight: the groups that were base
+# dependencies before the image-size split (pyproject.toml), and pii.
 EXTRA_MODULES = {
     "sandbox": ("daytona", "e2b", "httpx_ws"),
     "billing": ("stripe",),
@@ -74,6 +74,8 @@ EXTRA_MODULES = {
     "langchain": ("langchain", "langchain_community"),
     "rabbitmq": ("channels_rabbitmq",),
     "localizer": ("claude_agent_sdk",),
+    # The spaCy model the PII scrubber loads ships as a package of its own.
+    "pii": ("presidio_analyzer", "presidio_anonymizer", "en_core_web_sm"),
 }
 # What bin/install_nltk_data.py installs in the `minimal` profile.
 NLTK_RESOURCES = (

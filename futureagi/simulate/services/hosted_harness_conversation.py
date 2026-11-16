@@ -1016,7 +1016,7 @@ def ingest_conversation_events(
                 state=HostedHarnessConversationMessage.State.QUEUED,
             ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
         for event in events:
-            _ingest_event(conversation, event)
+            _ingest_event(conversation, event, chat_only=lease.attempt_id is None)
         lease.command_watermark = max(
             lease.command_watermark, conversation.command_acked_through
         )
@@ -1051,7 +1051,10 @@ def ingest_conversation_events(
 
 
 def _ingest_event(
-    conversation: HostedHarnessConversation, event: dict[str, Any]
+    conversation: HostedHarnessConversation,
+    event: dict[str, Any],
+    *,
+    chat_only: bool = False,
 ) -> None:
     canonical = {key: value for key, value in event.items() if key != "digest"}
     if canonical_digest(canonical) != event["digest"]:
@@ -1111,6 +1114,13 @@ def _ingest_event(
                 event["sequence"],
                 event["emitted_at"],
             )
+        )
+    if chat_only and event["kind"] == "turn_completed":
+        from simulate.services.harness_usage import bill_builder_turn
+
+        # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
+        transaction.on_commit(
+            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
         )
     _project_event(conversation, event)
 
@@ -1975,7 +1985,7 @@ def promote_conversation_checkpoint(
 
     Only a completed environment is published to; while authoring runs, its pipeline owns
     these. A checkpoint older than the published one is ignored, so a late delivery never
-    rolls the environment back.
+    rolls the environment back. A fix's request for variations lands in the fix instead.
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import drafts, rebuild
@@ -2001,12 +2011,17 @@ def promote_conversation_checkpoint(
             status_code=409,
         )
     archive = _authoring_archive(checkpoint)
-    from simulate.services import evidence_drafts
+    from simulate.services import agent_fix_variations, evidence_drafts
 
-    if command is not None and evidence_drafts.is_evidence_command(command):
+    if evidence_drafts.is_evidence_command(command):
         # An evidence turn read untrusted production text: its saves never reach
         # the environment; its scenarios become proposals on the import.
         evidence_drafts.land(environment, conversation, archive, command)
+        return environment
+    if agent_fix_variations.is_fix_command(command):
+        # A fix's variations land in the fix's own suite version, never in the
+        # environment's drafts or defaults.
+        agent_fix_variations.land(environment, conversation, archive, command)
         return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
