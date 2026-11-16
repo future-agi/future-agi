@@ -25,6 +25,7 @@ import requests
 import base64
 import copy
 import io
+from tfc.utils.media_tools import MediaToolUnavailable
 
 import structlog
 
@@ -746,6 +747,11 @@ class RunPrompt:
         # Ensure OpenAI Whisper gets a recognized file extension; convert if needed
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
+        except MediaToolUnavailable as exc:
+            # No ffmpeg in this image: send the audio unconverted and let the
+            # provider decode it, as before, but say why it was not converted.
+            logger.warning("stt_audio_not_converted", reason=str(exc))
+            detected = ""
         except Exception:
             detected = ""
         allowed = {
