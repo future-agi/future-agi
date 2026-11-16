@@ -1,3 +1,6 @@
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from django.conf import settings
 
 from simulate.models import AgentDefinition, AgentVersion
@@ -5,6 +8,9 @@ from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
 MASKED_VALUE = "********"
+SERVER_URL_CHANGE_NEEDS_SECRETS = (
+    "Enter the API key and secret again to change the server URL."
+)
 
 
 def is_masked(value: str) -> bool:
@@ -17,6 +23,99 @@ def is_masked(value: str) -> bool:
     if len(value) == 11 and value[4:7] == "...":
         return True
     return False
+
+
+class CredentialsNeedReentry(Exception):
+    """Saved secrets would be sent to a new address, so they must be typed again."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+def mask_websocket_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    if not isinstance(headers, dict):
+        return headers
+    return dict.fromkeys(headers, MASKED_VALUE)
+
+
+def mask_websocket_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    parts = urlsplit(url)
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"{MASKED_VALUE}@{netloc.rsplit('@', 1)[1]}"
+    query = urlencode(
+        [
+            (name, MASKED_VALUE)
+            for name, _ in parse_qsl(parts.query, keep_blank_values=True)
+        ],
+        safe="*",
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def _destination(url: str) -> tuple[str, str | None, int | None]:
+    parts = urlsplit(url)
+    return parts.scheme, parts.hostname, parts.port
+
+
+def _restore_url(url: str | None, stored: str | None, moved: bool) -> str | None:
+    if not url or not stored or MASKED_VALUE not in url:
+        return url
+    if moved:
+        raise CredentialsNeedReentry(
+            "Enter the websocket URL's credentials again to change where it connects."
+        )
+    new, old = urlsplit(url), urlsplit(stored)
+    old_values = dict(parse_qsl(old.query, keep_blank_values=True))
+    query = urlencode(
+        [
+            (name, old_values.get(name, value) if value == MASKED_VALUE else value)
+            for name, value in parse_qsl(new.query, keep_blank_values=True)
+        ],
+        safe="*",
+    )
+    netloc = old.netloc if new.netloc.startswith(f"{MASKED_VALUE}@") else new.netloc
+    return urlunsplit((new.scheme, netloc, new.path, query, new.fragment))
+
+
+def _restore_headers(
+    headers: dict[str, str] | None, stored: dict[str, str] | None, moved: bool
+) -> dict[str, str] | None:
+    if not isinstance(headers, dict) or MASKED_VALUE not in headers.values():
+        return headers
+    if moved:
+        raise CredentialsNeedReentry(
+            "Enter the websocket header values again to send them to a new URL."
+        )
+    stored = stored if isinstance(stored, dict) else {}
+    return {
+        name: stored.get(name, value) if value == MASKED_VALUE else value
+        for name, value in headers.items()
+    }
+
+
+def merge_websocket_secrets(
+    incoming: dict[str, Any],
+    stored_url: str | None,
+    stored_headers: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Masked websocket values sent back on save take their stored values, but only
+    while the URL still points at the same host; otherwise they must be typed again."""
+    url = incoming.get("websocket_url", stored_url)
+    moved = bool(stored_url and url) and _destination(url) != _destination(stored_url)
+    merged: dict[str, Any] = {}
+    if "websocket_url" in incoming:
+        merged["websocket_url"] = _restore_url(
+            incoming["websocket_url"], stored_url, moved
+        )
+    if "websocket_headers" in incoming:
+        merged["websocket_headers"] = _restore_headers(
+            incoming["websocket_headers"], stored_headers, moved
+        )
+    return merged
 
 
 def _has_credential_fields(data: ProviderCredentialsInput) -> bool:
@@ -33,6 +132,20 @@ def _has_credential_fields(data: ProviderCredentialsInput) -> bool:
             data.livekit_max_concurrency,
         ]
     )
+
+
+def _typed(value: str) -> bool:
+    return bool(value) and not is_masked(value)
+
+
+def refuse_moved_secrets(
+    *, stored_url: str, new_url: str, api_key: str, api_secret: str
+) -> None:
+    if not (stored_url and new_url) or new_url == stored_url:
+        return
+    if _typed(api_key) and _typed(api_secret):
+        return
+    raise CredentialsNeedReentry(SERVER_URL_CHANGE_NEEDS_SECRETS)
 
 
 def _apply_secrets(creds, *, api_key: str, api_secret: str, provider_changed: bool):
@@ -144,6 +257,13 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
                 provider_type=provider_type,
             )
     provider_changed = creds.provider_type != provider_type
+    if not provider_changed and (creds.api_key or creds.api_secret):
+        refuse_moved_secrets(
+            stored_url=creds.server_url,
+            new_url=server_url,
+            api_key=api_key,
+            api_secret=api_secret,
+        )
     creds.provider_type = provider_type
 
     _apply_secrets(
@@ -215,6 +335,23 @@ def resolve_api_secret_for_version(version):
     except ProviderCredentials.DoesNotExist:
         pass
     return None
+
+
+def resolve_server_url_for_version(version) -> str:
+    if version is None:
+        return ""
+    try:
+        if version.credentials.server_url:
+            return version.credentials.server_url
+    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+        pass
+    try:
+        legacy = version.agent_definition.credentials_legacy
+        if legacy and legacy.server_url:
+            return legacy.server_url
+    except ProviderCredentials.DoesNotExist:
+        pass
+    return ""
 
 
 def resolve_stored_api_key(

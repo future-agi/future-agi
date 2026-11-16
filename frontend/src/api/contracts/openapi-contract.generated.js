@@ -127797,6 +127797,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "enabled",
         "type",
+        "can_switch",
       ],
       type: "object",
       properties: {
@@ -127839,6 +127840,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Type",
           type: "string",
           minLength: 1,
+        },
+        can_switch: {
+          title: "Can switch",
+          type: "boolean",
         },
       },
     },

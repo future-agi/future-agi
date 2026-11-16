@@ -8,6 +8,10 @@ from simulate.serializers.harness_environment import (
     HarnessRunSummarySerializer,
     RunEnvironmentRefSerializer,
 )
+from simulate.serializers.websocket_fields import (
+    WebsocketHeadersField,
+    WebsocketUrlField,
+)
 from tfc.permissions.utils import cached_is_read_only_user
 
 MASKED_CREDENTIAL_VALUE = "********"
@@ -26,6 +30,16 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     livekit_config_json = serializers.SerializerMethodField()
     livekit_max_concurrency = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition
@@ -184,6 +198,16 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         source="_environment_count", read_only=True
     )
     environments = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition

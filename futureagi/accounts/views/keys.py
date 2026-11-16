@@ -9,7 +9,8 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -27,6 +28,10 @@ from accounts.serializers.org_api_key import (
     CreateSecretKeySerializer,
     OrgApiKeySerializer,
     UserSecretKeySerializer,
+)
+from accounts.services.organization_access import (
+    can_switch_key,
+    is_organization_admin,
 )
 from analytics.utils import (
     MixpanelEvents,
@@ -70,8 +75,46 @@ def _managed_keys(organization):
     )
 
 
+KEY_SWITCH_DENIED = (
+    "Only organization admins or the key's creator can turn this key on or off."
+)
+
+
+def _is_organization_admin(request: Request) -> bool:
+    organization = getattr(request, "organization", None) or request.user.organization
+    return is_organization_admin(request.user, organization)
+
+
+def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
+    logger.info(
+        "access_denied",
+        reason="key_switch_not_allowed",
+        user_id=str(request.user.id),
+        key_id=str(apikey.id),
+        key_type=apikey.type,
+    )
+    return GeneralMethods().forbidden_response(KEY_SWITCH_DENIED)
+
+
+class CanReadOrganizationKey(BasePermission):
+    message = (
+        "Only organization admins can see the organization key. "
+        "Ask an admin for an API key."
+    )
+
+    def has_permission(self, request: Request, view) -> bool:
+        if _is_organization_admin(request):
+            return True
+        logger.info(
+            "access_denied",
+            reason="organization_key_admin_only",
+            user_id=str(request.user.id),
+        )
+        return False
+
+
 class GetKeysView(APIView):
-    permission_classes = [IsAuthenticated, IsNotViewer]
+    permission_classes = [IsAuthenticated, IsNotViewer, CanReadOrganizationKey]
     viewer_denied_action = "see API keys"
     _gm = GeneralMethods()
 
@@ -190,6 +233,7 @@ class SecretKeyAPIViewSet(ViewSet):
             start = page_number * page_size
             paginated_keys = apiKeys[start : start + page_size]
 
+            is_admin = _is_organization_admin(request)
             table = [
                 {
                     "id": key.id,
@@ -200,6 +244,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
+                    "can_switch": can_switch_key(request.user, key, is_admin),
                 }
                 for key in paginated_keys
             ]
@@ -238,6 +283,10 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
+                    return _switch_denied(request, apikey)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
                 apikey.enabled = True
@@ -270,6 +319,10 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
+                    return _switch_denied(request, apikey)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
