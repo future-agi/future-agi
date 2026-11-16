@@ -47,6 +47,11 @@ class FunctionCallSerializer(serializers.Serializer):
         required=False,
         help_text="agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
     )
+    label = serializers.CharField(
+        required=False,
+        help_text="How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to "
+        "another agent or a control pass. Absent on a world actor's action.",
+    )
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
