@@ -11,7 +11,7 @@ import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypedDict
 
 import structlog
 from django.core.cache import cache
@@ -64,9 +64,22 @@ _SANDBOX_SOURCES = frozenset(
 )
 
 
-# The per-tool and per-action certification an archive holds (lists), its door files (mappings or None), and
-# whether it was read.
-CertificationFiles = dict[str, Any]
+class CertificationFiles(TypedDict, total=False):
+    """The per-tool and per-action certification an archive holds, its door files (None when absent) and whether
+    each could be read."""
+
+    tools: list[Mapping[str, Any]]
+    actions: list[Mapping[str, Any]]
+    routed: list[Mapping[str, Any]]
+    unobserved: list[Mapping[str, Any]]
+    worker_permissions: Mapping[str, Any] | None
+    door_outcome: Mapping[str, Any] | None
+    worker_limits: Mapping[str, Any] | None
+    actions_to_tools: Mapping[str, Any] | None
+    door_unreadable: bool
+    unreadable: bool
+
+
 _Read = tuple[CertificationFiles, bool]
 
 
@@ -122,14 +135,6 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
     )
 
 
-_FILES = ("tools", "actions", "routed", "unobserved")
-# Read by key, never through `_items`: each is a mapping or None.
-_DOOR_FILES = (
-    "worker_permissions",
-    "door_outcome",
-    "worker_limits",
-    "actions_to_tools",
-)
 # Kept rows and cached reads from before the door files were read lack them, so they are read once more.
 _FILES_VERSION = assembly.CERTIFICATION_FILES_VERSION
 
@@ -138,9 +143,28 @@ def _mapping(value: Any) -> Mapping[str, Any] | None:
     return value if isinstance(value, Mapping) else None
 
 
+def _files_of(source: Any) -> CertificationFiles:
+    """The certification files a kept row or a read archive holds, each of its own shape."""
+    return {
+        "tools": _items(source, "tools"),
+        "actions": _items(source, "actions"),
+        "routed": _items(source, "routed"),
+        "unobserved": _items(source, "unobserved"),
+        "worker_permissions": _mapping(_get(source, "worker_permissions")),
+        "door_outcome": _mapping(_get(source, "door_outcome")),
+        "worker_limits": _mapping(_get(source, "worker_limits")),
+        "actions_to_tools": _mapping(_get(source, "actions_to_tools")),
+        "door_unreadable": bool(_get(source, "door_unreadable")),
+    }
+
+
+def _get(source: Any, name: str) -> Any:
+    return source.get(name) if isinstance(source, Mapping) else None
+
+
 def _certification_files(
     row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
-) -> dict[str, Any]:
+) -> CertificationFiles:
     """The per-tool and per-action certification and tool routing of the archive at
     ``object_key``, kept on ``row``. A bundle stored since they are kept has them
     already; an older row has its archive read once, and keeps what was read. An
@@ -151,11 +175,7 @@ def _certification_files(
         and kept.get("object_key") == object_key
         and kept.get("files_version") == _FILES_VERSION
     ):
-        return {
-            **{name: _items(kept, name) for name in _FILES},
-            **{name: _mapping(kept.get(name)) for name in _DOOR_FILES},
-            "door_unreadable": bool(kept.get("door_unreadable")),
-        }
+        return _files_of(kept)
     files, readable = _read_once(object_key)
     if not readable:
         return {**files, "unreadable": True}
@@ -237,30 +257,18 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
             },
             _MAX_CERTIFICATION_BYTES,
         )
-    except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
+    except Exception as exc:
+        # Storage, network or a truncated archive.
         logger.warning(
             "harness_readiness_certification_unreadable",
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: _Read = (
-            {
-                **{name: [] for name in _FILES},
-                **dict.fromkeys(_DOOR_FILES),
-            },
-            False,
-        )
+        unreadable: _Read = (_files_of({}), False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     kept = assembly.certification_files(found, object_key)
-    read = (
-        {
-            **{name: kept[name] for name in _FILES},
-            **{name: kept.get(name) for name in _DOOR_FILES},
-            "door_unreadable": bool(kept.get("door_unreadable")),
-        },
-        True,
-    )
+    read: _Read = (_files_of(kept), True)
     cache.set(cache_key, read, timeout=_FILES_TTL_SECONDS)
     return read
 
@@ -325,7 +333,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
     files = (
         _certification_files(version, version.archive_object_key)
         if version.archive_layout == ArchiveLayout.COMBINED
-        else {}
+        else CertificationFiles()
     )
     tools = files.get("tools", [])
     return Evidence(

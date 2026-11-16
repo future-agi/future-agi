@@ -1493,7 +1493,14 @@ class TestReviewFollowUps:
                 "routed": [],
                 "unobserved": [],
                 # No door files in this archive: each reads absent.
-                **dict.fromkeys(evidence._DOOR_FILES),
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
                 "door_unreadable": False,
             },
             True,
@@ -1536,7 +1543,14 @@ class TestReviewFollowUps:
                 "routed": [],
                 "unobserved": [],
                 # No door files in this archive: each reads absent.
-                **dict.fromkeys(evidence._DOOR_FILES),
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
                 "door_unreadable": False,
             },
             True,
@@ -1648,7 +1662,14 @@ class TestReviewFollowUps:
             "routed": [],
             "unobserved": [],
             # No world door files in this sealed archive.
-            **dict.fromkeys(evidence._DOOR_FILES),
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
             "door_unreadable": False,
         }
         with patch.object(evidence.archives, "stream_members") as streamed:
@@ -1681,7 +1702,14 @@ class TestReviewFollowUps:
                 if one["status"] in ("passed", "refused")
             ],
             "unobserved": [],
-            **dict.fromkeys(evidence._DOOR_FILES),
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
             "door_unreadable": False,
             "files_version": assembly.CERTIFICATION_FILES_VERSION,
         }

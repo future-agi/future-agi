@@ -234,8 +234,8 @@ def selection_report(
         HostedHarnessError: 400 ``scenario_selection_empty``,
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
-    report = readiness_report(pairing)
     bundle = pair_bundle(pairing)
+    report = readiness_report(pairing, bundle=bundle)
     placement = _place_all(
         pairing,
         report["rows"],
@@ -312,8 +312,9 @@ def _worker_reasons(
 
 
 def _worker_keys(hold: CaseHold) -> list[str]:
-    """The `worker:<id>` keys a held case is held by; `worker_limits` when ALK named no worker."""
-    return [f"worker:{one}" for one in hold.workers] or [WORKER_LIMITS_HELD]
+    """The `worker:<id>` keys a held case is held by: the workers ALK sealed as unheld for it; `worker_limits` with
+    its sealed cause when it named none, or sealed before it named them."""
+    return [f"worker:{one}" for one in hold.unheld or ()] or [WORKER_LIMITS_HELD]
 
 
 def _held_by(
@@ -496,8 +497,8 @@ def case_page(
     Raises:
         HostedHarnessError: as ``selection_report``.
     """
-    report = readiness_report(pairing)
     bundle = pair_bundle(pairing)
+    report = readiness_report(pairing, bundle=bundle)
     placed = _place_all(
         pairing,
         report["rows"],
@@ -647,7 +648,8 @@ def _place_all(
         bundle is not None and validation.live_validation(bundle.id) is not None
     )
     pair_failed = validation.failed_check(bundle)
-    judge_failed = judge_unreachable(pairing, bundle)
+    # A certificate made before the check recorded it, or one that did not run it, reports nothing.
+    judge_failed = evidence.checks.get("judge_reachable") == "failed"
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
     reach = _door_reach(pairing)
@@ -879,12 +881,6 @@ def _place(
         gradable=_grading(case, statuses, judge_failed=judge_failed),
         hold=hold,
     )
-
-
-def judge_unreachable(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> bool:
-    """Whether the check found the judge unreachable. A certificate made before the
-    check recorded it, or one that did not run it, reports nothing."""
-    return read_evidence(pairing, bundle).checks.get("judge_reachable") == "failed"
 
 
 def _grading(
