@@ -155,6 +155,38 @@ class TestBuckets:
             "truncated": False,
         }
 
+    @pytest.mark.parametrize(
+        "read", ["selection_report", "case_page", "select_for_run"]
+    )
+    def test_each_report_reads_the_pairing_s_evidence_once(
+        self, user, workspace, storage, monkeypatch, read
+    ):
+        from simulate.services.harness_readiness import report as report_module
+
+        environment = _ten_certified(user, workspace, storage, f"once-{read}")
+        pairing = _pairing(environment)
+        reads = []
+        real = selection.read_evidence
+
+        def counted(*args, **kwargs):
+            reads.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(selection, "read_evidence", counted)
+        monkeypatch.setattr(report_module, "read_evidence", counted)
+        cache.clear()
+
+        if read == "selection_report":
+            harness_readiness.selection_report(pairing, keys=None, trials=1)
+        elif read == "case_page":
+            harness_readiness.case_page(
+                pairing, keys=None, trials=1, bucket=None, row=None, cursor=None
+            )
+        else:
+            harness_readiness.select_for_run(pairing, keys=LOOKUP_KEYS, trials=1)
+
+        assert len(reads) == 1
+
     def test_other_tool_failing_keeps_case_eligible(self, user, workspace, storage):
         environment = _ten_certified(
             user,
