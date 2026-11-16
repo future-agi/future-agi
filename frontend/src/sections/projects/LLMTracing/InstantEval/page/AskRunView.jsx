@@ -1234,6 +1234,7 @@ export default function AskRunView({
                 }
                 variant="scrollable"
                 scrollButtons="auto"
+                allowScrollButtonsMobile
                 aria-label="Questions"
               >
                 {questions.map((item, index) => (
