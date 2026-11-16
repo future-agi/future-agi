@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -18,6 +19,7 @@ from django.utils import timezone
 from simulate.models import (
     AgentVersion,
     CallExecution,
+    EvidenceImport,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
@@ -290,6 +292,24 @@ def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> 
     return f"run:{environment.id}:{idempotency_digest}"
 
 
+# The environment's own bookkeeping, which a job made from its payload must not carry:
+# its build spend would be billed again and its markers would act on the new job.
+RUN_DROPPED_METADATA = (
+    "scenario_extend",
+    "usage_limit",
+    "harness_spend",
+    "authoring_usage_reports",
+    "usage_reports",
+    "sandbox_runtime",
+    "default_pairs",
+    "default_pair_sealed",
+    "conversation_checkpoints",
+    "draft_saves",
+    "evidence_adds",
+    "observability_refusal",
+)
+
+
 def create_selected_harness_run(
     environment: HostedHarnessJob,
     *,
@@ -524,22 +544,9 @@ def create_selected_harness_run(
         if parallelism is not None:
             runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
-        for key in (
-            "scenario_extend",
-            "usage_limit",
-            "harness_spend",
-            "authoring_usage_reports",
-            "usage_reports",
-            "sandbox_runtime",
-            "default_pairs",
-            "default_pair_sealed",
-            "conversation_checkpoints",
-            "draft_saves",
-            "observability_refusal",
-            # The run's payload never names which cases are held back; its sandbox
-            # still holds every case of the suite.
-            HELD_BACK_METADATA_KEY,
-        ):
+        # The run's payload never names which cases are held back; its sandbox still holds
+        # every case of the suite.
+        for key in (*RUN_DROPPED_METADATA, HELD_BACK_METADATA_KEY):
             child_metadata.pop(key, None)
         if coding_agent_key_id is not None:
             child_metadata["coding_agent_key_id"] = coding_agent_key_id
@@ -2016,6 +2023,16 @@ def delete_environment(job: HostedHarnessJob) -> None:
         )
 
         close_environment_nudges(locked, code="environment_deleted")
+        # Its evidence imports go with it, and a transcript's stored text with them.
+        # One still drafting keeps its drafting chat until that is forgotten too.
+        from simulate.services.evidence_drafts import forget_later
+
+        for evidence_import in EvidenceImport.no_workspace_objects.filter(
+            environment=locked, deleted=False
+        ):
+            evidence_import.delete()
+            if evidence_import.drafting_job_id is not None:
+                transaction.on_commit(partial(forget_later, str(evidence_import.id)))
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1148,
+  endpointCount: 1152,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29055,6 +29055,115 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evidence-imports/": {
+      get: {
+        operationId: "simulate_api_harness-environments_list_evidence_imports",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/EvidenceImportListItem",
+            },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_harness-environments_evidence_imports",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EvidenceImportCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/EvidenceImport",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_evidence_import",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/EvidenceImport",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId:
+          "simulate_api_harness-environments_discard_evidence_import",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_evidence-imports_add_evidence_cases",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EvidenceImportAdd",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/EvidenceImportAddResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_evidence-imports_draft_evidence_cases",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EvidenceImportDraft",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/EvidenceImport",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/files/": {
       post: {
         operationId: "simulate_api_harness-environments_upload_file",
@@ -51456,6 +51565,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        flaky_protected: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixFlakyProtected",
+          },
+          default: [],
+        },
         lost_models: {
           type: "array",
           items: {
@@ -51546,6 +51662,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           maximum: 1440,
           minimum: 1,
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -51946,6 +52088,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AgentFixEvalWarning",
           },
+          readOnly: true,
+        },
+        eval_grading: {
+          title: "Eval grading",
+          type: "string",
+          enum: ["none", "pending", "done", "incomplete"],
           readOnly: true,
         },
       },
@@ -64190,6 +64338,279 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 100,
           minLength: 1,
+        },
+      },
+    },
+    EvidenceImport: {
+      required: [
+        "id",
+        "environment_id",
+        "project_id",
+        "dataset_id",
+        "agent_version_id",
+        "source_kind",
+        "created_at",
+        "simulated",
+        "production",
+        "drafting",
+        "cases",
+        "redaction",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          description:
+            "The Observe project; null for evidence from outside Observe.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        dataset_id: {
+          title: "Dataset id",
+          description: "A dataset import's dataset; null otherwise.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        simulated: {
+          title: "Simulated",
+          description:
+            "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+          type: "boolean",
+        },
+        production: {
+          title: "Production",
+          description:
+            "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
+          type: "boolean",
+        },
+        drafting: {
+          title: "Drafting",
+          description:
+            "True while the environment's builder is drafting cases.",
+          type: "boolean",
+        },
+        cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceImportCase",
+          },
+        },
+        redaction: {
+          $ref: "#/definitions/EvidenceRedaction",
+        },
+      },
+    },
+    EvidenceImportAdd: {
+      required: ["case_ids", "expected_drafts", "idempotency_key"],
+      type: "object",
+      properties: {
+        case_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        expected_drafts: {
+          $ref: "#/definitions/EvidenceExpectedDrafts",
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    EvidenceImportAddResponse: {
+      required: ["saved", "evidence_import"],
+      type: "object",
+      properties: {
+        saved: {
+          title: "Saved",
+          description:
+            "True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits.",
+          type: "boolean",
+        },
+        evidence_import: {
+          $ref: "#/definitions/EvidenceImport",
+        },
+      },
+    },
+    EvidenceImportCreate: {
+      required: ["source_kind"],
+      type: "object",
+      properties: {
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        project_id: {
+          title: "Project id",
+          description: "Session and call imports: the Observe project.",
+          type: "string",
+          format: "uuid",
+        },
+        ids: {
+          description:
+            "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        dataset_id: {
+          title: "Dataset id",
+          description: "Dataset imports: the dataset.",
+          type: "string",
+          format: "uuid",
+        },
+        columns: {
+          $ref: "#/definitions/EvidenceDatasetColumns",
+        },
+        transcripts: {
+          description: "Transcript imports: one case each, in this order.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceTranscriptInput",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        production: {
+          title: "Production",
+          description:
+            "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
+          type: "boolean",
+        },
+      },
+    },
+    EvidenceImportDraft: {
+      required: ["case_ids"],
+      type: "object",
+      properties: {
+        case_ids: {
+          description:
+            "The import's waiting cases the environment's builder drafts.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        shows: {
+          title: "Shows",
+          description: "What the person says each case records, by case id.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["failure", "success", "partial"],
+          },
+          default: {},
+        },
+      },
+    },
+    EvidenceImportListItem: {
+      required: [
+        "id",
+        "source_kind",
+        "source_name",
+        "source_available",
+        "case_count",
+        "added_count",
+        "status",
+        "created_at",
+        "can_discard",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        source_name: {
+          title: "Source name",
+          description:
+            "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source_available: {
+          title: "Source available",
+          description: "False once the Observe project or dataset was deleted.",
+          type: "boolean",
+        },
+        case_count: {
+          title: "Case count",
+          type: "integer",
+          minimum: 0,
+        },
+        added_count: {
+          title: "Added count",
+          description: "Cases already added to the suite.",
+          type: "integer",
+          minimum: 0,
+        },
+        status: {
+          title: "Status",
+          description:
+            "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
+          type: "string",
+          enum: ["waiting", "drafting", "drafted", "partly_added", "blocked"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        can_discard: {
+          title: "Can discard",
+          description:
+            "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+          type: "boolean",
         },
       },
     },
@@ -94999,6 +95420,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixFlakyProtected: {
+      required: ["key", "sub_goal", "passed", "runs"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        sub_goal: {
+          title: "Sub goal",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+          minimum: 0,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+    },
     AgentFixPlan: {
       required: [
         "target",
@@ -95099,7 +95551,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
-      required: ["surfaces", "budget_credits", "max_minutes"],
+      required: [
+        "surfaces",
+        "budget_credits",
+        "max_minutes",
+        "allowed_models",
+        "agent_cost_metered",
+        "agent_calls_unmeasured",
+        "reply_latency_margin_pct",
+        "cost_margin_pct",
+      ],
       type: "object",
       properties: {
         surfaces: {
@@ -95115,6 +95576,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_minutes: {
           title: "Max minutes",
+          type: "integer",
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_cost_metered: {
+          title: "Agent cost metered",
+          type: "boolean",
+        },
+        agent_calls_unmeasured: {
+          title: "Agent calls unmeasured",
+          type: "boolean",
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
           type: "integer",
         },
       },
@@ -95183,7 +95667,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixLaunchScenario: {
-      required: ["key", "name", "passed", "failing_sub_goals"],
+      required: [
+        "key",
+        "name",
+        "passed",
+        "failing_sub_goals",
+        "evidence_import_id",
+      ],
       type: "object",
       properties: {
         key: {
@@ -95207,6 +95697,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        evidence_import_id: {
+          title: "Evidence import id",
+          description:
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -95414,6 +95912,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        flaky_protected: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixFlakyProtected",
+          },
+          default: [],
+        },
       },
       "x-nullable": true,
     },
@@ -95493,6 +95998,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           default: {},
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        observes_models: {
+          title: "Observes models",
+          type: "boolean",
+          default: false,
+        },
+        meters_agent_cost: {
+          title: "Meters agent cost",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -102225,6 +102763,252 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_refreshing: {
           title: "Query refreshing",
           type: "boolean",
+        },
+      },
+    },
+    EvidenceImportCase: {
+      required: [
+        "id",
+        "source_id",
+        "name",
+        "status",
+        "reason",
+        "source_available",
+        "scenario_key",
+        "scenario_name",
+        "new_checks",
+        "changed_since_import",
+        "also_from",
+        "duplicate_of",
+        "trace_ids",
+        "started_at",
+        "ended_at",
+        "transcript",
+        "tool_calls",
+        "tool_inputs",
+        "tool_outputs",
+        "starting_state",
+        "labels",
+        "expected_outcome",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description:
+            "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+          type: "string",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "pending",
+            "unavailable",
+            "drafted",
+            "blocked",
+            "added",
+            "discarded",
+            "duplicate",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        source_available: {
+          title: "Source available",
+          description:
+            "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+          type: "boolean",
+        },
+        scenario_key: {
+          title: "Scenario key",
+          description: "The drafted scenario's key, once drafted.",
+          type: "string",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description:
+            "The drafted scenario's title, once drafted; blank when the builder gave none.",
+          type: "string",
+        },
+        new_checks: {
+          description:
+            "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceNewCheck",
+          },
+        },
+        changed_since_import: {
+          title: "Changed since import",
+          description:
+            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        also_from: {
+          title: "Also from",
+          description:
+            "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+          type: "integer",
+          minimum: 0,
+        },
+        duplicate_of: {
+          $ref: "#/definitions/EvidenceDuplicateOf",
+        },
+        trace_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        ended_at: {
+          title: "Ended at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        transcript: {
+          $ref: "#/definitions/EvidenceTranscript",
+        },
+        tool_calls: {
+          $ref: "#/definitions/EvidenceToolCalls",
+        },
+        tool_inputs: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        tool_outputs: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        starting_state: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        labels: {
+          $ref: "#/definitions/EvidenceLabels",
+        },
+        expected_outcome: {
+          $ref: "#/definitions/EvidenceExpectedOutcome",
+        },
+      },
+    },
+    EvidenceRedaction: {
+      required: ["method", "reason", "findings", "total"],
+      type: "object",
+      properties: {
+        method: {
+          title: "Method",
+          description:
+            "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
+          type: "string",
+          enum: ["presidio", "basic"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        findings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceRedactionFinding",
+          },
+        },
+        total: {
+          title: "Total",
+          description: "Every finding, including those past the listed ones.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    EvidenceExpectedDrafts: {
+      description:
+        "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+      required: ["environment", "suite"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/EvidenceDraftRef",
+        },
+        suite: {
+          $ref: "#/definitions/EvidenceDraftRef",
+        },
+      },
+    },
+    EvidenceDatasetColumns: {
+      description: "Dataset imports: the columns to read.",
+      required: ["conversation"],
+      type: "object",
+      properties: {
+        conversation: {
+          title: "Conversation",
+          description:
+            'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+          type: "string",
+          format: "uuid",
+        },
+        labels: {
+          description: "Columns read as the row's labels.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 10,
+        },
+        expected: {
+          title: "Expected",
+          description: "The column that says what should happen.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    EvidenceTranscriptInput: {
+      required: ["name", "format", "text"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          description:
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          type: "string",
+          maxLength: 120,
+          minLength: 1,
+        },
+        format: {
+          title: "Format",
+          description:
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          type: "string",
+          enum: ["json", "text", "csv"],
+        },
+        text: {
+          title: "Text",
+          description: "The transcript as pasted or uploaded.",
+          type: "string",
+          maxLength: 500000,
+          minLength: 1,
         },
       },
     },
@@ -125288,6 +126072,226 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       additionalProperties: true,
     },
+    EvidenceDuplicateOf: {
+      description:
+        "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+      required: ["import_id", "case_id", "scenario_name"],
+      type: "object",
+      properties: {
+        import_id: {
+          title: "Import id",
+          description: "The import holding the case.",
+          type: "string",
+          format: "uuid",
+        },
+        case_id: {
+          title: "Case id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description: "Its drafted scenario's title; blank until drafted.",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    EvidenceExpectedOutcome: {
+      description:
+        "What a dataset row's expected outcome column says should happen.",
+      required: ["status", "reason", "text"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+      },
+    },
+    EvidenceLabels: {
+      required: ["status", "reason", "labels"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceLabel",
+          },
+        },
+      },
+    },
+    EvidenceNewCheck: {
+      description:
+        "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+      required: ["name", "what"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        what: {
+          title: "What",
+          type: "string",
+        },
+      },
+    },
+    EvidencePart: {
+      description: "Whether the tool calls recorded their inputs.",
+      required: ["status", "reason"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+      },
+    },
+    EvidenceToolCalls: {
+      required: ["status", "reason", "calls"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        calls: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceToolCall",
+          },
+        },
+      },
+    },
+    EvidenceTranscript: {
+      required: ["status", "reason", "turns"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceTurn",
+          },
+        },
+      },
+    },
+    EvidenceRedactionFinding: {
+      required: [
+        "case_id",
+        "part",
+        "index",
+        "field",
+        "entity",
+        "start",
+        "end",
+        "value",
+        "replacement",
+      ],
+      type: "object",
+      properties: {
+        case_id: {
+          title: "Case id",
+          type: "string",
+          format: "uuid",
+        },
+        part: {
+          title: "Part",
+          type: "string",
+          enum: ["transcript", "tool_calls", "labels", "expected_outcome"],
+        },
+        index: {
+          title: "Index",
+          type: "integer",
+          minimum: 0,
+        },
+        field: {
+          title: "Field",
+          type: "string",
+          enum: ["text", "input", "output", "error", "notes", "value", "name"],
+        },
+        entity: {
+          title: "Entity",
+          type: "string",
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "integer",
+          minimum: 0,
+        },
+        end: {
+          title: "End",
+          type: "integer",
+          minimum: 0,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        replacement: {
+          title: "Replacement",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    EvidenceDraftRef: {
+      required: ["id", "revision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     ExperimentComparisonDetail: {
       required: ["metrics", "weights"],
       type: "object",
@@ -135801,6 +136805,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
         },
+        parts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTierPart",
+          },
+          default: [],
+        },
+        latency: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
+        cost: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
       },
     },
     AgentPromptOptimiserTrialEvalScore: {
@@ -136577,6 +137594,129 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
           },
+          "x-nullable": true,
+        },
+      },
+    },
+    EvidenceLabel: {
+      required: ["name", "kind", "value", "notes", "target"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        notes: {
+          title: "Notes",
+          type: "string",
+        },
+        target: {
+          title: "Target",
+          description: "row: a dataset row's label column.",
+          type: "string",
+          enum: ["session", "trace", "span", "row"],
+        },
+      },
+    },
+    EvidenceToolCall: {
+      required: [
+        "span_id",
+        "trace_id",
+        "name",
+        "at",
+        "failed",
+        "error",
+        "input",
+        "output",
+        "input_truncated",
+        "output_truncated",
+      ],
+      type: "object",
+      properties: {
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+        },
+        failed: {
+          title: "Failed",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        input: {
+          title: "Input",
+          type: "string",
+        },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        input_truncated: {
+          title: "Input truncated",
+          type: "boolean",
+        },
+        output_truncated: {
+          title: "Output truncated",
+          type: "boolean",
+        },
+      },
+    },
+    EvidenceTurn: {
+      required: ["role", "text", "truncated", "trace_id", "at"],
+      type: "object",
+      properties: {
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "agent"],
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        trace_id: {
+          title: "Trace id",
+          description: "Blank for a turn no trace recorded.",
+          type: "string",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
           "x-nullable": true,
         },
       },
@@ -137717,6 +138857,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Count",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    AgentFixCeilingNumbers: {
+      type: "object",
+      properties: {
+        baseline: {
+          title: "Baseline",
+          type: "number",
+          "x-nullable": true,
+        },
+        candidate: {
+          title: "Candidate",
+          type: "number",
+          "x-nullable": true,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "number",
+          "x-nullable": true,
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixVerdictTierPart: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },

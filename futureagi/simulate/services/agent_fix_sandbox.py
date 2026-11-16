@@ -143,7 +143,7 @@ def observe(fix_run_id: str, command_id: str) -> Observation:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_watch_failed",
-                "message": "the platform could not watch the improvement engine",
+                "message": "the platform could not watch the engine",
             },
         )
         return Observation.ENDED
@@ -164,7 +164,7 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_deadline",
-                "message": "the fix ran out of the time it was given",
+                "message": "the epoch ran out of the time it was given",
             },
         )
         return Observation.ENDED
@@ -287,15 +287,15 @@ def claim(fix_run_id: str) -> Observation | None:
             return Observation.WAITING
         failure = {
             "code": "fix_queue_timeout",
-            "message": "too many fixes are running; try again later",
+            "message": "too many epochs are running; try again later",
         }
     elif timezone.now() >= fix_deadline(fix_run):
         failure = {
             "code": "fix_deadline",
-            "message": "the fix ran out of the time it was given",
+            "message": "the epoch ran out of the time it was given",
         }
     elif fix_run.sandbox_attempt >= attempts:
-        message = f"the improvement engine stopped {attempts} times before it finished"
+        message = f"the engine stopped {attempts} times before it finished"
         if last_error := (fix_run.engine_notes or {}).get("last_error"):
             message = f"{message}; last error: {last_error}"
         failure = {"code": "fix_engine_died", "message": message}
@@ -339,7 +339,7 @@ def _provider() -> SandboxRuntimeProvider:
     if provider.name != "e2b":
         raise HostedHarnessError(
             "fix_sandbox_unavailable",
-            "Fix my agent runs in an E2B sandbox; set HOSTED_SANDBOX_PROVIDER=e2b",
+            "Epoch runs in an E2B sandbox; set HOSTED_SANDBOX_PROVIDER=e2b",
             status_code=503,
         )
     return provider

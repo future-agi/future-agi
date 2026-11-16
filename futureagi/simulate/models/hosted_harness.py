@@ -151,6 +151,21 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
+    # What the platform's evals of a fix's check run billed, in US dollars, added as each
+    # one bills. They run after the run's usage is sealed, so they are kept apart.
+    # db_default too: a build from before this column inserts jobs without it.
+    fix_eval_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0, db_default=0
+    )
+    # Set on a check run a retry read again from the failed fix it retries: the retry's
+    # winner grades it, so its evals count against the retry's limit. Null: its own fix's.
+    graded_for = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="adopted_check_runs",
+    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
@@ -647,6 +662,41 @@ class HostedHarnessConversationMessage(BaseModel):
             ),
             models.Index(fields=["conversation", "state"], name="idx_hconv_msg_state"),
         ]
+
+
+class HostedHarnessBuilderTurnUsage(BaseModel):
+    """What a builder chat turn after a build spent, and what it billed.
+
+    Such a turn runs in a chat sandbox of its own, outside any attempt, so no attempt's
+    ledger covers it. One row per command: a replayed ending finds the row and bills nothing
+    new. ``report`` is frozen once written, and None when the turn could not be priced.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usages",
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    command_message = models.OneToOneField(
+        HostedHarnessConversationMessage,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usage",
+    )
+    outcome = models.CharField(max_length=16, default="")
+    # The turn's usage as the guest reported it: tokens, USD, unpriced turns and its models.
+    usage = models.JSONField(default=dict)
+    report = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_builder_turn_usage"
+        indexes = [models.Index(fields=["job"], name="idx_hbturn_job")]
 
 
 class HostedHarnessConversationEvent(BaseModel):
