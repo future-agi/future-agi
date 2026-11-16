@@ -101,7 +101,6 @@ services:
       # COMPOSE_PROFILES=sandbox in .env, bin/start points this default at
       # the nsjail executor (code-executor-nsjail) instead.
       CODE_EXECUTOR_URL: ${CODE_EXECUTOR_URL:-http://code-executor:8060}
-      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
       # Never fall back to running eval code inside the API process when the
       # executor is down: that process holds every secret and /data.
       CODE_EXECUTOR_LOCAL_FALLBACK: "false"
@@ -444,7 +443,6 @@ services:
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     environment:
-      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
     profiles: ["sandbox"]
     privileged: true
     networks:
