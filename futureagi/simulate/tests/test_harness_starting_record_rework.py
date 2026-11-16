@@ -67,7 +67,17 @@ def test_a_rework_request_names_the_scenario_and_the_chosen_record_to_the_builde
     assert (
         KEY in message.content and "users record rider_id=rdr_priya" in message.content
     )
-    assert message.payload["_record"] == {**PRIYA, "key_field": "rider_id"}
+    assert message.payload["_record"] == {
+        **PRIYA,
+        "key_field": "rider_id",
+        "fields": {
+            "rider_id": "rdr_priya",
+            "phone": "+14155550102",
+            "first_name": "Priya",
+        },
+    }
+    # The builder reads the record exactly as seeded.
+    assert '"first_name": "Priya"' in message.content
     assert message.state == Message.State.QUEUED
 
 
@@ -94,7 +104,9 @@ def test_a_choice_the_world_cannot_hold_is_refused_and_never_sent(
     assert not _requests(environment).exists()
 
 
-def _land(environment, user, *, starts_from, holds=True, proved_at=None):
+def _land(
+    environment, user, *, starts_from, holds=True, proved_at=None, first_name="Priya"
+):
     """The builder's turn saving the reworked scenario and its proof."""
     proof = {
         "holds": holds,
@@ -106,7 +118,7 @@ def _land(environment, user, *, starts_from, holds=True, proved_at=None):
         user,
         fixture={
             **FIXTURE,
-            "identity": {"rider_id": starts_from, "first_name": "Priya"},
+            "identity": {"rider_id": starts_from, "first_name": first_name},
         },
         extra={"proofs.json": json.dumps({KEY: proof})},
     )
@@ -162,6 +174,14 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         ({}, {"starts_from": "rdr_arjun"}, "refused"),
         # A later, unrelated request whose turn fails never reaches back to this rework.
         ({"later_failure": True}, {"starts_from": "rdr_priya"}, "proven"),
+        # A fact about the record that is not its seeded value: invented, never the record.
+        ({}, {"starts_from": "rdr_priya", "first_name": "Priyanka"}, "refused"),
+        # The builder found the scenario cannot hold with that record and changed nothing: its reason is served.
+        (
+            {"reply": "rdr_priya has no completed rides, so the refund can't apply."},
+            None,
+            "refused",
+        ),
     ],
     ids=[
         "running",
@@ -172,6 +192,8 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         "unproven",
         "unchanged",
         "later unrelated failure",
+        "invented",
+        "cannot hold",
     ],
 )
 def test_the_served_state_follows_the_builder_s_turn(
@@ -186,9 +208,19 @@ def test_the_served_state_follows_the_builder_s_turn(
             timedelta(hours=-1) if stale else timedelta(seconds=1)
         )
         _land(environment, user, **landed, proved_at=made.isoformat())
+    turn = dict(turn) if turn is not None else None
+    reply = turn.pop("reply", None) if turn is not None else None
     if turn is not None:
         later_failure = turn.pop("later_failure", False)
         _turn_ends(environment, message, **turn)
+        if reply is not None:
+            Message.no_workspace_objects.create(
+                conversation_id=message.conversation_id,
+                role=Message.Role.ASSISTANT,
+                state=Message.State.COMPLETED,
+                sequence=message.sequence + 5,
+                content=reply,
+            )
         if later_failure:
             for offset, role, state in (
                 (10, Message.Role.USER, Message.State.COMPLETED),
@@ -206,6 +238,13 @@ def test_the_served_state_follows_the_builder_s_turn(
 
     assert (rework["id"], rework["state"]) == (str(message.id), served)
     assert (rework["reason"] is None) == (served != "refused")
+    if landed is not None and landed.get("first_name"):
+        assert (
+            rework["reason"]
+            == "first_name is Priyanka in the scenario, but users rdr_priya is seeded with Priya."
+        )
+    if reply is not None:
+        assert rework["reason"] == reply
 
 
 def test_a_second_request_waits_for_the_first(user, workspace, storage, auth_client):
