@@ -350,6 +350,12 @@ def worker_steps(
         "turns": rounds,
         "depth": max((block.depth for block in blocks), default=0),
         "parallel": sum(1 for block in blocks if block.parallel),
+        # Hand-offs to background jobs, which outlive the call that launched them.
+        "asynchronous": sum(
+            1
+            for block in blocks
+            if block.handoff is not None and block.handoff.get("launch") == "async"
+        ),
         "overlap_unknown": overlap_unknown,
         "worker_depths": depth_of,
     }

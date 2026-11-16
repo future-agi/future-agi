@@ -40,6 +40,7 @@ import {
   seconds,
 } from "./utils/callWorkersUtils";
 import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+import { fDateTime } from "src/utils/format-time";
 
 // Past this a heading may hit its three-line clamp, so the whole of it shows on hover.
 const LONG_TITLE = 80;
@@ -751,6 +752,7 @@ WorkersTable.propTypes = {
 /** One call of a multi-agent app: a table of its hand-offs first, every step in order on request. */
 export default function CallWorkersPanel({
   callExecutionId,
+  callStatus,
   onOpenTrace,
   traceIds = NO_TRACES,
 }) {
@@ -808,9 +810,30 @@ export default function CallWorkersPanel({
   const pastDeadline = named((one) => one.state === "deadline_passed");
   const cutShort = data.workers
     .filter((one) => one.state !== "deadline_passed" && C.cutShort[one.state])
-    .map((one) => `${one.name} (${C.cutShort[one.state]})`)
+    .map(
+      (one) =>
+        `${one.name} (${C.cutShort[one.state]}${
+          one.seen === "tool_calls_only" ? `, ${C.cutShortToolCallsOnly}` : ""
+        })`,
+    )
     .join(", ");
   const notDeclared = named((one) => one.undeclared);
+  const stoppedByUser = callStatus?.toLowerCase() === "cancelled";
+  // A cut-short worker's cleanup, as the API computed it when served; an old record has none.
+  const cleanups = data.workers
+    .filter((one) => one.cleanup && C.cleanup[one.cleanup.status])
+    .map((one) => {
+      const copy = C.cleanup[one.cleanup.status];
+      return {
+        id: one.worker_id,
+        text: C.workerCleanup(
+          one.name,
+          typeof copy === "function"
+            ? copy(one.cleanup.at ? fDateTime(one.cleanup.at) : "")
+            : copy,
+        ),
+      };
+    });
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
@@ -833,9 +856,19 @@ export default function CallWorkersPanel({
           />
         </Stack>
       ) : null}
+      {stoppedByUser &&
+      data.collection !== "no_evidence" &&
+      data.events.length > 0 ? (
+        <Typography
+          data-testid="stopped-by-user"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.stoppedByUser}
+        </Typography>
+      ) : null}
       {data.collection === "no_evidence" ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {C.noEvidence}
+          {stoppedByUser ? C.stoppedByUserNoEvidence : C.noEvidence}
         </Typography>
       ) : data.collection === "partial" || data.collection === "unavailable" ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -854,7 +887,7 @@ export default function CallWorkersPanel({
           sx={{ typography: "s3", color: "text.subtitle" }}
         >
           {C.supportedBoundary}
-          {data.depth > 1 || data.parallel > 0 ? (
+          {data.depth > 1 || data.parallel > 0 || data.asynchronous > 0 ? (
             <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
           ) : null}
         </Typography>
@@ -928,6 +961,15 @@ export default function CallWorkersPanel({
           {C.workersPastDeadline(pastDeadline)}
         </Typography>
       ) : null}
+      {cleanups.map((one) => (
+        <Typography
+          key={one.id}
+          data-testid="worker-cleanup"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {one.text}
+        </Typography>
+      ))}
       {notDeclared ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotDeclared(notDeclared)}
@@ -944,6 +986,8 @@ export default function CallWorkersPanel({
 
 CallWorkersPanel.propTypes = {
   callExecutionId: PropTypes.string,
+  // The call's own status: a cancelled call says it was stopped by the user.
+  callStatus: PropTypes.string,
   // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
   // The traces that tab lists: a step offers to open only one of these.

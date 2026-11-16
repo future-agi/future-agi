@@ -148,6 +148,7 @@ export default function VoiceCallDrawer({
                   <CallWorkersPanel
                     key={task.id}
                     callExecutionId={task.id}
+                    callStatus={task.status}
                     traceIds={callTraces.traces.map((trace) => trace.traceId)}
                     onOpenTrace={(traceId, spanId) => {
                       setOpenStep({ traceId, spanId });
@@ -168,6 +169,7 @@ export default function VoiceCallDrawer({
     ],
     [
       task.id,
+      task.status,
       showWorkers,
       data?.trial_state,
       callTraces.projectId,
@@ -243,6 +245,7 @@ export default function VoiceCallDrawer({
 VoiceCallDrawer.propTypes = {
   task: PropTypes.shape({
     id: PropTypes.string,
+    status: PropTypes.string,
     completedAt: PropTypes.string,
     outcomeReason: PropTypes.string,
   }).isRequired,

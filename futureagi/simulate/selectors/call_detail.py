@@ -199,6 +199,8 @@ class TrialNotice(TypedDict, total=False):
     on_call: int | None
     mode: str | None
     count: int
+    # The workers a notice names, e.g. a separate worker that reached the world without its own channel.
+    workers: list[str]
 
 
 class TrialStart(TypedDict, total=False):
@@ -238,6 +240,9 @@ class TrialState(TypedDict):
     usage_total: NotRequired[UsageTotal]
     limits: NotRequired[dict[str, int | float | str | None]]
     end_state_url: NotRequired[str]
+    # A multi-agent trial's records two or more participants named, and the workers the harness stopped.
+    shared_records: NotRequired[list[dict[str, object]]]
+    stopped_workers: NotRequired[list[dict[str, object]]]
 
 
 def call_actors(metadata: object) -> list[dict[str, str]]:
@@ -866,10 +871,27 @@ def trial_state(
         shown["usage_total"] = total
     if isinstance(state.get("limits"), dict):
         shown["limits"] = state["limits"]
+    if isinstance(state.get("shared_records"), list):
+        shown["shared_records"] = [
+            _shared_record(one, names) for one in _entries(state["shared_records"])
+        ]
+    if isinstance(state.get("stopped_workers"), list):
+        shown["stopped_workers"] = _entries(state["stopped_workers"])
     url = _end_state_url(call, metadata, state)
     if url:
         shown["end_state_url"] = url
     return shown
+
+
+def _shared_record(
+    record: Mapping[str, Any], names: Mapping[str, str]
+) -> dict[str, object]:
+    """A record two or more participants named, each call with its participant's name as the state changes give it."""
+    actions = [
+        {**one, "name": names.get(str(one.get("who")), str(one.get("who") or ""))}
+        for one in _entries(record.get("actions"))
+    ]
+    return {**record, "actions": actions}
 
 
 def has_customer(turns: Sequence[Mapping[str, Any]]) -> bool:

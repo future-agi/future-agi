@@ -366,6 +366,7 @@ class TestWorkerSteps:
             "parallel": 0,
             "overlap_unknown": False,
             "worker_depths": {},
+            "asynchronous": 0,
         }
 
     def test_a_return_without_an_id_is_never_given_to_the_hand_off_still_open(
@@ -823,3 +824,36 @@ def test_a_hand_off_recorded_inside_one_that_opens_later_sits_under_it():
     steps = {s["key"]: s for s in worker_steps(events)["steps"]}
     assert (steps[1]["parent"], steps[1]["relationship"]) == (4, "observed")
     assert steps[2]["parent"] == 1
+
+
+def test_background_hand_offs_are_counted_as_asynchronous():
+    from simulate.services.harness_worker_steps import worker_steps
+
+    events = [
+        {
+            "seq": 0,
+            "type": "delegated",
+            "worker_id": "r/researcher",
+            "delegation_id": "d1",
+            "launch": "async",
+            "at": "2026-11-15T10:00:01",
+            "attribution": "reported",
+        },
+        {
+            "seq": 1,
+            "type": "delegated",
+            "worker_id": "r/coder",
+            "delegation_id": "d2",
+            "at": "2026-11-15T10:00:02",
+            "attribution": "reported",
+        },
+        {
+            "seq": 2,
+            "type": "returned",
+            "worker_id": "r/coder",
+            "delegation_id": "d2",
+            "at": "2026-11-15T10:00:03",
+            "attribution": "reported",
+        },
+    ]
+    assert worker_steps(events)["asynchronous"] == 1

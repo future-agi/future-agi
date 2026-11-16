@@ -788,3 +788,43 @@ describe("TrialChangesPanel", () => {
       expect(screen.getByText(one.message)).toBeInTheDocument();
   });
 });
+
+describe("TrialChangesPanel shared records", () => {
+  const trial = (shared) => ({
+    state_changes: [],
+    duplicates: [],
+    decisions: [],
+    pre_run: [],
+    approvals: [],
+    usage_summary: [],
+    notices: [],
+    unreadable: false,
+    shared_records: shared,
+  });
+  const record = {
+    key: "order_id=1042",
+    argument: "order_id",
+    value: "1042",
+    actions: [
+      {
+        who: "worker:refund",
+        name: "Refund worker",
+        tool: "issue_refund",
+        outcome: "committed",
+        write: true,
+      },
+    ],
+    committed_writes: 1,
+    truncated: false,
+  };
+
+  it("names each participant's call on a record two of them touched, and shows nothing when none did", () => {
+    const { unmount } = render(<TrialChangesPanel trialState={trial([record])} />);
+    const section = screen.getByTestId("shared-records");
+    expect(section).toHaveTextContent("Refund worker");
+    expect(section).toHaveTextContent("issue_refund");
+    unmount();
+    render(<TrialChangesPanel trialState={trial([])} />);
+    expect(screen.queryByTestId("shared-records")).toBeNull();
+  });
+});

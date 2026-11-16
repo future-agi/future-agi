@@ -37,6 +37,7 @@ from simulate.services.run_results_v3_expressions import (
 )
 from simulate.services.run_results_v3_queries import UNGROUPED
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -48,6 +49,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -466,6 +468,11 @@ def _outcome(
         return "queued"
     if status in IN_PROGRESS_CALL_STATUSES:
         return "in_progress"
+    if (
+        status in CANCELLED_CALL_STATUSES
+        and harness_status not in SKIPPED_HARNESS_STATUSES
+    ):
+        return "cancelled"
     if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
     if status != "completed":

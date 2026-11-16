@@ -24,6 +24,8 @@ from django.db.models import (
     Q,
     QuerySet,
     Subquery,
+    Value,
+    When,
 )
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
@@ -41,6 +43,7 @@ from simulate.constants.harness_environment import (
 )
 from simulate.models import (
     AgentVersion,
+    CallExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessStageOutput,
@@ -390,6 +393,8 @@ _CONTRACT_FIELDS = (
     "runtime_dependencies",
     "implementation",
     "tool_entrypoints",
+    # The workers the app's source declares (id, name, tools, allowed tools, binding, address variable, process).
+    "workers",
     "data_store",
     "open_questions",
     "amendments",
@@ -886,6 +891,12 @@ def _contract_section(
     if not contract:
         return None
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    declared = contract.get("workers")
+    section["workers"] = [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
     section["call_actors"] = _call_actor_list(call_actors, scenario_docs)
@@ -1014,6 +1025,15 @@ def _max_turns(docs: Any) -> int | None:
         if isinstance(doc, dict) and isinstance(doc.get("max_turns"), int)
     ]
     return max(budgets) if budgets else None
+
+
+def _contract_worker(worker: dict[str, Any]) -> dict[str, Any]:
+    """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
+    tools = worker.get("tools") if isinstance(worker.get("tools"), list) else []
+    allowed = worker.get("allowed_tools")
+    allowed = allowed if isinstance(allowed, list) else []
+    narrower = bool(allowed) and any(tool not in allowed for tool in tools)
+    return {**worker, "allowed_tools": allowed if narrower else []}
 
 
 def _amendments(value: Any) -> list[dict[str, str]]:

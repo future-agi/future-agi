@@ -92,6 +92,7 @@ describe("toRun", () => {
       errored: 0,
       noScore: 0,
       skipped: 0,
+      cancelled: 1,
       passRate: 30,
       scored: 10,
       startedAt: "2026-10-14T11:58:53.368130+00:00",

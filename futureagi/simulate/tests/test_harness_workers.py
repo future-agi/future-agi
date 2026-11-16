@@ -581,6 +581,7 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "parallel",
         "overlap_unknown",
         "worker_depths",
+        "asynchronous",
     }
     first = found.json()["steps"][0]
     assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
@@ -2604,7 +2605,8 @@ def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
 )
 def test_a_worker_subject_the_harness_accepts_is_accepted_on_the_receipt(subject):
     """The harness keeps a worker's id as its source names it, spaces included; one refused subject would refuse the
-    whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue)."""
+    whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue).
+    """
     from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
 
     goal = {
@@ -3288,3 +3290,399 @@ def test_a_later_read_scheduled_before_a_rerun_does_not_run():
     ):
         alk_sim.record_call_workers("c1", second_read=True, attempt=first.isoformat())
         assert not read.called
+
+
+_TOOL_CALLS_ONLY = [
+    {"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"},
+    {"name": "list_refunds", "ok": True, "at": 2.0, "worker_id": "refund"},
+]
+
+_ASYNC_SPANS = [
+    _span("c1", None, "agent", "supervisor", "t01", "t20", trace_id="tr-main"),
+    _span(
+        "c2",
+        "c1",
+        "tool",
+        "start_async_task",
+        "t02",
+        "t03",
+        trace_id="tr-main",
+        output="Launched async subagent. task_id: job-r",
+    ),
+]
+
+_LAUNCHED_JOB_ROWS = [
+    {
+        "at": 1.0,
+        "ok": True,
+        "kind": "tool_call",
+        "name": "start_async_task",
+        "agent": "agent",
+        "span_id": "a9",
+        "ended_at": 1.1,
+        "worker_id": "agent",
+        "worker_label": "agent",
+        "relationship": "unknown",
+        "parent_span_id": "",
+        "runtime_ids": {"event_id": "a9"},
+        "result": "Launched async subagent. task_id: 01a1",
+    },
+    {
+        "at": 1.7,
+        "ok": True,
+        "kind": "delegated",
+        "name": "start_async_task",
+        "agent": "agent",
+        "span_id": "e4",
+        "ended_at": 78.5,
+        "worker_id": "agent",
+        "worker_label": "agent",
+        "delegated_to": "coder",
+        "relationship": "unknown",
+        "parent_span_id": "",
+        "runtime_ids": {"event_id": "e4", "parent_event_id": "a9"},
+        "result": "Here is the implementation",
+    },
+    {
+        "at": 36.0,
+        "ok": True,
+        "kind": "tool_call",
+        "name": "run_code_check",
+        "agent": "coder",
+        "span_id": "48",
+        "ended_at": 36.1,
+        "worker_id": "coder",
+        "worker_label": "coder",
+        "relationship": "observed",
+        "parent_span_id": "e4",
+        "runtime_ids": {"event_id": "48"},
+    },
+]
+
+
+def _cut_short_run(user, workspace, storage, settings, key):
+    """A run with its job and one attempt on the current attempt number, and the run's call."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import CallExecution, HostedHarnessAttempt, HostedHarnessJob
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, f"workers-{key}", storage), key=key)
+    job = HostedHarnessJob.no_workspace_objects.get(
+        test_execution_id=run.test_execution_id
+    )
+    job.current_attempt_number = 1
+    job.save(update_fields=["current_attempt_number"])
+    attempt = HostedHarnessAttempt.no_workspace_objects.create(
+        job=job,
+        attempt_number=1,
+        token_hash="t" * 64,
+        fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    return job, attempt, call
+
+
+@pytest.mark.django_db
+def test_user_canceled_receipt_on_a_failed_call_reads_cancel_requested_then_cancelled(
+    user, workspace, storage, settings
+):
+    from simulate.models import CallExecution, HostedHarnessJob
+
+    job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "uc")
+    # Ingested by a platform that did not yet mark a user stop cancelled: the call reads FAILED.
+    call.status = CallExecution.CallStatus.FAILED
+    call.call_metadata = {
+        "hosted_harness_receipt": {
+            "failure": {"code": "user_canceled", "domain": "platform_sync"}
+        }
+    }
+    job.state = HostedHarnessJob.State.RUNNING
+    assert harness_workers.trial_ending(call, job) == "cancel_requested"
+    job.state = HostedHarnessJob.State.CANCELED
+    assert harness_workers.trial_ending(call, job) == "cancelled"
+
+
+@pytest.mark.django_db
+def test_record_call_workers_and_the_view_pick_the_execution_s_job(
+    user, workspace, storage, settings
+):
+    from simulate.models import HostedHarnessExecution
+
+    job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "jb")
+    # Without an execution row, the job of the call's test execution.
+    assert harness_workers._job_for_call(call) == job
+    HostedHarnessExecution.objects.update_or_create(
+        call_execution=call, defaults={"job": job}
+    )
+    assert harness_workers._job_for_call(call) == job
+
+
+@pytest.mark.django_db
+def test_cleanup_stopped_with_sandbox_when_verified(user, workspace, storage, settings):
+    from django.utils import timezone
+
+    job, attempt, call = _cut_short_run(user, workspace, storage, settings, "cv")
+    attempt.cleanup_verified_at = timezone.now()
+    attempt.save(update_fields=["cleanup_verified_at"])
+    cleanup = harness_workers.worker_cleanup(call, job, {"state": "cancelled"})
+    assert cleanup == {
+        "status": "stopped_with_sandbox",
+        "at": attempt.cleanup_verified_at.isoformat(),
+    }
+
+
+@pytest.mark.django_db
+def test_cleanup_still_running_while_the_attempt_lives_or_the_cancel_window_is_open(
+    user, workspace, storage, settings
+):
+    from simulate.models import HostedHarnessJob
+
+    job, attempt, call = _cut_short_run(user, workspace, storage, settings, "sr")
+    assert (
+        harness_workers.worker_cleanup(call, job, {"state": "no_return"})["status"]
+        == "still_running"
+    )
+    # The cancel window: the job reads canceled and the attempt is marked, but its sandbox is not removed yet.
+    attempt.terminal_stage = "canceled"
+    attempt.save(update_fields=["terminal_stage"])
+    job.state = HostedHarnessJob.State.CANCELED
+    assert (
+        harness_workers.worker_cleanup(call, job, {"state": "cancel_requested"})[
+            "status"
+        ]
+        == "still_running"
+    )
+
+
+@pytest.mark.django_db
+def test_cleanup_unknown_when_the_guest_ended_without_verified_cleanup(
+    user, workspace, storage, settings
+):
+    from simulate.models import HostedHarnessJob
+
+    job, attempt, call = _cut_short_run(user, workspace, storage, settings, "uk")
+    attempt.terminal_event_received = True
+    attempt.save(update_fields=["terminal_event_received"])
+    job.state = HostedHarnessJob.State.COMPLETED
+    assert harness_workers.worker_cleanup(call, job, {"state": "deadline_passed"}) == {
+        "status": "unknown",
+        "at": None,
+    }
+
+
+@pytest.mark.django_db
+def test_a_worker_that_returned_or_never_ran_has_no_cleanup(
+    user, workspace, storage, settings
+):
+    job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "nc")
+    for state in ("completed", "failed", "not_observed"):
+        assert harness_workers.worker_cleanup(call, job, {"state": state}) is None
+
+
+@pytest.mark.django_db
+def test_old_record_without_cleanup_serves_as_is(
+    user, workspace, storage, settings, auth_client
+):
+    from simulate.services.harness_workers import WORKERS_KEY
+    from simulate.services.scoring_status import locked_call_metadata_update
+
+    _job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "old")
+    timeline = {
+        **worker_timeline(SPANS, DECLARED, run_key=RUN),
+        "collected_at": "2026-10-31T12:00:00Z",
+    }
+    locked_call_metadata_update(
+        call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True
+    )
+    found = auth_client.get(f"/simulate/v3/call-executions/{call.id}/workers/")
+    assert found.status_code == 200, found.content
+    for worker in found.json()["workers"]:
+        stored = next(one for one in timeline["workers"] if one["id"] == worker["id"])
+        # Only a cut-short worker gains a computed cleanup; nothing else is added.
+        if stored.get("state") in harness_workers.CUT_SHORT_STATES:
+            assert worker["cleanup"]["status"] in {
+                "stopped_with_sandbox",
+                "still_running",
+                "unknown",
+            }
+        else:
+            assert "cleanup" not in worker
+
+
+def test_worker_seen_only_through_tool_calls_takes_a_cancelled_trials_ending():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one
+        for one in worker_states(timeline, trial="cancel_requested")["workers"]
+    }
+    assert (workers["refund"]["state"], workers["refund"]["seen"]) == (
+        "cancel_requested",
+        "tool_calls_only",
+    )
+    # A declared worker that never acted is still not observed, never cut short.
+    assert workers["audit"]["state"] == "not_observed"
+    assert "seen" not in workers["audit"]
+
+
+def test_worker_seen_only_through_tool_calls_has_no_state_when_the_trial_ended():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    assert ("state" in workers["refund"], "seen" in workers["refund"]) == (False, False)
+
+
+@pytest.mark.django_db
+def test_served_workers_confirms_a_tool_calls_only_cancel(
+    user, workspace, storage, settings
+):
+    from django.utils import timezone
+
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.harness_workers import served_workers, worker_states
+
+    job, attempt, call = _cut_short_run(user, workspace, storage, settings, "tco")
+    call.status = CallExecution.CallStatus.CANCELLED
+    call.save(update_fields=["status"])
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state=HostedHarnessJob.State.CANCELED
+    )
+    attempt.cleanup_verified_at = timezone.now()
+    attempt.save(update_fields=["cleanup_verified_at"])
+    timeline = worker_states(
+        worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY),
+        trial="cancel_requested",
+    )
+    refund = next(
+        one
+        for one in served_workers(call, timeline)["workers"]
+        if one["id"] == "refund"
+    )
+    assert (refund["state"], refund["seen"], refund["cleanup"]["status"]) == (
+        "cancelled",
+        "tool_calls_only",
+        "stopped_with_sandbox",
+    )
+
+
+def test_a_worker_the_harness_stopped_ends_past_its_deadline_with_when_it_was_stopped():
+    from simulate.services.harness_workers import worker_states
+
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
+    workers = {
+        one["id"]: one
+        for one in worker_states(timeline, trial="ended", stopped={"refund": 1700.5})[
+            "workers"
+        ]
+    }
+    assert (workers["refund"]["state"], workers["refund"]["stopped_at"]) == (
+        "deadline_passed",
+        1700.5,
+    )
+    assert "stopped_at" not in workers["order_lookup"]
+
+
+def test_a_stopped_worker_s_cleanup_is_stopped_alone_and_a_refused_one_is_not():
+    cleanup = harness_workers.worker_cleanup(
+        None, None, {"state": "deadline_passed", "stopped_at": 0.0}
+    )
+    assert cleanup == {"status": "stopped", "at": "1970-01-01T00:00:00+00:00"}
+    # Refused only, with no job to read: nothing to say about its process.
+    assert (
+        harness_workers.worker_cleanup(None, None, {"state": "deadline_passed"}) is None
+    )
+
+
+def test_stopped_workers_are_read_from_the_trial_s_world_changes():
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    call = SimpleNamespace(
+        call_metadata={
+            TRIAL_STATE_KEY: {
+                "stopped_workers": [
+                    {
+                        "worker": "refund",
+                        "process": "refund-worker",
+                        "at": 12.5,
+                        "reason": "deadline_passed",
+                    },
+                    {"worker": "", "at": 1.0},
+                    {"worker": "audit", "at": True},
+                ]
+            }
+        }
+    )
+    assert harness_workers.stopped_workers(call) == {"refund": 12.5}
+
+
+def _job_run(span_id, trace, run_key, start):
+    return _span(
+        span_id,
+        None,
+        "agent",
+        "researcher",
+        start,
+        None,
+        trace_id=trace,
+        attributes={"gen_ai.conversation.id": run_key, "graph.node.id": "researcher"},
+    )
+
+
+def test_a_background_job_run_is_placed_under_the_tool_call_that_launched_it():
+    spans = [*_ASYNC_SPANS, _job_run("j1", "tr-job", "job-r", "t04")]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    (hand_off,) = [one for one in events if one["type"] == "delegated"]
+    assert (hand_off["delegation_id"], hand_off.get("launch")) == ("c2", "async")
+    assert hand_off.get("relationship") != "unknown"
+
+
+def test_a_job_whose_run_key_matches_no_launch_stays_unknown():
+    spans = [*_ASYNC_SPANS, _job_run("j1", "tr-job", "job-other", "t04")]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    assert not any(one.get("launch") == "async" for one in events)
+    # A key that is only part of a longer id is no match either.
+    partial = [*_ASYNC_SPANS, _job_run("j2", "tr-job", "job", "t04")]
+    assert not any(
+        one.get("launch") == "async"
+        for one in worker_timeline(partial, [], run_key=RUN)["events"]
+    )
+
+
+def test_a_sealed_job_hand_off_joined_to_its_launch_is_asynchronous_not_unknown():
+    from simulate.services.harness_worker_steps import worker_steps
+
+    declared = [
+        {"id": "coder", "name": "coder"},
+        {"id": "researcher", "name": "researcher"},
+    ]
+    events = worker_timeline(
+        [], declared, run_key=RUN, traced_calls=_LAUNCHED_JOB_ROWS
+    )["events"]
+    (hand_off,) = [one for one in events if one["type"] == "delegated"]
+    assert (hand_off.get("launch"), hand_off.get("relationship")) == ("async", None)
+    # The job's own call still sits in its hand-off, and the launching call stays the coordinator's.
+    (check,) = [one for one in events if one.get("tool") == "run_code_check"]
+    assert check["delegation_id"] == hand_off["delegation_id"]
+    assert [one["tool"] for one in events if one.get("tool") == "start_async_task"] == [
+        "start_async_task"
+    ]
+    assert worker_steps(events)["asynchronous"] == 1
+
+
+def test_a_hand_off_whose_parent_event_is_another_hand_off_is_not_a_launch():
+    rows = [dict(one) for one in _LAUNCHED_JOB_ROWS]
+    rows[0] = {**rows[0], "delegated_to": "researcher"}
+    events = worker_timeline([], [], run_key=RUN, traced_calls=rows)["events"]
+    assert not any(one.get("launch") == "async" for one in events)

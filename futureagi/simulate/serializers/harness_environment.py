@@ -115,6 +115,9 @@ class HarnessRunSummarySerializer(serializers.Serializer):
         allow_null=True, help_text="Errored receipts, also counted in outcome_failed."
     )
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_cancelled = serializers.IntegerField(
+        allow_null=True, help_text="Calls the user stopped; neither errored nor failed."
+    )
     outcome_no_score = serializers.IntegerField(
         allow_null=True, help_text="Calls that ran with no pass or fail."
     )
@@ -621,6 +624,18 @@ class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
     ended_reasons = serializers.ListField(child=serializers.CharField())
 
 
+class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(required=False, allow_blank=True)
+    tools = serializers.ListField(child=serializers.CharField(), required=False)
+    # The tools it may use when narrower than what its code holds; empty means all of `tools`.
+    allowed_tools = serializers.ListField(child=serializers.CharField(), required=False)
+    binding = serializers.ChoiceField(choices=("separate", "shared"), required=False)
+    address_env = serializers.CharField(required=False, allow_blank=True)
+    # The process that runs it alone, when the app serves it as its own service.
+    process = serializers.CharField(required=False, allow_blank=True)
+
+
 class HarnessEnvironmentContractSerializer(serializers.Serializer):
     """The agent contract as ALK wrote it, passed through, plus how it was built.
 
@@ -658,6 +673,12 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     )
     tool_entrypoints = serializers.ListField(
         child=serializers.JSONField(), required=False, allow_null=True
+    )
+    workers = HarnessEnvironmentWorkerSerializer(
+        many=True,
+        required=False,
+        allow_null=True,
+        help_text="The workers the app's source declares; a run shows which of them took part.",
     )
     data_store = serializers.JSONField(required=False, allow_null=True)
     open_questions = serializers.ListField(

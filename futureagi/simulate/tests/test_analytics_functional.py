@@ -529,7 +529,7 @@ class TestRunResultsV3Views:
             ("analyzing", "in_progress", "In progress"),
             ("completed", "inconclusive", "Inconclusive"),
             ("failed", "error", "Error"),
-            ("cancelled", "error", "Error"),
+            ("cancelled", "cancelled", "Cancelled"),
         ],
     )
     def test_call_lifecycle_outcomes_match_rows_filters_groups_and_detail(
@@ -1382,7 +1382,7 @@ class TestRunResultsV3Views:
             if item["id"] == str(crashed.id)
         )
         assert (stopped["outcome"], stopped["outcome_reason"]) == (
-            "error",
+            "cancelled",
             "Stopped before it finished: the run was cancelled",
         )
 
@@ -2699,6 +2699,7 @@ class TestRunResultsV3Views:
             "passed": 1,
             "failed": 0,
             "error": 1,
+            "cancelled": 0,
             "inconclusive": 2,
             "no_score": 0,
         }

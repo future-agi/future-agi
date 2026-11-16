@@ -1483,7 +1483,9 @@ class TestExecutionCancelView(APIView):
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    hosted_job, reason=reason
+                )
             return {
                 "success": True,
                 "message": "Cancellation signal sent to hosted simulation",

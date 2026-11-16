@@ -20,6 +20,9 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
 )
 
+# A finished two-call Run, for the runs list counts.
+from simulate.tests.test_rerun_calls_in_run import calls, finished_run  # noqa: F401
+
 
 def _config(output_type: str):
     template = SimpleNamespace(
@@ -326,13 +329,33 @@ def test_sql_scoring_matches_python(
         ("analyzing", "in_progress"),
         ("completed", "inconclusive"),
         ("failed", "error"),
-        ("cancelled", "error"),
+        ("cancelled", "cancelled"),
     ],
 )
 def test_call_outcome_distinguishes_lifecycle_from_terminal_verdict(
     execution_status, expected
 ):
     call = SimpleNamespace(call_metadata={}, status=execution_status, eval_outputs={})
+    assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.parametrize(
+    "harness_status,expected",
+    [
+        # A user stop: the receipt arrives errored, the call is cancelled with ended_reason user_canceled.
+        ("errored", "cancelled"),
+        (None, "cancelled"),
+        # A skipped scenario is stored cancelled too, but nobody stopped it.
+        ("skipped", "error"),
+    ],
+)
+def test_a_call_the_user_stopped_is_cancelled_not_an_error(harness_status, expected):
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": harness_status},
+        status=CallExecution.CallStatus.CANCELLED,
+        ended_reason="user_canceled",
+        eval_outputs={},
+    )
     assert call_outcome(call, {}) == expected
 
 
@@ -378,3 +401,46 @@ def test_a_worker_s_own_failed_check_never_fails_the_call(harness_status):
         eval_outputs=checks,
     )
     assert call_outcome(call, {}) == "passed"
+
+
+@pytest.mark.django_db
+def test_the_runs_list_counts_a_stopped_call_as_cancelled_not_errored(
+    finished_run,  # noqa: F811
+    calls,  # noqa: F811
+):
+    from simulate.services.harness_environment import receipt_outcome_counts
+    from simulate.tests.test_run_resume import _result
+
+    stopped, skipped = calls
+    for call, status in ((stopped, "errored"), (skipped, "skipped")):
+        call.status = CallExecution.CallStatus.CANCELLED
+        call.ended_reason = "user_canceled" if status == "errored" else None
+        call.call_metadata = {**call.call_metadata, "harness_outcome_status": status}
+        call.save(update_fields=["status", "ended_reason", "call_metadata"])
+        _result(finished_run, call, status=status)
+
+    assert receipt_outcome_counts([finished_run.id])[finished_run.id] == {
+        "cancelled": 1,
+        "skipped": 1,
+    }
+
+
+@pytest.mark.django_db
+def test_the_runs_list_counts_a_call_stopped_before_its_receipt_as_cancelled(
+    finished_run,  # noqa: F811
+    calls,  # noqa: F811
+):
+    from simulate.services.harness_environment import receipt_outcome_counts
+
+    # Neither call has a receipt: one was stopped before the guest sealed it, the other is a skipped case.
+    stopped, skipped = calls
+    stopped.status = CallExecution.CallStatus.CANCELLED
+    stopped.call_metadata = {}
+    stopped.save(update_fields=["status", "call_metadata"])
+    skipped.status = CallExecution.CallStatus.CANCELLED
+    skipped.call_metadata = {"harness_outcome_status": "skipped"}
+    skipped.save(update_fields=["status", "call_metadata"])
+
+    assert receipt_outcome_counts([finished_run.id])[finished_run.id] == {
+        "cancelled": 1
+    }

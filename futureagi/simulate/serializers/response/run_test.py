@@ -172,6 +172,7 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     )
     outcome_errored = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_cancelled = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_no_score = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_status = serializers.ChoiceField(
         choices=OUTCOME_STATUSES,

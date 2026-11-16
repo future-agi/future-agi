@@ -280,6 +280,10 @@ export interface ParticipantsSeed {
   testExecutionId: string;
   callExecutionId: string;
   traceId: string;
+  // A second call the user stopped mid-call: a worker cut short as cancelled, its run's sandbox removed.
+  cancelledCallExecutionId: string;
+  // A third call whose refund worker, served as its own process, the harness stopped when its deadline passed.
+  stoppedWorkerCallExecutionId: string;
 }
 
 const PARTICIPANTS_SEED_SCRIPT = `
@@ -298,7 +302,7 @@ from django.utils import timezone
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import StatusType
-from simulate.models import AgentDefinition, HostedHarnessJob, RunTest, Scenarios
+from simulate.models import AgentDefinition, HostedHarnessAttempt, HostedHarnessJob, RunTest, Scenarios
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.services.agent_setup import store_agent
 from tracer.services.simulation_project import ensure_simulation_project
@@ -401,8 +405,16 @@ def main():
         payload={"source": {"kind": "archive"}, "metadata": {"name": f"e2e-participants-env-{suffix}"}},
     )
     # A built environment: its run detail shows calls rather than the build overview.
+    # The contract snapshot declares the two workers, as the Contract tab's Workers card reads them.
+    contract = {"workers": [
+        {"id": "order_lookup", "name": "Order-lookup worker", "tools": ["get_order", "list_refunds", "update_order_status"],
+         "allowed_tools": ["get_order", "list_refunds"], "binding": "separate", "address_env": "ORDER_LOOKUP_API_URL"},
+        {"id": "refund", "name": "Refund worker", "tools": ["list_refunds", "issue_refund"], "allowed_tools": [],
+         "binding": "shared", "process": "refund-worker"},
+    ]}
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-        state=HostedHarnessJob.State.COMPLETED, current_stage="completed"
+        state=HostedHarnessJob.State.COMPLETED, current_stage="completed",
+        stage_outputs=[{"kind": "contract", "data": contract}],
     )
     run = f"run-{suffix}"
     record = {
@@ -446,6 +458,15 @@ def main():
                                   "reason": "orders.update_status is not permitted for order_lookup"}]},
         ],
         "decisions": [],
+        # Two workers named the same order: the World changes tab lists the record and its committed writes.
+        "shared_records": [
+            {"key": "order_id=1042", "argument": "order_id", "value": "1042", "committed_writes": 1,
+             "truncated": False,
+             "actions": [
+                 {"who": "worker:order_lookup", "tool": "list_refunds", "outcome": "committed", "write": None},
+                 {"who": "worker:refund", "tool": "issue_refund", "outcome": "committed", "write": True},
+             ]},
+        ],
     }
     call = CallExecution.objects.create(
         test_execution=execution,
@@ -457,12 +478,53 @@ def main():
     )
     # The span the trace is: in the agent's project, marked with this run and this call, as the harness marks them.
     send_span(project.id, trace_id, environment.id, call.id)
+    # The run's attempt with its sandbox removed, and a call the user stopped while the refund hand-off was out.
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(current_attempt_number=1)
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=environment, attempt_number=1, token_hash="t" * 64, fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1), cleanup_verified_at=timezone.now(),
+    )
+    stopped = {
+        **record,
+        "workers": [
+            {**record["workers"][0], "state": "completed"},
+            {**record["workers"][1], "state": "cancelled"},
+        ],
+        "events": record["events"][:4],
+    }
+    cancelled = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.CANCELLED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        completed_at=timezone.now(),
+        call_metadata={"harness_workers": stopped},
+    )
+    # The refund worker runs as its own process: past its deadline the harness ended it (sealed as stopped_workers).
+    past_deadline = {
+        **record,
+        "workers": [
+            record["workers"][0],
+            {**record["workers"][1], "state": "deadline_passed", "stopped_at": 1763200000.0},
+        ],
+        "events": record["events"][:4],
+    }
+    stopped_worker = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        completed_at=timezone.now(),
+        call_metadata={"harness_workers": past_deadline},
+    )
     print(json.dumps({
         "environmentId": str(environment.id),
         "runTestId": str(run_test.id),
         "testExecutionId": str(execution.id),
         "callExecutionId": str(call.id),
         "traceId": trace_id,
+        "cancelledCallExecutionId": str(cancelled.id),
+        "stoppedWorkerCallExecutionId": str(stopped_worker.id),
     }))
 
 
@@ -470,11 +532,16 @@ main()
 `;
 
 export function seedParticipantsCall(opts: { organizationId: string; workspaceId: string }): ParticipantsSeed {
+  return runInlineSeed<ParticipantsSeed>('e2e-participants-', PARTICIPANTS_SEED_SCRIPT, opts);
+}
+
+/** Runs one seed script in the backend container for the caller's org and workspace; returns its last JSON line. */
+function runInlineSeed<T>(prefix: string, script: string, opts: { organizationId: string; workspaceId: string }): T {
   const container = resolveBackendContainer();
   const suffix = `${Date.now().toString(36)}${randomBytes(2).toString('hex')}`;
-  const dir = mkdtempSync(join(tmpdir(), 'e2e-participants-'));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   const scriptPath = join(dir, `seed-${suffix}.py`);
-  writeFileSync(scriptPath, PARTICIPANTS_SEED_SCRIPT);
+  writeFileSync(scriptPath, script);
   try {
     execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
     const stdout = execFileSync('docker', ['exec',
@@ -485,8 +552,166 @@ export function seedParticipantsCall(opts: { organizationId: string; workspaceId
       `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
     ], { encoding: 'utf-8' });
     const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as ParticipantsSeed;
+    return JSON.parse(lastLine) as T;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Seeds a hosted Run that is under way, for the Stop journey: one call in progress and one case the harness already
+ * skipped (stored cancelled with `harness_outcome_status: skipped` and its skipped receipt, as
+ * `_call_lifecycle_status` in `futureagi/simulate/services/hosted_harness_ingestion.py` writes it). The Run's attempt
+ * has no sandbox, so the user's Stop runs the product's own cancel path to its end on this stack: the workflow signal
+ * finds no workflow and `HostedHarnessGateway.cancel` closes the attempt, the job, the Run and its open call as
+ * cancelled. Built through the ORM for the same reason as `seedParticipantsCall`: the sandbox that runs calls is not
+ * part of this stack.
+ */
+export interface StopJourneySeed {
+  environmentId: string;
+  runJobId: string;
+  runTestId: string;
+  testExecutionId: string;
+  ongoingCallExecutionId: string;
+  skippedCallExecutionId: string;
+  ongoingScenarioName: string;
+  skippedScenarioName: string;
+}
+
+const STOP_JOURNEY_SEED_SCRIPT = `
+import json
+import os
+import uuid
+from datetime import timedelta
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+from django.utils import timezone
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from model_hub.models.choices import StatusType
+from simulate.models import (
+    AgentDefinition,
+    HostedHarnessAttempt,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    RunTest,
+    Scenarios,
+)
+from simulate.models.test_execution import CallExecution, TestExecution
+
+
+def job(organization, workspace, run_test, name, **fields):
+    return HostedHarnessJob.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        run_test=run_test,
+        name=name,
+        run_id=uuid.uuid4(),
+        idempotency_key=uuid.uuid4().hex,
+        request_digest=uuid.uuid4().hex,
+        schema_version="1.6",
+        seed=1,
+        artifact_level="standard",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=2,
+        payload={"source": {"kind": "archive"}, "metadata": {"name": name}},
+        **fields,
+    )
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+    agent = AgentDefinition.objects.create(
+        agent_name=f"e2e-stop-agent-{suffix}",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="e2e SIM stop journey seed",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    scenarios = {}
+    for kind in ("ongoing", "skipped"):
+        scenarios[kind] = Scenarios.objects.create(
+            name=f"e2e-stop-{kind}-{suffix}",
+            description="e2e SIM stop journey scenario",
+            source="test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent,
+            status=StatusType.COMPLETED.value,
+        )
+    run_test = RunTest.objects.create(
+        name=f"e2e-stop-run-{suffix}", agent_definition=agent, organization=organization, workspace=workspace,
+    )
+    run_test.scenarios.add(*scenarios.values())
+    # A built environment: its run detail shows calls rather than the build overview.
+    environment = job(organization, workspace, run_test, f"e2e-stop-env-{suffix}")
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        state=HostedHarnessJob.State.COMPLETED, current_stage="completed",
+    )
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        agent_definition=agent,
+        status=TestExecution.ExecutionStatus.RUNNING,
+        total_scenarios=2,
+        total_calls=2,
+    )
+    # The Run's own job, running on its first attempt, whose sandbox does not exist on this stack.
+    run_job = job(organization, workspace, run_test, f"e2e-stop-env-{suffix}", environment=environment,
+                  test_execution=execution)
+    HostedHarnessJob.no_workspace_objects.filter(id=run_job.id).update(
+        state=HostedHarnessJob.State.RUNNING, current_stage="running", current_attempt_number=1,
+    )
+    attempt = HostedHarnessAttempt.no_workspace_objects.create(
+        job=run_job, attempt_number=1, token_hash=uuid.uuid4().hex, fence_hash=uuid.uuid4().hex,
+        expires_at=timezone.now() + timedelta(hours=1), state=HostedHarnessAttempt.State.RUNNING,
+    )
+    ongoing = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenarios["ongoing"],
+        status=CallExecution.CallStatus.ONGOING,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        started_at=timezone.now(),
+    )
+    skipped = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenarios["skipped"],
+        status=CallExecution.CallStatus.CANCELLED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        completed_at=timezone.now(),
+        call_metadata={"harness_outcome_status": "skipped"},
+    )
+    # The harness's receipt for the case it skipped, as it posts one before the user stops the Run.
+    registration = HostedHarnessScenario.no_workspace_objects.create(
+        job=run_job, scenario_key=f"skipped-{suffix}", scenario=scenarios["skipped"], call_execution=skipped,
+    )
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job=run_job, attempt=attempt, scenario=registration, attempt_number=1, digest="sha256:" + "0" * 64,
+        status="skipped", body={"scenario_key": registration.scenario_key, "status": "skipped"},
+    )
+    print(json.dumps({
+        "environmentId": str(environment.id),
+        "runJobId": str(run_job.id),
+        "runTestId": str(run_test.id),
+        "testExecutionId": str(execution.id),
+        "ongoingCallExecutionId": str(ongoing.id),
+        "skippedCallExecutionId": str(skipped.id),
+        "ongoingScenarioName": scenarios["ongoing"].name,
+        "skippedScenarioName": scenarios["skipped"].name,
+    }))
+
+
+main()
+`;
+
+export function seedStopJourney(opts: { organizationId: string; workspaceId: string }): StopJourneySeed {
+  return runInlineSeed<StopJourneySeed>('e2e-stop-', STOP_JOURNEY_SEED_SCRIPT, opts);
 }

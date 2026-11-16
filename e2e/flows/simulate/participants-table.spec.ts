@@ -27,6 +27,7 @@ test('SIM-E2E-009: a multi-agent call shows its workers turn by turn, an unplace
       'open the Participants tab',
       'open the first hand-off row and Open in Traces, then close the trace',
       'open the World changes tab',
+      'open the call the user stopped and its Participants tab',
     ],
     backendChecks: [
       'the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown',
@@ -36,11 +37,13 @@ test('SIM-E2E-009: a multi-agent call shows its workers turn by turn, an unplace
       'the unplaced hand-off carries the parent unknown chip, and only that one',
       'a step read from a trace opens that trace, and closing it leaves the call on its Traces tab',
       "World changes lists the worker's refused attempt with its reason",
+      'World changes lists the order two workers named, with its committed writes',
+      'the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox',
     ],
   }),
 }, async ({ page, actor }, testInfo) => {
-  // 6 browser actions × 60s, plus 60s headroom.
-  test.setTimeout(420_000);
+  // 9 browser actions × 60s, plus 60s headroom.
+  test.setTimeout(600_000);
   const seed = seedParticipantsCall({ organizationId: actor.organizationId, workspaceId: actor.workspaceId });
   await testInfo.attach('participants-seed', { contentType: 'application/json', body: JSON.stringify(seed) });
 
@@ -82,5 +85,27 @@ test('SIM-E2E-009: a multi-agent call shows its workers turn by turn, an unplace
     await page.getByRole('tab', { name: WORLD_CHANGES_TAB, exact: true }).click({ timeout: UI_READY });
     await expect(page.getByText('Worker · order_lookup', { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByTestId('refused-attempts')).toContainText('update_order_status: orders.update_status is not permitted for order_lookup');
+  });
+
+  await test.step('ui: World changes lists the order two workers named', async () => {
+    const shared = page.getByTestId('shared-records');
+    await expect(shared).toContainText('Records touched by more than one participant', { timeout: UI_READY });
+    await expect(shared).toContainText('order_id 1042');
+    await expect(shared).toContainText('Committed writes: 1');
+  });
+
+  await test.step('api: the stopped call serves its cancelled worker with the sandbox cleanup', async () => {
+    const served = await actor.api.get<{ workers: { id: string; state: string; cleanup?: { status: string } }[] }>(
+      `/simulate/v3/call-executions/${seed.cancelledCallExecutionId}/workers/`,
+    );
+    const refund = served.workers.find((one) => one.id === 'refund');
+    expect([refund?.state, refund?.cleanup?.status]).toEqual(['cancelled', 'stopped_with_sandbox']);
+  });
+
+  await test.step('ui: the stopped call says it was stopped by the user', async () => {
+    await page.goto(`/dashboard/simulate/environments/${seed.environmentId}/runs/${seed.runTestId}/${seed.testExecutionId}?rowId=${seed.cancelledCallExecutionId}`);
+    await page.getByRole('tab', { name: PARTICIPANTS_TAB, exact: true }).click({ timeout: UI_READY });
+    await expect(page.getByTestId('stopped-by-user')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByTestId('worker-cleanup')).toContainText("Refund worker: Stopped when the run's sandbox was removed");
   });
 });

@@ -458,4 +458,3 @@ describe("runSimulationTarget", () => {
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
   });
 });
-

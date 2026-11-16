@@ -291,8 +291,9 @@ class TrialNoticeSerializer(serializers.Serializer):
 
     code = serializers.CharField(
         help_text="fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, "
-        "duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing "
-        "(the agent's change refused before anyone approved it: `action`, `count`)"
+        "duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing "
+        "(the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or "
+        "worker_limits_not_enforced"
     )
     message = serializers.CharField(
         help_text="Plain words for the person reading the run."
@@ -303,6 +304,8 @@ class TrialNoticeSerializer(serializers.Serializer):
     count = serializers.IntegerField(
         required=False, help_text="For evidence_incomplete."
     )
+    # The workers the notice names, e.g. a separate worker that reached the world without its own channel.
+    workers = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class DuplicateCommitSerializer(serializers.Serializer):
@@ -377,6 +380,37 @@ class TrialStartSerializer(serializers.Serializer):
     )
 
 
+class SharedRecordActionSerializer(serializers.Serializer):
+    who = serializers.CharField()
+    name = serializers.CharField(
+        help_text="The participant's name, as the state changes give it."
+    )
+    tool = serializers.CharField(allow_blank=True)
+    outcome = serializers.CharField()
+    # False for a call the world logged as a read; true for a write; null when nothing says.
+    write = serializers.BooleanField(allow_null=True)
+
+
+class SharedRecordSerializer(serializers.Serializer):
+    key = serializers.CharField(
+        help_text="What the calls named, as argument=value; never a database identity."
+    )
+    argument = serializers.CharField()
+    value = serializers.CharField()
+    actions = SharedRecordActionSerializer(many=True)
+    committed_writes = serializers.IntegerField()
+    truncated = serializers.BooleanField()
+
+
+class StoppedWorkerSerializer(serializers.Serializer):
+    worker = serializers.CharField()
+    process = serializers.CharField()
+    at = serializers.FloatField(
+        help_text="When the harness ended it, seconds since the epoch."
+    )
+    reason = serializers.CharField()
+
+
 class TrialStateSerializer(serializers.Serializer):
     """A trial's World state. Every list is present, empty when the trial had none."""
 
@@ -432,4 +466,14 @@ class TrialStateSerializer(serializers.Serializer):
     notices = TrialNoticeSerializer(
         many=True,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+    )
+    shared_records = SharedRecordSerializer(
+        many=True,
+        required=False,
+        help_text="Records two or more participants named in this trial, and what the world made of each call.",
+    )
+    stopped_workers = StoppedWorkerSerializer(
+        many=True,
+        required=False,
+        help_text="Workers whose own process the harness ended when their deadline passed.",
     )

@@ -49,7 +49,7 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_worker_steps import worker_steps
-from simulate.services.harness_workers import WORKERS_KEY
+from simulate.services.harness_workers import WORKERS_KEY, served_workers
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -227,6 +227,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
+    cancelled = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
     no_score = serializers.IntegerField()
 
@@ -631,6 +632,13 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     trends = TrendSerializer(many=True)
 
 
+class CleanupSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("stopped", "stopped_with_sandbox", "still_running", "unknown")
+    )
+    at = serializers.CharField(allow_null=True)
+
+
 class CallWorkerSerializer(serializers.Serializer):
     worker_id = serializers.CharField()
     id = serializers.CharField()
@@ -656,6 +664,12 @@ class CallWorkerSerializer(serializers.Serializer):
         ],
         required=False,
     )
+    # Seen only through its tool calls in a trial cut short: its hand-off was still open.
+    seen = serializers.ChoiceField(choices=["tool_calls_only"], required=False)
+    # When the harness ended this worker's own process past its deadline.
+    stopped_at = serializers.FloatField(required=False)
+    # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
+    cleanup = CleanupSerializer(required=False)
 
 
 class CallWorkerEventSerializer(serializers.Serializer):
@@ -685,6 +699,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     relationship = serializers.ChoiceField(
         choices=("observed", "unknown"), required=False
     )
+    # `async` for a hand-off to a background job, placed under the tool call that launched it.
+    launch = serializers.ChoiceField(choices=("async",), required=False)
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
 
@@ -763,6 +779,8 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
     depth = serializers.IntegerField()
     parallel = serializers.IntegerField()
+    # Hand-offs to background jobs, placed under the tool call that launched each.
+    asynchronous = serializers.IntegerField(required=False)
     overlap_unknown = serializers.BooleanField()
     # The level each worker was first handed work at.
     worker_depths = serializers.DictField(child=serializers.IntegerField())
@@ -1182,7 +1200,11 @@ class CallExecutionV3WorkersView(APIView):
             timeline.get("messages", []),
             turns_cut=bool(timeline.get("messages_omitted")),
         )
-        return Response(CallWorkersResponseSerializer({**timeline, **steps}).data)
+        return Response(
+            CallWorkersResponseSerializer(
+                {**served_workers(call, timeline), **steps}
+            ).data
+        )
 
 
 class RunAnalyticsV3View(APIView):

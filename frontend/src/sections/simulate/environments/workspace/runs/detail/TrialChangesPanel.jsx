@@ -115,6 +115,7 @@ function WorldState({ trialState }) {
   const notices = allNotices.filter((one) => one !== outside);
   const { unreadable } = trialState;
   const records = !unreadable && trialState.records ? trialState.records : null;
+  const shared = trialState.shared_records || [];
   const noticeList = notices.length > 0 && (
     <Box>
       <Typography
@@ -226,6 +227,31 @@ function WorldState({ trialState }) {
         </Box>
       ))}
       {records && <RecordsSection records={records} outside={outside} />}
+      {shared.length > 0 && (
+        <Box data-testid="shared-records">
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.sharedHeading}
+          </Typography>
+          {shared.map((record) => (
+            <Box key={record.key}>
+              <Typography sx={{ ...quiet, fontWeight: 600 }}>
+                {C.sharedRecord(record)}
+              </Typography>
+              {record.actions.map((action, index) => (
+                <Typography key={`${record.key}-${index}`} sx={quiet}>
+                  {C.sharedAction(action, action.name)}
+                </Typography>
+              ))}
+              <Typography sx={quiet}>
+                {C.committedWrites(record.committed_writes)}
+              </Typography>
+            </Box>
+          ))}
+          {shared.some((record) => record.truncated) && (
+            <Typography sx={quiet}>{C.sharedTruncated}</Typography>
+          )}
+        </Box>
+      )}
       {preRun.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -305,8 +331,13 @@ WorldState.propTypes = {
     duplicates: PropTypes.arrayOf(
       PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
     ),
+    shared_records: PropTypes.arrayOf(PropTypes.object),
     notices: PropTypes.arrayOf(
-      PropTypes.shape({ code: PropTypes.string, message: PropTypes.string }),
+      PropTypes.shape({
+        code: PropTypes.string,
+        message: PropTypes.string,
+        workers: PropTypes.arrayOf(PropTypes.string),
+      }),
     ),
   }),
 };

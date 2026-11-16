@@ -2540,3 +2540,57 @@ def test_a_scenario_needs_a_production_only_tool_only_when_every_path_calls_one(
     assert needed_production_tools(
         {"solution": solution, "alternatives": [[{"tool": "issue_refund"}]]}, blocked
     ) == ["issue_refund"]
+
+
+def test_environment_detail_lists_declared_workers():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentWorkerSerializer,
+    )
+    from simulate.services import harness_environment
+
+    contract = {
+        "workers": [
+            {
+                "id": "order_lookup",
+                "name": "Order-lookup worker",
+                "tools": ["get_order", "list_refunds", "update_order_status"],
+                "allowed_tools": ["get_order", "list_refunds"],
+                "binding": "separate",
+                "address_env": "ORDER_LOOKUP_API_URL",
+            },
+            {"name": "no id, never shown"},
+        ]
+    }
+    with (
+        patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+        patch.object(harness_environment, "_call_actor_list", return_value=[]),
+        patch.object(harness_environment, "_stage_output", return_value=None),
+        patch.object(harness_environment, "_end_conditions", return_value={}),
+        patch.object(harness_environment, "_provenance", return_value={}),
+    ):
+        section = harness_environment._contract_section(
+            SimpleNamespace(), contract, None, None, None
+        )
+    (worker,) = section["workers"]
+    for malformed in (None, "workers", 5, {"id": "x"}):
+        with (
+            patch.object(harness_environment, "_catalogue_entries", return_value=[]),
+            patch.object(harness_environment, "_call_actor_list", return_value=[]),
+            patch.object(harness_environment, "_stage_output", return_value=None),
+            patch.object(harness_environment, "_end_conditions", return_value={}),
+            patch.object(harness_environment, "_provenance", return_value={}),
+        ):
+            assert (
+                harness_environment._contract_section(
+                    SimpleNamespace(), {"workers": malformed}, None, None, None
+                )["workers"]
+                == []
+            )
+    assert HarnessEnvironmentWorkerSerializer(worker).data["allowed_tools"] == [
+        "get_order",
+        "list_refunds",
+    ]
+    assert worker["id"] == "order_lookup"

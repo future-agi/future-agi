@@ -985,6 +985,7 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
             " Passed",
             "passed",
             "error",
+            "errored",
             "unknown",
             1,
             "no_score",
