@@ -491,21 +491,24 @@ class TestRunResultsV3Views:
             call_metadata=metadata,
         )
         expected = [
-            {"name": "Verify identity", "passed": True},
-            {"name": "Create refund", "passed": False},
+            {"name": "Verify identity", "passed": True, "subject_kind": "task"},
+            {"name": "Create refund", "passed": False, "subject_kind": "task"},
             {
                 "name": "Lookup stayed read-only",
                 "passed": False,
                 "subject": "worker:order_lookup",
+                "subject_kind": "worker",
+                "worker_id": "order_lookup",
             },
-            {"name": "Send confirmation", "passed": None},
+            {"name": "Send confirmation", "passed": None, "subject_kind": "task"},
             {
                 "name": "Offer upgrade",
                 "passed": None,
                 "result": "not_applicable",
                 "reason": "Not applicable: x",
+                "subject_kind": "task",
             },
-            {"name": "Unmeasured goal", "passed": None},
+            {"name": "Unmeasured goal", "passed": None, "subject_kind": "task"},
         ]
         response = auth_client.get(
             f"/simulate/v3/test-executions/{test_execution.id}/calls/"
@@ -1180,7 +1183,7 @@ class TestRunResultsV3Views:
         }
         assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
-            {"name": "identity_verified", "passed": True}
+            {"name": "identity_verified", "passed": True, "subject_kind": "task"}
         ]
         assert row["scenario_details"] == "Caller needs help with a return."
         assert row["ideal_outcome"] == "Return is completed"
@@ -1481,6 +1484,7 @@ class TestRunResultsV3Views:
                 "passed": None,
                 "result": "not_applicable",
                 "reason": "Not applicable: the caller never asked to cancel in this call.",
+                "subject_kind": "task",
             }
         ]
 
@@ -3957,8 +3961,8 @@ class TestRunResultsV3Views:
 
         assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
         assert row["sub_goal_results"] == [
-            {"name": "pin_verified", "passed": None},
-            {"name": "exact_greeting", "passed": None},
+            {"name": "pin_verified", "passed": None, "subject_kind": "task"},
+            {"name": "exact_greeting", "passed": None, "subject_kind": "task"},
         ]
 
     def test_receipt_sub_goals_take_priority_over_the_authored_scenarios(
@@ -3987,7 +3991,7 @@ class TestRunResultsV3Views:
 
         assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
-            {"name": "identity_verified", "passed": True}
+            {"name": "identity_verified", "passed": True, "subject_kind": "task"}
         ]
 
     @pytest.mark.parametrize("layout", ["trial", "registration"])
@@ -4054,7 +4058,9 @@ class TestRunResultsV3Views:
         body = response.json()
         row = next(row for row in body["results"] if row["id"] == str(call.id))
         assert row["sub_goals"] == ["pin_verified"]
-        assert row["sub_goal_results"] == [{"name": "pin_verified", "passed": None}]
+        assert row["sub_goal_results"] == [
+            {"name": "pin_verified", "passed": None, "subject_kind": "task"}
+        ]
         assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
 
     def test_receipt_sub_goals_keep_the_authored_ones_out_of_filters_and_facets(

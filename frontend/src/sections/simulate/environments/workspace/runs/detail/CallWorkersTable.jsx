@@ -22,6 +22,8 @@ import { EventList } from "./CallWorkersEventList";
 import { Reveal, UnknownParent } from "./CallWorkersParts";
 import { asMarkdown, handOffEvents } from "./utils/callWorkersUtils";
 
+const NO_CHECKS = [];
+
 // A cell's text takes the cell's size and colour, so a failed answer reads in red.
 const CELL_TEXT_SX = { typography: "s1", color: "inherit" };
 
@@ -44,7 +46,15 @@ const CLAMPED_CELL_SX = {
 };
 
 // One hand-off as a table row. Its raw data opens below it, as wide as the table, since JSON won't fit in a cell.
-function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
+function WorkerRow({
+  step,
+  byKey,
+  names,
+  checks = NO_CHECKS,
+  start,
+  onOpenTrace,
+  traceIds,
+}) {
   const [open, setOpen] = useState(false);
   const name = names.ofStep(step);
   const worker = names.workerOf(step.worker_id);
@@ -147,6 +157,21 @@ function WorkerRow({ step, byKey, names, start, onOpenTrace, traceIds }) {
             {step.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
+            {checks.map((one) => (
+              <Typography
+                key={one.name}
+                data-testid="worker-row-check"
+                data-status={one.status}
+                sx={{
+                  typography: "s3",
+                  color:
+                    one.status === "failed" ? "error.main" : "warning.main",
+                  ml: 2.25,
+                }}
+              >
+                {C.checkStatus[one.status]} · {one.name}
+              </Typography>
+            ))}
             {step.end_state ? (
               <Chip
                 size="small"
@@ -210,6 +235,8 @@ WorkerRow.propTypes = {
   step: PropTypes.object.isRequired,
   byKey: PropTypes.object.isRequired,
   names: PropTypes.object.isRequired,
+  // The failed or unsure checks the API places on this hand-off.
+  checks: PropTypes.arrayOf(PropTypes.object),
   start: PropTypes.string,
   onOpenTrace: PropTypes.func,
   traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
@@ -219,6 +246,7 @@ export function WorkersTable({
   rows,
   byKey,
   names,
+  placedOn = {},
   start,
   onOpenTrace,
   traceIds,
@@ -247,6 +275,7 @@ export function WorkersTable({
               step={step}
               byKey={byKey}
               names={names}
+              checks={placedOn[step.key]}
               start={start}
               onOpenTrace={onOpenTrace}
               traceIds={traceIds}
@@ -261,6 +290,8 @@ WorkersTable.propTypes = {
   rows: PropTypes.array.isRequired,
   byKey: PropTypes.object.isRequired,
   names: PropTypes.object.isRequired,
+  // Each step key's placed checks, as the API serves them in `placements`.
+  placedOn: PropTypes.object,
   start: PropTypes.string,
   onOpenTrace: PropTypes.func,
   traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,

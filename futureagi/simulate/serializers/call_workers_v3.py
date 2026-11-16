@@ -7,7 +7,6 @@ from rest_framework import serializers
 from simulate.types import (
     HandOffEnd,
     PlacementStatus,
-    RefusalCode,
     SubGoalUnscored,
     TextFormat,
     Untied,
@@ -86,8 +85,10 @@ class CallWorkerEventSerializer(serializers.Serializer):
     # The record's size limit was reached before this step, so that part was not kept.
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
-    refusal_code = serializers.ChoiceField(
-        choices=get_args(RefusalCode), required=False
+    refusal_code = serializers.CharField(
+        allow_blank=True,
+        required=False,
+        help_text="The world's refusal code, as the harness sealed it.",
     )
     # `async` for a hand-off to a background job, placed under the tool call that launched it.
     launch = serializers.ChoiceField(choices=("async",), required=False)

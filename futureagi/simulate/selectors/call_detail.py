@@ -21,7 +21,6 @@ from simulate.services.hosted_harness_ingestion import (
 from simulate.services.run_results_v3 import recorded_calls
 from simulate.services.run_results_v3_queries import call_actor_delivery
 from simulate.types import (
-    RefusalCode,
     SharedRecord,
     SharedRecordAction,
     StoppedWorker,
@@ -97,7 +96,7 @@ APPROVAL_MISSING = "approval_missing"
 
 class RefusedAction(TypedDict):
     action: str
-    code: RefusalCode
+    code: str
     reason: str
 
 

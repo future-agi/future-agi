@@ -99245,8 +99245,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         refusal_code: {
           title: "Refusal code",
+          description: "The world's refusal code, as the harness sealed it.",
           type: "string",
-          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         launch: {
           title: "Launch",
@@ -124926,8 +124926,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         refusal_code: {
           title: "Refusal code",
+          description: "The world's refusal code, as the harness sealed it.",
           type: "string",
-          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         launch: {
           title: "Launch",
@@ -139167,8 +139167,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         code: {
           title: "Code",
+          description: "The world's refusal code, as the harness sealed it.",
           type: "string",
-          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         reason: {
           title: "Reason",
