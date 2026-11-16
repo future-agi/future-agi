@@ -1404,6 +1404,8 @@ def log_and_deduct_cost_for_api_request(
     source_id=None,
     workspace=None,
 ):
+    from tfc.utils.evaluation_denials import EvaluationDenied
+
     if config is None:
         config = {}
 
@@ -1490,6 +1492,8 @@ def log_and_deduct_cost_for_api_request(
             source_id,
             workspace,
         )
+    except EvaluationDenied:
+        raise
     except Exception as e:
         traceback.print_exc()
         logger.exception(f"Error logging and deducting cost for api call: {str(e)}")

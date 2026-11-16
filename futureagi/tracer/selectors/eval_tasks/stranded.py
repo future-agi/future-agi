@@ -14,13 +14,17 @@ from django.db.models import Max, Q, Subquery, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
 
-from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
 # Statuses whose undrained work the sweep may re-enter without asking anyone.
 _SWEEPABLE = (EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING)
 
 _UNDRAINED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
+
+# A live continuous workflow parks its cursor ``CONTINUOUS_CURSOR_OVERLAP``
+# (5 min) behind now on every poll. Six times that means nothing has polled.
+STALE_CONTINUOUS_CURSOR = timedelta(minutes=30)
 
 
 def sweepable_statuses() -> list[str]:
@@ -31,7 +35,14 @@ def sweepable_statuses() -> list[str]:
 
 
 def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
-    """Tasks in a sweepable status that still hold undrained entries.
+    """Tasks in a sweepable status that still hold undrained entries, plus
+    continuous tasks whose cursor stopped advancing.
+
+    A continuous task only creates entries while its workflow runs, so one
+    whose workflow died between polls holds no undrained entries at all and
+    the entry read alone never finds it. Its frozen ``continuous_cursor`` is
+    the only trace it leaves. Both kinds are ranked by how long they have been
+    still (last-touched entry, or the cursor) and share the one cap.
 
     Ordered by the oldest last-touched entry first, so a task frozen for days
     is always served before tasks that are draining normally — otherwise a busy
@@ -86,8 +97,8 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
     # rows before the join. They are no longer what stops an empty string
     # reaching a UUID column: nothing compares ``eval_task_id`` to a uuid any
     # more.
-    stranded_ids = [
-        row["eval_task_id"]
+    entry_rows = (
+        (row["last_touched"], row["eval_task_id"])
         for row in EvalLogger.no_workspace_objects.filter(
             status__in=_UNDRAINED,
             eval_task_id__isnull=False,
@@ -97,7 +108,21 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
         .values("eval_task_id")
         .annotate(last_touched=Max("updated_at"))
         .order_by("last_touched")[:limit]
-    ]
+    )
+    cursor_rows = (
+        (cursor, str(task_id))
+        for task_id, cursor in EvalTask.no_workspace_objects.filter(
+            status__in=sweepable_statuses(),
+            run_type=RunType.CONTINUOUS,
+            continuous_cursor__lt=timezone.now() - STALE_CONTINUOUS_CURSOR,
+        )
+        .order_by("continuous_cursor")
+        .values_list("id", "continuous_cursor")[:limit]
+    )
+    # dict.fromkeys dedupes a task found both ways, keeping its stillest rank.
+    stranded_ids = list(
+        dict.fromkeys(task_id for _, task_id in sorted([*entry_rows, *cursor_rows]))
+    )[:limit]
     if not stranded_ids:
         return []
     # Re-read as model instances. The status filter is repeated so a task
@@ -135,6 +160,7 @@ def only_unreclaimable_claims_remain(
 
 __all__ = [
     "find_stranded_tasks",
+    "STALE_CONTINUOUS_CURSOR",
     "only_unreclaimable_claims_remain",
     "sweepable_statuses",
 ]
