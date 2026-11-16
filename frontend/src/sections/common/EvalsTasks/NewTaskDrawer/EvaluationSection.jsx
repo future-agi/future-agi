@@ -36,7 +36,7 @@ const EvaluationSection = ({
     <>
       <ShowComponent condition={isEvalsLoading}>
         <Box
-          borderRadius={0.5}
+          borderRadius="4px"
           p={theme.spacing(1.5)}
           flexGrow={1}
           display="flex"
@@ -66,7 +66,7 @@ const EvaluationSection = ({
           minHeight={"30vh"}
           sx={{ height: "100%" }}
         >
-          <Typography fontSize={16} fontWeight="bold">
+          <Typography fontSize={16} fontWeight="600">
             No evaluations added
           </Typography>
           <Typography
@@ -97,11 +97,11 @@ const EvaluationSection = ({
                 }}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/action_buttons/ic_add.svg"
-                    sx={{ width: 16, height: 16, color: "text.secondary" }}
+                    sx={{ color: "text.secondary" }}
                   />
                 }
-                sx={{ px: theme.spacing(3), fontWeight: 500 }}
                 disabled={!selected}
               >
                 Add Evaluations
@@ -117,7 +117,7 @@ const EvaluationSection = ({
         <Box
           border="1px solid"
           borderColor={theme.palette.divider}
-          borderRadius={0.5}
+          borderRadius="4px"
           p={theme.spacing(1.5)}
           flexGrow={1}
           display="flex"

@@ -144,6 +144,44 @@ describe("AddToQueueDialog", () => {
     expect(screen.queryByText("Annotator Queue")).not.toBeInTheDocument();
   });
 
+  it("scopes enumerated span resolution to the selected project", async () => {
+    const user = userEvent.setup();
+    useAnnotationQueuesList.mockReturnValue({
+      data: {
+        results: [
+          {
+            id: "manager-queue",
+            name: "Manager Queue",
+            status: "active",
+            viewer_role: "manager",
+            viewer_roles: ["manager"],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+
+    renderDialog({
+      sourceType: "observation_span",
+      sourceIds: ["span-1"],
+      projectId: "project-1",
+      itemName: "Span",
+    });
+
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(addItems).toHaveBeenCalledWith(
+        {
+          queueId: "manager-queue",
+          items: [{ source_type: "observation_span", source_id: "span-1" }],
+          project_id: "project-1",
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
   it("surfaces partial backend skips when some selected traces are unavailable", async () => {
     const user = userEvent.setup();
     useAnnotationQueuesList.mockReturnValue({
@@ -184,5 +222,60 @@ describe("AddToQueueDialog", () => {
       "1 trace added to Manager Queue · 1 trace is still in progress and was not added to the annotation queue.",
       { variant: "info" },
     );
+  });
+
+  it("keeps the dialog open when a filter add outcome is unknown", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSuccess = vi.fn();
+    useAnnotationQueuesList.mockReturnValue({
+      data: {
+        results: [
+          {
+            id: "manager-queue",
+            name: "Manager Queue",
+            status: "active",
+            viewer_role: "manager",
+            viewer_roles: ["manager"],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    addItems.mockImplementationOnce((_variables, callbacks) => {
+      callbacks.onError?.({ transportCode: "ERR_CANCELED" });
+    });
+
+    renderDialog({
+      onClose,
+      onSuccess,
+      selectionMode: "filter",
+      projectId: "project-1",
+      filter: [],
+    });
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(addItems).toHaveBeenCalledWith(
+        {
+          queueId: "manager-queue",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+            filter: [],
+            exclude_ids: ["trace-1"],
+            is_voice_call: false,
+            remove_simulation_calls: false,
+          },
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    // The real shared API hook shows the refresh/check warning. With that hook
+    // mocked here, the consumer must not replace it with a success/empty toast.
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,6 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import EmptyContent from "src/components/empty-content";
 import PropTypes from "prop-types";
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import {
@@ -25,6 +28,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import { getInitials } from "../annotation-queue-table";
 import { isQueueAnnotatorRole } from "../constants";
@@ -34,6 +38,16 @@ import { fToNow } from "src/utils/format-time";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 const SkeletonCell = () => (
   <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 1 }}>
@@ -121,7 +135,7 @@ function StatusCellRenderer({ data }) {
         {data.reserved_by && (
           <Tooltip title={`Reserved by ${data.reserved_by_name || "someone"}`}>
             <Iconify
-              icon="mingcute:lock-fill"
+              icon="solar:lock-linear"
               width={16}
               sx={{ color: "warning.main" }}
             />
@@ -228,14 +242,13 @@ function AssignedCellRenderer({ data, context }) {
             color="primary"
             onClick={canAssign ? handleClick : undefined}
             sx={{
-              height: 24,
-              fontSize: 12,
               cursor: canAssign ? "pointer" : "default",
             }}
           />
         </Tooltip>
       ) : assignedUsers.length > 0 ? (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <Stack spacing={0.25} sx={{ py: 0.25 }}>
               {assignedUsers.map((u) => (
@@ -258,10 +271,6 @@ function AssignedCellRenderer({ data, context }) {
                 height: 28,
                 fontSize: 12,
                 fontWeight: 600,
-                bgcolor: "primary.main",
-                color: "primary.contrastText",
-                border: "2px solid",
-                borderColor: "background.paper",
               },
             }}
           >
@@ -279,8 +288,6 @@ function AssignedCellRenderer({ data, context }) {
           onClick={canAssign ? handleClick : undefined}
           sx={{
             cursor: canAssign ? "pointer" : "default",
-            height: 24,
-            fontSize: 12,
             borderStyle: canAssign ? "dashed" : "solid",
             "&:hover": canAssign
               ? {
@@ -296,7 +303,7 @@ function AssignedCellRenderer({ data, context }) {
         onClose={handleClose}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { width: 220 } } }}
+        slotProps={{ paper: { sx: { width: 240 } } }}
       >
         <Box sx={{ px: 0.75, py: 0.75 }}>
           <TextField
@@ -405,11 +412,10 @@ function ReviewCellRenderer({ data }) {
   }
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip
-        label={reviewStatus.replace("_", " ")}
-        size="small"
-        color={REVIEW_COLORS[reviewStatus] || "default"}
-        sx={{ height: 22, fontSize: 11 }}
+      <StatusBadge
+        status={reviewStatus.replace("_", " ")}
+        label={String(reviewStatus.replace("_", " "))}
+        role={CHIP_ROLE[REVIEW_COLORS[reviewStatus] || "default"]}
       />
     </Box>
   );
@@ -442,7 +448,6 @@ function CommentsCellRenderer({ data }) {
             variant="outlined"
             icon={<Iconify icon="solar:chat-round-dots-bold" width={14} />}
             label={comments}
-            sx={{ height: 22, fontSize: 11, fontWeight: 700 }}
           />
         )}
         {openFeedback > 0 && (
@@ -452,7 +457,6 @@ function CommentsCellRenderer({ data }) {
             variant="outlined"
             icon={<Iconify icon="solar:flag-bold" width={14} />}
             label={openFeedback}
-            sx={{ height: 22, fontSize: 11, fontWeight: 700 }}
           />
         )}
       </Stack>
@@ -493,17 +497,17 @@ function ActionsCellRenderer({ data, context }) {
     >
       <Tooltip title="Remove item">
         <IconButton
+          className="row-hover-action"
           size="small"
           onClick={(e) => {
             e.stopPropagation();
             context?.onRemoveConfirm(data);
           }}
           sx={{
-            opacity: 1,
             "&:hover": { color: "error.main" },
           }}
         >
-          <Iconify icon="mingcute:close-line" width={16} />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       </Tooltip>
     </Box>
@@ -601,6 +605,7 @@ export default function QueueItemsTable({
         },
         {
           field: "comment_count",
+          cellStyle: { fontVariantNumeric: "tabular-nums" },
           headerName: "Comments",
           flex: 0.8,
           minWidth: 116,
@@ -726,20 +731,7 @@ export default function QueueItemsTable({
   const getRowId = useCallback((params) => params.data?.id, []);
 
   const CustomNoRowsOverlay = useCallback(
-    () => (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          No items match your filters
-        </Typography>
-      </Box>
-    ),
+    () => <EmptyContent title="No items match your filters" />,
     [],
   );
 
@@ -765,21 +757,6 @@ export default function QueueItemsTable({
             flex: 1,
             minHeight: 0,
             overscrollBehavior: "none",
-            "& .ag-row": {
-              borderBottom: "1px solid",
-              borderBottomColor: "divider",
-            },
-            "& .ag-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
-            "& .ag-cell:last-of-type": {
-              borderRight: 0,
-            },
-            "& .ag-header-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
           }}
         >
           <AgGridReact
@@ -789,8 +766,8 @@ export default function QueueItemsTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={52}
-            headerHeight={42}
+            rowHeight={ROW_HEIGHT.default}
+            headerHeight={32}
             pagination={false}
             animateRows={false}
             rowSelection={canSelectItems ? { mode: "multiRow" } : undefined}
@@ -821,7 +798,7 @@ export default function QueueItemsTable({
             alignItems: "center",
             py: 1.5,
             px: 2,
-            fontSize: 13,
+            fontSize: 12,
             color: "text.secondary",
             flexShrink: 0,
           }}
@@ -841,7 +818,8 @@ export default function QueueItemsTable({
       <Dialog
         open={Boolean(removeTarget)}
         onClose={() => setRemoveTarget(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>Remove Item</DialogTitle>

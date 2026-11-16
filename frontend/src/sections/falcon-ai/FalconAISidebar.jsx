@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
-import { alpha, useTheme } from "@mui/material/styles";
 import useFalconStore from "./store/useFalconStore";
 import useFalconSocket from "./hooks/useFalconSocket";
 import { useFalconContext } from "./hooks/useFalconContext";
@@ -18,8 +17,6 @@ import SkillPicker from "./components/SkillPicker";
 const SIDEBAR_WIDTH = 420;
 
 export default function FalconAISidebar() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const closeSidebar = useFalconStore((s) => s.closeSidebar);
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
@@ -140,10 +137,8 @@ export default function FalconAISidebar() {
         display: "flex",
         flexDirection: "column",
         borderLeft: 1,
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.08)
-          : alpha(theme.palette.common.black, 0.08),
-        bgcolor: isDark ? "background.default" : "background.paper",
+        borderColor: "divider",
+        bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >

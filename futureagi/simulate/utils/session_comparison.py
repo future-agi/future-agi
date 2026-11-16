@@ -8,6 +8,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.serializers.chat_message import ChatMessageSerializer
 from tracer.models.trace import Trace
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 
 RECORDING_ATTR_KEYS = {
@@ -153,7 +154,6 @@ def fetch_tool_calls(call_execution: CallExecution, role: ChatRole):
     for chat_message in chat_messages:
         content = chat_message.content
         if content and len(content) > 0:
-
             for item in content:
                 if (
                     item.get("role") == role
@@ -292,7 +292,12 @@ def fetch_voice_conversation_span(trace_id: str) -> dict:
     span_attributes.update(conversation_span.attrs_bool or {})
     # Overflow keys that aren't the round-tripped PG JSONField columns are
     # part of the original span_attributes; keep them merged in.
-    _ROUND_TRIP_COLS = ("model_parameters", "input_images", "eval_input", "eval_attributes")
+    _ROUND_TRIP_COLS = (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    )
     for k, v in extra.items():
         if k not in _ROUND_TRIP_COLS:
             span_attributes[k] = v
@@ -393,8 +398,7 @@ def parse_voice_span_transcripts(attrs: dict) -> list[dict]:
 
     # Final fallback: read from raw_log.messages (full Vapi/Retell response)
     if not transcripts or all(t["role"] == "user" for t in transcripts):
-        raw_log = attrs.get("raw_log", {})
-        raw_messages = raw_log.get("messages", []) if isinstance(raw_log, dict) else []
+        raw_messages = span_raw_log(attrs).get("messages", [])
         if raw_messages:
             from_raw = []
             for msg in raw_messages:
@@ -631,7 +635,9 @@ def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
         payload = {}
 
     recording = (
-        (payload.get("artifact") or {}).get("recording") or payload.get("recording") or {}
+        (payload.get("artifact") or {}).get("recording")
+        or payload.get("recording")
+        or {}
     )
     if not isinstance(recording, dict):
         recording = {}

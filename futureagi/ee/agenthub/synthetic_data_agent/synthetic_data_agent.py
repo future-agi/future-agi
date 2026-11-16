@@ -46,7 +46,7 @@ import pandas as pd
 from agentic_eval.core.utils.model_config import ModelConfigs
 
 # Default model configuration using ModelConfigs
-DEFAULT_SDA_MODEL_CONFIG = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+DEFAULT_SDA_MODEL_CONFIG = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
 import json
 import os
 import copy
@@ -477,7 +477,7 @@ class SyntheticDataAgent:
                 "generation_type" in payload and payload["generation_type"] == "prompt"
             )
             if prompt_type:
-                _cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH_LITE
+                _cfg = ModelConfigs.VERTEX_GEMINI_3_1_FLASH_LITE
                 self.llm = LLM(
                     model_name=_cfg.model_name,
                     temperature=_cfg.temperature,
@@ -3135,11 +3135,15 @@ INSTRUCTION: """ + str(ins_subset[i])
                         min_length = field_constraint.get("min_length", None)
                         max_length = field_constraint.get("max_length", None)
                         try:
-                            if min_length and len(field_value) < int(re.sub(r"[^\d]", "", str(min_length)) or 0):
+                            if min_length and len(field_value) < int(
+                                re.sub(r"[^\d]", "", str(min_length)) or 0
+                            ):
                                 issues.append(
                                     f"Record {record_id}, Field {field_name}: Length {len(field_value)} below minimum {min_length}"
                                 )
-                            if max_length and len(field_value) > int(re.sub(r"[^\d]", "", str(max_length)) or 0):
+                            if max_length and len(field_value) > int(
+                                re.sub(r"[^\d]", "", str(max_length)) or 0
+                            ):
                                 issues.append(
                                     f"Record {record_id}, Field {field_name}: Length {len(field_value)} above maximum {max_length}"
                                 )

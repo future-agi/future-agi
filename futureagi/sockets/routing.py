@@ -1,3 +1,5 @@
+import importlib
+
 from django.urls import re_path
 
 from sockets.consumer import DataConsumer
@@ -18,9 +20,9 @@ websocket_urlpatterns = [
 # set). Otherwise fall back to a stub that closes the socket with an
 # upgrade-required error frame.
 if ee_feature_enabled("ee.falcon_ai"):
-    from ee.falcon_ai.routing import websocket_urlpatterns as falcon_ws_patterns
-
-    websocket_urlpatterns += falcon_ws_patterns
+    websocket_urlpatterns += importlib.import_module(
+        "ee.falcon_ai.routing"
+    ).websocket_urlpatterns
 else:
     from sockets.ee_stub_consumer import EEUpgradeConsumer
 

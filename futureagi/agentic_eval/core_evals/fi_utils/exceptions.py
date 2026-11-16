@@ -1,9 +1,5 @@
-
-
 class CustomException(Exception):
-    def __init__(
-        self, message: str | None = None, extra_info: dict | None = None
-    ):
+    def __init__(self, message: str | None = None, extra_info: dict | None = None):
         self.message = message
         self.extra_info = extra_info
         super().__init__(self.message)
@@ -34,3 +30,10 @@ class MediaNotAccessibleError(ValueError):
             f"The file could not be downloaded — please ensure "
             f"the URL is valid and accessible."
         )
+
+
+class CodeEvalSetupError(ValueError):
+    """Raised when this install cannot run a code eval at all: no code
+    executor, or no Node.js for a JavaScript eval. Its message is always one of
+    the backend's own texts (sandbox.SETUP_ERROR_MESSAGES), never one an eval
+    script returned, so callers may show it to users."""

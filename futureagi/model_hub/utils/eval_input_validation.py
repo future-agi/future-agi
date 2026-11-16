@@ -9,6 +9,52 @@ from __future__ import annotations
 import json
 from typing import Any
 
+try:
+    from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
+except ImportError:
+    # Older installs do not yet expose the evaluator's typed config error.
+    class EvalConfigError(ValueError):
+        """An evaluation configuration error whose message is safe to display."""
+
+
+class MissingEvalInputError(EvalConfigError):
+    """A declared evaluation input was explicitly supplied empty."""
+
+
+def validate_eval_configuration(eval_id: str, evaluator) -> None:
+    """Check the resolved deterministic rubric, not an unversioned template.
+
+    Protect intentionally has no rubric. Other evaluators own their own
+    validation; in particular, do not classify arbitrary ValueErrors as config.
+    """
+    if eval_id != "DeterministicEvaluator":
+        return
+
+    from agentic_eval.core.utils.model_config import ModelConfigs
+    from evaluations.engine.registry import get_eval_class
+
+    # Model binding can replace a deterministic template's engine (e.g. Jev).
+    if not isinstance(evaluator, get_eval_class(eval_id)):
+        return
+    if evaluator.provider in {
+        ModelConfigs.PROTECT.provider,
+        ModelConfigs.PROTECT_FLASH.provider,
+    }:
+        return
+    if not evaluator.rule_prompt or not evaluator.rule_prompt.strip():
+        raise EvalConfigError(
+            "Evaluation criteria (rule_prompt) are required. Add grading instructions."
+        )
+
+
+PARTIAL_INPUT_WARNING_TYPE = "partial_input"
+
+PARTIAL_INPUT_MESSAGE = (
+    "Eval ran with some inputs empty. "
+    "Result may be less reliable. "
+    "Ignore if this is intentional."
+)
+
 
 def is_empty_value(value: Any) -> bool:
     """Return True when ``value`` is effectively empty for eval purposes."""
@@ -80,27 +126,25 @@ def validate_eval_inputs(
         # matches "every mapped input empty".
         if is_custom_eval and mapped_keys is not None:
             keys_label = ", ".join(f"'{k}'" for k in sorted(declared_keys))
-            raise ValueError(
-                f"No input received for any of {keys_label}. "
-                "Please check your inputs."
+            raise MissingEvalInputError(
+                f"No input received for any of {keys_label}. Please check your inputs."
             )
         return None, values
 
     if is_custom_eval:
         empty = sorted(
-            k for k in keys_to_check
-            if k not in values or is_empty_value(values.get(k))
+            k for k in keys_to_check if k not in values or is_empty_value(values.get(k))
         )
         nonempty = sorted(
-            k for k in keys_to_check
+            k
+            for k in keys_to_check
             if k in values and not is_empty_value(values.get(k))
         )
 
         if not nonempty:
             keys_label = ", ".join(f"'{k}'" for k in sorted(keys_to_check))
-            raise ValueError(
-                f"No input received for any of {keys_label}. "
-                "Please check your inputs."
+            raise MissingEvalInputError(
+                f"No input received for any of {keys_label}. Please check your inputs."
             )
 
         normalized = dict(values)
@@ -111,20 +155,16 @@ def validate_eval_inputs(
         warning = None
         if empty:
             warning = {
-                "type": "partial_input",
+                "type": PARTIAL_INPUT_WARNING_TYPE,
                 "empty_keys": empty,
                 "filled_keys": nonempty,
-                "message": (
-                    "Eval ran with some inputs empty. "
-                    "Result may be less reliable. "
-                    "Ignore if this is intentional."
-                ),
+                "message": PARTIAL_INPUT_MESSAGE,
             }
         return warning, normalized
 
     for key in sorted(k for k in keys_to_check if k in values):
         if is_empty_value(values[key]):
-            raise ValueError(
+            raise MissingEvalInputError(
                 f"No input received for '{key}'. Please check your input."
             )
     return None, values

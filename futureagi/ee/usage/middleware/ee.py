@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import structlog
 from django.http import JsonResponse
-
 from ee.usage.deployment import DeploymentMode
 from tfc.utils.api_errors import build_error_envelope
 
@@ -35,8 +34,24 @@ class EEFeatureMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # DO NOT REMOVE — this is load-bearing, not legacy special-casing.
+        #
+        # The check below needs the caller's organization, but
+        # `request.organization` is only assigned by APIKeyAuthentication
+        # (accounts/authentication.py), which runs during DRF dispatch — i.e.
+        # inside the view, after every middleware. There is no org to resolve
+        # here, so on cloud the check would look up a blank org id, hit a
+        # UUID column, and raise ValidationError before authentication ever
+        # runs — a 500 on every request under these prefixes.
+        #
+        # Cloud plan entitlement therefore belongs at the view layer. Only
+        # self-hosted license gating is resolvable from middleware, because
+        # that path is org-independent.
+        if DeploymentMode.is_cloud():
+            return self.get_response(request)
+
         # Check if this path requires an EE feature. The unified resolver
-        # handles self-hosted licenses and cloud plan entitlements.
+        # handles self-hosted license state.
         for path_prefix, feature in EE_FEATURE_PATHS.items():
             if request.path.startswith(path_prefix):
                 from ee.usage.services.entitlements import Entitlements

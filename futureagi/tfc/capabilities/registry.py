@@ -31,7 +31,8 @@ class FeatureDefinition:
     # Two-tier gating: requires_license=True features are cloud-plan products
     # by default and run FREE on self-hosted deployments (OSS or EE, any
     # license state). Setting oss_locked=True additionally requires a valid
-    # license off-cloud — reserved for managed compute and the error feed.
+    # license off-cloud — reserved for managed compute, the error feed and
+    # EE-only evaluator models (Jev).
     oss_locked: bool = False
     required_service: str | None = None
     metering_dimension: str | None = None
@@ -102,6 +103,19 @@ FEATURE_TURING_MODELS = FeatureDefinition(
     air_gap_behavior=AirGapBehavior.UNAVAILABLE,
 )
 
+# Jev runs on the org's own TypeSafe key (Settings -> AI Providers), so no
+# FutureAGI service or managed credits are involved; it still needs TypeSafe.
+# Community: every self-hosted install runs it, licensed or not. It stays a
+# paid feature so Cloud resolves it through the plan (has_jev_models).
+FEATURE_JEV_MODELS = FeatureDefinition(
+    id="jev_models",
+    display_name="Jev Models",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+    air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+)
+
 FEATURE_PROTECT = FeatureDefinition(
     id="protect",
     oss_locked=True,
@@ -153,6 +167,26 @@ FEATURE_ERROR_FEED = FeatureDefinition(
     id="error_feed",
     oss_locked=True,
     display_name="Error Feed",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+)
+
+# Instant eval and Insights are Enterprise-only, like the error feed:
+# self-hosted needs a licence that lists them, Cloud a plan that does.
+FEATURE_INSTANT_EVAL = FeatureDefinition(
+    id="instant_eval",
+    oss_locked=True,
+    display_name="Instant eval",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+)
+
+FEATURE_INSIGHTS = FeatureDefinition(
+    id="insights",
+    oss_locked=True,
+    display_name="Insights",
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,
@@ -269,6 +303,8 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_SYNTHETIC_DATA,
     FEATURE_SCENARIOS,
     FEATURE_ERROR_FEED,
+    FEATURE_INSTANT_EVAL,
+    FEATURE_INSIGHTS,
     FEATURE_FIX_MY_AGENT,
     FEATURE_OPTIMIZATION,
     FEATURE_SCIM,
@@ -281,6 +317,7 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_DEDICATED_SUPPORT,
     FEATURE_AGREEMENT_METRICS,
     FEATURE_REQUIRED_LABELS,
+    FEATURE_JEV_MODELS,
 )
 
 
@@ -295,8 +332,9 @@ PAID_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.requires_license
 )
 
-# Paid features that stay license-gated even off-cloud (managed compute +
-# the error feed). Everything else in PAID_FEATURES is free on self-hosted.
+# Paid features that stay license-gated even off-cloud (managed compute, the
+# error feed, Instant eval and Insights). Everything else in PAID_FEATURES,
+# Jev included, is free on self-hosted.
 OSS_LOCKED_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.oss_locked
 )

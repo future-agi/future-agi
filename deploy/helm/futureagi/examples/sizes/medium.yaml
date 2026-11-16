@@ -1,0 +1,69 @@
+# Medium: a production install for one organisation. Two or more replicas of
+# every stateless component, spread over nodes and zones, with CPU and memory
+# autoscaling and disruption budgets. Layer it over your datastore values:
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -f external.yaml -f sizes/medium.yaml --timeout 20m
+#
+# Needs at least two nodes, and HA datastores (not the bundled ones).
+topologySpread:
+  preset: soft
+backend:
+  granian:
+    workers: 2
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "2", memory: 4Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+worker:
+  gracefulShutdownSeconds: 300
+  preStopSleepSeconds: 30
+  allQueues:
+    maxConcurrentActivities: 100
+    resources:
+      requests: {cpu: "1", memory: 3Gi}
+      limits: {cpu: "2", memory: 6Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 70
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600
+frontend:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+fiCollector:
+  goMemLimit: 1800MiB
+  resources:
+    requests: {cpu: 500m, memory: 2Gi}
+    limits: {cpu: "1", memory: 2Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 70
+agentccGateway:
+  # Two or more replicas share rate limits and budgets in Redis (database 4);
+  # with redis.external.tls, in the Redis agentccGateway.extraEnv names.
+  redis:
+    enabled: auto
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 70

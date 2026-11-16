@@ -1,14 +1,16 @@
-import { Box, Grid, Skeleton, useTheme } from "@mui/material";
+import { Alert, Box, Button, Grid, Skeleton, useTheme } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvaluationDateTimeRangePicker from "../EvalsChartsView/EvaluationDateTimeRangePicker";
 import ReactApexChart from "react-apexcharts";
-import { useQuery } from "@tanstack/react-query";
+import { seriesColor } from "src/theme/data-colors";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { endOfToday, sub } from "date-fns";
 import { useLocation, useParams } from "react-router";
 import { getRandomId } from "src/utils/utils";
 import PropTypes from "prop-types";
+import { readEvalMetrics } from "../utils/eval_metrics_read";
 
 const MetricsTabGraph = ({ setDateFilter }) => {
   const theme = useTheme();
@@ -62,15 +64,30 @@ const MetricsTabGraph = ({ setDateFilter }) => {
     return [currentFilter];
   }, [parentDateFilter, setDateFilter]);
 
-  const { data: graphData, isLoading } = useQuery({
+  const {
+    data: graphData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["get-graph-data", evalId, filters, selectedInterval],
-    queryFn: async () => {
-      const response = await axios.get(endpoints.develop.eval.getEvalMetrics, {
-        params: { eval_template_id: evalId, filters: JSON.stringify(filters) },
-      });
-      return response.data;
-    },
-    // enabled: Boolean(observeId) && filters.length > 0,
+    queryFn: ({ signal }) =>
+      readEvalMetrics(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.develop.eval.getEvalMetrics, {
+            signal: requestSignal,
+            timeout,
+            params: {
+              eval_template_id: evalId,
+              filters: JSON.stringify(filters),
+            },
+          }),
+        signal,
+      ),
+    enabled: Boolean(evalId),
+    placeholderData: keepPreviousData,
+    retry: false,
   });
 
   const chartData = useMemo(() => {
@@ -98,13 +115,13 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           name: lineSeriesName,
           type: "line",
           data: primaryData,
-          color: "#CC91EA",
+          color: seriesColor(theme, 0),
         },
         {
           name: barSeriesName,
           type: "column",
           data: trafficData,
-          color: isDark ? "#3f3f46" : "#F0ECFF",
+          color: theme.palette.border.default,
         },
       ],
       options: {
@@ -114,7 +131,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           type: "line",
           stacked: false,
           background: "transparent",
-          foreColor: isDark ? "#a1a1aa" : undefined,
+          foreColor: theme.palette.text.secondary,
           toolbar: {
             show: false,
           },
@@ -159,7 +176,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           intersect: false,
         },
         grid: {
-          borderColor: isDark ? "#27272a" : undefined,
+          borderColor: theme.palette.divider,
         },
         legend: {
           position: "top",
@@ -167,7 +184,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
         },
       },
     };
-  }, [graphData?.result, isDark, chartId]);
+  }, [graphData?.result, isDark, theme, chartId]);
 
   return (
     <Box sx={{ paddingY: 1, height: "100%", overflow: "hidden" }}>
@@ -189,6 +206,21 @@ const MetricsTabGraph = ({ setDateFilter }) => {
 
       {/* Chart Categories and Charts */}
       <Box sx={{ height: "90%", overflowY: "auto" }}>
+        {isError && (
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" size="small" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+            sx={{ mb: 1 }}
+          >
+            {graphData
+              ? "Could not refresh evaluation metrics. The previous graph is still shown."
+              : error?.message || "Could not load evaluation metrics."}
+          </Alert>
+        )}
         {isLoading ? (
           <>
             <Skeleton variant="text" width={150} height={40} />
@@ -198,7 +230,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
               </Grid>
             </Grid>
           </>
-        ) : (
+        ) : graphData ? (
           <>
             <ReactApexChart
               ref={chartRef}
@@ -208,7 +240,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
               height={150} // Adjust height as needed
             />
           </>
-        )}
+        ) : null}
       </Box>
     </Box>
   );
