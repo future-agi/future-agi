@@ -234,6 +234,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, gp)
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(genaiResponseText(respBody))
@@ -274,6 +275,9 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, reqBody, headers)
+		if callErr == nil {
+			recordServedBy(rc, gp)
+		}
 		return callErr
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
@@ -539,6 +543,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, provider)
 		rc.Response = canonicalResp
 		return nil
 	})
@@ -632,6 +637,9 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		if rawChunkCh != nil {
+			recordServedBy(rc, provider)
+		}
 		return nil
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
