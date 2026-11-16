@@ -130287,7 +130287,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessSeededRowChoice: {
       description:
         "Other seeded rows of the table the scenario could start from instead, the first 50.",
-      required: ["key", "summary", "available", "unavailable_reason"],
+      required: ["key", "summary", "note"],
       type: "object",
       properties: {
         key: {
@@ -130304,15 +130304,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
-        available: {
-          title: "Available",
+        note: {
+          title: "Note",
           description:
-            "False when another scenario of the suite already starts from this row.",
-          type: "boolean",
-        },
-        unavailable_reason: {
-          title: "Unavailable reason",
-          description: "Why the row can't be chosen; null when it can.",
+            "Another scenario of the suite that already starts from this row; null when none does.",
           type: "string",
           minLength: 1,
           "x-nullable": true,

@@ -1080,3 +1080,13 @@ def test_someone_new_on_the_caller_s_side_speaks_on_the_first_way_the_agent_is_r
         "caller": {"channel": channel},
         "world": {"channel": None},
     }
+
+
+def test_a_chat_actor_scheduled_for_a_turn_says_it_comes_in_before_the_person_closes():
+    from simulate.services.harness_actor_labels import when_label
+
+    scheduled = {"kind": "mid_journey", "turn": 2}
+
+    assert "before the person closes" in when_label(scheduled, "chat_message")
+    # On a call the scheduled turn is the whole rule.
+    assert "closes" not in when_label(scheduled, "audio_mix")

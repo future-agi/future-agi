@@ -14,11 +14,9 @@ class HarnessSeededRowChoiceSerializer(serializers.Serializer):
     summary = serializers.CharField(
         help_text=f"The row in one line: its key, then up to {SUMMARY_VALUES} of its other values."
     )
-    available = serializers.BooleanField(
-        help_text="False when another scenario of the suite already starts from this row."
-    )
-    unavailable_reason = serializers.CharField(
-        allow_null=True, help_text="Why the row can't be chosen; null when it can."
+    note = serializers.CharField(
+        allow_null=True,
+        help_text="Another scenario of the suite that already starts from this row; null when none does.",
     )
 
 

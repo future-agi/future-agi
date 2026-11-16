@@ -22,6 +22,8 @@ HANDOFF_CHANNEL = "audio_handoff"
 TAKES_PHONE_FROM_TURN = 2
 # A phone menu on the person's line: it answers the call the agent places, before anyone speaks.
 IVR_CHANNEL = "ivr"
+# Someone who writes in the chat: one the scenario schedules for a turn comes in before the person closes, if sooner.
+CHAT_CHANNEL = "chat_message"
 # The trigger kinds each runtime evaluates: someone who speaks runs on the agent's turns and words, someone acting
 # through the world on its actions, contacts and time.
 SPEAKING_TRIGGERS = ("always", "on_tool", "on_keyword", "mid_journey", "conditional")
@@ -214,7 +216,12 @@ def when_label(
     )
     if kind == "mid_journey":
         turn = whole_of(trigger.get("turn")) or 0
-        return f"After the agent's turn {max(turn, TAKES_PHONE_FROM_TURN) if handoff else turn}"
+        after = f"After the agent's turn {max(turn, TAKES_PHONE_FROM_TURN) if handoff else turn}"
+        return (
+            f"{after}, or before the person closes the chat, if sooner"
+            if channel == CHAT_CHANNEL
+            else after
+        )
     if kind == "on_tool":
         on_call = whole_of(trigger.get("on_call")) or 1
         tool = text_of(trigger.get("tool"))

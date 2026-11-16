@@ -148348,8 +148348,7 @@
             "required": [
                 "key",
                 "summary",
-                "available",
-                "unavailable_reason"
+                "note"
             ],
             "type": "object",
             "properties": {
@@ -148365,14 +148364,9 @@
                     "type": "string",
                     "minLength": 1
                 },
-                "available": {
-                    "title": "Available",
-                    "description": "False when another scenario of the suite already starts from this row.",
-                    "type": "boolean"
-                },
-                "unavailable_reason": {
-                    "title": "Unavailable reason",
-                    "description": "Why the row can't be chosen; null when it can.",
+                "note": {
+                    "title": "Note",
+                    "description": "Another scenario of the suite that already starts from this row; null when none does.",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

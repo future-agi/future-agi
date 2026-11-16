@@ -446,7 +446,7 @@ def test_a_rework_waiting_on_the_person_says_so_with_the_chat_message_that_asks(
     assert auth_client.get(_url(environment)).json()["can_rework"] is True
 
 
-def test_a_row_another_scenario_starts_from_is_not_offered_and_never_sent(
+def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_the_builder(
     user, workspace, storage, auth_client
 ):
     from simulate.services.harness_versioning.versions import record_authoring
@@ -485,11 +485,9 @@ def test_a_row_another_scenario_starts_from_is_not_offered_and_never_sent(
         if one["path"] == ["identity", "rider_id"]
     ]
     [priya] = [one for one in rider["choices"] if one["key"] == "rdr_priya"]
-    refused = _rework(auth_client, environment)
+    asked = _rework(auth_client, environment)
 
-    assert priya["available"] is False and OTHER in priya["unavailable_reason"]
-    assert refused.status_code == 400, refused.content
-    assert refused.json()["problems"] == [
-        {"field": "key", "message": priya["unavailable_reason"]}
-    ]
-    assert not _requests(environment).exists()
+    # Two scenarios may share a row with different callers: the builder applies its caller rule.
+    assert OTHER in priya["note"]
+    assert asked.status_code == 202, asked.content
+    assert _requests(environment).count() == 1

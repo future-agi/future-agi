@@ -28,14 +28,12 @@ const RIDER = {
     {
       key: "rdr_priya",
       summary: "Priya's row, as the server words it",
-      available: true,
-      unavailable_reason: null,
+      note: null,
     },
     {
       key: "rdr_meera",
       summary: "Meera's row, as the server words it",
-      available: false,
-      unavailable_reason: "The server's reason Meera's row is taken.",
+      note: "The server's note on Meera's row.",
     },
   ],
 };
@@ -282,7 +280,7 @@ describe("StartingRecords", () => {
     expect(focused).toEqual(["reply-1"]);
   });
 
-  it("offers a row another scenario starts from as not choosable, with the server's reason", () => {
+  it("offers a row another scenario starts from with the server's note beside it", () => {
     reads(RECORDS);
     sends();
     open();
@@ -293,13 +291,8 @@ describe("StartingRecords", () => {
     fireEvent.mouseDown(screen.getByLabelText("Record to start from"));
 
     const meera = screen.getByRole("option", { name: /Meera's row/ });
-    expect(meera).toHaveAttribute("aria-disabled", "true");
-    expect(meera).toHaveTextContent(
-      "The server's reason Meera's row is taken.",
-    );
-    expect(
-      screen.getByRole("option", { name: /Priya's row/ }),
-    ).not.toHaveAttribute("aria-disabled", "true");
+    expect(meera).toHaveTextContent("The server's note on Meera's row.");
+    expect(meera).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows the server's problem with a choice under the picker", () => {

@@ -58,9 +58,8 @@ class SeededRow(TypedDict):
     # The row's key as text, as a rework request sends it back.
     key: str
     summary: str
-    # Another scenario of the suite already starts from this row: it can't be chosen, and why.
-    available: bool
-    unavailable_reason: str | None
+    # Another scenario of the suite already starts from this row, said beside it; null when none does.
+    note: str | None
 
 
 class ReworkRequest(TypedDict):
@@ -419,8 +418,7 @@ def _record_of(
             SeededRow(
                 key=str(one[key_field]),
                 summary=_summary(key_field, one),
-                available=True,
-                unavailable_reason=None,
+                note=None,
             )
             for one in table.others(key_field, fact.value, CHOICES_MAX)
         ],
@@ -520,23 +518,16 @@ def _taken(files: ScenarioFiles, tables: list[_Table]) -> dict[tuple[str, str], 
     return taken
 
 
-def _taken_reason(table: str, key: str, scenario: str) -> str:
-    return f"{table} {key} already starts the scenario {scenario}; each scenario starts from a record of its own."
-
-
-def _with_availability(
+def _with_notes(
     records: list[StartingRecord], taken: Mapping[tuple[str, str], str]
 ) -> list[StartingRecord]:
+    """Each choice another scenario already starts from, said beside it; the builder decides whether it can be."""
     for record in records:
         record["choices"] = [
             {
                 **choice,
-                "available": (record["table"], choice["key"]) not in taken,
-                "unavailable_reason": _taken_reason(
-                    record["table"],
-                    choice["key"],
-                    taken[(record["table"], choice["key"])],
-                )
+                "note": f"{record['table']} {choice['key']} already starts the scenario "
+                f"{taken[(record['table'], choice['key'])]}"
                 if (record["table"], choice["key"]) in taken
                 else None,
             }
@@ -548,24 +539,14 @@ def _with_availability(
 def scenario_records(
     files: ScenarioFiles,
 ) -> tuple[list[StartingRecord], RowsUnavailable | None]:
-    """The records a scenario's facts name, each choice saying whether another scenario already starts from it, and
-    why the world's rows can't be read when they can't."""
+    """The records a scenario's facts name, each choice noting another scenario that already starts from it, and why
+    the world's rows can't be read when they can't."""
     fixture = files.document.get("fixture")
     records, unavailable = _with_tables(
         files.environment,
-        lambda tables: _with_availability(
-            _records(fixture, tables), _taken(files, tables)
-        ),
+        lambda tables: _with_notes(_records(fixture, tables), _taken(files, tables)),
     )
     return records or [], unavailable
-
-
-def taken_by(files: ScenarioFiles, *, table: str, key: str) -> str | None:
-    """Why another scenario of the suite already holds ``table`` ``key``, or None when none starts from it."""
-    found, _ = _with_tables(
-        files.environment, lambda tables: _taken(files, tables).get((table, key))
-    )
-    return _taken_reason(table, key, found) if found else None
 
 
 def seeded_row(

@@ -62,12 +62,12 @@ export default function StartingRecordRework({
         }
       >
         {record.choices.map((row) => (
-          <MenuItem key={row.key} value={row.key} disabled={!row.available}>
+          <MenuItem key={row.key} value={row.key}>
             <Stack>
               <Typography sx={{ typography: "s1" }}>{row.summary}</Typography>
-              {row.unavailable_reason && (
+              {row.note && (
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {row.unavailable_reason}
+                  {row.note}
                 </Typography>
               )}
             </Stack>
