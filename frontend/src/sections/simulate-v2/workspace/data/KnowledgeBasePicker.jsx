@@ -40,13 +40,15 @@ export default function KnowledgeBasePicker({
       PaperProps={{ sx: { maxWidth: 640, p: 2.5 } }}
     >
       <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-        Choose from Knowledge base
+        Add from the Knowledge base
       </Typography>
       <Typography
         title={`${KB_SNAPSHOT_LINE} ${KB_STATE_LINE} ${KB_LIMIT_LINE}`}
         sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
       >
-        Copies the revision you pick · PDF, DOCX, RTF, TXT up to 5 MB
+        {/* What this is for (#101) — opened from Add source. */}
+        Pick a file and the revision to copy into this environment · PDF, DOCX,
+        RTF, TXT up to 5 MB
       </Typography>
 
       <Box sx={{ mt: 1.5, maxHeight: 420, overflowY: "auto" }}>

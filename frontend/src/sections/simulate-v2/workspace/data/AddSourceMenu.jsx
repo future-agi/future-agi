@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import { Box, Menu, MenuItem, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
@@ -24,6 +25,9 @@ export default function AddSourceMenu({
   multiple = true,
   added = [],
   title = null,
+  /* The same import from code (#92, #93): one more way to add a source,
+     not a separate button beside the menu. */
+  command = null,
 }) {
   const fileRef = useRef(null);
   const [kbOpen, setKbOpen] = useState(false);
@@ -85,6 +89,28 @@ export default function AddSourceMenu({
             />
           </MenuItem>
         </Tooltip>
+        {command && (
+          <Tooltip arrow placement="left" title={command}>
+            <MenuItem
+              onClick={() => {
+                onClose();
+                navigator.clipboard?.writeText(command).catch(() => {});
+                enqueueSnackbar("Command copied — run it in your terminal", {
+                  variant: "success",
+                });
+              }}
+              sx={rowSx}
+            >
+              <Iconify icon="solar:code-linear" width={16} />
+              <Typography sx={{ typography: "s2", flex: 1 }}>
+                From code
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                copy the command
+              </Typography>
+            </MenuItem>
+          </Tooltip>
+        )}
         {/* Connectors that aren't ready: one quiet line, not a row each. */}
         <Tooltip
           arrow
@@ -148,6 +174,7 @@ AddSourceMenu.propTypes = {
   added: PropTypes.arrayOf(PropTypes.string),
   anchorEl: PropTypes.any,
   onClose: PropTypes.func.isRequired,
+  command: PropTypes.string,
   onAddFiles: PropTypes.func.isRequired,
   onAddOrg: PropTypes.func.isRequired,
   multiple: PropTypes.bool,

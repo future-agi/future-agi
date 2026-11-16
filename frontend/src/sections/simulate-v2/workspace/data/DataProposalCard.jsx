@@ -311,14 +311,28 @@ export default function DataProposalCard({
                 : i.title}
             </Typography>
             {(i.kind === "rule" || i.editable) && pickable(i) && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => setEditing(editing === i.id ? null : i.id)}
-                sx={{ minWidth: 0, py: 0, px: 0.75, typography: "s3" }}
+              <Tooltip
+                arrow
+                describeChild
+                title={
+                  i.kind === "rule"
+                    ? "Changes the rule we'll add. The file stays as it is."
+                    : "Changes what we'll add. The file stays as it is."
+                }
               >
-                {editing === i.id ? "Done" : "Edit"}
-              </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setEditing(editing === i.id ? null : i.id)}
+                  sx={{ minWidth: 0, py: 0, px: 0.75, typography: "s3" }}
+                >
+                  {editing === i.id
+                    ? "Done"
+                    : i.kind === "rule"
+                      ? "Edit rule"
+                      : "Edit"}
+                </Button>
+              </Tooltip>
             )}
             {i.inferred && (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>

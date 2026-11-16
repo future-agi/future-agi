@@ -154,7 +154,9 @@ export default function ReviewRefreshDialog({
               {`Review refresh · ${source.name}`}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`Rev ${plan.from} → rev ${plan.latest} · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}`}
+              {/* Why it's open and what to do (#100): a new revision in the
+                  Knowledge base; every change is in unless rejected. */}
+              {`New in the Knowledge base: rev ${plan.from} → rev ${plan.latest} · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}, each accepted unless you reject it · then Save as ${next}`}
             </Typography>
           </Box>
           <IconButton size="small" onClick={close} aria-label="Close">
@@ -344,9 +346,15 @@ export default function ReviewRefreshDialog({
             borderColor: "divider",
           }}
         >
-          <Box flex={1}>
+          <Stack direction="row" spacing={1.5} alignItems="center" flex={1}>
+            <Box
+              component="span"
+              sx={{ typography: "s3", color: "text.secondary" }}
+            >
+              {`${accepted.length} of ${plan.changes.length} accepted`}
+            </Box>
             {touched.length > 0 && <ScenarioCount list={touched} />}
-          </Box>
+          </Stack>
           <Button size="small" variant="outlined" onClick={keepPinned}>
             {`Keep rev ${plan.from} pinned`}
           </Button>

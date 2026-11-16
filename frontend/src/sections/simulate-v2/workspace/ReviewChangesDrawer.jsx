@@ -356,7 +356,13 @@ export default function ReviewChangesDrawer({
                             flexShrink: 0,
                           }}
                         >
-                          {f.source ? `Fix in ${f.source}` : "Fix"}
+                          {/* What to do about it, not "fix the file" — a
+                              source is never edited here (#97). */}
+                          {/^missing table/i.test(f.detail || "")
+                            ? "Supply the records"
+                            : f.source
+                              ? "Attach a file"
+                              : "Fix"}
                         </Button>
                         {canEdit && (
                           <Button

@@ -116,8 +116,18 @@ export default function SourceDrawer({
     if (focusAt) setTab("preview");
   }, [sourceId, focusAt]);
   useEffect(() => {
-    if (focusTab) setTab(focusTab);
-  }, [sourceId, focusTab]);
+    if (!focusTab) return;
+    /* Remove from the Sources row (#96): the Usage tab, where removing
+       sits, with its confirmation already open. */
+    if (focusTab === "remove") {
+      setTab("usage");
+      const s = (envState.sources || []).find((x) => x.id === sourceId);
+      if (s?.inEnv) setArchiving(true);
+      else setRemoving(true);
+      return;
+    }
+    setTab(focusTab);
+  }, [sourceId, focusTab]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!source) return <SideDrawer open={false} onClose={onClose} />;
   const p = source.parsed || {};
   const all = envState.sources || [];
@@ -252,6 +262,7 @@ export default function SourceDrawer({
           <Select
             size="small"
             value={source.role || ""}
+            renderValue={(v) => (v ? roleLabel(v) : "")}
             disabled={readOnly || source.status === "unsupported"}
             onChange={(e) =>
               edit(
@@ -262,14 +273,30 @@ export default function SourceDrawer({
             sx={{ typography: "s2", minWidth: 200 }}
           >
             {ROLES.map((r) => (
-              <MenuItem key={r.id} value={r.id} sx={{ typography: "s2" }}>
+              <MenuItem
+                key={r.id}
+                value={r.id}
+                sx={{ typography: "s2", display: "block", maxWidth: 360 }}
+              >
                 {r.label}
+                <Typography
+                  component="span"
+                  sx={{
+                    display: "block",
+                    typography: "s3",
+                    color: "text.tertiary",
+                    whiteSpace: "normal",
+                  }}
+                >
+                  {r.note}
+                </Typography>
               </MenuItem>
             ))}
           </Select>
           <Select
             size="small"
             value={source.visibility || ""}
+            renderValue={(v) => (v ? visibilityLabel(v) : "")}
             disabled={readOnly || source.status === "unsupported"}
             onChange={(e) =>
               edit(
@@ -280,8 +307,23 @@ export default function SourceDrawer({
             sx={{ typography: "s2", minWidth: 160 }}
           >
             {VISIBILITY.map((v) => (
-              <MenuItem key={v.id} value={v.id} sx={{ typography: "s2" }}>
+              <MenuItem
+                key={v.id}
+                value={v.id}
+                sx={{ typography: "s2", display: "block", maxWidth: 360 }}
+              >
                 {v.label}
+                <Typography
+                  component="span"
+                  sx={{
+                    display: "block",
+                    typography: "s3",
+                    color: "text.tertiary",
+                    whiteSpace: "normal",
+                  }}
+                >
+                  {v.note}
+                </Typography>
               </MenuItem>
             ))}
           </Select>
@@ -647,7 +689,7 @@ export default function SourceDrawer({
                   onClick={() => setArchiving(true)}
                   sx={{ mt: 1.5 }}
                 >
-                  Archive this source
+                  Remove from this environment
                 </Button>
               )}
               {/* Not saved into the world yet: nothing depends on it, so it just goes. */}
@@ -933,7 +975,7 @@ export default function SourceDrawer({
       <ConfirmDialog
         open={archiving}
         onClose={() => setArchiving(false)}
-        title={`Archive ${source.name}?`}
+        title={`Remove ${source.name} from this environment?`}
         content={`New versions won't use it. ${usage.rules.length + usage.scenarios.length + usage.tables.length ? `It's used by ${[usage.rules.length && `${usage.rules.length} rules`, usage.scenarios.length && `${usage.scenarios.length} scenarios`, usage.tables.length && `${usage.tables.length} seed tables`].filter(Boolean).join(", ")} — they keep citing it on the versions they were made on. ` : ""}Past runs still show it.`}
         action={
           <Button
@@ -942,11 +984,11 @@ export default function SourceDrawer({
             color="primary"
             onClick={() => {
               setArchiving(false);
-              edit({ archived: true }, `${source.name} archived`);
+              edit({ archived: true }, `${source.name} removed`);
               onClose();
             }}
           >
-            Archive
+            Remove
           </Button>
         }
       />

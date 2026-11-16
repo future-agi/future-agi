@@ -48,8 +48,8 @@ export const ROLES = [
   },
   {
     id: "seed",
-    label: "Records",
-    note: "Records are mapped to world tables and seed the world",
+    label: "Seed records",
+    note: "Rows that fill the world's tables — the data the agent's tools return",
   },
   {
     id: "task-input",
@@ -70,16 +70,20 @@ export const ROLES = [
 export const roleLabel = (id) => ROLES.find((r) => r.id === id)?.label || id;
 
 export const VISIBILITY = [
-  { id: "agent", label: "Agent-visible", note: "In the agent's context" },
+  {
+    id: "agent",
+    label: "Agent reads it",
+    note: "The agent reads it directly, like part of its instructions",
+  },
   {
     id: "tool",
-    label: "Tool-only",
-    note: "The agent reaches it only through the world's tools",
+    label: "Through tools only",
+    note: "The agent never sees the file — only what the world's tools return from it",
   },
   {
     id: "evaluator",
-    label: "Evaluator-only",
-    note: "Never reaches the agent or the caller",
+    label: "Evaluator only",
+    note: "Used to grade; never reaches the agent or the caller",
   },
 ];
 export const visibilityLabel = (id) =>
@@ -121,8 +125,7 @@ export const KB_LIMIT_LINE =
   "Knowledge base uploads take PDF, DOCX, RTF and TXT — up to 5 MB a file, 1 GB in all.";
 export const KB_SNAPSHOT_LINE =
   "Copies a snapshot of the revision you pick — not linked live.";
-export const KB_STATE_LINE =
-  "Added to the draft only, until you accept.";
+export const KB_STATE_LINE = "Added to the draft only, until you accept.";
 
 /** The type column: the file's own kind. */
 export const typeLabelOf = (source) =>
@@ -668,7 +671,7 @@ export const dataProposalOf = (
     items.push({
       id: `table-${s.id}`,
       kind: "table",
-      title: `Seed table ${t.table}: ${t.accepted.toLocaleString()} rows${t.rejected.length ? `, ${t.rejected.length} rejected` : ""}`,
+      title: `New table ${t.table}: ${t.accepted.toLocaleString()} rows${t.rejected.length ? `, ${t.rejected.length} rejected` : ""}`,
       cite: {
         sourceId: s.id,
         ref: s.name,
@@ -1222,7 +1225,9 @@ export const draftDataPatches = (
           }),
       },
       "seed",
-      `Table ${t.name} seeded from ${file || "your records"} · ${t.rows} rows`,
+      /* A new world table built from the file's rows — the file itself
+         is never changed (#97). */
+      `New table ${t.name} · ${t.rows} rows from ${file || "your records"}`,
       file,
       { kind: "tables", name: t.name, rows: t.rows, source: file },
       take.find((i) => i.kind === "table" && i.table?.name === t.name)?.cite,

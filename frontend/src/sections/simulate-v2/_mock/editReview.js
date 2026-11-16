@@ -68,7 +68,9 @@ export const sourceLinkOf = (c, envState) => {
     return file
       ? {
           kind: "file",
-          label: `Open ${name}`,
+          /* It shows where the change came from — the file is never
+             edited (#97). */
+          label: `View in ${name}`,
           sourceId: file.id,
           at: c.cite?.at || null,
           where,

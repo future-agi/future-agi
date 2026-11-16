@@ -1,16 +1,24 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { SectionCard } from "../../components/primitives";
-import CopyCommandButton from "../../components/CopyCommandButton";
 import {
   participantViewsOf,
   readFile,
   sourceFromOrg,
+  ROLES,
+  VISIBILITY,
   roleLabel,
   visibilityLabel,
   typeLabelOf,
@@ -34,7 +42,7 @@ const STATUS = {
   unsupported: "Not supported",
   "no-access": "No access",
 };
-const GRID = "minmax(180px, 2fr) 56px 1fr 1.1fr 1fr 80px 0.9fr";
+const GRID = "minmax(180px, 2fr) 56px 1fr 1.1fr 1fr 80px 0.9fr 28px";
 const ago = (iso) => {
   const h = Math.round((Date.now() - Date.parse(iso || "")) / 3600000);
   return h < 1
@@ -136,7 +144,6 @@ export default function SourcesSection({
       }
       action={
         <Stack direction="row" spacing={1} alignItems="center">
-          <CopyCommandButton command={dataCli.import(env, sources[0])} />
           {!readOnly && (
             <Button
               size="small"
@@ -158,6 +165,7 @@ export default function SourcesSection({
         onAddFiles={addFiles}
         onAddOrg={addOrg}
         added={sources.filter((s) => s.kb).map((s) => s.name)}
+        command={dataCli.import(env, sources[0])}
       />
       {!readOnly && pending.length > 0 && (
         <Stack
@@ -223,6 +231,7 @@ export default function SourcesSection({
               "State",
               "Version",
               "Used by",
+              "",
             ].map((h) => (
               <Typography
                 key={h}
@@ -238,6 +247,30 @@ export default function SourcesSection({
             const refresh = kbRefreshOf(s);
             const pd = personalDataOf(s);
             const choosing = pd.has && !pd.choice;
+            /* A file that needs something from you says what, and where to
+               click, on its own line (#99) — not only in the State cell. */
+            const problem =
+              s.status === "needs-attention"
+                ? {
+                    say: `${s.statusNote || "Some rows were rejected"} — see which and why`,
+                    label: "See rejected rows",
+                    go: () => setOpen(s.id, "preview"),
+                  }
+                : s.status === "unreadable"
+                  ? {
+                      say:
+                        s.statusNote ||
+                        "No text to read — upload a text version instead",
+                      label: "Remove",
+                      go: () => setOpen(s.id, "remove"),
+                    }
+                  : s.status === "unsupported"
+                    ? {
+                        say: `${s.statusNote || "This file type can't be read."} Export it as PDF or DOCX and upload that.`,
+                        label: "Remove",
+                        go: () => setOpen(s.id, "remove"),
+                      }
+                    : null;
             return (
               <Box
                 key={s.id}
@@ -268,12 +301,24 @@ export default function SourcesSection({
                   >
                     {typeLabelOf(s)}
                   </Typography>
-                  <Typography noWrap sx={{ typography: "s2" }}>
-                    {s.role ? roleLabel(s.role) : "—"}
-                  </Typography>
-                  <Typography noWrap sx={{ typography: "s2" }}>
-                    {s.visibility ? visibilityLabel(s.visibility) : "—"}
-                  </Typography>
+                  <Tooltip
+                    arrow
+                    title={ROLES.find((r) => r.id === s.role)?.note || ""}
+                  >
+                    <Typography noWrap sx={{ typography: "s2" }}>
+                      {s.role ? roleLabel(s.role) : "—"}
+                    </Typography>
+                  </Tooltip>
+                  <Tooltip
+                    arrow
+                    title={
+                      VISIBILITY.find((v) => v.id === s.visibility)?.note || ""
+                    }
+                  >
+                    <Typography noWrap sx={{ typography: "s2" }}>
+                      {s.visibility ? visibilityLabel(s.visibility) : "—"}
+                    </Typography>
+                  </Tooltip>
                   <Typography
                     noWrap
                     sx={{
@@ -311,8 +356,37 @@ export default function SourcesSection({
                   >
                     {n ? `${n} item${n === 1 ? "" : "s"}` : "Nothing yet"}
                   </Typography>
+                  {/* Remove a file from its row (#96) — the confirmation
+                      says what still uses it. */}
+                  {!readOnly ? (
+                    <Tooltip
+                      arrow
+                      title={
+                        s.inEnv
+                          ? "Remove from this environment — new versions stop using it; past runs keep it"
+                          : "Remove — it isn't in the world yet"
+                      }
+                    >
+                      <IconButton
+                        size="small"
+                        aria-label={`Remove ${s.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(s.id, "remove");
+                        }}
+                        sx={{ p: 0.25, color: "text.tertiary" }}
+                      >
+                        <Iconify
+                          icon="solar:trash-bin-minimalistic-linear"
+                          width={16}
+                        />
+                      </IconButton>
+                    </Tooltip>
+                  ) : (
+                    <span />
+                  )}
                 </Box>
-                {(refresh || s.revoked || choosing) && (
+                {(refresh || s.revoked || choosing || problem) && (
                   <Stack
                     spacing={0.5}
                     sx={{ px: 2, pb: 1 }}
@@ -355,6 +429,25 @@ export default function SourcesSection({
                         )}
                       </Stack>
                     )}
+                    {problem && (
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography
+                          sx={{ typography: "s3", color: "status.warning.fg" }}
+                        >
+                          {problem.say}
+                        </Typography>
+                        {!readOnly && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={problem.go}
+                            sx={{ flexShrink: 0 }}
+                          >
+                            {problem.label}
+                          </Button>
+                        )}
+                      </Stack>
+                    )}
                     {choosing && (
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Typography
@@ -387,11 +480,27 @@ export default function SourcesSection({
                 borderColor: "divider",
               }}
             >
-              <Typography
-                sx={{ typography: "s3", color: "text.tertiary", mb: 0.5 }}
+              {/* How it's decided (#96): each file's Who reads it, set from
+                  its role when it's added and changeable on the file — a
+                  setting, not something worked out per upload. */}
+              <Tooltip
+                arrow
+                placement="top-start"
+                title="From each file's Who reads it, set by its role when it's added: policies and records reach the agent only through the world's tools, reference material is in the agent's context, hidden answers are the evaluator's only. Change it on the file."
               >
-                Who sees what in a run
-              </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    mb: 0.5,
+                    width: "fit-content",
+                    borderBottom: "1px dashed",
+                    borderColor: "divider",
+                  }}
+                >
+                  Who sees what in a run
+                </Typography>
+              </Tooltip>
               {[
                 ["agent", "Agent under test"],
                 ["caller", "Simulated caller"],
@@ -426,7 +535,7 @@ export default function SourcesSection({
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 2, pt: 1.25 }}
           >
-            {`Archived · ${archived.length}`}
+            {`Removed · ${archived.length}`}
           </Typography>
           {archived.map((s) => (
             <Stack
@@ -506,13 +615,15 @@ export default function SourcesSection({
                 noWrap
                 sx={{ typography: "s3", color: "text.tertiary" }}
               >
-                {(review || [])
+                {/* Where it came from (#95): it opens once the uploaded
+                    files are read. */}
+                {`What the builder read in ${(review || [])
                   .map(
                     (id) =>
                       (envState.sources || []).find((s) => s.id === id)?.name,
                   )
                   .filter(Boolean)
-                  .join(", ")}
+                  .join(", ")} — nothing changes until you add it`}
               </Typography>
             </Box>
             <IconButton
