@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Stack, Typography } from "@mui/material";
+import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PERSONAL_CHOICES, WHO_SEES_PERSONAL } from "../../_mock/dataMapping";
 
@@ -14,7 +14,45 @@ export default function PersonalDataChoice({
   columns = [],
   onChoose,
   readOnly = false,
+  compact = false,
 }) {
+  /* Compact (review drawer): the three choices on one line, each one's
+     meaning on hover. */
+  if (compact)
+    return (
+      <Stack
+        direction="row"
+        role="radiogroup"
+        aria-label="Personal data"
+        spacing={1.5}
+        useFlexGap
+        flexWrap="wrap"
+      >
+        {PERSONAL_CHOICES.map((c) => {
+          const on = choice === c.id;
+          return (
+            <Tooltip key={c.id} title={c.note} arrow>
+              <ButtonBase
+                role="radio"
+                aria-checked={on}
+                disabled={readOnly}
+                onClick={() => onChoose(c.id)}
+                sx={{ gap: 0.5, typography: "s3", py: 0.25 }}
+              >
+                <Iconify
+                  icon={on ? "solar:check-circle-bold" : "solar:circle-linear"}
+                  width={14}
+                />
+                <Box component="span" sx={{ fontWeight: on ? 600 : 400 }}>
+                  {c.id === "replace" ? "Replace" : c.label}
+                  {c.id === suggested ? " (suggested)" : ""}
+                </Box>
+              </ButtonBase>
+            </Tooltip>
+          );
+        })}
+      </Stack>
+    );
   return (
     <Box>
       <Stack role="radiogroup" aria-label="Personal data" spacing={0.25}>
@@ -86,4 +124,5 @@ PersonalDataChoice.propTypes = {
   columns: PropTypes.arrayOf(PropTypes.string),
   onChoose: PropTypes.func.isRequired,
   readOnly: PropTypes.bool,
+  compact: PropTypes.bool,
 };

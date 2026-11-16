@@ -7,6 +7,7 @@ import {
   Checkbox,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
@@ -26,6 +27,7 @@ import {
 } from "../../_mock/dataMapping";
 import { openReviewChanges } from "../reviewChangesBus";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { currentEnvVersion, editsLandInPlace } from "../../_mock/versions";
 import { personaFor } from "../../_mock/scenarios";
 import { stampNewBatch } from "../../_mock/addScenarios";
 import { asProposal } from "../../_mock/scenarioSources";
@@ -73,7 +75,10 @@ export default function DataProposalCard({
   sourceIds,
   onOpenSource,
   onSaved,
+  /* "drawer": fills a side drawer — the list scrolls, the footer stays. */
+  layout = "card",
 }) {
+  const drawer = layout === "drawer";
   const { envState, patch } = useEnvState(env.id);
   const latest = useRef(envState);
   latest.current = envState;
@@ -107,6 +112,11 @@ export default function DataProposalCard({
   const [saved, setSaved] = useState(null);
   const [rejected, setRejected] = useState(false);
   const next = nextSnapshotLabel(env, envState);
+  /* No run has used the current version yet: accepted changes land on it
+     now, so there's no next version to save (versions.js envChangePatch). */
+  const inPlace = editsLandInPlace(envState);
+  const current =
+    currentEnvVersion(env, envState)?.label || "the current version";
   const pickable = (i) =>
     !i.blocking && !["hidden", "unreadable", "personal"].includes(i.kind);
   /* Each source with personal data needs a choice before anything is accepted. */
@@ -159,6 +169,15 @@ export default function DataProposalCard({
         failedEnvChanges: [...(envState.failedEnvChanges || []), ...failed],
       });
     const n = patches.length - 1;
+    if (inPlace) {
+      enqueueSnackbar(
+        `Added ${n} change${n === 1 ? "" : "s"} to environment ${current}${failed.length ? ` · ${failed.length} couldn't apply` : ""}. No run has used ${current} yet, so they apply now.`,
+        { variant: "success" },
+      );
+      if (onSaved) onSaved();
+      else setSaved({ label: current, rules: 0, inPlace: true });
+      return null;
+    }
     enqueueSnackbar(
       `Added ${n} change${n === 1 ? "" : "s"} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
       {
@@ -255,7 +274,7 @@ export default function DataProposalCard({
         direction="row"
         spacing={1}
         sx={{
-          px: 1,
+          px: drawer ? 2.25 : 1,
           py: 1,
           "& + &": { borderTop: "1px solid", borderColor: "divider" },
         }}
@@ -307,20 +326,23 @@ export default function DataProposalCard({
               </Typography>
             )}
           </Stack>
-          {i.detail && !(i.editable && edits[i.id] != null) && (
-            <Typography
-              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-            >
-              {i.detail}
-            </Typography>
-          )}
+          {i.detail &&
+            (i.blocking ||
+              ["missing", "conflict", "unreadable"].includes(i.kind)) &&
+            !(i.editable && edits[i.id] != null) && (
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+              >
+                {i.detail}
+              </Typography>
+            )}
           {i.kind === "missing" && i.present !== false && (
             <Typography
               sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
             >
               {i.affects?.length
-                ? `Flagged: ${i.affects.length} ${i.affects.length === 1 ? "scenario uses" : "scenarios use"} these rows (${i.affects.slice(0, 3).join(", ")}${i.affects.length > 3 ? ", …" : ""}). Resolve them to complete coverage.`
-                : "Flagged, not dropped: the draft stays open, and coverage won't read as complete until these rows are resolved."}
+                ? `${i.affects.length} ${i.affects.length === 1 ? "scenario uses" : "scenarios use"} these rows`
+                : "Kept, flagged until resolved"}
             </Typography>
           )}
           {i.editable && edits[i.id] != null && editing !== i.id && (
@@ -346,11 +368,11 @@ export default function DataProposalCard({
           )}
           {/* data.md §3: values the builder made up say so — never
               attributed to an uploaded source. */}
-          {!i.cite && i.kind !== "conflict" && (
+          {!i.cite && !["conflict", "unreadable"].includes(i.kind) && (
             <Typography
               sx={{ mt: 0.5, typography: "s3", color: "text.tertiary" }}
             >
-              Generated — made by the builder, not from a file you added
+              Generated, not from a file
             </Typography>
           )}
           {i.kind === "table" &&
@@ -360,30 +382,34 @@ export default function DataProposalCard({
               <Typography
                 sx={{ mt: 0.5, typography: "s3", color: "text.tertiary" }}
               >
-                Personal fields: Generated replacements, consistent across
-                tables
+                Personal fields replaced
               </Typography>
             )}
           {i.cite && (
-            <ButtonBase
-              onClick={() => onOpenSource?.(i.cite.sourceId)}
-              sx={{
-                mt: 0.5,
-                typography: "s3",
-                color: "text.tertiary",
-                textAlign: "left",
-                display: "block",
-                "&:hover": { color: "text.primary" },
-              }}
+            <Tooltip
+              title={i.cite.excerpt ? `“${i.cite.excerpt}”` : ""}
+              arrow
+              placement="bottom-start"
             >
-              <Iconify
-                icon="solar:link-minimalistic-linear"
-                width={12}
-                sx={{ mr: 0.5, verticalAlign: "-2px" }}
-              />
-              {i.cite.ref}
-              {i.cite.excerpt ? ` — “${i.cite.excerpt}”` : ""}
-            </ButtonBase>
+              <ButtonBase
+                onClick={() => onOpenSource?.(i.cite.sourceId)}
+                sx={{
+                  mt: 0.5,
+                  typography: "s3",
+                  color: "text.tertiary",
+                  textAlign: "left",
+                  display: "block",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                <Iconify
+                  icon="solar:link-minimalistic-linear"
+                  width={12}
+                  sx={{ mr: 0.5, verticalAlign: "-2px" }}
+                />
+                {i.cite.ref}
+              </ButtonBase>
+            </Tooltip>
           )}
           {i.kind === "conflict" && (
             <Stack spacing={0.5} sx={{ mt: 0.75 }} role="radiogroup">
@@ -446,6 +472,7 @@ export default function DataProposalCard({
           {i.kind === "personal" && (
             <Box sx={{ mt: 0.75 }}>
               <PersonalDataChoice
+                compact
                 suggested={i.suggested}
                 choice={i.choice}
                 readOnly={!gates.canEdit}
@@ -480,9 +507,11 @@ export default function DataProposalCard({
     return (
       <Stack spacing={0.5}>
         <Typography sx={{ typography: "s2" }}>
-          {saved.draft
-            ? "Added to your unsaved changes. Review and save them from the header."
-            : `Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
+          {saved.inPlace
+            ? `Added to environment ${saved.label}. No run has used it yet, so the changes apply now.`
+            : saved.draft
+              ? "Added to your unsaved changes. Review and save them from the header."
+              : `Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
         </Typography>
         <Button
           size="small"
@@ -496,50 +525,69 @@ export default function DataProposalCard({
     );
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+    <Box
+      sx={
+        drawer
+          ? {
+              display: "flex",
+              flexDirection: "column",
+              height: "100%",
+              minHeight: 0,
+            }
+          : { border: "1px solid", borderColor: "divider", borderRadius: 1 }
+      }
+    >
+      {!drawer && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            Proposed changes
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Nothing changes until you add them.
+          </Typography>
+        </Box>
+      )}
       <Box
-        sx={{
-          px: 1.5,
-          py: 1.25,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
+        sx={drawer ? { flex: 1, minHeight: 0, overflowY: "auto" } : undefined}
       >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          Proposed changes
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          Each one cites where it came from. Nothing changes until you accept.
-        </Typography>
+        {GROUPS.flatMap((g) => {
+          const items = proposal.items.filter((x) => g.kinds.includes(x.kind));
+          if (!items.length) return [];
+          return [
+            <Typography
+              key={`h-${g.label}`}
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.tertiary",
+                px: drawer ? 2.5 : 1.5,
+                pt: 1,
+                pb: 0.25,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              {`${g.label} · ${items.length}`}
+            </Typography>,
+            ...items.map((x) => renderItem(x)),
+          ];
+        })}
       </Box>
-      {GROUPS.flatMap((g) => {
-        const items = proposal.items.filter((x) => g.kinds.includes(x.kind));
-        if (!items.length) return [];
-        return [
-          <Typography
-            key={`h-${g.label}`}
-            sx={{
-              typography: "s3",
-              fontWeight: 600,
-              color: "text.tertiary",
-              px: 1.5,
-              pt: 1,
-              pb: 0.25,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            {`${g.label} · ${items.length}`}
-          </Typography>,
-          ...items.map((x) => renderItem(x)),
-        ];
-      })}
       <Stack
         direction="row"
         alignItems="center"
         spacing={1}
         sx={{
-          px: 1.5,
+          px: drawer ? 2.5 : 1.5,
+          /* Clear of the floating assistant button in the corner. */
+          pr: drawer ? 9 : 1.5,
           py: 1.25,
           borderTop: "1px solid",
           borderColor: "divider",
@@ -547,10 +595,12 @@ export default function DataProposalCard({
       >
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
           {undecided.length
-            ? `Choose how to handle personal data in ${undecided.map((i) => i.cite.ref).join(", ")} first.`
+            ? "Choose how to handle personal data first"
             : proposal.items.some((i) => i.blocking)
-              ? "Blocked items stay out until they're resolved; the rest can be saved now."
-              : `Adds them to the draft. Save environment ${next} from Review changes once the affected scenarios pass.`}
+              ? "Blocked items stay out"
+              : inPlace
+                ? `Applies to ${current} now — no run uses it yet`
+                : `Saved as ${next} from Review changes`}
         </Typography>
         <Button
           variant="outlined"
@@ -568,7 +618,11 @@ export default function DataProposalCard({
             count ? accept() : onSaved ? onSaved() : setRejected(true)
           }
         >
-          {!count ? "Done" : `Add ${count} to unsaved changes`}
+          {!count
+            ? "Done"
+            : inPlace
+              ? `Add ${count} to ${current}`
+              : `Add ${count} ${count === 1 ? "change" : "changes"}`}
         </Button>
       </Stack>
       <AddSourceMenu
@@ -590,4 +644,5 @@ DataProposalCard.propTypes = {
   env: PropTypes.object.isRequired,
   sourceIds: PropTypes.array.isRequired,
   onOpenSource: PropTypes.func,
+  layout: PropTypes.oneOf(["card", "drawer"]),
 };

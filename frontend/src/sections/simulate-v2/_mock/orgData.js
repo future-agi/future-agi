@@ -691,7 +691,7 @@ export const dataProposalOf = (
             : `Missing table: ${j.to.split(".")[0]}`,
           detail: j.present
             ? j.rows.map((r) => `row ${r.row}: ${r.reason}`).join(" · ")
-            : `${t.table}.${j.field} refers to ${j.to}, which isn't attached — every row needs it.`,
+            : `No ${j.to.split(".")[0]} table for ${t.table}.${j.field}.`,
           /* Named in the card: the scenarios that use these rows. */
           affects: (affectedBy[`${s.id}:${j.field}`] || []).map(
             (sc) => sc.name || sc.title || sc.id,
@@ -743,7 +743,7 @@ export const dataProposalOf = (
       title: "Scenario: duplicate refund retry",
       detail: hasRefunds
         ? "Order O-104 already has refund RF-7; the caller asks to retry. One refund must exist at the end."
-        : "Needs a refunds table holding an existing refund — attach one, or this case stays blocked.",
+        : "Needs a refunds table — attach one to unblock it.",
       cite: {
         sourceId: retry.s.id,
         ref: `${retry.s.name} · p.${retry.p.page}`,

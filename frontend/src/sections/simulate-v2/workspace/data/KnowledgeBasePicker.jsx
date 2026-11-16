@@ -42,14 +42,11 @@ export default function KnowledgeBasePicker({
       <Typography sx={{ typography: "m2", fontWeight: 600 }}>
         Choose from Knowledge base
       </Typography>
-      <Typography sx={{ typography: "s2", mt: 1 }}>
-        {KB_SNAPSHOT_LINE}
-      </Typography>
-      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
-        {KB_STATE_LINE}
-      </Typography>
-      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
-        {`${KB_LIMIT_LINE} Updates are never pulled in on their own — a new revision waits for you to review it.`}
+      <Typography
+        title={`${KB_SNAPSHOT_LINE} ${KB_STATE_LINE} ${KB_LIMIT_LINE}`}
+        sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+      >
+        Copies the revision you pick · PDF, DOCX, RTF, TXT up to 5 MB
       </Typography>
 
       <Box sx={{ mt: 1.5, maxHeight: 420, overflowY: "auto" }}>

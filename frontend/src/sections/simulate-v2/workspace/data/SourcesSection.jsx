@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -25,7 +25,7 @@ import AddSourceMenu from "./AddSourceMenu";
 import DataProposalCard from "./DataProposalCard";
 import ReviewRefreshDialog from "./ReviewRefreshDialog";
 import SourceDrawer from "./SourceDrawer";
-import ClosableDialog from "../../components/ClosableDialog";
+import SideDrawer from "../../components/SideDrawer";
 
 const STATUS = {
   ready: "Ready",
@@ -484,28 +484,65 @@ export default function SourcesSection({
         onReviewRefresh={(src) => setRefreshing(src.id)}
         onReconnect={(src) => setReconnecting(src.id)}
       />
-      <ClosableDialog
-        open={!!review}
-        onClose={() => setReview(null)}
-        fullWidth
-        maxWidth={false}
-        PaperProps={{ sx: { maxWidth: 720, p: 2 } }}
-      >
-        <Typography sx={{ typography: "m2", fontWeight: 600, mb: 1.5 }}>
-          Review what the builder proposes
-        </Typography>
-        {review && (
-          <DataProposalCard
-            env={env}
-            sourceIds={review}
-            onSaved={() => setReview(null)}
-            onOpenSource={(id) => {
-              setReview(null);
-              if (id) setOpen(id);
+      <SideDrawer open={!!review} onClose={() => setReview(null)} width={560}>
+        <Stack sx={{ height: "100%" }}>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            spacing={1.5}
+            sx={{
+              px: 2.5,
+              pt: 2,
+              pb: 1.25,
+              borderBottom: "1px solid",
+              borderColor: "divider",
             }}
-          />
-        )}
-      </ClosableDialog>
+          >
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+                Review proposed changes
+              </Typography>
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                {(review || [])
+                  .map(
+                    (id) =>
+                      (envState.sources || []).find((s) => s.id === id)?.name,
+                  )
+                  .filter(Boolean)
+                  .join(", ")}
+              </Typography>
+            </Box>
+            <IconButton
+              size="small"
+              onClick={() => setReview(null)}
+              aria-label="Close"
+            >
+              <Iconify
+                icon="solar:close-circle-linear"
+                width={20}
+                sx={{ color: "text.tertiary" }}
+              />
+            </IconButton>
+          </Stack>
+          <Box sx={{ flex: 1, minHeight: 0 }}>
+            {review && (
+              <DataProposalCard
+                layout="drawer"
+                env={env}
+                sourceIds={review}
+                onSaved={() => setReview(null)}
+                onOpenSource={(id) => {
+                  setReview(null);
+                  if (id) setOpen(id);
+                }}
+              />
+            )}
+          </Box>
+        </Stack>
+      </SideDrawer>
       {refreshing && (
         <ReviewRefreshDialog
           open
