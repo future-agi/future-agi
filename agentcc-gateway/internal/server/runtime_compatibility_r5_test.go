@@ -38,7 +38,7 @@ type runtimeR5Capture struct {
 	views [][]byte
 }
 
-func (c *runtimeR5Capture) Name() string { return "zz-capture" }
+func (c *runtimeR5Capture) Name() string            { return "zz-capture" }
 func (c *runtimeR5Capture) Stage() guardrails.Stage { return c.stage }
 func (c *runtimeR5Capture) Check(_ context.Context, in *guardrails.CheckInput) *guardrails.CheckResult {
 	var value interface{} = in.Request
@@ -110,7 +110,10 @@ func newRuntimeR5Fixture(t *testing.T, gr *tenant.GuardrailConfig, reply string,
 	cfg.Providers["gemini"] = config.ProviderConfig{BaseURL: upstream.URL, APIKey: "synthetic", APIFormat: "gemini", Models: []string{"gemini-3.8-flash"}}
 	cfg.MCP.Enabled, cfg.A2A.Enabled = true, true
 	cfg.Guardrails = config.GuardrailsConfig{Enabled: true, DefaultTimeout: time.Second, Rules: rules}
-	registry := map[string]guardrails.Guardrail{}
+	// main registers the built-in leakage check even without a static rule.
+	// A legacy org check with nil Config cannot use the dynamic fallback, so
+	// omitting this implementation silently turns its blocking control off.
+	registry := map[string]guardrails.Guardrail{"data-leakage-prevention": leakage.New(nil)}
 	for _, rule := range rules {
 		registry[rule.Name] = runtimeR5Factory(rule.Name, rule.Config)
 	}
@@ -273,7 +276,7 @@ func TestRuntimeR5NativeRemediationHTTP(t *testing.T) {
 				redact := map[string]interface{}{"remediation": "redact", "entities": []interface{}{"email"}}
 				restrict := map[string]interface{}{"forbidden_topics": []interface{}{map[string]interface{}{"name": "address", "keywords": []interface{}{"sample@example.com"}}}}
 				checks := map[string]*tenant.GuardrailCheck{
-					"pii-detection": {Enabled: true, Action: "log", ConfidenceThreshold: .5, Config: redact},
+					"pii-detection":     {Enabled: true, Action: "log", ConfidenceThreshold: .5, Config: redact},
 					"topic-restriction": {Enabled: true, Action: "block", ConfidenceThreshold: .5, Config: restrict},
 				}
 				gr := &tenant.GuardrailConfig{PipelineMode: "parallel"}

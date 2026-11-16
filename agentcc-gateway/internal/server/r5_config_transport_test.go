@@ -187,6 +187,17 @@ func r5AssertOpaqueDepthTransport(t *testing.T, body []byte, depth int, kind str
 	if err := json.Unmarshal(body, &want); err != nil {
 		t.Fatal(err)
 	}
+	// The generated admin contract has omitempty on these two envelope maps:
+	// providers:{} and guardrails.checks:{} are omitted before tenant decoding.
+	// Normalize only those empty envelope fields, independently of the converter
+	// under test. Never normalize inside a check's opaque Config: null, {}, []
+	// and nested values must still compare exactly against the original bytes.
+	if len(want.Providers) == 0 {
+		want.Providers = nil
+	}
+	if want.Guardrails != nil && len(want.Guardrails.Checks) == 0 {
+		want.Guardrails.Checks = nil
+	}
 	for _, bulk := range []bool{false, true} {
 		store := tenant.NewStore()
 		h := NewOrgConfigHandlers(store, "synthetic-admin", nil)
@@ -243,6 +254,54 @@ func TestR5ConfigTransportOpaqueDepth(t *testing.T) {
 				}
 				r5AssertOpaqueDepthTransport(t, body, depth, kind)
 			})
+		}
+	}
+}
+
+func TestR5ConfigTransportOpaqueShapesAndOwnership(t *testing.T) {
+	body := []byte(`{"providers":{},"guardrails":{"checks":{},"key_policies":[{"id":"opaque","key_ids":["key"],"checks":{"custom-static":{"enabled":true,"config":{"null":null,"empty_object":{},"empty_array":[],"nested":[null,{},[]],"owned":[{"leaf":"kept"}]}}}}]}}`)
+	// Literal tenant oracle: only the empty envelope maps are absent. In
+	// contrast, every opaque value (including empty containers) is retained.
+	want := &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{
+		KeyPolicies: []*tenant.KeyGuardrailPolicy{{
+			ID: "opaque", KeyIDs: []string{"key"},
+			Checks: map[string]*tenant.GuardrailCheck{"custom-static": {
+				Enabled: true,
+				Config: map[string]interface{}{
+					"null":         nil,
+					"empty_object": map[string]interface{}{},
+					"empty_array":  []interface{}{},
+					"nested":       []interface{}{nil, map[string]interface{}{}, []interface{}{}},
+					"owned":        []interface{}{map[string]interface{}{"leaf": "kept"}},
+				},
+			}},
+		}},
+	}}
+	for _, bulk := range []bool{false, true} {
+		store := tenant.NewStore()
+		h := NewOrgConfigHandlers(store, "synthetic-admin", nil)
+		w := r5SubmitOrgConfig(h, body, bulk)
+		if w.Code != http.StatusOK {
+			t.Fatalf("bulk=%t status=%d body=%s", bulk, w.Code, w.Body.String())
+		}
+		cfg := store.Get("synthetic-org")
+		if !reflect.DeepEqual(cfg, want) {
+			t.Fatalf("bulk=%t opaque null/empty/array values changed", bulk)
+		}
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored tenant.OrgConfig
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(&restored, want) {
+			t.Fatalf("bulk=%t opaque shapes changed during tenant roundtrip", bulk)
+		}
+		restored.Guardrails.KeyPolicies[0].Checks["custom-static"].Config["owned"].([]interface{})[0].(map[string]interface{})["leaf"] = "restored-only"
+		if !reflect.DeepEqual(cfg, want) {
+			t.Fatal("roundtrip config aliases the stored opaque value")
 		}
 	}
 }

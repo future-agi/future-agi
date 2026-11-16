@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -41,28 +42,80 @@ func TestRuntimeR5MiddlewareAuthHTTP(t *testing.T) {
 					if status != want || len(calls) != 0 {
 						t.Fatalf("status=%d want=%d calls=%d body=%s", status, want, len(calls), body)
 					}
+					if scheme != "Basic" {
+						runtimeR5AssertModelCatalogue(t, route.path, body, true)
+					}
 				})
 			}
 			for _, tc := range []struct {
-				name, query string
-				headers     map[string]string
+				name, query    string
+				headers        map[string]string
+				catalogVisible bool
 			}{
-				{"api-header", "", map[string]string{"x-api-key": "sk-agentcc-r5-a"}},
-				{"google-header", "", map[string]string{"x-goog-api-key": "sk-agentcc-r5-a"}},
-				{"query-key", "?key=sk-agentcc-r5-a", nil},
-				{"query-api-key", "?api_key=sk-agentcc-r5-a", nil},
-				{"invalid-authorization-falls-through", "", map[string]string{"Authorization": "Bearer invalid", "x-api-key": "sk-agentcc-r5-a"}},
-				{"invalid-header-falls-through-to-query", "?key=sk-agentcc-r5-a", map[string]string{"Authorization": "Basic invalid", "x-api-key": "invalid"}},
+				{"api-header", "", map[string]string{"x-api-key": "sk-agentcc-r5-a"}, true},
+				{"google-header", "", map[string]string{"x-goog-api-key": "sk-agentcc-r5-a"}, false},
+				{"query-key", "?key=sk-agentcc-r5-a", nil, false},
+				{"query-api-key", "?api_key=sk-agentcc-r5-a", nil, false},
+				{"invalid-authorization-falls-through", "", map[string]string{"Authorization": "Bearer invalid", "x-api-key": "sk-agentcc-r5-a"}, false},
+				{"invalid-header-falls-through-to-query", "?key=sk-agentcc-r5-a", map[string]string{"Authorization": "Basic invalid", "x-api-key": "invalid"}, false},
 			} {
 				t.Run(route.method+route.path+"/"+tc.name, func(t *testing.T) {
 					status, body, calls := f.send(t, route.method, route.path+tc.query, route.body, tc.headers)
-					if status != route.status || len(calls) != 0 {
-						t.Fatalf("status=%d want=%d calls=%d body=%s", status, route.status, len(calls), body)
+					// KeyAuth admission is broader than header-only catalog
+					// visibility. A valid fallback must reach the handler, but it
+					// must not turn a hidden model's 404 into 200 (or into 401).
+					want := route.status
+					if route.path == "/v1/models/gpt-5.5" && !tc.catalogVisible {
+						want = 404
 					}
+					if status != want || len(calls) != 0 {
+						t.Fatalf("status=%d want=%d calls=%d body=%s", status, want, len(calls), body)
+					}
+					runtimeR5AssertModelCatalogue(t, route.path, body, tc.catalogVisible)
 				})
 			}
 		}
 	})
+}
+
+func runtimeR5AssertModelCatalogue(t *testing.T, path string, body []byte, visible bool) {
+	t.Helper()
+	switch path {
+	case "/v1/models":
+		var list struct {
+			Object string `json:"object"`
+			Data   []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &list); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, model := range list.Data {
+			found = found || model.ID == "gpt-5.5"
+		}
+		if list.Object != "list" || found != visible || (!visible && len(list.Data) != 0) {
+			t.Fatalf("catalog visibility=%t body=%s", visible, body)
+		}
+	case "/v1/models/gpt-5.5":
+		var detail struct {
+			ID    string `json:"id"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if visible {
+			if detail.ID != "gpt-5.5" || detail.Error.Code != "" {
+				t.Fatalf("visible catalog model missing: %s", body)
+			}
+		} else if detail.ID != "" || detail.Error.Code != "model_not_found" {
+			t.Fatalf("hidden catalog model did not retain handler 404: %s", body)
+		}
+	}
 }
 
 func TestRuntimeR5SelectedMiddlewareAuthHTTP(t *testing.T) {
@@ -85,4 +138,3 @@ func TestRuntimeR5SelectedMiddlewareAuthHTTP(t *testing.T) {
 		t.Fatalf("later selected candidate displaced first valid unselected key: %d %s", status, body)
 	}
 }
-
