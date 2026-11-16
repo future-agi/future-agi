@@ -30,15 +30,18 @@ import jwt
 import requests
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
 
 from simulate.models import (
+    CallExecution,
     HostedHarnessAttempt,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessSecret,
 )
@@ -158,27 +161,17 @@ _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
-# After a user stop, how long cancel waits for the guest to seal the in-flight call before deleting the sandbox.
-# Strictly above the guest's own bound (ALK_CANCEL_SEAL_SECONDS, 15 s by default) plus the time the runner needs to
-# upload its transcript and tool trace and post the receipt. Capped so pkill 10 + seal 45 + provider get about 30 +
-# delete 120 stays inside the cancel activity's 4-minute timeout.
-_GUEST_CANCEL_SEAL_SECONDS = 15
+# Capped so pkill 10 + seal 45 + provider get about 30 + delete 120 stays inside the cancel activity's 4-minute timeout.
 _CANCEL_SEAL_CAP_SECONDS = 45
 _CANCEL_SEAL_POLL_SECONDS = 2
 _CANCEL_SIGNAL_TIMEOUT_SECONDS = 10
 
 
 def _cancel_seal_seconds() -> float:
-    try:
-        value = float(
-            os.environ.get("HARNESS_CANCEL_SEAL_SECONDS") or _CANCEL_SEAL_CAP_SECONDS
-        )
-    except ValueError:
-        value = _CANCEL_SEAL_CAP_SECONDS
-    return max(0.0, min(value, _CANCEL_SEAL_CAP_SECONDS))
-
-
-_CANCEL_SEAL_SECONDS = _cancel_seal_seconds()
+    """How long a stop waits for the guest to seal the call in flight, as configured and capped."""
+    return max(
+        0.0, min(float(settings.HARNESS_CANCEL_SEAL_SECONDS), _CANCEL_SEAL_CAP_SECONDS)
+    )
 
 
 def _empty_workspace_archive() -> bytes:
@@ -2305,8 +2298,10 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
 
 
 class HostedHarnessGateway:
+    # Set instead of a client when none is configured: raised on first sandbox use.
+    _provider_error: HostedHarnessError | None = None
+
     def __init__(self, *, require_provider: bool = True) -> None:
-        self._provider_error: HostedHarnessError | None = None
         try:
             self.client = get_sandbox_provider()
         except SandboxProviderUnavailableError as exc:
@@ -2320,7 +2315,7 @@ class HostedHarnessGateway:
             )
             if require_provider:
                 raise error from exc
-            self.client, self._provider_error = None, error
+            self._provider_error = error
         except SandboxProviderConfigurationError as exc:
             error = HostedHarnessError(
                 "sandbox_provider_not_configured",
@@ -2331,7 +2326,7 @@ class HostedHarnessGateway:
             if require_provider:
                 raise error from exc
             # Raised on first sandbox use instead: a run whose sandbox was never created can still be cancelled.
-            self.client, self._provider_error = None, error
+            self._provider_error = error
 
     # TODO: no caller since the authoring activity was removed; delete with its
     # sandbox helpers.
@@ -4407,7 +4402,7 @@ class HostedHarnessGateway:
                         "sandbox_created": False,
                     },
                 )
-            from simulate.models import CallExecution, TestExecution
+            from simulate.models import TestExecution
 
             job.state = HostedHarnessJob.State.CANCELED
             job.current_stage = HostedHarnessJob.State.CANCELED
@@ -4441,7 +4436,7 @@ class HostedHarnessGateway:
                 )
             return job
 
-        if self.client is None:
+        if self._provider_error is not None:
             raise self._provider_error
         # Hang up the PSTN leg before any provider call. Reconnecting to or
         # deleting a remote sandbox can take tens of seconds, while Stop must
@@ -4519,13 +4514,9 @@ class HostedHarnessGateway:
     def _await_guest_seal(self, attempt: HostedHarnessAttempt) -> None:
         """Wait, bounded, until every call still in flight on this attempt has its receipt or the guest's terminal
         event arrived. Never raises; a retried cancel never waits twice."""
-        from django.core.cache import cache
-
-        from simulate.models import CallExecution, HostedHarnessExecution
 
         def in_flight() -> bool:
-            # Pending too: the guest's "scenario started" event can reach us only with the call's receipt, so a call
-            # under way may still read pending here.
+            # Pending too: a call under way may read pending until its "scenario started" event arrives with the receipt.
             return HostedHarnessExecution.objects.filter(
                 job_id=attempt.job_id,
                 call_execution__status__in=(
@@ -4547,7 +4538,7 @@ class HostedHarnessGateway:
                 logger.warning(
                     "hosted_cancel_seal_cache_unavailable attempt=%s", attempt.id
                 )
-            deadline = time.monotonic() + _CANCEL_SEAL_SECONDS
+            deadline = time.monotonic() + _cancel_seal_seconds()
             while time.monotonic() < deadline:
                 attempt.refresh_from_db(fields=["terminal_event_received"])
                 # Not `terminal_stage`: cancel itself sets it to "canceled" before this wait.
