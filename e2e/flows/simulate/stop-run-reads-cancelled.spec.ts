@@ -23,10 +23,10 @@ interface ExecutionsPage {
   results: { id: string; status: string; outcome_cancelled: number; outcome_errored: number; outcome_skipped: number }[];
 }
 
-test('SIM-E2E-020: a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error', {
+test('SIM-E2E-035: a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-020', area: 'simulate',
+    id: 'SIM-E2E-035', area: 'simulate',
     userGoal: 'A developer stops a Run mid-call and sees the stopped call counted as Cancelled, never as an error, while a case the harness skipped still reads Error',
     steps: [
       'seed a running hosted Run with one call under way and one case the harness skipped',
