@@ -2947,80 +2947,27 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World changes reads a read apart from a write
+### SIM-E2E-007 — a run with fewer failing cases than an epoch needs starts one that writes variations first
 
-**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World changes says what the agent only read apart from what it committed
+**Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/actors-world-changes.spec.ts:20`
-
-**Tags:** —
-
-**User steps:**
-
-1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
-2. read the cast (GET actors)
-3. read the scenarios (GET harness-jobs/<id>/scenarios)
-4. read the trial (GET v3/call-executions/<id>)
-5. open the Scenarios tab
-6. open the trial's World changes
-
-**Backend state verified:**
-
-- the cast lists the actor with no channel
-- the refund scenario includes it by id
-- the trial's World changes count 1 committed (issue_refund) and 1 read (lookup_order)
-
-**Browser observations:**
-
-- the Scenarios table names the actor, never its raw id
-- World changes reads "1 read" and "Committed: issue_refund"
-
-### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
-
-**Goal:** A developer inspects each tool of the test world: its inputs with units, the fields it returns, whether it changes records, whether it is reset between trials, and which tools only production answers
-
-**Spec:** `flows/simulate/tool-contract-view.spec.ts:13`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:215`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
-2. read the environment (GET harness-environments/<id>/)
-3. open the Contract tab
-4. expand lookup_order
-5. read issue_refund's Unsupported label
-
-**Backend state verified:**
-
-- the contract section names issue_refund production-only
-- lookup_order returns status and total
+1. open a finished run of the environment
+2. open Debug failures
+3. press Improve
+4. read the Scenarios row of the launch form
+5. press Start improvement
+6. read the epoch page
 
 **Browser observations:**
 
-- lookup_order reads "Reads only" and its returned fields with units
-- issue_refund reads Unsupported, never Simulated
-
-### SIM-E2E-019 — World changes shows a faulted call apart from a commit, and an actor's change made during the call
-
-**Goal:** A developer reads what each trial did to the world: a call the scenario's test condition faulted, counted apart from what was committed, and what a world actor decided and committed during the call
-
-**Spec:** `flows/simulate/world-changes-fault-and-actor.spec.ts:14`
-
-**Tags:** —
-
-**User steps:**
-
-1. seed a trial whose refund was faulted by its test condition (e2e/lib/harness_environment_seed.py)
-2. open its World changes
-3. seed a trial where the world actor approved during the call
-4. open its World changes
-
-**Backend state verified:**
-
-- seeded through the backend container; the World changes record is the one ingestion keeps
-
-**Browser observations:**
-
-- the faulted trial reads 1 faulted and No change, never Committed: issue_refund
-- the actor trial names Dana Brooks, her committed approvals.put and her decision
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 must keep passing", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits and 150 minutes
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
