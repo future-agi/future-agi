@@ -154,6 +154,8 @@ class SelectionView(Scope):
     untested: int
     lists: dict[Bucket, CaseList]
     held_by: list[HeldBy]
+    # The first area, in report order, holding selected cases back; null when none is blocked.
+    blocking_area: str | None
     dropped: list[DroppedCase]
     grading: Grading
     requirements_recorded: bool
@@ -279,6 +281,10 @@ def selection_report(
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
             "held_by": _held_by(rows, report["workers"], placed),
+            "blocking_area": next(
+                (one["id"] for one in report["areas"] if one["status"] == "blocked"),
+                None,
+            ),
             "dropped": placement.dropped,
             "grading": {
                 "gradable": requested - len(not_gradable),

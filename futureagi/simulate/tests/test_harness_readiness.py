@@ -1061,6 +1061,7 @@ class TestApi:
             "untested",
             "lists",
             "held_by",
+            "blocking_area",
             "dropped",
             "grading",
             "requirements_recorded",

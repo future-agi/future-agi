@@ -1723,6 +1723,11 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
         many=True,
         help_text="Each blocked row, then each blocked worker, holding selected cases back, with how many.",
     )
+    blocking_area = serializers.CharField(
+        allow_null=True,
+        help_text="The first area, in report order, that reads blocked: what the run dialog names as holding "
+        "cases back.",
+    )
     dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
     grading = HarnessCapabilityGradingSerializer()
     requirements_recorded = serializers.BooleanField(

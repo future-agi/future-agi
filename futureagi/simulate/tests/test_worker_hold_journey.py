@@ -132,6 +132,8 @@ def test_the_cases_alk_holds_are_held_back_and_every_refusal_names_the_worker(
     assert report["blockers"] == report["counts"]["blocked"] + blocked_workers
     assert report["answer"]["kind"] == "blocked"
     assert report["selection"]["eligible"] == len(LOOKUP_KEYS)
+    # Only a worker holds cases back: no readiness area is named as blocking them.
+    assert report["selection"]["blocking_area"] is None
     reason = held["worker:refund"]["reason"]
     assert reason
 
