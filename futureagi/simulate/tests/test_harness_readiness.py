@@ -1062,13 +1062,13 @@ class TestApi:
             "stale",
             "untested",
             "lists",
-            "held_by_workers",
+            "held_by",
             "dropped",
             "grading",
             "requirements_recorded",
         }
         # A single agent's workers hold nothing back.
-        assert body["selection"]["held_by_workers"] == {}
+        assert body["selection"]["held_by"] == []
         assert set(body["selection"]["lists"]) == {
             "eligible",
             "blocked",

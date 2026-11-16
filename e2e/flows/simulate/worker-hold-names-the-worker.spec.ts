@@ -10,7 +10,7 @@ const REFUNDS = 2;
 const LOOKUPS = 2;
 
 interface WorkerRow { worker_id: string; name: string; status: string; reason: string }
-interface Report { workers: WorkerRow[]; selection: { eligible: number; held_by_workers: Record<string, number> } }
+interface Report { workers: WorkerRow[]; selection: { eligible: number; held_by: { id: string; count: number }[] } }
 interface Refusal { error: string; message: string }
 
 test('SIM-E2E-021: a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it', {
@@ -38,7 +38,7 @@ test('SIM-E2E-021: a worker whose limits nothing holds keeps back the cases rely
     const report = await actor.api.get<Report>(`${ENVIRONMENTS}/${seed.environmentId}/capabilities/`);
     refund = report.workers.find((one) => one.worker_id === 'refund');
     expect(refund?.status).toBe('blocked');
-    expect([report.selection.held_by_workers, report.selection.eligible]).toEqual([{ refund: REFUNDS }, LOOKUPS]);
+    expect([report.selection.held_by.map((one) => [one.id, one.count]), report.selection.eligible]).toEqual([[['worker:refund', REFUNDS]], LOOKUPS]);
   });
 
   await test.step('api: a run of only the refund cases is refused naming the Refund worker', async () => {

@@ -803,7 +803,7 @@ _RUNS_READ = 20
 _WHOLE_REPLY_KINDS = frozenset({"http", "callable", "command"})
 
 
-def _runs(pairing: Pairing) -> list[Any]:
+def recent_runs(pairing: Pairing) -> list[Any]:
     """The newest runs of the pairing's agent and environment version."""
     if pairing.agent_version is None:
         return []
@@ -1137,7 +1137,7 @@ def _children(pairing: Pairing, runs: list[Any]) -> Reading:
 def observed(pairing: Pairing) -> dict[str, Reading]:
     """What this agent's runs on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""
-    runs = _runs(pairing)
+    runs = recent_runs(pairing)
     return {
         "continuity": _continuity(runs),
         "streaming": _streaming(pairing),

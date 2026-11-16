@@ -211,7 +211,6 @@ def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
 
 
 @pytest.mark.django_db
-@pytest.mark.django_db
 def test_a_bypass_with_another_agent_version_does_not_block(
     user, workspace, storage, django_capture_on_commit_callbacks
 ):
