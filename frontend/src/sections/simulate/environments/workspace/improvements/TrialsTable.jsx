@@ -72,7 +72,7 @@ export default function TrialsTable({ fix }) {
           bgcolor: "background.neutral",
         }}
       >
-        <Typography sx={head}>Trial</Typography>
+        <Typography sx={head}>Candidate</Typography>
         <Typography sx={head}>Status</Typography>
         <Typography sx={head}>Pass</Typography>
       </Box>
@@ -115,12 +115,12 @@ export default function TrialsTable({ fix }) {
                   flexShrink: 0,
                 }}
               >
-                {`T${c.attempt}`}
+                {`C${c.attempt}`}
               </Box>
               <Box minWidth={0}>
                 <Typography
                   sx={{ typography: "s2", fontWeight: 600 }}
-                >{`Trial ${c.attempt}`}</Typography>
+                >{`Candidate ${c.attempt}`}</Typography>
                 <Typography
                   noWrap
                   sx={{ typography: "s3", color: "text.subtitle" }}

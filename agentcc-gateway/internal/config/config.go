@@ -20,6 +20,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
 	"github.com/futureagi/agentcc-gateway/internal/video/tariff"
 	"gopkg.in/yaml.v3"
+
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 )
 
 // Config is the top-level gateway configuration.
@@ -218,6 +220,12 @@ type AzureSecretsConfig struct {
 type ModelDatabaseConfig struct {
 	ValidationEnabled *bool                          `yaml:"validation_enabled" json:"validation_enabled"` // nil = default true
 	Overrides         map[string]ModelOverrideConfig `yaml:"overrides" json:"overrides"`
+
+	// CatalogueURL is fetched at startup and every CatalogueSyncInterval for a
+	// newer pricing catalogue (LiteLLM format). Empty turns the sync off, for
+	// air-gapped deployments. Read at startup only; a reload does not change it.
+	CatalogueURL          string        `yaml:"catalogue_url" json:"catalogue_url"`
+	CatalogueSyncInterval time.Duration `yaml:"catalogue_sync_interval" json:"catalogue_sync_interval"` // default 24h, minimum 1h
 }
 
 // IsValidationEnabled returns whether model validation is enabled (default true).
@@ -376,6 +384,12 @@ type ProviderConfig struct {
 	Local        *bool  `yaml:"local" json:"local"`                 // force local/remote treatment
 	SkipTLS      bool   `yaml:"skip_tls" json:"skip_tls"`           // skip TLS verification
 	AutoDiscover *bool  `yaml:"auto_discover" json:"auto_discover"` // auto-discover models from /v1/models
+
+	// IgnoreProviderCost makes the gateway price this provider's requests from
+	// the model catalogue even when the provider is one whose response states
+	// what the request cost (OpenRouter, Perplexity and xAI at their official
+	// hosts). An org instance built from this entry inherits it.
+	IgnoreProviderCost bool `yaml:"ignore_provider_cost" json:"ignore_provider_cost"`
 
 	// AWS Bedrock credentials (per-provider, overrides env vars).
 	AWSAccessKeyID     string `yaml:"aws_access_key_id" json:"-"`
@@ -1020,6 +1034,10 @@ type IPACLConfig struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		ModelDatabase: ModelDatabaseConfig{
+			CatalogueURL:          modeldb.DefaultCatalogueURL,
+			CatalogueSyncInterval: modeldb.DefaultSyncInterval,
+		},
 		Video: defaultVideoConfig(),
 		Server: ServerConfig{
 			Port:                  8080,
