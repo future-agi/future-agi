@@ -202,6 +202,7 @@ function RunTraceTableStub({
   evalActions,
   rerunDisabledReason,
   onRerunScenarios,
+  onRerunInRun,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -233,6 +234,7 @@ function RunTraceTableStub({
           rerun ticked
         </button>
       )}
+      {onRerunInRun && <span>rerun-in-run</span>}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -252,6 +254,7 @@ RunTraceTableStub.propTypes = {
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
   onRerunScenarios: PropTypes.func,
+  onRerunInRun: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -652,6 +655,50 @@ describe("RunDetail", () => {
     expect(
       screen.queryByRole("button", { name: "Stop simulation" }),
     ).toBeNull();
+  });
+
+  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+        fixRun: { id: "fix-1", label: "c2-target" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
+      "Check run c2-target for this fix · agent v2",
+    );
+    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+    expect(screen.queryByText(/^Run 3/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
+  });
+
+  it("offers no Re-run or Debug failures on a fix's check run", () => {
+    stubTickable = false;
+    const fixRun = { id: "fix-1", label: "c2-target" };
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, fixRun },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rerun ticked" })).toBeNull();
+    expect(screen.queryByText("rerun-in-run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Debug failures" })).toBeNull();
+    stubTickable = true;
   });
 
   it("shows Cancelling in the header while a stopped run winds down", () => {
@@ -1163,6 +1210,32 @@ describe("RunDetail", () => {
 
     // The run reports 4 failing, but the diagnosis measured 3 broken of 12.
     expect(screen.getByText("3 failing of 12 measured")).toBeInTheDocument();
+  });
+
+  it("gives no measured count until the diagnosis has one", async () => {
+    // The run's failing count holds errored calls; its measured count does not.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 19, measured: 18 },
+      isLoading: false,
+    });
+    useDebugAnalysis.mockReturnValue(
+      debugHook({
+        ...ANALYSIS,
+        status: "running",
+        isWorking: true,
+        summary: null,
+        goals: [],
+        oneOffs: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(screen.getByText("19 failing")).toBeInTheDocument();
+    expect(screen.queryByText(/failing of/)).toBeNull();
   });
 
   it("folds long tails into one row so the rows still add up", async () => {

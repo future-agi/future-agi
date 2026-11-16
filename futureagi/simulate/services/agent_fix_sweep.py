@@ -13,7 +13,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from simulate.models import AgentFixRun
-from simulate.selectors.agent_fix import fix_deadline
+from simulate.selectors.agent_fix import fix_deadline, queue_deadline
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.agent_fix_sandbox import release
 from simulate.temporal.client import agent_fix_workflow_running
@@ -74,8 +74,10 @@ def _ending(fix_run: AgentFixRun, now: datetime) -> Closing | None:
     """How a fix that nothing drives ends, or None while its workflow still drives it."""
     grace = timedelta(seconds=settings.AGENT_FIX_TOKEN_GRACE_SECONDS)
     # Past its deadline and the engine's grace, a fix is over even when a stuck
-    # workflow still counts as running.
-    overdue = now >= fix_deadline(fix_run) + grace
+    # workflow still counts as running. A queued fix's deadline is the end of its wait.
+    queued = fix_run.state == AgentFixRun.State.QUEUED
+    deadline = queue_deadline(fix_run) if queued else fix_deadline(fix_run)
+    overdue = now >= deadline + grace
     if not overdue and agent_fix_workflow_running(str(fix_run.id)):
         return None
     if fix_run.state == AgentFixRun.State.STOPPING:

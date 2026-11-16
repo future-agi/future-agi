@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from simulate.models import HarnessNudge
+from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
     HarnessRunPinnedVersionsSerializer,
@@ -629,9 +629,21 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
         allow_blank=False,
     )
     agent_payload = HarnessAgentPayloadChangeSerializer(required=False)
+    make_default = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "False only checks the new version: once it passes, a run can pick it"
+            " and a move makes it the default. Omitted, it is true, except for a"
+            " coding agent key, whose push is never the default."
+        ),
+    )
 
     def validate(self, attrs):
-        given = [name for name in self.fields if name in attrs]
+        given = [
+            name
+            for name in ("archive_artifact_id", "prompt", "agent_payload")
+            if name in attrs
+        ]
         if not given:
             raise serializers.ValidationError(
                 "Give archive_artifact_id, prompt or agent_payload."
@@ -848,6 +860,42 @@ class HarnessSuiteMemberSerializer(serializers.Serializer):
     number = serializers.IntegerField()
     name = serializers.CharField(allow_blank=True)
     use_case = serializers.CharField(allow_blank=True)
+
+
+class HarnessVerifyCreateSerializer(serializers.Serializer):
+    agent_version_id = serializers.UUIDField(
+        help_text=(
+            "The agent version to verify. Its completed verify is final; after one"
+            " that failed or was canceled, a new one starts."
+        )
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=3)
+
+
+class HarnessVerifyCreateResponseSerializer(serializers.Serializer):
+    verify_id = serializers.UUIDField()
+    state = serializers.ChoiceField(choices=HostedHarnessJob.State.values)
+
+
+class HarnessVerifyResultSerializer(serializers.Serializer):
+    """How an agent version did on the held-back cases: counts only, never a case."""
+
+    state = serializers.ChoiceField(choices=HostedHarnessJob.State.values)
+    passed = serializers.IntegerField(min_value=0)
+    failed = serializers.IntegerField(min_value=0)
+    # Trials asked for; those neither passed nor failed are unfinished or undecided.
+    total = serializers.IntegerField(min_value=0)
+    trials = serializers.IntegerField(min_value=1, max_value=20)
+    held_back_pass_rate = serializers.ListField(
+        child=serializers.FloatField(min_value=0, max_value=1),
+        min_length=2,
+        max_length=2,
+        allow_null=True,
+        help_text="95% range of the trial pass rate, [low, high]; null until it ends.",
+    )
+    limited_validation = serializers.BooleanField(
+        help_text="Too few cases were held back to call a version verified."
+    )
 
 
 NUDGE_STATES = tuple(HarnessNudge.State.values)

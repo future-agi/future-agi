@@ -71,6 +71,12 @@ export const TYPE_CONFIG = {
     label: "Reranker",
     mdiIcon: "solar:sort-from-top-to-bottom-linear",
   },
+  internal: {
+    color: "#94A3B8",
+    icon: "/icons/tracedetails/unknown_icon.svg",
+    label: "Internal",
+    mdiIcon: "solar:clock-circle-linear",
+  },
   unknown: {
     color: "#94A3B8",
     icon: "/icons/tracedetails/unknown_icon.svg",

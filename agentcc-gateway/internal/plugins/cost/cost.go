@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -90,6 +91,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// Video tariffs are pinned independently of the chat model database.
+	switch rc.EndpointType {
+	case "video":
+		value, err := strconv.ParseFloat(rc.Metadata["video_cost_usd"], 64)
+		if err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			rc.Metadata["cost"] = fmt.Sprintf("%.6f", value)
+		}
+		return pipeline.ResultContinue()
+	}
+	if p.modelDB == nil {
+		return pipeline.ResultContinue()
+	}
 	db := p.modelDB()
 	if db == nil {
 		return pipeline.ResultContinue()

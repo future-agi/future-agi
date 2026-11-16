@@ -2,7 +2,7 @@ name: AgentCC Gateway CI
 
 on:
   pull_request:
-    branches: [main, develop, dev]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
       - "agentcc-gateway/**"
       - "api_contracts/gateway/**"

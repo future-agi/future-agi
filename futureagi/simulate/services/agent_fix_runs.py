@@ -22,9 +22,11 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
+    default_max_minutes,
     is_retryable,
     launch_blocker,
     overridable_regressions,
+    recent_lost_models,
     scenario_results,
 )
 from simulate.services.agent_fix_agents import agent_kind
@@ -75,11 +77,12 @@ def launch_fix_run(
     surfaces: list[Surface],
     locked_paths: list[str],
     budget_usd: float,
-    max_minutes: int,
+    max_minutes: int | None,
     user: Any,
     protected_scenario_keys: Sequence[str] = (),
 ) -> AgentFixRun:
-    """Start fixing the agent of a finished run on the scenarios the user chose."""
+    """Start fixing the agent of a finished run on the scenarios the user chose; without
+    ``max_minutes``, within the time the launch form suggests for the run's suite."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
@@ -136,6 +139,8 @@ def launch_fix_run(
             f"to be proven; these have {failing_cases}",
             status_code=422,
         )
+    if max_minutes is None:
+        max_minutes = default_max_minutes(len(ran))
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
@@ -175,12 +180,18 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
     require_agent_fix_usage(str(failed.organization_id))
+    # The models the failed fix lost recently, with when: the retry's first launch starts
+    # without them. Its last error stays with it.
+    lost_models = recent_lost_models(failed.engine_notes)
     return _create_fix_run(
         source_run,
         base_version_id=failed.base_agent_version_id,
         request=failed.request,
         user=user,
         retried_from=failed,
+        engine_notes={"lost_models": lost_models, "last_error": None}
+        if lost_models
+        else None,
     )
 
 
@@ -191,6 +202,7 @@ def _create_fix_run(
     request: dict[str, Any],
     user: Any,
     retried_from: AgentFixRun | None = None,
+    engine_notes: dict[str, Any] | None = None,
 ) -> AgentFixRun:
     """The new fix, its workflow started once it is committed; one active fix per environment."""
     environment = source_run.environment
@@ -205,6 +217,7 @@ def _create_fix_run(
                 retried_from=retried_from,
                 created_by=user,
                 request=request,
+                engine_notes=engine_notes,
             )
             transaction.on_commit(lambda: _start_workflow(fix_run.id))
     except IntegrityError as exc:

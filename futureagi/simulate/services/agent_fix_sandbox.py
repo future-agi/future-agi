@@ -15,7 +15,11 @@ from django.utils import timezone
 
 from simulate.models import AgentFixRun
 from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
-from simulate.selectors.agent_fix import fix_deadline
+from simulate.selectors.agent_fix import (
+    fix_deadline,
+    queue_deadline,
+    recent_lost_models,
+)
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
 from simulate.services.hosted_harness_gateway import (
@@ -262,18 +266,24 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
                 fix_run.state = AgentFixRun.State.RUNNING
                 fix_run.started_at = timezone.now()
             fix_run.token_hash = ""
+            if fix_run.engine_notes:
+                # A launch forgets older losses, so a model it loses again is noted anew.
+                fix_run.engine_notes = {
+                    **fix_run.engine_notes,
+                    "lost_models": recent_lost_models(fix_run.engine_notes),
+                }
             fix_run.save(
                 update_fields=[
                     "state",
                     "started_at",
                     "token_hash",
+                    "engine_notes",
                     "updated_at",
                 ]
             )
     attempts = settings.AGENT_FIX_MAX_SANDBOX_ATTEMPTS
     if held_back:
-        waited = (timezone.now() - fix_run.created_at).total_seconds()
-        if waited < settings.AGENT_FIX_MAX_QUEUED_SECONDS:
+        if timezone.now() < queue_deadline(fix_run):
             return Observation.WAITING
         failure = {
             "code": "fix_queue_timeout",
@@ -285,10 +295,10 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
             "message": "the fix ran out of the time it was given",
         }
     elif fix_run.sandbox_attempt >= attempts:
-        failure = {
-            "code": "fix_engine_died",
-            "message": f"the improvement engine stopped {attempts} times before it finished",
-        }
+        message = f"the improvement engine stopped {attempts} times before it finished"
+        if last_error := (fix_run.engine_notes or {}).get("last_error"):
+            message = f"{message}; last error: {last_error}"
+        failure = {"code": "fix_engine_died", "message": message}
     else:
         return None
     close_fix_run(fix_run.id, AgentFixRun.State.FAILED, failure=failure)

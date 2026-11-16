@@ -149,6 +149,7 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.temporal.activities.xl import (
     PATH_MISSING,
     TRANSCRIPT_DOT_ALIASES,
@@ -174,6 +175,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 try:
     from ee.usage.models.usage import APICallType
@@ -4573,6 +4575,8 @@ class TestExecutor:
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
+                except EvaluationDenied as denial:
+                    logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
                     logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                     traceback.print_exc()
@@ -5488,6 +5492,9 @@ class TestExecutor:
                     eval_config_id=str(eval_config.id),
                 )
 
+        except EvaluationDenied as denial:
+            record_evaluation_denial(call_execution, eval_config, denial)
+            raise
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 

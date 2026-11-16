@@ -140,7 +140,7 @@ def provider(monkeypatch):
     return fake
 
 
-def _new_fix(user, workspace):
+def _new_fix(user, workspace, *, max_minutes=60):
     environment, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -157,7 +157,7 @@ def _new_fix(user, workspace):
             failing_sub_goals=["refund_issued"],
             surfaces=[Surface.PROMPT],
             budget_usd=5,
-            max_minutes=60,
+            max_minutes=max_minutes,
         ).model_dump(mode="json"),
     )
 
@@ -363,6 +363,24 @@ def test_only_a_started_engine_uses_up_an_attempt(fix_run, provider, monkeypatch
     assert fix_run.sandbox_attempt == 1
 
 
+def test_a_launch_forgets_the_models_lost_over_an_hour_ago(fix_run, provider):
+    recent = (timezone.now() - timedelta(minutes=10)).isoformat()
+    old = (timezone.now() - timedelta(minutes=61)).isoformat()
+    _running(
+        fix_run,
+        engine_notes={
+            "lost_models": {"deepseek/flash": old, "luna/coder": recent},
+            "last_error": None,
+        },
+    )
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    # A model it loses again gets a new time instead of the expired one.
+    assert fix_run.engine_notes["lost_models"] == {"luna/coder": recent}
+
+
 def test_launch_after_the_last_sandbox_closes_the_run_as_engine_died(fix_run, provider):
     _running(fix_run, sandbox_attempt=2)
 
@@ -458,15 +476,42 @@ def test_a_running_fix_is_started_again_even_when_the_caps_are_full(
     assert launch(str(fix_run.id)).observation == Observation.RUNNING
 
 
+def _queued_for(fix_run, minutes):
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        created_at=timezone.now() - timedelta(minutes=minutes)
+    )
+
+
+def test_a_queued_fix_waits_as_long_as_its_own_time_limit(
+    provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 3600
+    _running(_new_fix(user, workspace))
+    fix_run = _new_fix(user, workspace, max_minutes=300)
+
+    seen = []
+    # A fix ahead with the same limit can end up to the 10-minute grace past its deadline.
+    for minutes in (61, 309, 311):
+        _queued_for(fix_run, minutes=minutes)
+        seen.append(launch(str(fix_run.id)).observation)
+
+    fix_run.refresh_from_db()
+    assert seen == [Observation.WAITING, Observation.WAITING, Observation.ENDED]
+    assert fix_run.failure["code"] == "fix_queue_timeout"
+    assert provider.specs == []
+
+
 def test_a_fix_that_waits_too_long_fails_free_to_retry(
     fix_run, provider, user, workspace, settings
 ):
+    # Longer than the fix's own 60 minutes, so the setting is what it waits.
     settings.AGENT_FIX_MAX_RUNNING = 1
-    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 60
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 2 * 3600
     _running(_new_fix(user, workspace))
-    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
-        created_at=timezone.now() - timedelta(seconds=61)
-    )
+    _queued_for(fix_run, minutes=61)
+    assert launch(str(fix_run.id)).observation == Observation.WAITING
+    _queued_for(fix_run, minutes=121)
 
     launched = launch(str(fix_run.id))
 
@@ -607,3 +652,37 @@ def test_release_deletes_the_sandbox_once(fix_run, provider):
     fix_run.refresh_from_db()
     assert provider.deleted == ["sandbox-1"]
     assert fix_run.sandbox_ref == ""
+
+
+def test_the_engine_s_last_error_reaches_the_failure_message_unchanged(
+    fix_run, provider
+):
+    # One of the engine's fixed sentences: the failure message shows it as sent.
+    last_error = "A model call kept failing or timing out, so the fix could not finish."
+    _running(
+        fix_run,
+        sandbox_attempt=2,
+        engine_notes={"lost_models": {}, "last_error": last_error},
+    )
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure == {
+        "code": "fix_engine_died",
+        "message": "the improvement engine stopped 2 times before it finished; "
+        f"last error: {last_error}",
+    }
+
+
+def test_an_engine_that_stopped_without_an_error_keeps_the_plain_message(
+    fix_run, provider
+):
+    _running(fix_run, sandbox_attempt=2)
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure["message"] == (
+        "the improvement engine stopped 2 times before it finished"
+    )

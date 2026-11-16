@@ -163,11 +163,11 @@ describe("ModelSelector — Jev models (bring your own key)", () => {
       "Turing LargeBest accuracy for complex evaluations",
       "Turing SmallBalanced accuracy, lower cost",
       "Turing FlashFast, low-latency evaluations",
-      "Jev 1.13 (pinned)jev-1.13.0",
-      "Jev latestjev-latest",
+      "Jev 1.13 (pinned)TypeSafe · Pass/Fail / Choices / ScoreKey configured",
+      "Jev latestMoving aliasTypeSafe · Pass/Fail / Choices / ScoreKey configured",
       "local-modelcustom",
     ]);
-    const headers = ["FutureAGI Models", "Jev models", "Your Models"].map(
+    const headers = ["Future AGI", "Decision models", "Your models"].map(
       (text) => screen.getByText(text),
     );
     expect(
@@ -224,7 +224,7 @@ describe("ModelSelector — Jev models (bring your own key)", () => {
       );
       expect(screen.getByText("Jev 1.13 (pinned)")).toBeInTheDocument();
       expect(screen.queryByText("Jev latest")).not.toBeInTheDocument();
-      expect(screen.queryByText("FutureAGI Models")).not.toBeInTheDocument();
+      expect(screen.queryByText("Future AGI")).not.toBeInTheDocument();
     },
   );
 

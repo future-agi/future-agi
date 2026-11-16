@@ -60,7 +60,7 @@ const PersonaCardMenu = ({
           </ListItemIcon>
           <ListItemText
             primary="Edit"
-            primaryTypographyProps={{ fontSize: 13, fontWeight: 400 }}
+            primaryTypographyProps={{ fontSize: 12, fontWeight: 400 }}
           />
         </MenuItem>
       </ShowComponent>
@@ -75,7 +75,7 @@ const PersonaCardMenu = ({
           </ListItemIcon>
           <ListItemText
             primary="Duplicate"
-            primaryTypographyProps={{ fontSize: 13, fontWeight: 400 }}
+            primaryTypographyProps={{ fontSize: 12, fontWeight: 400 }}
           />
         </MenuItem>
       </ShowComponent>
@@ -95,7 +95,7 @@ const PersonaCardMenu = ({
         </ListItemIcon>
         <ListItemText
           primary="View"
-          primaryTypographyProps={{ fontSize: 13, fontWeight: 400 }}
+          primaryTypographyProps={{ fontSize: 12, fontWeight: 400 }}
         />
       </MenuItem>
 
@@ -109,7 +109,7 @@ const PersonaCardMenu = ({
           </ListItemIcon>
           <ListItemText
             primary="Delete"
-            primaryTypographyProps={{ fontSize: 13, fontWeight: 400 }}
+            primaryTypographyProps={{ fontSize: 12, fontWeight: 400 }}
           />
           {isDeleting && (
             <Box sx={{ ml: "auto" }}>

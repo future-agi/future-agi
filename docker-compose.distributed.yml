@@ -453,6 +453,20 @@ services:
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_XL_MAX_WORKFLOWS:-20}
 
+  worker-sql-workbench:
+    <<: *queue-worker
+    profiles: []
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: sql_workbench
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 2
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: 2
+
   worker-exact-aggregation:
     <<: *queue-worker
     # Unlike the other per-queue workers this admission boundary is always on;
@@ -599,6 +613,8 @@ services:
   # (the backend and workers use the compose network).
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
+    environment:
+      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
     ports:
       - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true
@@ -981,7 +997,7 @@ services:
   # ==========================================================================
 
   temporal:
-    image: temporalio/auto-setup:1.29.1
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -1056,7 +1072,7 @@ services:
     restart: unless-stopped
 
   peerdb-temporal:
-    image: temporalio/auto-setup:1.29
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432

@@ -1541,6 +1541,18 @@ def retry_preflight(version: AgentVersion) -> None:
     logger.info("harness_agent_version_retried version=%s", version.id)
 
 
+def queue_check(version: AgentVersion) -> None:
+    """Check a pending version no environment asked to make its default: a new one,
+    or the pending twin a repeated change returned. Its pass moves no default; a run
+    can pick it, and a move makes it the default."""
+    now = timezone.now()
+    pending = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=version.id, preflight_status=Status.PENDING
+    ).update(check_started_at=now, updated_at=now)
+    if pending:
+        transaction.on_commit(lambda: _schedule_preflight(version.id))
+
+
 def _live_duplicate(
     runtime: HarnessAgentVersionRuntime,
 ) -> HarnessAgentVersionRuntime | None:

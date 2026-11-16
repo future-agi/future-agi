@@ -76,6 +76,10 @@ class AgentFixRun(BaseModel):
     spent_usd = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     # The engine's closing report (simulate.pydantic_schemas.agent_fix.FixReport).
     report = models.JSONField(null=True, blank=True)
+    # What the fix keeps from its engines' reports across launches: lost_models, each model
+    # a launch stopped using with when it was lost, and last_error, the last error an engine
+    # could not recover from.
+    engine_notes = models.JSONField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

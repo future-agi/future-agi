@@ -84,11 +84,17 @@ class EngineBrief(BaseModel):
     base_commit: str
     request: FixRequest
     inventory: list[InventoryScenario]
+    # The models earlier launches stopped using in the last hour because their calls were
+    # lost: a relaunch starts without them.
+    lost_models: list[str] = Field(default_factory=list)
     # Where a relaunched engine picks up: its attempts are numbered after the last candidate
     # an earlier launch sent, and its budget starts from what the fix has committed.
     last_attempt: int
     committed_usd: float
     deadline_at: str
+    # The source run's trials that failed a sub-goal on the targets the engine searches:
+    # Diagnose reads them while Reproduce runs. Never a held-back target.
+    source_failures: list["CheckRecord"] = Field(default_factory=list)
 
 
 class CandidateCreated(BaseModel):
@@ -216,6 +222,12 @@ class EngineReport(BaseModel):
     # With the failed ending: what failed and who can fix it.
     failure: CheckFailure | None = None
     winner_candidate_id: UUID | None = None
+    # The models this launch stopped using because their calls were lost, and the last
+    # error it could not recover from. The fix keeps both across launches.
+    lost_models: list[str] = Field(default_factory=list)
+    # The user reads last_error in the failure message: the engine sends one of its
+    # fixed sentences (lastErrorOf, workers/agent-fix/util.mjs), never its own text.
+    last_error: str | None = None
 
 
 class EngineModels(BaseModel):

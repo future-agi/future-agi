@@ -59,7 +59,7 @@ class ObserveUsageFilterBuilderV2(ClickHouseFilterBuilderV2):
                 FROM (
                     SELECT id, parent_span_id, name, observation_type, project_id,
                            cost, total_tokens, prompt_tokens, completion_tokens, trace_id,
-                           {usage_coverage_sql(attrs="attrs_string")} AS usage_coverage
+                           {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
                     FROM spans FINAL
                     PREWHERE {self._project_scope_predicate()}
                         {self._candidate_filter("trace_id")}
@@ -156,7 +156,7 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
                     {usage_aggregate_sql(prefix="live.", coverage="live.usage_coverage")}
                 FROM (
                     SELECT {source_columns},
-                        {usage_coverage_sql(attrs="attrs_string")} AS usage_coverage
+                        {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
                     FROM spans FINAL
                     PREWHERE {self.project_filter_sql()}
                         AND trace_id IN (

@@ -119,6 +119,14 @@ describe("step rows", () => {
       "2 of up to 4 trials · best so far 67% on 6 target scenarios",
     );
     expect(rows[2].lines).toEqual([
+      "2 held-back scenarios it never saw and 9 must-pass scenarios, including the 1 you protected",
+    ]);
+  });
+
+  it("counts must-pass scenarios alone when none were protected", () => {
+    const fix = byId("fix-search");
+    const rows = stepRows({ ...fix, plan: { ...fix.plan, protected: 0 } });
+    expect(rows[2].lines).toEqual([
       "2 held-back scenarios it never saw and 9 must-pass scenarios",
     ]);
   });

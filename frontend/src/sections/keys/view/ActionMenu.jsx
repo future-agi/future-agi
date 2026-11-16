@@ -19,6 +19,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { isKeyExpired } from "./keyExpiry";
 
 const allMenuItems = [
   {
@@ -61,9 +62,11 @@ const ActionMenu = ({ data, onRefresh }) => {
     event.stopPropagation();
     setAnchorEl(event.currentTarget);
     setMenuItems(
-      allMenuItems.filter((item) =>
-        data.enabled ? item.id !== 2 : item.id !== 1,
-      ),
+      allMenuItems.filter((item) => {
+        if (data.enabled) return item.id !== 2;
+        // An expired key can't be re-enabled; the API refuses it.
+        return item.id !== 1 && !(item.id === 2 && isKeyExpired(data));
+      }),
     );
   };
 
@@ -154,8 +157,6 @@ const ActionMenu = ({ data, onRefresh }) => {
         PaperProps={{
           sx: {
             width: 240,
-            border: "1px solid",
-            borderColor: (theme) => theme.palette.divider,
             borderRadius: "8px",
             padding: 1.5,
             mt: 0.2,
@@ -178,8 +179,7 @@ const ActionMenu = ({ data, onRefresh }) => {
                   py: 0.5,
                   "&:hover": {
                     bgcolor: "action.hover",
-                    "& .MuiTypography-root": {
-                    },
+                    "& .MuiTypography-root": {},
                   },
                 }}
               >

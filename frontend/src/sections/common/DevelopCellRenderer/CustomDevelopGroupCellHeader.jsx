@@ -71,7 +71,7 @@ const CustomDevelopGroupCellHeader = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={600} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={600} fontSize="12px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>

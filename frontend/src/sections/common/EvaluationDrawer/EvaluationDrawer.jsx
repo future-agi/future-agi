@@ -41,6 +41,7 @@ import CreateEvaluationGroupDrawer from "./CreateEvaluationGroupDrawer";
 import { useSearchParams } from "react-router-dom";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { getDecisionRunConfigOverrides } from "src/sections/common/EvalPicker/serializeEvalConfig";
 import { useRunEvaluationStore } from "src/sections/develop-detail/states";
 import { useWorkbenchEvaluationContext } from "src/sections/workbench/createPrompt/Evaluation/context/WorkbenchEvaluationContext";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
@@ -609,7 +610,9 @@ const EvaluationDrawerChild = ({
           // should be forwarded so eval_runner can apply it at run time.
           const isComposite = evalConfig.templateType === "composite";
 
-          const runConfig = {};
+          const runConfig = isComposite
+            ? {}
+            : getDecisionRunConfigOverrides(evalConfig);
           if (!isComposite) {
             // Single-eval runtime overrides. Composite children each
             // carry their own model/mode/tools — none of this applies

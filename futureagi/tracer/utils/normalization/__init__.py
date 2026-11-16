@@ -9,6 +9,7 @@ identity join or immutable admission is claimed by this module.
 from __future__ import annotations
 
 import json
+from fnmatch import fnmatchcase
 from importlib.resources import files
 from typing import Any
 
@@ -29,7 +30,7 @@ def requires_immutable_admission(attributes: dict[str, Any]) -> bool:
 
 
 def normalize_attributes(
-    attributes: dict[str, Any], scope: dict[str, Any] | None = None
+    attributes: dict[str, Any], scope: dict[str, Any] | None = None, *, name: str = ""
 ) -> dict[str, Any]:
     """Return normalized attributes without modifying the caller's source dict.
 
@@ -45,7 +46,7 @@ def normalize_attributes(
             p
             for p in CONTRACT["profiles"]
             if scope.get("name") == p["scope_name"]
-            and scope.get("version") in p["scope_versions"]
+            and (scope.get("version") or "") in p["scope_versions"]
         ),
         None,
     )
@@ -59,6 +60,27 @@ def normalize_attributes(
             if kind:
                 result["fi.span.kind"] = kind.upper()
                 result["fi.source.operation"] = operation
+        # Only qualified, timing-only telemetry is collapsible. Never hide a
+        # model/tool operation, an explicit producer kind, or usage-bearing work.
+        if (
+            not operation
+            and not any(result.get(key) for key in KIND_KEYS)
+            and not any(
+                key.startswith(tuple(CONTRACT["usage_prefixes"]))
+                or key in CONTRACT["usage_keys"]
+                for key in result
+            )
+            and (
+                name in profile.get("timing_names", [])
+                or name.startswith(tuple(profile.get("timing_prefixes", [])))
+                or any(
+                    fnmatchcase(name, p)
+                    for p in profile.get("timing_name_patterns", [])
+                )
+            )
+        ):
+            result["fi.span.kind"] = "INTERNAL"
+            result["fi.observation.category"] = "timing"
         session = result.get(profile["session_fallback"])
         if (
             not result.get("session.id")
@@ -86,7 +108,9 @@ def normalize_attributes(
 
 def normalize_span(span: dict[str, Any]) -> dict[str, Any]:
     attributes = span.setdefault("attributes", {})
-    normalized = normalize_attributes(attributes, span.get("scope"))
+    normalized = normalize_attributes(
+        attributes, span.get("scope"), name=span.get("name", "")
+    )
     attributes.clear()
     attributes.update(normalized)
     return attributes
