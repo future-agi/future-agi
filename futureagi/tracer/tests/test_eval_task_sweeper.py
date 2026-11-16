@@ -1381,7 +1381,8 @@ class TestRecoveryActivationEligibility:
         ],
     )
     @pytest.mark.parametrize(
-        "status", [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED]
+        "status",
+        [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED],
     )
     @pytest.mark.parametrize("recover_failed", [False, True])
     @pytest.mark.parametrize("with_cursor", [False, True])
@@ -1437,7 +1438,8 @@ class TestRecoveryActivationEligibility:
 
     @pytest.mark.parametrize("run_type", [RunType.HISTORICAL, RunType.CONTINUOUS])
     @pytest.mark.parametrize(
-        "status", [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED]
+        "status",
+        [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED],
     )
     def test_direct_recovery_uses_durable_marker_not_the_callers_snapshot(
         self, make_task, make_entry, temporal, settings, run_type, status

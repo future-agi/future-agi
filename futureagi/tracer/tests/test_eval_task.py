@@ -1065,7 +1065,9 @@ class TestEvalTaskDetailPatchRecoveryEligibility:
                 .order_by("pk")
                 .values()
             ),
-            list(task.evals.using("default").order_by("pk").values_list("pk", flat=True)),
+            list(
+                task.evals.using("default").order_by("pk").values_list("pk", flat=True)
+            ),
         )
 
     def _assert_unstamped_and_unrecovered(self, task, expected, workflow_calls):
