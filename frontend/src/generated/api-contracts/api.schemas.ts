@@ -27566,10 +27566,19 @@ export interface BlockedCallApi {
   count?: number;
 }
 
+export type TrialRefusedActionApiCode =
+  (typeof TrialRefusedActionApiCode)[keyof typeof TrialRefusedActionApiCode];
+
+export const TrialRefusedActionApiCode = {
+  not_permitted: "not_permitted",
+  deadline_passed: "deadline_passed",
+  approval_missing: "approval_missing",
+} as const;
+
 export interface TrialRefusedActionApi {
   /** @minLength 1 */
   action: string;
-  code: string;
+  code: TrialRefusedActionApiCode;
   reason: string;
 }
 
@@ -28215,6 +28224,7 @@ export interface CallWorkerApi {
   tokens?: number;
   state?: CallWorkerApiState;
   cut_short: boolean;
+  past_deadline: boolean;
   checks: WorkerCheckApi[];
 }
 
@@ -28520,6 +28530,8 @@ export type FailurePlacementApiUntied =
 
 export const FailurePlacementApiUntied = {
   no_moment: "no_moment",
+  several_hand_offs: "several_hand_offs",
+  no_hand_off: "no_hand_off",
 } as const;
 
 export interface FailurePlacementApi {

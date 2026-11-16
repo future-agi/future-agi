@@ -160654,7 +160654,12 @@
                 },
                 "code": {
                     "title": "Code",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "not_permitted",
+                        "deadline_passed",
+                        "approval_missing"
+                    ]
                 },
                 "reason": {
                     "title": "Reason",
@@ -162093,6 +162098,7 @@
                 "undeclared",
                 "instance_ids",
                 "cut_short",
+                "past_deadline",
                 "checks"
             ],
             "type": "object",
@@ -162152,6 +162158,10 @@
                 },
                 "cut_short": {
                     "title": "Cut short",
+                    "type": "boolean"
+                },
+                "past_deadline": {
+                    "title": "Past deadline",
                     "type": "boolean"
                 },
                 "checks": {
@@ -162746,7 +162756,9 @@
                     "title": "Untied",
                     "type": "string",
                     "enum": [
-                        "no_moment"
+                        "no_moment",
+                        "several_hand_offs",
+                        "no_hand_off"
                     ],
                     "x-nullable": true
                 }

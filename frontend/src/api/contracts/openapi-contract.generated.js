@@ -98819,6 +98819,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "undeclared",
         "instance_ids",
         "cut_short",
+        "past_deadline",
         "checks",
       ],
       type: "object",
@@ -98878,6 +98879,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cut_short: {
           title: "Cut short",
+          type: "boolean",
+        },
+        past_deadline: {
+          title: "Past deadline",
           type: "boolean",
         },
         checks: {
@@ -99201,7 +99206,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         untied: {
           title: "Untied",
           type: "string",
-          enum: ["no_moment"],
+          enum: ["no_moment", "several_hand_offs", "no_hand_off"],
           "x-nullable": true,
         },
       },
@@ -138733,6 +138738,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         code: {
           title: "Code",
           type: "string",
+          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         reason: {
           title: "Reason",

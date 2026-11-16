@@ -60922,7 +60922,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .array(
             zod.object({
               action: zod.string().min(1),
-              code: zod.string(),
+              code: zod.enum([
+                "not_permitted",
+                "deadline_passed",
+                "approval_missing",
+              ]),
               reason: zod.string(),
             }),
           )
@@ -61426,7 +61430,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .array(
                 zod.object({
                   action: zod.string().min(1),
-                  code: zod.string(),
+                  code: zod.enum([
+                    "not_permitted",
+                    "deadline_passed",
+                    "approval_missing",
+                  ]),
                   reason: zod.string(),
                 }),
               )
@@ -61936,6 +61944,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         ])
         .optional(),
       cut_short: zod.boolean(),
+      past_deadline: zod.boolean(),
       checks: zod.array(
         zod.object({
           name: zod.string().min(1),
@@ -62222,7 +62231,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       status: zod.enum(["failed", "inconclusive"]),
       step: zod.number(),
       worker_id: zod.string().min(1),
-      untied: zod.enum(["no_moment"]),
+      untied: zod.enum(["no_moment", "several_hand_offs", "no_hand_off"]),
     }),
   ),
   pending: zod.boolean(),
