@@ -615,6 +615,12 @@ import type {
   HarnessAgentCredentialsResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
+  HarnessCapabilityCasePageApi,
+  HarnessCapabilityRecheckApi,
+  HarnessCapabilityRecheckResponseApi,
+  HarnessCapabilitySelectionApi,
+  HarnessCapabilitySelectionReportApi,
+  HarnessCertifiedPairingPageApi,
   HarnessCompareApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
@@ -634,6 +640,7 @@ import type {
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
   HarnessDefaultMoveApi,
+  HarnessDefaultMoveValidatingApi,
   HarnessDraftSaveApi,
   HarnessDraftSaveResponseApi,
   HarnessDraftsApi,
@@ -1261,6 +1268,9 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsActorViewParams,
+  SimulateApiHarnessEnvironmentsCapabilitiesParams,
+  SimulateApiHarnessEnvironmentsCapabilityCasesParams,
+  SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsDeleteActorParams,
   SimulateApiHarnessEnvironmentsListParams,
@@ -60589,6 +60599,299 @@ export const simulateApiHarnessEnvironmentsDeleteActor = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse200 = {
+  data: HarnessCapabilitySelectionReportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/`;
+};
+
+/**
+ * The run readiness of an agent, environment and suite pairing, computed now,
+and the selected cases it holds back; an absent id is the environment's default
+and absent keys select the whole suite. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilities = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsSelectCapabilitiesResponse200 = {
+  data: HarnessCapabilitySelectionReportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsSelectCapabilitiesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsSelectCapabilitiesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSelectCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsSelectCapabilitiesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
+  | simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSuccess
+  | simulateApiHarnessEnvironmentsSelectCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSelectCapabilitiesUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/capabilities/`;
+};
+
+/**
+ * The same report for a selection too large for a query string. No writes.
+ */
+export const simulateApiHarnessEnvironmentsSelectCapabilities = async (
+  id: string,
+  harnessCapabilitySelectionApi: HarnessCapabilitySelectionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsSelectCapabilitiesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsSelectCapabilitiesResponse>(
+    getSimulateApiHarnessEnvironmentsSelectCapabilitiesUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessCapabilitySelectionApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponse200 = {
+  data: HarnessCapabilityCasePageApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilityCasesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseError =
+  simulateApiHarnessEnvironmentsCapabilityCasesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponse =
+  | simulateApiHarnessEnvironmentsCapabilityCasesResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilityCasesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilityCasesUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityCasesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/cases/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/cases/`;
+};
+
+/**
+ * One page, by scenario number, of the selected cases in a bucket or held
+back by a row. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilityCases = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityCasesParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilityCasesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilityCasesResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilityCasesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponse200 = {
+  data: HarnessCertifiedPairingPageApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilityHistoryResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseError =
+  simulateApiHarnessEnvironmentsCapabilityHistoryResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponse =
+  | simulateApiHarnessEnvironmentsCapabilityHistoryResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilityHistoryResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilityHistoryUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/history/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/history/`;
+};
+
+/**
+ * The pairings certified on this environment, newest first, with the exact
+agent, environment and suite versions of each. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilityHistory = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilityHistoryResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilityHistoryResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilityHistoryUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse202 =
+  {
+    data: HarnessCapabilityRecheckResponseApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse =
+
+    | simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseSuccess
+    | simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/capabilities/recheck/`;
+  };
+
+/**
+ * Validate a pairing again with a run-less check; moves no default. An absent
+id is the environment's default.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilities =
+  async (
+    id: string,
+    harnessCapabilityRecheckApi: HarnessCapabilityRecheckApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse>(
+      getSimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessCapabilityRecheckApi),
+      },
+    );
+  };
+
 export type simulateApiHarnessEnvironmentsCompareResponse200 = {
   data: HarnessCompareApi;
   status: 200;
@@ -62256,15 +62559,22 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202 = {
+  data: HarnessDefaultMoveValidatingApi;
+  status: 202;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
-  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess = (
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202
+) & {
+  headers: ApiResponseHeaders;
+};
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
     headers: ApiResponseHeaders;
@@ -62284,7 +62594,7 @@ export const getSimulateApiHarnessEnvironmentsVersionsMoveDefaultUrl = (
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const simulateApiHarnessEnvironmentsVersionsMoveDefault = async (
   id: string,
