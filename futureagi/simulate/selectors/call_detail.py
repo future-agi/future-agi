@@ -9,11 +9,7 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
-from simulate.constants.hosted_harness import (
-    SHARED_RECORD_ACTIONS_KEPT,
-    SHARED_RECORDS_KEPT,
-    TRIAL_STATE_KEY,
-)
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.models import CallExecution, HostedHarnessArtifact
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_actor_labels import FallbackView, fallback_of
@@ -267,7 +263,8 @@ class TrialState(TypedDict):
     end_state_url: NotRequired[str]
     # A multi-agent trial's records two or more participants named, and the workers the harness stopped.
     shared_records: NotRequired[list[SharedRecord]]
-    shared_records_truncated: NotRequired[bool]
+    # As the harness sealed it; None for a trial sealed before it said which bound was reached.
+    shared_records_truncated: NotRequired[bool | None]
     stopped_workers: NotRequired[list[StoppedWorker]]
 
 
@@ -994,9 +991,8 @@ def trial_state(
     if isinstance(state.get("shared_records"), list):
         shared = _entries(state["shared_records"])
         shown["shared_records"] = [_shared_record(one, names) for one in shared]
-        # More records were named than kept: the harness marks every kept record when it cut the list.
-        shown["shared_records_truncated"] = len(shared) >= SHARED_RECORDS_KEPT and all(
-            one.get("truncated") is True for one in shared
+        shown["shared_records_truncated"] = _sealed_flag(
+            state, "shared_records_truncated"
         )
     if isinstance(state.get("stopped_workers"), list):
         shown["stopped_workers"] = stopped_workers_of(state)
@@ -1016,11 +1012,14 @@ def _shared_record(record: Mapping[str, Any], names: Mapping[str, str]) -> Share
         for one in _entries(record.get("actions"))
     ]
     shared = cast(SharedRecord, {**record, "actions": actions})
-    # This record's own actions were cut, not only the list of records.
-    shared["actions_truncated"] = (
-        record.get("truncated") is True and len(actions) >= SHARED_RECORD_ACTIONS_KEPT
-    )
+    shared["actions_truncated"] = _sealed_flag(record, "actions_truncated")
     return shared
+
+
+def _sealed_flag(sealed: Mapping[str, Any], key: str) -> bool | None:
+    """A truncation flag as the harness sealed it; None when the trial predates it, never guessed from its bounds."""
+    value = sealed.get(key)
+    return value if isinstance(value, bool) else None
 
 
 class EarlierAttempt(TypedDict):

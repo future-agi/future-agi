@@ -102,39 +102,69 @@ def test_shared_records_and_bypass_notice_are_kept_and_served(
     assert served["shared_records"][0]["committed_writes"] == 1
 
 
-def test_a_record_whose_own_calls_were_cut_is_told_apart_from_a_cut_list() -> None:
-    from simulate.constants.hosted_harness import (
-        SHARED_RECORD_ACTIONS_KEPT,
-        SHARED_RECORDS_KEPT,
-        TRIAL_STATE_KEY,
-    )
+def _shared_record(key, truncated, **sealed):
+    return {
+        "key": f"order_id={key}",
+        "argument": "order_id",
+        "value": str(key),
+        "actions": [{"who": "agent", "tool": "get_order", "outcome": "read"}],
+        "committed_writes": 0,
+        "truncated": truncated,
+        **sealed,
+    }
+
+
+def _served_trial(trial):
     from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.views.run_results_v3 import TrialStateSerializer
 
-    def record(key, actions, truncated):
-        action = {"who": "agent", "tool": "get_order", "outcome": "read"}
-        return {
-            "key": f"order_id={key}",
-            "argument": "order_id",
-            "value": str(key),
-            "actions": [action] * actions,
-            "committed_writes": 0,
-            "truncated": truncated,
-        }
+    call = SimpleNamespace(id="c1", call_metadata={})
+    return TrialStateSerializer(
+        trial_state(call, metadata={TRIAL_STATE_KEY: trial})
+    ).data
 
-    def served(records):
-        call = SimpleNamespace(id="c1", call_metadata={})
-        return trial_state(
-            call, metadata={TRIAL_STATE_KEY: {"shared_records": records}}
-        )
 
-    # One record with more calls than kept, the rest whole: only that record says its calls were cut.
-    one_cut = served([record(1, SHARED_RECORD_ACTIONS_KEPT, True), record(2, 2, False)])
-    assert [one["actions_truncated"] for one in one_cut["shared_records"]] == [
+def test_the_sealed_truncation_flags_are_kept_and_served_as_sealed(
+    organization, workspace
+) -> None:
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_call_actors import _ingest
+
+    shared = [
+        _shared_record(1, True, actions_truncated=True),
+        _shared_record(2, True, actions_truncated=False),
+    ]
+    metadata: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "multi-agent-shared-records-cut",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [],
+            "world_actors": {
+                "actions": [],
+                "state_changes": [],
+                "shared_records": shared,
+                "shared_records_truncated": True,
+            },
+        },
+        metadata,
+    )
+    trial = metadata[TRIAL_STATE_KEY]
+    assert trial["shared_records_truncated"] is True
+    served = _served_trial(trial)
+    assert served["shared_records_truncated"] is True
+    assert [one["actions_truncated"] for one in served["shared_records"]] == [
         True,
         False,
     ]
-    assert one_cut["shared_records_truncated"] is False
-    # More records than kept: every kept record is marked, yet none had its own calls cut.
-    list_cut = served([record(n, 2, True) for n in range(SHARED_RECORDS_KEPT)])
-    assert list_cut["shared_records_truncated"] is True
-    assert not any(one["actions_truncated"] for one in list_cut["shared_records"])
+
+
+def test_a_trial_sealed_before_the_flags_serves_neither_as_known() -> None:
+    # Only the record's own `truncated`: which bound was reached is not known, so neither flag is guessed.
+    served = _served_trial({"shared_records": [_shared_record(1, True)]})
+    assert served["shared_records_truncated"] is None
+    assert served["shared_records"][0]["actions_truncated"] is None
+    assert served["shared_records"][0]["truncated"] is True

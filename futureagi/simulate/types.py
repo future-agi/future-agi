@@ -228,8 +228,8 @@ class SharedRecord(TypedDict):
     committed_writes: int
     # As the harness sealed it: its actions or the list of records reached its bound.
     truncated: bool
-    # Served only: this record's own actions were cut.
-    actions_truncated: NotRequired[bool]
+    # As the harness sealed it: this record's own actions were cut; None for a trial sealed before the flag.
+    actions_truncated: NotRequired[bool | None]
 
 
 class WorkerCleanup(TypedDict):

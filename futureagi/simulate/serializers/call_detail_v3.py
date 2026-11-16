@@ -409,8 +409,11 @@ class SharedRecordSerializer(serializers.Serializer):
     actions = SharedRecordActionSerializer(many=True)
     committed_writes = serializers.IntegerField()
     truncated = serializers.BooleanField()
-    # This record's own actions were cut at the harness's bound.
-    actions_truncated = serializers.BooleanField(default=False)
+    actions_truncated = serializers.BooleanField(
+        allow_null=True,
+        default=None,
+        help_text="This record's own actions were cut; null for a trial sealed before the harness said so.",
+    )
 
 
 class StoppedWorkerSerializer(serializers.Serializer):
@@ -485,7 +488,9 @@ class TrialStateSerializer(serializers.Serializer):
     )
     shared_records_truncated = serializers.BooleanField(
         required=False,
-        help_text="More records were touched by more than one participant than the trial kept.",
+        allow_null=True,
+        help_text="More records were touched by more than one participant than the trial kept; null for a trial "
+        "sealed before the harness said so.",
     )
     stopped_workers = StoppedWorkerSerializer(
         many=True,

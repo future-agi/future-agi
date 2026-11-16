@@ -1686,6 +1686,11 @@ def _ingest_hosted_transcript(
                 )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
+            # Whether the harness cut the list of shared records, as it sealed it beside the list.
+            if isinstance(world, dict) and isinstance(
+                world.get("shared_records_truncated"), bool
+            ):
+                trial["shared_records_truncated"] = world["shared_records_truncated"]
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
                 trial["limits"] = _actor_limits(world["limits"])
@@ -1698,7 +1703,14 @@ def _ingest_hosted_transcript(
                 {
                     **{
                         key: one.get(key)
-                        for key in ("code", "message", "action", "on_call", "mode", "count")
+                        for key in (
+                            "code",
+                            "message",
+                            "action",
+                            "on_call",
+                            "mode",
+                            "count",
+                        )
                         if key in one
                     },
                     # The workers a notice names, e.g. a separate worker that bypassed its channel.

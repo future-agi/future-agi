@@ -7,7 +7,3 @@ TRIAL_STATE_KEY = "harness_trial_state"
 SCENARIO_FAILURE_CODES = frozenset({"actor_missing", "worker_limits_not_enforced"})
 # The cancel reason and failure code of a run the user stopped; a fix ending or an environment delete has its own.
 USER_CANCELED = "user_canceled"
-# The harness keeps at most this many shared records per trial and this many actions per record; its `truncated` on a
-# record says either bound was reached.
-SHARED_RECORDS_KEPT = 20
-SHARED_RECORD_ACTIONS_KEPT = 50
