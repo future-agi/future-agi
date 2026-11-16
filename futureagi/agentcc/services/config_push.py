@@ -6,6 +6,7 @@ Called when org configs are created, activated, or deleted.
 import copy
 import math
 import uuid
+from typing import Any
 
 import structlog
 from django.conf import settings as django_settings
@@ -766,8 +767,43 @@ def _wire_number(value):
         return False
 
 
+# A selected config may contain at most 128 nested objects/arrays. This is a
+# conservative transport budget for Python copying/serialization, NOT Go's JSON
+# nesting limit. Deeper configs remain saved and explicitly unavailable on wire.
+_KEY_CONFIG_MAX_DEPTH = 128
+
+
+def _wire_key_config(value: Any) -> bool:
+    """Check JSON shape and Go's interface{} float64 range without coercion.
+
+    Walk iteratively before copying: even a non-JSON in-memory cycle or very
+    deep saved JSON must not take down a policy (and its valid siblings).
+    Shared, acyclic containers are allowed; only ancestors count as cycles.
+    """
+    pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    ancestors: set[int] = set()
+    while pending:
+        item, depth, leaving = pending.pop()
+        if leaving:
+            ancestors.remove(id(item))
+        elif isinstance(item, (dict, list)):
+            if depth >= _KEY_CONFIG_MAX_DEPTH or id(item) in ancestors:
+                return False
+            if isinstance(item, dict) and any(not isinstance(key, str) for key in item):
+                return False
+            ancestors.add(id(item))
+            pending.append((item, depth, True))
+            children = item.values() if isinstance(item, dict) else item
+            pending.extend((child, depth + 1, False) for child in children)
+        elif item is None or isinstance(item, (str, bool)):
+            continue
+        elif not _wire_number(item):
+            return False
+    return True
+
+
 def _project_key_check(check):
-    """Preserve raw objects; mark only values the typed envelope cannot carry."""
+    """Own a transportable config copy; keep saved data and check intent intact."""
     invalid = False
     enabled = check.get("enabled", True)
     if not isinstance(enabled, bool):
@@ -779,8 +815,10 @@ def _project_key_check(check):
     if not _wire_number(threshold):
         threshold, invalid = 0.8, True
     cfg = check.get("config", {})
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, dict) or not _wire_key_config(cfg):
         cfg, invalid = {}, True
+    else:
+        cfg = copy.deepcopy(cfg)
     result = {
         "enabled": enabled,
         "action": action,
@@ -810,20 +848,10 @@ def _colliding_key_check(checks):
 
 
 def _build_key_policy(org_id, policy, gateway_ids):
-    # Copy before credential injection and normalization. Saved malformed values
-    # stay intact for explicit repair, including falsey nonobjects such as null.
-    checks = copy.deepcopy(policy.checks) if isinstance(policy.checks, list) else [None]
-    objects = [check for check in checks if isinstance(check, dict)]
-    for check in objects:
-        check["_policy"] = str(policy.id)
-    # Invalid names cannot be used as credential-map keys.
-    named = [
-        check
-        for check in objects
-        if isinstance(check.get("name"), str) and check["name"].strip()
-    ]
-    _inject_guardrail_credentials(named, org_id, policies=[policy])
-    grouped = {}
+    # Bound each config before copying, then inject credentials only into owned
+    # projections. A bad/deep check must not prevent copying its valid siblings.
+    checks = policy.checks if isinstance(policy.checks, list) else [None]
+    named = []
     unusable = 0
     for check in checks:
         if (
@@ -833,10 +861,21 @@ def _build_key_policy(org_id, policy, gateway_ids):
         ):
             unusable += 1
             continue
-        name = check["name"]
-        registry_name = _RULE_TO_REGISTRY.get(name, name)
         projected = _project_key_check(check)
+        projected["name"] = check["name"]
+        projected["_policy"] = str(policy.id)
+        named.append(projected)
+    _inject_guardrail_credentials(named, org_id, policies=[policy])
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for projected in named:
+        name = projected.pop("name")
+        projected.pop("_policy")
+        registry_name = _RULE_TO_REGISTRY.get(name, name)
         cfg = projected["config"]
+        # Decrypted credential values also cross the same JSON boundary.
+        if not _wire_key_config(cfg):
+            cfg = projected["config"] = {}
+            projected["configuration_error"] = "invalid_config"
         if name in _RULE_PROVIDER_DEFAULTS:
             cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
         if registry_name not in BUILTIN_CONFIG_NAMES:

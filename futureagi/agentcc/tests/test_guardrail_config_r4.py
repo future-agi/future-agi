@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from accounts.models import Organization
 
+from accounts.models import Organization
 from agentcc.guardrail_config_validation import (
     MODERATION_COUNTS,
     SELECTORS,
