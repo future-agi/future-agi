@@ -46,6 +46,11 @@ TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
 # The world door's sealed worker limits: whether the door holds per-worker limits, and each worker's allow-list.
 DOOR_FILE_PATH = "environment-bundle/generated/tool-proxy/door.json"
 PERMISSIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/permissions.json"
+# What ALK decided for this build: whether the door stands and on which surface, or why not; each worker's limits and
+# the workers each scenario relies on; and each sealed world action's tool.
+DOOR_OUTCOME_PATH = "environment-bundle/door.json"
+WORKER_LIMITS_PATH = "environment-bundle/worker-limits.json"
+ACTIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/actions.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
@@ -205,7 +210,7 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
 
 
 # Bumped when the kept certification files gain a file: readiness reads an older row's archive once more.
-CERTIFICATION_FILES_VERSION = 2
+CERTIFICATION_FILES_VERSION = 3
 
 
 def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
@@ -226,6 +231,9 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
         # Mappings, not lists: read by key, None when absent.
         "door": _json_object(files.get(DOOR_FILE_PATH)),
         "worker_permissions": _json_object(files.get(PERMISSIONS_FILE_PATH)),
+        "door_outcome": _json_object(files.get(DOOR_OUTCOME_PATH)),
+        "worker_limits": _json_object(files.get(WORKER_LIMITS_PATH)),
+        "actions_to_tools": _json_object(files.get(ACTIONS_FILE_PATH)),
     }
 
 
