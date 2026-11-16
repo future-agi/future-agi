@@ -2909,9 +2909,7 @@ def test_a_cancelled_run_reads_each_call_it_cut_short(
     )
     run.refresh_from_db()
     with (
-        patch(
-            "simulate.services.hosted_harness_ingestion._dispatch_worker_read"
-        ) as read,
+        patch("simulate.services.hosted_harness.dispatch_worker_read") as read,
         django_capture_on_commit_callbacks(execute=True),
     ):
         project_terminal_job_onto_run(run, timezone.now())
