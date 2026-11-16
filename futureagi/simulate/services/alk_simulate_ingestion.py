@@ -58,6 +58,8 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BATCH_SIZE = 9
+# The origin of a run test's one scenario that holds every persona as a dataset row.
+GROUPED_SCENARIOS_ORIGIN = "alk_sdk_ingestion_grouped"
 _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 # Bookkeeping keys the backend owns inside ``call_metadata``. A result PATCH
 # merges caller-supplied ``call_metadata`` caller-wins, so the caller must not be
@@ -443,8 +445,7 @@ def append_alk_sim_scenarios(run_test, personas):
         existing = list(run_test.scenarios.filter(deleted=False).order_by("created_at"))
         if (
             len(existing) == 1
-            and (existing[0].metadata or {}).get("origin")
-            == "alk_sdk_ingestion_grouped"
+            and (existing[0].metadata or {}).get("origin") == GROUPED_SCENARIOS_ORIGIN
             and existing[0].dataset_id
         ):
             scenario = existing[0]
@@ -504,7 +505,7 @@ def _create_persona_scenarios(
         dataset=dataset,
         status=StatusType.COMPLETED.value,
         metadata={
-            "origin": "alk_sdk_ingestion_grouped",
+            "origin": GROUPED_SCENARIOS_ORIGIN,
             "persona_count": len(personas),
             **({"persona": only_persona} if only_persona is not None else {}),
         },

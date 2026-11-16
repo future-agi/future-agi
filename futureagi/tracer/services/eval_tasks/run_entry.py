@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 RECLAIMED = "reclaimed"
 
 
-def run_entry(entry: EvalLogger) -> str:
+def run_entry(entry: EvalLogger, *, feedback_id: str | None = None) -> str:
     """Run the eval for one entry and record its terminal status; returns it.
 
     No-op (returns ``"deleted"``) if the entry was soft-deleted mid-run — a
@@ -49,8 +49,14 @@ def run_entry(entry: EvalLogger) -> str:
     claim taken in the meantime. Eval/data failures converge to a terminal
     state; infrastructure read failures propagate to the activity's bounded
     retry policy.
+
+    ``feedback_id`` is set when a user's feedback asked for the recompute
+    (Recalculate on a task result): the eval is then billed and logged as a
+    feedback run, as the per-span activity does for results without a task.
     """
-    fresh = EvalLogger.objects.filter(id=entry.id).first()
+    # Primary throughout: the entry was claimed moments ago and its claim
+    # stamp fences every write below.
+    fresh = EvalLogger.objects.using("default").filter(id=entry.id).first()
     if fresh is None:
         return "deleted"
 
@@ -85,8 +91,13 @@ def run_entry(entry: EvalLogger) -> str:
         return RECLAIMED
     fresh.updated_at = run_epoch
 
-    config = CustomEvalConfig.objects.select_related("project").get(
-        id=fresh.custom_eval_config_id
+    # Primary: the config may have been created or edited just before this
+    # run. The eval cores re-read it by id from the primary too, so the eval
+    # runs the config whose hash is stamped below.
+    config = (
+        CustomEvalConfig.objects.using("default")
+        .select_related("project")
+        .get(id=fresh.custom_eval_config_id)
     )
     # Infrastructure reads happen before the terminalizing evaluator boundary:
     # a transient PG failure loading task ownership must be retried by Temporal,
@@ -103,7 +114,9 @@ def run_entry(entry: EvalLogger) -> str:
     # does and does not stop.
     with running_entry_epoch(run_epoch):
         try:
-            _run_for_target(fresh, config, task_project=task_project)
+            _run_for_target(
+                fresh, config, task_project=task_project, feedback_id=feedback_id
+            )
         except EvalTelemetryReadError:
             # CH transport/query pressure is infrastructure, not an eval result.
             # Bubble it to the activity so its bounded retry policy can retry the
@@ -134,7 +147,7 @@ def run_entry(entry: EvalLogger) -> str:
 
     # The evaluator wrote the result onto the entry; read its error flag to pick
     # the terminal status, then stamp status + hash.
-    fresh.refresh_from_db()
+    fresh.refresh_from_db(using="default")
     status = EvalEntryStatus.ERRORED if fresh.error else EvalEntryStatus.COMPLETED
     # Explicit rather than scoped: this call is outside ``running_entry_epoch``,
     # and the refresh above has already replaced ``fresh.updated_at`` with
@@ -146,6 +159,10 @@ def run_entry(entry: EvalLogger) -> str:
         # another claim's result.
         return RECLAIMED
     if status == EvalEntryStatus.COMPLETED:
+        # The clustering gate reads the entry's config: hand it the one loaded
+        # above from the primary, not a lazy load from a replica that may not
+        # have a config created moments ago.
+        fresh.custom_eval_config = config
         _reseed_eval_clustering(fresh, config.project_id)
     return status
 
@@ -192,7 +209,11 @@ def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
 
 
 def _run_for_target(
-    entry: EvalLogger, config: CustomEvalConfig, *, task_project
+    entry: EvalLogger,
+    config: CustomEvalConfig,
+    *,
+    task_project,
+    feedback_id: str | None = None,
 ) -> None:
     """Dispatch to the per-target_type evaluation core (reused from eval.py),
     forcing eval input to load from ClickHouse for the duration."""
@@ -243,11 +264,15 @@ def _run_for_target(
                 type=OBSERVE,
                 observation_span=span,
                 project_id=task_project.id,
+                feedback_id=feedback_id,
             )
             # Single evals write inside _execute_evaluation; composites return the
             # logger kwargs for the caller to persist (mirrors the span wrapper).
+            # Strict: a failed write must end the entry ERRORED, not COMPLETED
+            # with no result (which would also retire a Recalculate's previous
+            # result).
             if isinstance(result, dict) and "trace" in result:
-                _write_eval_logger(result, span, config, task_id)
+                _write_eval_logger(result, span, config, task_id, strict=True)
         elif entry.target_type == EvalTargetType.TRACE:
             trace = get_trace(
                 entry.trace_id,
@@ -280,6 +305,7 @@ def _run_for_target(
                 custom_eval_config=config,
                 eval_task_id=task_id,
                 run_params=run_params,
+                feedback_id=feedback_id,
             )
         elif entry.target_type == EvalTargetType.SESSION:
             session = get_trace_session(entry.trace_session_id, project=task_project)
@@ -291,6 +317,7 @@ def _run_for_target(
                 custom_eval_config=config,
                 eval_task_id=task_id,
                 run_params=run_params,
+                feedback_id=feedback_id,
             )
         else:
             raise ValueError(f"Unsupported target_type: {entry.target_type!r}")

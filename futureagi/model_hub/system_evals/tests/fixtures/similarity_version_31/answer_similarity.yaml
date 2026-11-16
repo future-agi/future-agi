@@ -1,0 +1,158 @@
+eval_id: 57
+name: answer_similarity
+description: Evaluates the similarity between the expected and actual responses
+eval_tags:
+- NLP Metrics
+- Output Validation
+visible_ui: false
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - expected_response
+  - response
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    comparator:
+      type: option
+      default: CosineSimilarity
+    failure_threshold:
+      type: float
+      default: 0.5
+  config_params_desc:
+    expected_response: The expected correct response
+    response: The actual response to be evaluated
+    comparator: The method to use for comparison
+    failure_threshold: The threshold below which the evaluation fails
+  config_params_option:
+    comparator:
+    - CosineSimilarity
+    - NormalisedLevenshteinSimilarity
+    - JaroWincklerSimilarity
+    - JaccardSimilarity
+    - SorensenDiceSimilarity
+    - PhoneticSimilarity
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import difflib
+        response = kwargs.get("response", output or "")
+        expected_response = kwargs.get("expected_response", expected or "")
+        comparator = kwargs.get("comparator", "CosineSimilarity")
+        failure_threshold = float(kwargs.get("failure_threshold", 0.5))
+        # Allow empty strings through so individual comparators can evaluate them
+        if response is None or expected_response is None:
+            return {"score": 0.0, "reason": "Missing response or expected_response"}
+
+        response = str(response)
+        expected_response = str(expected_response)
+        if comparator == "NormalisedLevenshteinSimilarity":
+            # Normalized Levenshtein using SequenceMatcher as approximation
+            score = difflib.SequenceMatcher(None, response, expected_response).ratio()
+        elif comparator == "JaroWincklerSimilarity":
+            # Jaro-Winkler implementation
+            s1, s2 = response, expected_response
+            if s1 == s2:
+                score = 1.0
+            else:
+                len_s1, len_s2 = len(s1), len(s2)
+                max_dist = max(len_s1, len_s2) // 2 - 1
+                if max_dist < 0:
+                    max_dist = 0
+                s1_matches = [False] * len_s1
+                s2_matches = [False] * len_s2
+                matches = 0
+                transpositions = 0
+                for i in range(len_s1):
+                    start = max(0, i - max_dist)
+                    end = min(i + max_dist + 1, len_s2)
+                    for j in range(start, end):
+                        if s2_matches[j] or s1[i] != s2[j]:
+                            continue
+                        s1_matches[i] = True
+                        s2_matches[j] = True
+                        matches += 1
+                        break
+                if matches == 0:
+                    score = 0.0
+                else:
+                    k = 0
+                    for i in range(len_s1):
+                        if not s1_matches[i]:
+                            continue
+                        while not s2_matches[k]:
+                            k += 1
+                        if s1[i] != s2[k]:
+                            transpositions += 1
+                        k += 1
+                    jaro = (matches / len_s1 + matches / len_s2 + (matches - transpositions / 2) / matches) / 3
+                    prefix = 0
+                    for i in range(min(4, min(len_s1, len_s2))):
+                        if s1[i] == s2[i]:
+                            prefix += 1
+                        else:
+                            break
+                    score = jaro + prefix * 0.1 * (1 - jaro)
+        elif comparator == "JaccardSimilarity":
+            set1 = set(response.lower().split())
+            set2 = set(expected_response.lower().split())
+            if not set1 and not set2:
+                score = 1.0
+            else:
+                intersection = set1 & set2
+                union = set1 | set2
+                score = len(intersection) / len(union) if union else 0.0
+        elif comparator == "SorensenDiceSimilarity":
+            set1 = set(response.lower().split())
+            set2 = set(expected_response.lower().split())
+            if not set1 and not set2:
+                score = 1.0
+            else:
+                intersection = set1 & set2
+                score = 2 * len(intersection) / (len(set1) + len(set2)) if (len(set1) + len(set2)) > 0 else 0.0
+        elif comparator == "PhoneticSimilarity":
+            import re
+
+            def soundex(word):
+                mapping = {
+                    'B':'1','F':'1','P':'1','V':'1',
+                    'C':'2','G':'2','J':'2','K':'2','Q':'2','S':'2','X':'2','Z':'2',
+                    'D':'3','T':'3','L':'4','M':'5','N':'5','R':'6'
+                }
+                word = word.upper()
+                if not word or not word[0].isalpha():
+                    return "0000"
+                first_letter = word[0]
+                first_code = mapping.get(first_letter, '')
+                encoded = []
+                for char in word[1:]:
+                    code = mapping.get(char, '')
+                    if not code:
+                        continue
+                    if encoded and encoded[-1] == code:
+                        continue
+                    if not encoded and code == first_code:
+                        continue
+                    encoded.append(code)
+                return (first_letter + ''.join(encoded) + '000')[:4]
+
+            tokens1 = set(soundex(w) for w in re.findall(r'\b\w+\b', response.lower()))
+            tokens2 = set(soundex(w) for w in re.findall(r'\b\w+\b', expected_response.lower()))
+
+            if not tokens1 and not tokens2:
+                score = 1.0
+            elif not tokens1 or not tokens2:
+                score = 0.0
+            else:
+                score = len(tokens1.intersection(tokens2)) / len(tokens1.union(tokens2))
+        else:
+            # Default: CosineSimilarity approximated via SequenceMatcher
+            score = difflib.SequenceMatcher(None, response.lower(), expected_response.lower()).ratio()
+
+        reason = f"{comparator} score: {score:.4f}"
+        if score < failure_threshold:
+            reason += f" (below threshold {failure_threshold})"
+        return {"score": float(score), "reason": reason}

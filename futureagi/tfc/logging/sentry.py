@@ -415,14 +415,6 @@ def init_sentry(
             ignore_logger,
         )
 
-        # Keep a generous-but-bounded string length so stack frames and request
-        # bodies stay readable without bloating every event (the old 10MB cap
-        # multiplied payload size across millions of events).
-        try:
-            sentry_sdk.utils.MAX_STRING_LENGTH = 8192
-        except AttributeError:
-            pass  # Newer SDK versions may not have this
-
         # Suppress pure-infrastructure loggers at the source. This is the
         # single most important noise lever: it stops the OTel exporter's
         # transient "failed to reach collector" ERRORs from becoming issues.
@@ -502,6 +494,8 @@ def init_sentry(
             # passed through the scrubber + before_send redaction below.
             send_default_pii=True,
             event_scrubber=event_scrubber,
+            # Keep stack frames and request values readable without bloating events.
+            max_value_length=8192,
             # "medium" caps bodies at ~10KB: enough to debug, small enough that
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",

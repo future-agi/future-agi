@@ -16,28 +16,23 @@ repos:
       - id: check-docstring-first
       - id: debug-statements
 
-  # Python code formatting
-  - repo: https://github.com/psf/black
-    rev: 25.11.0
+  # Python linting, import sorting and formatting with ruff, configured in
+  # pyproject.toml. rev is the ruff that CI pins (RUFF_VERSION in
+  # .github/workflows/python-lint.yml); scripts/test_check_python_lint_delta.py
+  # checks they match. Like CI and the lint-staged hook, both hooks cover only
+  # Python files under futureagi/: the upstream ruff-format hook also takes
+  # Markdown, and the repo's other Python has no ruff config.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
     hooks:
-      - id: black
-        language_version: python3
-        args: [--line-length=88]
+      - id: ruff-check
+        args: [--fix]
+        files: ^futureagi/
+        types_or: [python, pyi]
+      - id: ruff-format
+        files: ^futureagi/
+        types_or: [python, pyi]
 
-  # Import sorting
-  - repo: https://github.com/pycqa/isort
-    rev: 7.0.0
-    hooks:
-      - id: isort
-        args: [--profile=black, --line-length=88]
-
-  # TODO: fix and uncomment
-  # # Modern Python linting with ruff (fast, comprehensive)
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   rev: v0.14.2
-  #   hooks:
-  #     - id: ruff
-  #       args: [--fix, --exit-non-zero-on-fix]
   # TODO: fix and uncomment
   # # Security scanning
   # - repo: https://github.com/PyCQA/bandit
@@ -67,16 +62,9 @@ repos:
   #       files: '\.(html)$'
   #       types_or: [html]
 
-  # Type checking with Future AGI's baseline strategy
-  - repo: local
-    hooks:
-      - id: mypy
-        name: mypy type checking (Future AGI baseline)
-        entry: bash -c 'make mypy || true'  # Don't fail pre-commit, just warn
-        language: system
-        types: [python]
-        pass_filenames: false
-        verbose: true
+  # No mypy hook: a whole-repo run takes minutes, too slow for every commit.
+  # CI's "Python types (advisory)" workflow checks it against
+  # mypy-baseline.txt; `make mypy` shows the same result before pushing.
 
 # Configuration for specific tools
 default_language_version:

@@ -963,9 +963,9 @@ class TestRunTestKPIsViewAPI:
         data = response.json()
         assert data["agent_type"] == AgentDefinition.AgentTypeChoices.VOICE
         assert data["completed_calls"] == 2
-        assert (
-            data["connected_calls"] == 3
-        ), "connected_voice_calls counts the failed-but-connected call too"
+        assert data["connected_calls"] == 3, (
+            "connected_voice_calls counts the failed-but-connected call too"
+        )
         assert data["completed_calls"] != data["connected_calls"], (
             "the two numbers must differ here, or this test could not catch "
             '"completed_calls": connected_calls replacing the real column'
@@ -1052,7 +1052,13 @@ class TestRunTestKPIsViewAPI:
         metric = response.json()["politeness"]
         assert metric["Excellent"] == 1
         assert metric["Impolite"] == 1
-        assert metric["choices"] == ["Excellent", "Good", "Neutral", "Impolite", "Hostile"]
+        assert metric["choices"] == [
+            "Excellent",
+            "Good",
+            "Neutral",
+            "Impolite",
+            "Hostile",
+        ]
 
     def test_kpi_choice_metric_uses_legacy_binding_labels(
         self, auth_client, organization, run_test, scenario, test_execution

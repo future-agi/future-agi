@@ -71,7 +71,7 @@ const FewShotExamples = ({
             }
             sx={{
               "& .MuiInputBase-root": {
-                fontSize: "13px",
+                fontSize: "12px",
                 ...((disabled || isJevModel) && { cursor: "not-allowed" }),
               },
             }}
@@ -105,7 +105,7 @@ const FewShotExamples = ({
               />
               <Typography
                 variant="body2"
-                sx={{ fontSize: "13px", flex: 1 }}
+                sx={{ fontSize: "12px", flex: 1 }}
                 noWrap
               >
                 {option.name}

@@ -281,7 +281,7 @@ function RoomContent({ onDisconnected, callId }) {
                     justifyContent: "center",
                     bgcolor: `${color}.o10`,
                     color: `${color}.500`,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: 600,
                     border: "1.5px solid",
                     borderColor: p.isSpeaking ? `${color}.400` : `${color}.200`,

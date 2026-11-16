@@ -13,6 +13,10 @@ MAX_MINUTES_MAX = 24 * 60
 # Held-back cases a fix needs to count as verified. On a failure that fails every baseline
 # run, 4 pass a large real fix 87% of the time and 2 only 56%.
 HELD_BACK_VERIFIED_MIN = 4
+# A third of the failing cases are held back, once there are enough for a third to tell.
+HELD_BACK_SHARE = 3
+# A run with too few failing cases gets this many variations of each written first.
+VARIATIONS_PER_CASE = 3
 
 
 class Surface(StrEnum):
@@ -31,8 +35,10 @@ class Ending(StrEnum):
 
 
 class FixStep(StrEnum):
-    """Where a fix is, in the four steps the user follows."""
+    """Where a fix is, in the steps the user follows. Variations comes first, and only
+    for a run with too few failing cases."""
 
+    VARIATIONS = "variations"
     REPRODUCE = "reproduce"
     SEARCH = "search"
     VERIFY = "verify"
@@ -64,6 +70,12 @@ class FixRequest(BaseModel):
     locked_paths: list[str] = Field(default_factory=list)
     budget_usd: float = Field(gt=0, le=BUDGET_CREDITS_MAX / 100)
     max_minutes: int = Field(gt=0, le=MAX_MINUTES_MAX)
+    # Set at launch on a run with too few failing cases: the fix's first step writes
+    # variations of them, and clears it once the variations that failed are targets.
+    variations_pending: bool = False
+    # Each variation that became a target, with the failing case it varies: it is held
+    # back with that case, and counts as that case toward verified.
+    variation_parents: dict[str, str] = Field(default_factory=dict)
 
 
 class InventoryScenario(BaseModel):
@@ -302,7 +314,14 @@ class LaunchDefaults(BaseModel):
 class LaunchLimits(BaseModel):
     budget_credits_max: int
     max_minutes_max: int
+    # The fewest failing cases a launch takes: fewer could not reach cases_min even if
+    # every variation failed.
     scenarios_min: int
+    # The failing cases a fix needs; with fewer, it writes variations of each first.
+    cases_min: int
+    variations_per_case: int
+    # The fewest failing cases a fix that writes variations can still end verified from.
+    verified_cases_min: int
     scenarios_max: int
 
 
@@ -324,3 +343,5 @@ class LaunchOptions(BaseModel):
     limits: LaunchLimits
     # Set when Start must be disabled, with the reason launch would give.
     blocked: LaunchBlocked | None = None
+    # Set when a launch that writes variations would be refused, with the reason.
+    variations_blocked: LaunchBlocked | None = None
