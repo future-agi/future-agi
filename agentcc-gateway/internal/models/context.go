@@ -59,6 +59,11 @@ type RequestContext struct {
 	Timings       map[string]time.Duration
 	Errors        []error
 
+	// TranslationDrops holds only the translator's own notes, separate from
+	// caller metadata and provider-attempt notes. Retries rebuild the combined
+	// notes from this baseline rather than accumulating stale provider drops.
+	TranslationDrops []string
+
 	// GuardrailRequest and GuardrailResponse carry the text of a request and
 	// its response, chat-shaped, on the routes that forward the client's own
 	// body: native /v1/messages, /v1/responses and native GenAI. There Request
@@ -199,6 +204,7 @@ func (rc *RequestContext) Release() {
 	rc.OrgModelFallbacks = nil
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
+	rc.TranslationDrops = nil
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0

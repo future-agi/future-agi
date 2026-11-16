@@ -94,6 +94,7 @@ func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.C
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 	}
+	logResponsesDrops(req)
 	respBody, _, err := p.CreateResponse(ctx, body)
 	if err != nil {
 		return nil, err
@@ -135,6 +136,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 			errs <- models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 			return
 		}
+		logResponsesDrops(req)
 		stream, _, err := p.StreamResponse(ctx, body)
 		if err != nil {
 			errs <- err
@@ -285,10 +287,11 @@ type responsesFunctionTool struct {
 
 // toResponsesRequest translates a chat request into a Responses API request.
 // The Responses API has no stop, seed, presence/frequency penalties or
-// logit_bias, and returns logprobs in another shape: a caller's own chat
-// request that sets one is refused with a 400 naming it, and a translated
-// request (/v1/messages, GenAI) is sent without it and the drop logged, as n
-// is. Modalities, audio and other unknown fields are not sent. A tool, tool
+// logit_bias, and returns logprobs in another shape. These settings and extra
+// choices (n > 1) are omitted for every caller; the dispatch logs their names
+// and the handlers report them through the translation-drops notes channel.
+// Logprobs are not half-mapped without translating the output shape.
+// Modalities, audio and other unknown fields are not sent. A tool, tool
 // choice, tool call or content part the Responses API cannot be sent in chat
 // shape is refused with a 400 rather than forwarded or dropped.
 func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
@@ -329,29 +332,6 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 			out.Store = store
 		}
 	}
-	// A response has one output; more choices cannot be asked for. A caller
-	// who chose this model themselves asked for them and is told so. A
-	// translated request (GenAI candidateCount), or one the gateway moved onto
-	// this model, gets one, as before this route existed.
-	callerChose := callerChoseResponses(req)
-	if req.N != nil && *req.N > 1 {
-		if callerChose {
-			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
-		}
-		slog.Info("responses route answers one choice; extra candidates dropped",
-			"requested", *req.N, "translated_from", req.TranslatedFrom,
-			"caller_model", req.CallerModel, "model", req.Model)
-	}
-
-	if params := chatOnlyParams(req); len(params) > 0 {
-		if callerChose {
-			return nil, unsupportedOverResponses(strings.Join(params, ", "))
-		}
-		slog.Info("responses route drops chat-only parameters",
-			"parameters", params, "translated_from", req.TranslatedFrom,
-			"caller_model", req.CallerModel, "model", req.Model)
-	}
-
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
 	out.SafetyIdentifier = req.Extra["safety_identifier"]
 	out.Metadata = req.Extra["metadata"]
@@ -382,43 +362,42 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 	return out, nil
 }
 
-// callerChoseResponses reports whether the caller is the one who can change
-// what goes over the Responses route: their own chat request (not a
-// translated one) for a model they chose. A request the gateway moved onto
-// this model (routing, a target's model_override, a model fallback, failover,
-// the traffic mirror) is the caller's only if the model they asked for would
-// have taken this route too, as when a target only renames it.
-func callerChoseResponses(req *models.ChatCompletionRequest) bool {
-	if req.TranslatedFrom != "" {
-		return false
-	}
-	if req.CallerModel == "" || req.CallerModel == req.Model {
-		return true
-	}
-	// "<provider>/<model>" is how a caller names an org provider's model; the
-	// gateway strips the prefix (case-insensitively) to call it. That is the
-	// caller's own choice of model, not a retarget.
-	if _, model, ok := strings.Cut(req.CallerModel, "/"); ok && strings.EqualFold(model, req.Model) {
-		return true
-	}
-	asked := *req
-	asked.Model = req.CallerModel
-	return NeedsResponses(&asked)
-}
-
-// ResponsesDrops names what the Responses route drops from req instead of
-// refusing it (see callerChoseResponses): its chat-only parameters and extra
-// choices. Nil when req does not go over that route, or when it would be
-// refused. A translated route adds these to the drops it reports.
+// ResponsesDrops names the settings omitted by a valid Responses attempt.
+// Called after pre-plugins/tool routing, never from the caller's original body.
+// A conversion error is still an error, not an attempt that dropped settings.
 func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
-	if !p.ChatNeedsResponses(req) || callerChoseResponses(req) {
+	if !p.ChatNeedsResponses(req) {
 		return nil
 	}
+	drops := responsesDroppedParams(req)
+	if len(drops) == 0 {
+		return nil
+	}
+	out, err := toResponsesRequest(req, req.Stream)
+	if err != nil {
+		return nil
+	}
+	if _, err := json.Marshal(out); err != nil {
+		return nil
+	}
+	return drops
+}
+
+func responsesDroppedParams(req *models.ChatCompletionRequest) []string {
 	drops := chatOnlyParams(req)
 	if req.N != nil && *req.N > 1 {
 		drops = append(drops, "n")
 	}
 	return drops
+}
+
+// Only fixed parameter names reach the warning, never parameter values or
+// caller-supplied model/header strings. This also covers mirror calls,
+// which do not have an HTTP response or a request-log pipeline of their own.
+func logResponsesDrops(req *models.ChatCompletionRequest) {
+	if drops := responsesDroppedParams(req); len(drops) > 0 {
+		slog.Warn("responses route drops chat-only parameters", "parameters", drops)
+	}
 }
 
 // chatOnlyParams names the chat parameters set on req that the Responses API

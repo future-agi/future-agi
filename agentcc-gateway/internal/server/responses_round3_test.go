@@ -16,9 +16,9 @@ import (
 
 // "openai/gpt-5.6-terra" is how a caller names its org's OpenAI model; the
 // gateway strips the prefix (case-insensitively) to call it. That is the
-// caller's own choice, so a chat-only parameter is refused with the 400 and
-// its remedy, not silently dropped as for a model the gateway moved there.
-func TestCallerPrefixedGPT56KeepsTheChatOnlyRefusal(t *testing.T) {
+// caller's own choice. Decision B explicitly replaces the previous 400:
+// prefixed callers also keep dispatch, with the same drop warning.
+func TestCallerPrefixedGPT56DropsAndWarns(t *testing.T) {
 	upstream := &openAIUpstream{hits: map[string]int{}}
 	ts := httptest.NewServer(upstream)
 	defer ts.Close()
@@ -26,8 +26,14 @@ func TestCallerPrefixedGPT56KeepsTheChatOnlyRefusal(t *testing.T) {
 	cfg.Auth.Enabled = true
 	cfg.Auth.Keys = []config.AuthKeyConfig{{
 		Name: "org-user", Key: "sk-agentcc-org-gpt56", Owner: "user", KeyType: "byok",
-		Metadata: map[string]string{"org_id": "org-gpt56"},
+		Metadata: map[string]string{"org_id": "org-gpt56", "access_groups": "tools"},
 	}}
+	cfg.Routing.AccessGroups = config.AccessGroupsConfig{
+		"tools": {
+			Models:  []string{"openai/gpt-5.6-terra", "OpenAI/gpt-5.6-terra", "gpt-5.6-terra"},
+			Aliases: map[string]string{"friendly-tools": "openai/gpt-5.6-terra"},
+		},
+	}
 	// The org provider takes the official host (so gpt-5.6 tools go over the
 	// Responses API) and the test dialer from this entry.
 	cfg.Providers["openai"] = bridgeProviderConfig(ts, false)
@@ -40,10 +46,12 @@ func TestCallerPrefixedGPT56KeepsTheChatOnlyRefusal(t *testing.T) {
 	tenantStore.Set("org-gpt56", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
 		"openai": {APIKey: "org-key", Enabled: true, Models: []string{"gpt-5.6-terra"}},
 	}})
-	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
+	logs, wantLog := responseDropsLogger(t)
+	srv := New(cfg, "", registry, pipeline.NewEngine(logs), nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
 	srv.ready.Store(true)
+	t.Cleanup(srv.asyncWorker.Stop)
 
-	for _, model := range []string{"openai/gpt-5.6-terra", "OpenAI/gpt-5.6-terra", "gpt-5.6-terra"} {
+	for _, model := range []string{"openai/gpt-5.6-terra", "OpenAI/gpt-5.6-terra", "gpt-5.6-terra", "friendly-tools"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%t", model, stream), func(t *testing.T) {
 				before := upstream.count("/v1/responses") + upstream.count("/v1/chat/completions")
@@ -53,14 +61,18 @@ func TestCallerPrefixedGPT56KeepsTheChatOnlyRefusal(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 				w := httptest.NewRecorder()
 				srv.httpServer.Handler.ServeHTTP(w, req)
-				if w.Code != http.StatusBadRequest {
-					t.Fatalf("status = %d, want 400 refusing stop/seed: %s", w.Code, w.Body.String())
+				if w.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
 				}
-				if !strings.Contains(w.Body.String(), "stop") {
-					t.Errorf("the 400 does not name stop: %s", w.Body.String())
+				if got := w.Header().Get("x-agentcc-translation-drops"); got != "stop_unsupported,seed_unsupported" {
+					t.Errorf("drops = %q", got)
 				}
-				if n := upstream.count("/v1/responses") + upstream.count("/v1/chat/completions") - before; n != 0 {
-					t.Errorf("upstream calls = %d, want none", n)
+				if model, leaked := sentToResponses(t, upstream); model != "gpt-5.6-terra" || len(leaked) > 0 {
+					t.Errorf("sent model %q with unsupported settings %v", model, leaked)
+				}
+				wantLog("stop_unsupported,seed_unsupported")
+				if n := upstream.count("/v1/responses") + upstream.count("/v1/chat/completions") - before; n != 1 {
+					t.Errorf("upstream calls = %d, want one", n)
 				}
 			})
 		}

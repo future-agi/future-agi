@@ -208,6 +208,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
 	canonicalReq.TranslatedFrom = "google"
+	rc.TranslationDrops = drops
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined

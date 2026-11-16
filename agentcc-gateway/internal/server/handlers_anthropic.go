@@ -190,6 +190,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	canonicalReq.TranslatedFrom = "anthropic"
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
+	rc.TranslationDrops = drops
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
@@ -1125,43 +1126,55 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 // pre-plugins, so a request a policy changed or refused reports only what its
 // final form loses.
 func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
-	extra := responsesRouteDrops(provider, req)
-	if len(extra) == 0 {
-		return
-	}
-	drops := extra
-	if prev := rc.Metadata["translation_drops"]; prev != "" {
-		drops = append(strings.Split(prev, ","), extra...)
-	}
-	joined := strings.Join(drops, ",")
-	rc.Metadata["translation_drops"] = joined
-	w.Header().Set("x-agentcc-translation-drops", joined)
+	setResponsesRouteDrops(w, rc, responsesRouteDrops(provider, req))
 }
 
 // noteChatResponsesRouteDrops records what provider's Responses route drops
-// from a chat request the gateway moved there (see the OpenAI provider's
-// ResponsesDrops): each as <name>_unsupported in the log's translation_drops
+// from any chat request: each as <name>_unsupported in the log's translation_drops
 // and the x-agentcc-translation-drops header, the gateway's notes channel. It
 // runs per provider attempt, so a failover attempt never keeps another's.
 func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
 	drops := responsesRouteDrops(provider, req)
-	if len(drops) == 0 {
-		delete(rc.Metadata, "translation_drops")
-		w.Header().Del("x-agentcc-translation-drops")
-		return
-	}
 	names := make([]string, len(drops))
 	for i, drop := range drops {
 		names[i] = drop + "_unsupported"
 	}
-	joined := strings.Join(names, ",")
-	rc.Metadata["translation_drops"] = joined
-	w.Header().Set("x-agentcc-translation-drops", joined)
+	setResponsesRouteDrops(w, rc, names)
 }
 
-// responsesRouteDrops names what provider's Responses route will drop from a
-// translated request instead of refusing it (see the OpenAI provider's
-// ResponsesDrops); nil for any other provider or route.
+// Rebuild per attempt from trusted translator notes, never from headers or
+// arbitrary metadata. A nil writer supports async/scheduled request logs;
+// their admission response precedes execution and cannot report future drops.
+func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, extra []string) {
+	var drops []string
+	seen := make(map[string]bool)
+	for _, group := range [][]string{rc.TranslationDrops, extra} {
+		for _, drop := range group {
+			if drop != "" && !seen[drop] {
+				seen[drop] = true
+				drops = append(drops, drop)
+			}
+		}
+	}
+	if len(drops) == 0 {
+		delete(rc.Metadata, "translation_drops")
+		if w != nil {
+			w.Header().Del("x-agentcc-translation-drops")
+		}
+		return
+	}
+	if rc.Metadata == nil {
+		rc.Metadata = make(map[string]string)
+	}
+	joined := strings.Join(drops, ",")
+	rc.Metadata["translation_drops"] = joined
+	if w != nil {
+		w.Header().Set("x-agentcc-translation-drops", joined)
+	}
+}
+
+// responsesRouteDrops names what provider's Responses route will omit;
+// nil for any other provider, route or invalid conversion.
 func responsesRouteDrops(provider providers.Provider, req *models.ChatCompletionRequest) []string {
 	rp, ok := provider.(interface {
 		ResponsesDrops(*models.ChatCompletionRequest) []string

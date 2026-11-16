@@ -364,8 +364,12 @@ func TestChatCompletionsFallsBackFromGPT56OverResponses(t *testing.T) {
 
 // An async job runs the same chat call, so it takes the same route.
 func TestChatCompletionsAsyncJobCarriesGPT56ToolsOverResponses(t *testing.T) {
-	srv, upstream := newResponsesBridgeServer(t)
-	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", false, ""), map[string]string{"x-agentcc-async": "true"})
+	logs, wantLog := responseDropsLogger(t)
+	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}})
+	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", false, allResponsesOnlySettings), map[string]string{"x-agentcc-async": "true"})
+	if got := w.Header().Get("x-agentcc-translation-drops"); got != "" {
+		t.Errorf("admission response predicts a future drop: %q", got)
+	}
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202. Body: %s", w.Code, w.Body.String())
 	}
@@ -405,6 +409,10 @@ func TestChatCompletionsAsyncJobCarriesGPT56ToolsOverResponses(t *testing.T) {
 	}
 	checkToolCompletion(t, job.Response)
 	checkHits(t, upstream, 0, 1)
+	if _, leaked := sentToResponses(t, upstream); len(leaked) != 0 {
+		t.Errorf("async call sent %v", leaked)
+	}
+	wantLog(allResponsesDropNotes)
 }
 
 func derefRaw(raw *json.RawMessage) json.RawMessage {

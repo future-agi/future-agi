@@ -639,10 +639,8 @@ func TestToResponsesRequestRefusesWhatItCannotCarry(t *testing.T) {
 		{"allowed_tools with a custom tool", `"custom" tool in allowed_tools`, func(r *models.ChatCompletionRequest) {
 			r.ToolChoice = json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"get_weather"}},{"type":"custom","custom":{"name":"run_sql"}}]}}`)
 		}},
-		{"more than one choice", `n=2`, func(r *models.ChatCompletionRequest) {
-			two := 2
-			r.N = &two
-		}},
+		// Decision B: n > 1 now drops with a note; covered by
+		// TestChatOnlyParametersOverResponses instead of this refusal table.
 		{"unknown tool_choice mode", `tool_choice "sometimes"`, func(r *models.ChatCompletionRequest) {
 			r.ToolChoice = json.RawMessage(`"sometimes"`)
 		}},

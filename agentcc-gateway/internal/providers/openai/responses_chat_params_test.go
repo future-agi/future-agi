@@ -2,86 +2,118 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// Each chat-only parameter the Responses API has no field for: a caller's own
-// chat request is refused naming it; a translated request is carried without
-// it.
+// Decision B deliberately replaces the original direct-caller 400 assertions:
+// preserve dispatch, omit unsupported settings and report only their names.
 func TestChatOnlyParametersOverResponses(t *testing.T) {
-	seed, top, on := 7, 3, true
+	seed, top, on, n := 0, 3, true, 2
 	penalty := 0.5
 	cases := []struct {
 		name string
 		set  func(*models.ChatCompletionRequest)
 	}{
-		{"stop", func(r *models.ChatCompletionRequest) { r.Stop = json.RawMessage(`["\n\nHuman:"]`) }},
+		{"stop", func(r *models.ChatCompletionRequest) { r.Stop = json.RawMessage(`["secret-stop\r\nvalue"]`) }},
 		{"seed", func(r *models.ChatCompletionRequest) { r.Seed = &seed }},
 		{"logprobs", func(r *models.ChatCompletionRequest) { r.Logprobs = &on }},
 		{"top_logprobs", func(r *models.ChatCompletionRequest) { r.TopLogprobs = &top }},
 		{"frequency_penalty", func(r *models.ChatCompletionRequest) { r.FrequencyPenalty = &penalty }},
 		{"presence_penalty", func(r *models.ChatCompletionRequest) { r.PresencePenalty = &penalty }},
 		{"logit_bias", func(r *models.ChatCompletionRequest) { r.LogitBias = map[string]int{"50256": -100} }},
+		{"n", func(r *models.ChatCompletionRequest) { r.N = &n }},
 	}
+	p := &Provider{openAIAPI: true}
 	for _, tc := range cases {
-		t.Run(tc.name+"/direct", func(t *testing.T) {
-			req := toolTurnRequest("gpt-5.6-terra")
-			tc.set(req)
-			_, err := toResponsesRequest(req, false)
-			if err == nil || err.Code != unsupportedCode || err.Status != 400 {
-				t.Fatalf("got %v, want a 400 %s", err, unsupportedCode)
-			}
-			if !strings.Contains(err.Message, "cannot carry "+tc.name+".") ||
-				!strings.Contains(err.Message, `reasoning_effort to "none"`) {
-				t.Errorf("message %q does not name %s with the remedy", err.Message, tc.name)
-			}
-		})
-		for _, from := range []string{"anthropic", "google"} {
-			t.Run(tc.name+"/translated-"+from, func(t *testing.T) {
-				req := toolTurnRequest("gpt-5.6-terra")
-				tc.set(req)
-				req.TranslatedFrom = from
-				got := mustResponsesRequest(t, req)
-				body, _ := json.Marshal(got)
-				for _, key := range []string{`"stop"`, `"seed"`, `"logprobs"`, `"top_logprobs"`, `"frequency_penalty"`, `"presence_penalty"`, `"logit_bias"`} {
-					if strings.Contains(string(body), key) {
-						t.Errorf("%s sent over Responses: %s", key, body)
+		for _, from := range []string{"", "anthropic", "google"} {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/from=%s/stream=%t", tc.name, from, stream), func(t *testing.T) {
+					req := toolTurnRequest("gpt-5.6-terra")
+					tc.set(req)
+					req.TranslatedFrom, req.Stream = from, stream
+					got, err := toResponsesRequest(req, stream)
+					if err != nil {
+						t.Fatalf("decision B must dispatch, not refuse: %v", err)
 					}
-				}
-			})
+					body, _ := json.Marshal(got)
+					var sent map[string]json.RawMessage
+					_ = json.Unmarshal(body, &sent)
+					for _, key := range []string{"stop", "seed", "logprobs", "top_logprobs", "frequency_penalty", "presence_penalty", "logit_bias", "n", "include"} {
+						if _, ok := sent[key]; ok {
+							t.Errorf("%s sent over Responses: %s", key, body)
+						}
+					}
+					if drops := p.ResponsesDrops(req); len(drops) != 1 || drops[0] != tc.name {
+						t.Errorf("drops = %v, want only %s", drops, tc.name)
+					}
+				})
+			}
 		}
 	}
 }
 
-// Values that change nothing are not refused.
 func TestChatOnlyParametersThatChangeNothingAreNotRefused(t *testing.T) {
-	zero, off, none := 0.0, false, 0
+	zero, off, none, one := 0.0, false, 0, 1
 	req := toolTurnRequest("gpt-5.6-terra")
-	req.Stop = json.RawMessage(`[]`)
 	req.FrequencyPenalty, req.PresencePenalty = &zero, &zero
 	req.Logprobs, req.TopLogprobs = &off, &none
 	req.LogitBias = map[string]int{"50256": 0}
-	if _, err := toResponsesRequest(req, false); err != nil {
-		t.Fatalf("got %v", err)
-	}
-	req.Stop = json.RawMessage(`""`)
-	if _, err := toResponsesRequest(req, false); err != nil {
-		t.Fatalf("empty stop string: %v", err)
+	req.N = &one
+	p := &Provider{openAIAPI: true}
+	for _, stop := range []string{`[]`, `""`, `[""]`, `null`} {
+		req.Stop = json.RawMessage(stop)
+		if _, err := toResponsesRequest(req, false); err != nil {
+			t.Fatalf("stop=%s: %v", stop, err)
+		}
+		if drops := p.ResponsesDrops(req); len(drops) != 0 {
+			t.Errorf("stop=%s: no-op settings reported as %v", stop, drops)
+		}
 	}
 }
 
-// All the parameters a request sets are named at once.
+// Decision B changes the old combined-refusal assertion into combined notes.
 func TestChatOnlyParametersAreNamedTogether(t *testing.T) {
 	seed := 1
 	req := toolTurnRequest("gpt-5.6-terra")
 	req.Stop = json.RawMessage(`"END"`)
 	req.Seed = &seed
-	_, err := toResponsesRequest(req, false)
-	if err == nil || !strings.Contains(err.Message, "cannot carry stop, seed.") {
-		t.Fatalf("got %v", err)
+	mustResponsesRequest(t, req)
+	p := &Provider{openAIAPI: true}
+	if got := strings.Join(p.ResponsesDrops(req), ","); got != "stop,seed" {
+		t.Fatalf("drops = %q", got)
+	}
+}
+
+func TestResponsesDropsRequireAValidResponsesAttempt(t *testing.T) {
+	p := &Provider{openAIAPI: true}
+	for _, tc := range []struct {
+		name string
+		edit func(*models.ChatCompletionRequest)
+	}{
+		{"reasoning off", func(r *models.ChatCompletionRequest) { r.Extra["reasoning_effort"] = json.RawMessage(`"none"`) }},
+		{"tools removed", func(r *models.ChatCompletionRequest) { r.Tools = nil }},
+		{"other model", func(r *models.ChatCompletionRequest) { r.Model = "gpt-5.5" }},
+		{"invalid tool choice", func(r *models.ChatCompletionRequest) { r.ToolChoice = json.RawMessage(`"sometimes"`) }},
+		{"malformed supported field", func(r *models.ChatCompletionRequest) { r.Extra["metadata"] = json.RawMessage(`{`) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := toolTurnRequest("gpt-5.6-terra")
+			req.Stop = json.RawMessage(`"secret"`)
+			req.Extra = make(map[string]json.RawMessage)
+			tc.edit(req)
+			if drops := p.ResponsesDrops(req); len(drops) != 0 {
+				t.Fatalf("no dispatch should report no drops, got %v", drops)
+			}
+		})
+	}
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Stop = json.RawMessage(`"secret"`)
+	if drops := (&Provider{}).ResponsesDrops(req); len(drops) != 0 {
+		t.Fatalf("unofficial upstream reports %v", drops)
 	}
 }
 

@@ -41,7 +41,7 @@ func sentToResponses(t *testing.T, upstream *openAIUpstream) (model string, leak
 		t.Fatalf("decoding /v1/responses body: %v", err)
 	}
 	json.Unmarshal(sent["model"], &model)
-	for _, key := range []string{"stop", "seed"} {
+	for _, key := range []string{"stop", "seed", "logprobs", "top_logprobs", "frequency_penalty", "presence_penalty", "logit_bias", "n", "include"} {
 		if _, ok := sent[key]; ok {
 			leaked = append(leaked, key)
 		}
@@ -57,7 +57,8 @@ func TestGatewayRetargetedOntoGPT56DropsChatOnlyParams(t *testing.T) {
 	for _, path := range []string{"fallback", "failover"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%t", path, stream), func(t *testing.T) {
-				srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{alsoAs: []string{"openai-b"}, configure: func(cfg *config.Config) {
+				logs, wantLog := responseDropsLogger(t)
+				srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}, alsoAs: []string{"openai-b"}, configure: func(cfg *config.Config) {
 					cfg.Routing.DefaultStrategy = "least-latency"
 					cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 3, OnStatusCodes: []int{http.StatusBadGateway}}
 					switch path {
@@ -84,6 +85,10 @@ func TestGatewayRetargetedOntoGPT56DropsChatOnlyParams(t *testing.T) {
 				if upstream.count("/v1/responses") != 1 {
 					t.Fatalf("/v1/responses hits = %d, want 1: %v", upstream.count("/v1/responses"), upstream.hits)
 				}
+				if got := w.Result().Header.Get("x-agentcc-translation-drops"); got != "stop_unsupported,seed_unsupported" {
+					t.Errorf("drop header = %q", got)
+				}
+				wantLog("stop_unsupported,seed_unsupported")
 				model, leaked := sentToResponses(t, upstream)
 				if model != "gpt-5.6-terra" || len(leaked) > 0 {
 					t.Errorf("sent model %q with %v, want gpt-5.6-terra with stop and seed dropped", model, leaked)
@@ -97,7 +102,9 @@ func TestGatewayRetargetedOntoGPT56DropsChatOnlyParams(t *testing.T) {
 // copy onto gpt-5.6 reaches the Responses API without the chat-only
 // parameters instead of being refused before it is sent.
 func TestMirrorOntoGPT56DropsChatOnlyParams(t *testing.T) {
-	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{configure: func(cfg *config.Config) {
+	wantWarning := captureResponsesWarning(t)
+	logs, wantLog := responseDropsLogger(t)
+	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}, configure: func(cfg *config.Config) {
 		cfg.Routing.Mirror = config.MirrorConfig{Enabled: true, Rules: []config.MirrorRule{
 			{SourceModel: "gpt-5.5", TargetProvider: "openai", TargetModel: "gpt-5.6-terra", SampleRate: 1},
 		}}
@@ -106,6 +113,11 @@ func TestMirrorOntoGPT56DropsChatOnlyParams(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
+	if got := w.Result().Header.Get("x-agentcc-translation-drops"); got != "" {
+		t.Errorf("shadow warning leaked into primary response: %q", got)
+	}
+	wantLog("")
+	wantWarning("[stop seed]")
 	deadline := time.Now().Add(5 * time.Second)
 	for upstream.count("/v1/responses") == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -118,14 +130,14 @@ func TestMirrorOntoGPT56DropsChatOnlyParams(t *testing.T) {
 	}
 }
 
-// A caller who asks for gpt-5.6 with function tools and stop or seed is still
-// told, on the chat and the streaming route alike, and nothing is sent. So is
-// a caller whose own model a routing target only renames.
-func TestCallerOwnGPT56RequestWithChatOnlyParamsIsRefused(t *testing.T) {
+// Decision B replaces the old direct/renamed caller refusal assertions:
+// keep serving the request, with omissions visible in headers and request logs.
+func TestCallerOwnGPT56RequestWithChatOnlyParamsDropsAndWarns(t *testing.T) {
 	for _, renamed := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("renamed=%t/stream=%t", renamed, stream), func(t *testing.T) {
-				srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{configure: func(cfg *config.Config) {
+				logs, wantLog := responseDropsLogger(t)
+				srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}, configure: func(cfg *config.Config) {
 					if renamed {
 						declareOpenAI(cfg)
 						cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"gpt-5.6-terra": {
@@ -134,20 +146,22 @@ func TestCallerOwnGPT56RequestWithChatOnlyParamsIsRefused(t *testing.T) {
 					}
 				}})
 				w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", stream, chatOnlyExtra), nil)
-				if w.Code != http.StatusBadRequest {
-					t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+				if w.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
 				}
-				var resp struct {
-					Error struct {
-						Code    string `json:"code"`
-						Message string `json:"message"`
-					} `json:"error"`
+				if stream {
+					checkToolStream(t, w)
+				} else {
+					checkToolCompletion(t, w.Body.Bytes())
 				}
-				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.Error.Code != "unsupported_over_responses" ||
-					!strings.Contains(resp.Error.Message, "stop, seed") || !strings.Contains(resp.Error.Message, "reasoning_effort") {
-					t.Errorf("error = %s, want unsupported_over_responses naming stop, seed with the reasoning_effort remedy", w.Body.String())
+				if got := w.Header().Get("x-agentcc-translation-drops"); got != "stop_unsupported,seed_unsupported" {
+					t.Errorf("drops = %q", got)
 				}
-				checkHits(t, upstream, 0, 0)
+				if _, leaked := sentToResponses(t, upstream); len(leaked) > 0 {
+					t.Errorf("sent unsupported settings: %v", leaked)
+				}
+				checkHits(t, upstream, 0, 1)
+				wantLog("stop_unsupported,seed_unsupported")
 			})
 		}
 	}

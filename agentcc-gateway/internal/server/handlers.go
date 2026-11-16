@@ -1166,9 +1166,9 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The model the caller chose. From here on the gateway may send the
-	// request under another one (routing, failover, fallback, mirror); a
-	// provider uses this to tell the caller's choices from the gateway's.
+	// Keep the caller's model provenance before gateway retargeting (routing,
+	// failover, fallback, mirror). Responses omissions no longer depend on
+	// whether the caller or the gateway chose the target model.
 	req.CallerModel = req.Model
 
 	// 3. Complexity-based routing (only if not provider-locked).
@@ -2333,7 +2333,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey, metadataErrorKey:
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", "translation_drops", usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false
