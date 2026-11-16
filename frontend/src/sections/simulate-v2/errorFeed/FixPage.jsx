@@ -45,6 +45,8 @@ import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT,
   FIX_SCENARIO_CAP,
+  VARIATIONS_PER_FAILING,
+  variationsPlanOf,
   envsForAgent,
   fixEnvFor,
   fixEstimate,
@@ -125,7 +127,7 @@ const PREP_STEPS = [
     label: "Diagnosing it in the agent's prompt and tools",
     ms: 900,
   },
-  { id: "scenarios", label: "Writing scenarios from the traces", ms: 1100 },
+  { id: "scenarios", label: "Collecting the issue's failing scenarios", ms: 1100 },
   { id: "limits", label: "Applying the agent's limits", ms: 500 },
 ];
 
@@ -799,7 +801,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     meta={
                       edited
                         ? "Edited by you — the search starts from this"
-                        : "Drafted from the agent's prompt, its tools and the failing calls — edit it if it's wrong"
+                        : "Stored by the Error Feed for this issue — edit it if it's wrong"
                     }
                     action={
                       edited ? (
@@ -1285,6 +1287,14 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     <Typography
                       sx={{ typography: "s2", fontWeight: 600 }}
                     >{`${chosen.length} from this issue`}</Typography>
+                    {/* #82: variations are drafted after Start, never on this page. */}
+                    <Typography
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      {variationsPlanOf(chosen.length).drafted
+                        ? `+ up to ${variationsPlanOf(chosen.length).upTo} variations (up to ${VARIATIONS_PER_FAILING} per failing scenario), drafted when you start`
+                        : `No variations drafted — ${FIX_SCENARIO_CAP} or more failing scenarios are enough`}
+                    </Typography>
                     {regressionCount > 0 && (
                       <Typography
                         sx={{ typography: "s3", color: "text.subtitle" }}
@@ -1295,7 +1305,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       held back, what may change, what stays locked. */}
                   <SumRow k="Held back">
                     <Typography sx={{ typography: "s2" }}>
-                      {`About ${Math.round(chosen.length * HELD_SHARE)} of the reproducing scenarios, plus fresh variations — set aside before the fix`}
+                      {`About ${Math.round(chosen.length * HELD_SHARE)} of the reproducing scenarios${variationsPlanOf(chosen.length).drafted ? ", plus some of the variations" : ""} — set aside before the fix`}
                     </Typography>
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}

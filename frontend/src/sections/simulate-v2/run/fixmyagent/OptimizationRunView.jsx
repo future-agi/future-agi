@@ -32,10 +32,8 @@ import {
   noGainRunsOf,
 } from "../../_mock/optimizer";
 import {
-  improverModelsText,
   staleSince,
   optimizationVerdict,
-  OPTIMIZER_MODELS,
   OPT_STATUS,
   DEFAULT_LIMITS,
   improvementOutcome,
@@ -43,7 +41,6 @@ import {
   issueLine,
   limitRows,
   searchSpend,
-  judgeFor,
   ladderOf,
   improvementPhaseOf,
   IMPROVEMENT_PHASES,
@@ -244,7 +241,6 @@ export default function OptimizationRunView({
       (outcome.issue?.fixed && soft?.tone === "#DC2626" ? null : soft)
     : null;
   const blockedBy = shippable ? null : outcome.headline;
-  const model = OPTIMIZER_MODELS.find((m) => m.id === record.model);
   /* What ships — the search's pick, or another trade-off someone chose.
      Only a verified change ships: a chosen run is verified first. */
   const shipped = shippedCandidate(record);
@@ -1555,7 +1551,7 @@ export default function OptimizationRunView({
             />
 
             {/* ── how it searched, for whoever wants it ── */}
-            <SearchDetails record={record} result={result} model={model} />
+            <SearchDetails result={result} />
           </Box>
         )}
     </Stack>
@@ -3153,7 +3149,7 @@ const surfaceWord = (trial, result) => {
 };
 
 /* Which optimizer and model searched, and the full trace — kept out of the way. */
-function SearchDetails({ record, result, model }) {
+function SearchDetails({ result }) {
   const [open, setOpen] = useState(false);
   return (
     <Box sx={{ px: 2.5, pb: 2.5 }}>
@@ -3177,7 +3173,7 @@ function SearchDetails({ record, result, model }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 0.5 }}
           >
-            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} candidates · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
+            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · judged by a different model from the one that wrote the changes, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} candidates · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
           </Typography>
           {/* GEPA keeps the best candidate for each scenario, not one overall best. */}
           {result.optimizer?.id === "gepa" && <ParetoPool result={result} />}
@@ -3193,9 +3189,7 @@ function SearchDetails({ record, result, model }) {
   );
 }
 SearchDetails.propTypes = {
-  record: PropTypes.object,
   result: PropTypes.object,
-  model: PropTypes.object,
 };
 
 /* GEPA's pool: each trial that is the best at fixing at least one scenario. */

@@ -555,6 +555,16 @@ export const issueRunFor = (env, es, issue, drafts, { id, cap } = {}) => {
    finalist, so more costs a lot and makes the search noisier, not better. */
 export const FIX_SCENARIO_CAP = 12;
 
+/* Variations of the failing scenarios are drafted only after the fix starts
+   (Kartik, #82): drafting is a builder turn and costs tokens, and planning
+   the fix makes no model call. With FIX_SCENARIO_CAP or more failing
+   scenarios nothing is drafted and those are used as they are. */
+export const VARIATIONS_PER_FAILING = 3;
+export const variationsPlanOf = (failing = 0) =>
+  failing >= FIX_SCENARIO_CAP
+    ? { drafted: false, upTo: 0 }
+    : { drafted: true, upTo: failing * VARIATIONS_PER_FAILING };
+
 /** The scenarios a fix uses by default, and the rest. Drafts come most common first. */
 export const fixScenariosOf = (drafts = []) => {
   const all = [...drafts].sort(

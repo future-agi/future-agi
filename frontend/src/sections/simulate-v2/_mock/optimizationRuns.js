@@ -133,8 +133,10 @@ export const OPTIMIZER_MODELS = [
    turns each plan into the exact edit. Both matter — in Kartik's 23 Oct runs
    every planner named the same cause and the writer decided whether the fix
    was accepted (Flash-Lite 1/3, Flash 2/3, Opus 3/3). Neither is picked in
-   the product (27 Oct: no optimizer settings); both default to the strongest
-   model the budget allows, OPTIMIZER_MODELS[0]. */
+   the product (27 Oct: no optimizer settings). Kartik 16 Nov (#16): models
+   aren't picked by budget (today one model plans, another writes, a third
+   reviews; the budget only decides when it stops) and the product shows no
+   model names, so improverModelsText is no longer rendered. */
 export const SAME_AS_PLANNER = "same";
 export const modelLabelOf = (id) =>
   OPTIMIZER_MODELS.find((m) => m.id === id)?.label || id;
