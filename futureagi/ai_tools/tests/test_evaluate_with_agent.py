@@ -111,9 +111,7 @@ def mock_orchestrator():
             return_value="TRACE: test-trace",
         ),
         patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-        patch(
-            "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-        ) as MockOrchestrator,
+        patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
     ):
         MockScout.return_value.run.return_value = dict(_SCOUT_BRIEF)
         MockOrchestrator.return_value.run.return_value = dict(_ORCHESTRATOR_OUTPUT)
@@ -206,9 +204,9 @@ class TestInputValidation:
                 },
                 tool_context,
             )
-            assert (
-                not result.is_error
-            ), f"Scope '{scope}' unexpectedly failed: {result.content}"
+            assert not result.is_error, (
+                f"Scope '{scope}' unexpectedly failed: {result.content}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -325,9 +323,7 @@ class TestChoices:
                 return_value="SPAN: test",
             ),
             patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-            patch(
-                "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-            ) as MockOrchestrator,
+            patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
         ):
             numeric_output = dict(_ORCHESTRATOR_OUTPUT)
             numeric_output["result"] = {
@@ -392,9 +388,7 @@ class TestOptionalParams:
                 return_value="TRACE: test",
             ),
             patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-            patch(
-                "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-            ) as MockOrchestrator,
+            patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
         ):
             mock_gather.return_value = _EMPTY_RESOURCES
             MockScout.return_value.run.return_value = dict(_SCOUT_BRIEF)
@@ -427,9 +421,7 @@ class TestOptionalParams:
                 return_value="TRACE: test",
             ),
             patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-            patch(
-                "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-            ) as MockOrchestrator,
+            patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
         ):
             mock_gather.return_value = _EMPTY_RESOURCES
             MockScout.return_value.run.return_value = dict(_SCOUT_BRIEF)
@@ -492,9 +484,7 @@ class TestErrorHandling:
                 return_value="TRACE: test",
             ),
             patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-            patch(
-                "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-            ) as MockOrchestrator,
+            patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
         ):
             MockScout.return_value.run.return_value = dict(_SCOUT_BRIEF)
             MockOrchestrator.return_value.run.side_effect = RuntimeError("LLM timeout")
@@ -525,9 +515,7 @@ class TestErrorHandling:
                 return_value="[Summary unavailable for trace id=fake: DoesNotExist]",
             ),
             patch("ee.agenthub.eval_orchestrator.EvalScout") as MockScout,
-            patch(
-                "ee.agenthub.eval_orchestrator.EvalOrchestrator"
-            ) as MockOrchestrator,
+            patch("ee.agenthub.eval_orchestrator.EvalOrchestrator") as MockOrchestrator,
         ):
             MockScout.return_value.run.return_value = dict(_SCOUT_BRIEF)
             MockOrchestrator.return_value.run.return_value = dict(_ORCHESTRATOR_OUTPUT)

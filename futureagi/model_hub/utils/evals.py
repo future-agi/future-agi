@@ -56,22 +56,25 @@ FUNCTION_CONFIG_EVALS = [
     "contains",
     "contains_any",
 ]
-NOT_UI_EVALS = [
-    "protect_flash",
-    "prompt_adherence",
-    "answer_similarity",
-    "deterministic_evals",
-    "json_scheme_validation",
-    "api_call",
-    "custom_code_evaluation",
-    # Deprecating evals - will stop appearing in the selection pane.
-    "content_moderation",
-    "factual_accuracy",
-    "content_safety_violation",
-    "is_factually_consistent",
-    "is_compliant",
-    "recall_score",  # deprecating this, as we will be using recall_at_k (same behavior when k is not specified)
-] + FUNCTION_CONFIG_EVALS
+NOT_UI_EVALS = (
+    [
+        "protect_flash",
+        "prompt_adherence",
+        "answer_similarity",
+        "deterministic_evals",
+        "json_scheme_validation",
+        "api_call",
+        "custom_code_evaluation",
+        # Deprecating evals - will stop appearing in the selection pane.
+        "content_moderation",
+        "factual_accuracy",
+        "content_safety_violation",
+        "is_factually_consistent",
+        "is_compliant",
+        "recall_score",  # deprecating this, as we will be using recall_at_k (same behavior when k is not specified)
+    ]
+    + FUNCTION_CONFIG_EVALS
+)
 
 
 USE_CASES = """

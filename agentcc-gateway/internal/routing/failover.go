@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 
@@ -15,11 +16,16 @@ var DefaultFailoverStatusCodes = []int{429, 500, 502, 503, 504}
 
 // Failover handles automatic provider failover on errors.
 type Failover struct {
-	cfg     config.FailoverConfig
-	router  *Router
-	retryer *Retryer
-	cbReg   *CircuitBreakerRegistry
-	codes   map[int]bool
+	cfg               config.FailoverConfig
+	router            *Router
+	retryer           *Retryer
+	cbReg             *CircuitBreakerRegistry
+	codes             map[int]bool
+	useCircuitBreaker func(string) bool
+	// orgBreakers holds BYOK breakers keyed by (org, provider). breakerScope is
+	// the org a request-scoped copy records into; empty means no org breaker.
+	orgBreakers  *ScopedCircuitBreakerRegistry
+	breakerScope string
 }
 
 // FailoverCallFunc is called for each failover attempt.
@@ -50,13 +56,50 @@ func NewFailover(cfg config.FailoverConfig, router *Router, retryer *Retryer, cb
 		codes[c] = true
 	}
 
-	return &Failover{
+	f := &Failover{
 		cfg:     cfg,
 		router:  router,
 		retryer: retryer,
 		cbReg:   cbReg,
 		codes:   codes,
 	}
+	if cbReg.IsEnabled() {
+		f.orgBreakers = cbReg.orgBreakers
+	}
+	return f
+}
+
+// WithCircuitBreakerFilter scopes admission and outcome recording per attempt.
+// The request-local filter must identify the actual instance used by the call.
+func (f *Failover) WithCircuitBreakerFilter(filter func(string) bool) *Failover {
+	scoped := *f
+	scoped.useCircuitBreaker = filter
+	return &scoped
+}
+
+// WithOrgCircuitBreakers is WithCircuitBreakerFilter for an org's request:
+// attempts the filter rejects (the org's own key) use a breaker for
+// (orgID, provider), with the shared thresholds, so one org's failures never
+// open the operator breaker or another org's. An empty orgID means none.
+func (f *Failover) WithOrgCircuitBreakers(orgID string, filter func(string) bool) *Failover {
+	scoped := f.WithCircuitBreakerFilter(filter)
+	scoped.breakerScope = orgID
+	return scoped
+}
+
+// circuitBreakerFor returns the breaker that admits and records an attempt
+// on providerID, or nil when the attempt has none.
+func (f *Failover) circuitBreakerFor(providerID string) *CircuitBreaker {
+	if !f.cbReg.IsEnabled() {
+		return nil
+	}
+	if f.useCircuitBreaker == nil || f.useCircuitBreaker(providerID) {
+		return f.cbReg.Get(providerID)
+	}
+	if f.breakerScope == "" || f.orgBreakers == nil {
+		return nil
+	}
+	return f.orgBreakers.Get(f.breakerScope, providerID)
 }
 
 // IsEnabled returns true if failover is enabled and a router is available.
@@ -95,7 +138,16 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 	var lastErr error
 	var originalProvider string
 
-	for attempt := 1; attempt <= f.cfg.MaxAttempts; attempt++ {
+	// Refused targets are excluded, but only admitted provider calls spend the
+	// attempt budget. Selection ends once all distinct providers are excluded.
+	attempt := 0
+	for attempt < f.cfg.MaxAttempts {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
 		// Select a target, excluding already-tried providers.
 		var result *RoutingResult
 		var err error
@@ -108,6 +160,9 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 			if lastErr != nil {
 				return nil, lastErr // Return the actual provider error, not "no targets"
 			}
+			if len(excluded) > 0 || f.router.TargetCount(model) > 0 {
+				return nil, models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
+			}
 			return nil, err
 		}
 
@@ -116,12 +171,10 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Check circuit breaker before calling.
-		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
-			if !cb.Allow() {
-				excluded[result.Target.ProviderID] = true
-				continue
-			}
+		cb := f.circuitBreakerFor(result.Target.ProviderID)
+		if cb != nil && !cb.Allow() {
+			excluded[result.Target.ProviderID] = true
+			continue
 		}
 
 		// Create per-attempt timeout if configured so later attempts get full time.
@@ -132,6 +185,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Call the provider (with retry if configured).
+		attempt++
 		var callErr error
 		if f.retryer.IsEnabled() {
 			_, callErr = f.retryer.Execute(attemptCtx, func() error {
@@ -146,8 +200,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Record result in circuit breaker.
-		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
+		if cb != nil {
 			if callErr == nil {
 				cb.RecordSuccess()
 			} else {
@@ -161,7 +214,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 				ModelOverride:    result.Target.ModelOverride,
 				Attempts:         attempt,
 				OriginalProvider: originalProvider,
-				FallbackUsed:     attempt > 1,
+				FallbackUsed:     result.Target.ProviderID != originalProvider,
 				StrategyName:     result.StrategyName,
 			}, nil
 		}

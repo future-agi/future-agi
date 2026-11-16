@@ -18,7 +18,6 @@ from tracer.models.project import Project
 from tracer.serializers.project import ProjectNameUpdateSerializer, ProjectSerializer
 from tracer.views.project import ProjectView
 
-
 APP_NAMES = [
     "deploy ✈️",
     "team 👩‍💻",
@@ -58,6 +57,7 @@ def test_actual_project_create_and_rename_preserve_unicode(name):
     assert Project._meta.get_field("name").clean(expected, None) == expected
 
     request = SimpleNamespace(
+        method="POST",
         data={
             "name": name,
             "model_type": Project._meta.get_field("model_type").choices[0][0],
