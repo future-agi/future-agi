@@ -38,6 +38,7 @@ from simulate.services.hosted_harness_validation import (
     receipt_call_times,
     validate_jsonb_strings,
 )
+from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -1107,6 +1108,10 @@ def _apply_receipt_to_call(
                 known = isinstance(run_test_id, (str, UUID))
                 selected = runnable_eval_config_ids(run_test_id) if known else []
                 tool_on = _tool_evaluation_on(run_test_id) if known else False
+                # A fix's check run starts no grading here: its fix grades the base
+                # version's and the winner's runs once it has a winner.
+                if is_fix_check_run(call.test_execution_id):
+                    selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id

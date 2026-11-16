@@ -21,6 +21,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
 	"github.com/futureagi/agentcc-gateway/internal/video/tariff"
 	"gopkg.in/yaml.v3"
+
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 )
 
 // Config is the top-level gateway configuration.
@@ -219,6 +221,12 @@ type AzureSecretsConfig struct {
 type ModelDatabaseConfig struct {
 	ValidationEnabled *bool                          `yaml:"validation_enabled" json:"validation_enabled"` // nil = default true
 	Overrides         map[string]ModelOverrideConfig `yaml:"overrides" json:"overrides"`
+
+	// CatalogueURL is fetched at startup and every CatalogueSyncInterval for a
+	// newer pricing catalogue (LiteLLM format). Empty turns the sync off, for
+	// air-gapped deployments. Read at startup only; a reload does not change it.
+	CatalogueURL          string        `yaml:"catalogue_url" json:"catalogue_url"`
+	CatalogueSyncInterval time.Duration `yaml:"catalogue_sync_interval" json:"catalogue_sync_interval"` // default 24h, minimum 1h
 }
 
 // IsValidationEnabled returns whether model validation is enabled (default true).
@@ -1081,6 +1089,10 @@ type IPACLConfig struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		ModelDatabase: ModelDatabaseConfig{
+			CatalogueURL:          modeldb.DefaultCatalogueURL,
+			CatalogueSyncInterval: modeldb.DefaultSyncInterval,
+		},
 		Video: defaultVideoConfig(),
 		Server: ServerConfig{
 			Port:                  8080,
