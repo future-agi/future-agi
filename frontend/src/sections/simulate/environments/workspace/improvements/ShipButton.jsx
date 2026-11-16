@@ -5,7 +5,7 @@ import {
   Button,
   InputBase,
   MenuItem,
-  Select,
+  TextField,
   Typography,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
@@ -44,12 +44,6 @@ const shipHint = (fix, candidate, anyway) => {
     : `Makes Trial ${candidate.attempt}'s version the environment's default`;
 };
 
-const selectSx = {
-  height: 34,
-  typography: "s2",
-  "& .MuiSelect-select": { typography: "s2", py: 0.75 },
-};
-
 const trialLabel = (c) =>
   `Trial ${c.attempt} · ${c.outcome === "winner" ? "Winner" : "Broke must-pass checks"}`;
 
@@ -58,20 +52,21 @@ const trialLabel = (c) =>
 function TrialPicker({ trials, picked, onPick }) {
   return (
     <Row label="Trial">
-      <Select
+      {/* The house picker, as RunDialog's version fields. */}
+      <TextField
+        select
         size="small"
         fullWidth
         value={picked.id}
         onChange={(e) => onPick(e.target.value)}
-        sx={selectSx}
         inputProps={{ "aria-label": "Trial to ship" }}
       >
         {trials.map((c) => (
-          <MenuItem key={c.id} value={c.id} sx={{ typography: "s2" }}>
+          <MenuItem key={c.id} value={c.id}>
             {trialLabel(c)}
           </MenuItem>
         ))}
-      </Select>
+      </TextField>
     </Row>
   );
 }
@@ -162,9 +157,10 @@ export default function ShipButton({ fix }) {
     );
   }
   if (shipped) {
+    // Named, since the page leads with the winner and a trial shipped anyway may be another.
     return (
       <Button size="small" variant="contained" disabled>
-        Default
+        {`Trial ${shipped.attempt} is the default`}
       </Button>
     );
   }

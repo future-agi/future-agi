@@ -282,7 +282,9 @@ describe("Ship", () => {
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Default" })).toBeDisabled(),
+      expect(
+        screen.getByRole("button", { name: "Trial 3 is the default" }),
+      ).toBeDisabled(),
     );
     expect(shipPosts()[0][0]).toMatch(/make-default\/$/);
   });
@@ -350,7 +352,9 @@ describe("Ship anyway", () => {
         /Shipped anyway by Test User · .*: The escalation copy changed on purpose/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Default" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Trial 2 is the default" }),
+    ).toBeDisabled();
   });
 
   it("lets one Ship cover the winner and a trial only must-pass refused", async () => {
