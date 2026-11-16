@@ -60575,15 +60575,9 @@ export const simulateV3CallExecutionDetailResponseTrialStateLimitsActorSecondsPe
 
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsModelMax = 200;
 
-export const simulateV3CallExecutionDetailResponseTrialStateSharedRecordsItemActionsTruncatedDefault =
-  false;
-
 export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin = 0;
 
 export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax = 200;
-
-export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateSharedRecordsItemActionsTruncatedDefault =
-  false;
 
 export const SimulateV3CallExecutionDetailResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -61471,8 +61465,9 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             truncated: zod.boolean(),
             actions_truncated: zod
               .boolean()
-              .default(
-                simulateV3CallExecutionDetailResponseTrialStateSharedRecordsItemActionsTruncatedDefault,
+              .optional()
+              .describe(
+                "This record's own actions were cut; null for a trial sealed before the harness said so.",
               ),
           })
           .describe(
@@ -61487,7 +61482,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .boolean()
       .optional()
       .describe(
-        "More records were touched by more than one participant than the trial kept.",
+        "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
       ),
     stopped_workers: zod
       .array(
@@ -62054,8 +62049,9 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                 truncated: zod.boolean(),
                 actions_truncated: zod
                   .boolean()
-                  .default(
-                    simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateSharedRecordsItemActionsTruncatedDefault,
+                  .optional()
+                  .describe(
+                    "This record's own actions were cut; null for a trial sealed before the harness said so.",
                   ),
               })
               .describe(
@@ -62070,7 +62066,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .boolean()
           .optional()
           .describe(
-            "More records were touched by more than one participant than the trial kept.",
+            "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
           ),
         stopped_workers: zod
           .array(

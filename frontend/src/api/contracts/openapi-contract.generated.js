@@ -98957,8 +98957,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         shared_records_truncated: {
           title: "Shared records truncated",
           description:
-            "More records were touched by more than one participant than the trial kept.",
+            "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
           type: "boolean",
+          "x-nullable": true,
         },
         stopped_workers: {
           description:
@@ -124521,8 +124522,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         actions_truncated: {
           title: "Actions truncated",
+          description:
+            "This record's own actions were cut; null for a trial sealed before the harness said so.",
           type: "boolean",
-          default: false,
+          "x-nullable": true,
         },
       },
     },

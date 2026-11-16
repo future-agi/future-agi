@@ -28080,6 +28080,7 @@ export interface SharedRecordApi {
   actions: SharedRecordActionApi[];
   committed_writes: number;
   truncated: boolean;
+  /** This record's own actions were cut; null for a trial sealed before the harness said so. */
   actions_truncated?: boolean;
 }
 
@@ -28128,7 +28129,7 @@ export interface TrialStateApi {
   notices: TrialNoticeApi[];
   /** Records two or more participants named in this trial, and what the world made of each call. */
   shared_records?: SharedRecordApi[];
-  /** More records were touched by more than one participant than the trial kept. */
+  /** More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so. */
   shared_records_truncated?: boolean;
   /** Workers whose own process the harness ended when their deadline passed. */
   stopped_workers?: StoppedWorkerApi[];
