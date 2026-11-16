@@ -1652,6 +1652,32 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
+### GW-E2E-005 — a decision through the org OpenRouter provider is answered, logged with its cost, and held to the key rate limit
+
+**Goal:** A self-hosted team calls an OpenRouter Jev decision model through the gateway with its own OpenRouter key and a gateway key, sees the call in Request Logs with its cost, and is held to its rate limit
+
+**Spec:** `flows/gateway/openrouter-decisions.spec.ts:60`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as a freshly provisioned organization of its own
+2. save the OpenRouter provider key and Jev models for the organization, as the dashboard preset does (OpenAI format)
+3. mint a gateway API key
+4. send a decision (a System One body to /v1/systemone) to openrouter-chat/~typesafe/jev-latest with that key
+5. open Gateway Request Logs and find the decision
+6. limit each key to one request per minute
+7. send the same decision again
+
+**Backend state verified:**
+
+- the decision answer is the vendor answer, byte for byte, from OpenRouter's /api/alpha/decisions on the org key (the mock takes that key nowhere else)
+- the saved PG agentcc_provider_credential row for openrouter-chat has api_format openai and no base_url of its own
+- exactly one PG agentcc_request_log row for the key records the decision: endpoint_type decision, provider openrouter-chat, the vendor token counts and a cost above zero
+- the Request Logs list endpoint the UI calls returns that row
+- the second decision is refused with 429 before the vendor is called: no tokens and no cost are recorded for it
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file

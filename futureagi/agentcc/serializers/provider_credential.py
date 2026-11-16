@@ -3,9 +3,9 @@ from urllib.parse import urlsplit
 from django.core.validators import URLValidator
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.services.credential_manager import mask_key
+from integrations.services.credentials import CredentialManager
 
 
 class AgentccProviderCredentialSerializer(serializers.ModelSerializer):
@@ -103,11 +103,11 @@ def allows_keyless_system_one(provider_name, api_format, base_url):
         return False
     host = urlsplit(url).hostname.lower().rstrip(".")
     name = provider_name.lower()
-    if name.startswith(("typesafe", "perplexity", "openai")):
+    if name.startswith(("typesafe", "perplexity", "openai", "openrouter")):
         return False
     return not any(
         host == vendor or host.endswith("." + vendor)
-        for vendor in ("typesafe.ai", "perplexity.ai", "openai.com")
+        for vendor in ("typesafe.ai", "perplexity.ai", "openai.com", "openrouter.ai")
     )
 
 

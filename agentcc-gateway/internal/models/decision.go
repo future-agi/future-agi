@@ -334,7 +334,8 @@ func parseDecisionUsage(raw json.RawMessage) DecisionUsage {
 // UpstreamErrorMessage is the message a vendor's non-200 answer passes on.
 // Only a 400 or 422 shows the vendor's text (DecisionUpstreamError), so only
 // those parse the reply and check it against the request (up to 32 MB);
-// every other status gets the fallback without that work.
+// every other status, including an unmapped 4xx, gets the fallback without
+// that work.
 func (r *DecisionRequest) UpstreamErrorMessage(status int, body []byte, apiKey, fallback string) string {
 	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
 		return fallback
@@ -412,9 +413,19 @@ func (r *DecisionRequest) SafeUpstreamMessage(body []byte, apiKey, fallback stri
 	return message
 }
 
+// DecisionContentField reports whether a decision body field carries the
+// caller's content: every top-level field but model (questions are read field
+// by field), and every question field but its type and name. The vendor error
+// filter (contentPayloads) and the input guardrail view share this rule.
+func DecisionContentField(key string, inQuestion bool) bool {
+	if inQuestion {
+		return key != "type" && key != "name"
+	}
+	return key != "model" && key != "questions"
+}
+
 // contentPayloads returns the parts of the body a vendor message must not
-// echo: every top-level field but model and questions, and every question
-// field but its type and name.
+// echo: the fields DecisionContentField names.
 func (r *DecisionRequest) contentPayloads() ([]json.RawMessage, bool) {
 	members, err := objectMembers(r.Body)
 	if err != nil {
@@ -427,7 +438,7 @@ func (r *DecisionRequest) contentPayloads() ([]json.RawMessage, bool) {
 			return false
 		}
 		for _, f := range fields {
-			if f.key != "type" && f.key != "name" {
+			if DecisionContentField(f.key, true) {
 				payloads = append(payloads, f.value)
 			}
 		}
@@ -490,7 +501,8 @@ func retryAfter(header http.Header) string {
 // DecisionUpstreamError maps a decision vendor's non-200 answer onto the
 // gateway's error table. The gateway does not retry; Retry-After is passed on
 // where the vendor set one. message is the vendor's own text, already through
-// SafeUpstreamMessage; only a 400 or 422 carries it to the caller.
+// SafeUpstreamMessage; only a 400 or 422 carries it to the caller. Another
+// 4xx keeps its status as upstream_rejected with the vendor fallback message.
 func DecisionUpstreamError(vendor string, status int, header http.Header, message string) *APIError {
 	e := &APIError{UpstreamStatus: status}
 	switch status {
@@ -521,8 +533,15 @@ func DecisionUpstreamError(vendor string, status int, header http.Header, messag
 		e.Status, e.Type, e.Code = status, ErrTypeInvalidRequest, "upstream_rejected"
 		e.Message = message
 	default:
-		e.Status, e.Type, e.Code = http.StatusBadGateway, ErrTypeUpstream, "upstream_error"
-		e.Message = vendor + " request failed."
+		if status >= 400 && status < 500 {
+			// The vendor refused this request, so it is not an outage; its
+			// text is not passed on (see UpstreamErrorMessage).
+			e.Status, e.Type, e.Code = status, ErrTypeInvalidRequest, "upstream_rejected"
+			e.Message = vendor + " rejected the request."
+		} else {
+			e.Status, e.Type, e.Code = http.StatusBadGateway, ErrTypeUpstream, "upstream_error"
+			e.Message = vendor + " request failed."
+		}
 	}
 	return e
 }

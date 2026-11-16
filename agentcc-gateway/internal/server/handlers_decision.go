@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -11,10 +13,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -118,6 +122,23 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	h.applyOrgAuditOverrides(orgCfg, rc)
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 
+	// Decision bodies are forwarded byte for byte. Input guardrails get a
+	// separate chat-shaped view, never the body that goes to the provider. It
+	// is built only when an input guardrail may apply, and never for the
+	// platform's own internal-key traffic (the Jev evaluator judging traces).
+	var guardrailContent json.RawMessage
+	if h.decisionInputGuardrailsApply(rc, orgCfg) {
+		content, apiErr := decisionGuardrailContent(req.Body, h.decisionBodyLimit())
+		if apiErr != nil {
+			models.WriteError(w, apiErr)
+			return
+		}
+		guardrailContent = content
+		rc.GuardrailRequest = &models.ChatCompletionRequest{Messages: []models.Message{{
+			Role: "user", Content: guardrailContent,
+		}}}
+	}
+
 	target, err := h.resolveDecision(r.Context(), r.Header, rc, req, providerKey, hasProviderKey, orgID, orgCfg)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
@@ -127,6 +148,13 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	req.SetUpstreamModel(target.upstreamModel)
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		// A masking/redacting guardrail may mutate its chat-shaped view, but
+		// cannot rewrite the decision body without changing its wire format.
+		if guardrailContent != nil && decisionGuardrailRewritten(rc, guardrailContent) {
+			rc.Flags.GuardrailTriggered = true
+			rc.Metadata["guardrail_action"] = "blocked"
+			return decisionRedactionError()
+		}
 		// The auth plugin has run by now. Check again what it learned.
 		if rc.Metadata["auth_type"] == "license" {
 			return errBYOKRequired("Decision models run only on your own provider key; a managed service token cannot call them.")
@@ -160,6 +188,12 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+		// A blocking redaction guardrail stops the pipeline before providerCall;
+		// still explain why the decision body cannot be sent unchanged. Any
+		// other error (a rate limit, budget, auth) is returned as it is.
+		if guardrailContent != nil && isGuardrailBlock(err) && decisionGuardrailRewritten(rc, guardrailContent) {
+			err = decisionRedactionError()
+		}
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -172,6 +206,398 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(rc.DecisionResponse.Body)
+}
+
+func decisionGuardrailRewritten(rc *models.RequestContext, original json.RawMessage) bool {
+	if rc.GuardrailRequest == nil || len(rc.GuardrailRequest.Messages) != 1 {
+		return true
+	}
+	content := rc.GuardrailRequest.Messages[0].Content
+	if bytes.Equal(content, original) {
+		return false
+	}
+	// A re-encoding (for example HTML escaping) is not a rewrite: compare the
+	// text, only on this slow path.
+	var got, want string
+	return json.Unmarshal(content, &got) != nil || json.Unmarshal(original, &want) != nil || got != want
+}
+
+func decisionRedactionError() *models.APIError {
+	return models.ErrGuardrailBlocked("content_blocked", "redaction is not applied to decisions; request blocked")
+}
+
+// isGuardrailBlock reports whether err is a guardrail's content block.
+func isGuardrailBlock(err error) bool {
+	var apiErr *models.APIError
+	return errors.As(err, &apiErr) && apiErr.Type == models.ErrTypeGuardrail && apiErr.Status == http.StatusForbidden
+}
+
+// decisionInputGuardrailsApply reports whether input guardrails may check
+// this decision: a static (config.yaml) input rule, or an enabled org check
+// that runs on input. Org checks count only when a guardrail plugin runs: it
+// reports each check's stage, and without its callback any enabled check
+// counts.
+// Internal-key traffic is the platform's own (the Jev evaluator judges traces
+// that may hold PII or injection text on purpose), so it is not checked; org
+// keys, BYOK and managed, are.
+func (h *Handlers) decisionInputGuardrailsApply(rc *models.RequestContext, orgCfg *tenant.OrgConfig) bool {
+	if key := h.lookupRequestKey(rc); key != nil && key.KeyType == "internal" {
+		return false
+	}
+	if h.guardrailEngine != nil && h.guardrailEngine.PreCount() > 0 {
+		return true
+	}
+	if orgCfg == nil || orgCfg.Guardrails == nil {
+		return false
+	}
+	if h.orgInputGuardrails != nil {
+		// The guardrail plugin knows each check's stage.
+		return h.orgInputGuardrails(rc.Metadata["org_id"])
+	}
+	// No guardrail plugin in the pipeline (guardrails.enabled is false): no
+	// org check will run, so none applies.
+	if h.engine == nil || h.engine.Plugin("guardrails") == nil {
+		return false
+	}
+	for _, check := range orgCfg.Guardrails.Checks {
+		if check != nil && check.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// maxDecisionTextDepth bounds how deeply a decision field is read for the
+// guardrail view. Real criteria nest a few levels; a body nested deeper is
+// refused rather than sent on with text the guardrails never saw.
+const maxDecisionTextDepth = 64
+
+// decisionGuardrailContent is the text the input guardrails check: every
+// top-level field but model and questions, and every question field but its
+// type and name (the rule models.DecisionContentField shares with the vendor
+// error filter), in body order, so the same body gives the same text.
+// Strings are decoded (\uXXXX escapes included), object keys inside a value
+// are text too ({"<criterion>": "<description>"}), and numbers are kept as
+// written. The body is validated, then scanned once in place, and the parts
+// are written straight into the content as one JSON string (no tree, no
+// per-value garbage, no second copy). The content is not HTML-escaped, so it
+// is the text plus its quotes and JSON escapes. Text deeper than
+// maxDecisionTextDepth, or content longer than maxContent bytes (when
+// maxContent > 0) as the guardrails receive it, is refused. It is never used
+// to build or rewrite the upstream body.
+func decisionGuardrailContent(body []byte, maxContent int64) (json.RawMessage, *models.APIError) {
+	if !json.Valid(body) || firstNonSpace(body) != '{' {
+		return nil, models.ErrBadRequest("invalid_json", "request body must be a single JSON object")
+	}
+	s := decisionTextScan{b: body, maxContent: maxContent}
+	s.content.WriteByte('"')
+	if err := s.read(); err != nil {
+		if errors.Is(err, errDecisionTextTooLarge) {
+			return nil, models.ErrBadRequest("decision_text_too_large", fmt.Sprintf(
+				"The decision's text for the gateway's guardrails is longer than %d bytes as JSON. Send less text.", maxContent))
+		}
+		return nil, models.ErrBadRequest("decision_too_deep", fmt.Sprintf(
+			"A decision field is nested more than %d levels deep, too deep for the gateway's guardrails to check. Flatten it.", maxDecisionTextDepth))
+	}
+	s.content.WriteByte('"')
+	return s.content.Bytes(), nil
+}
+
+var (
+	errDecisionTooDeep      = errors.New("decision field nested too deeply")
+	errDecisionTextTooLarge = errors.New("decision text too large")
+)
+
+func firstNonSpace(b []byte) byte {
+	for _, c := range b {
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			return c
+		}
+	}
+	return 0
+}
+
+// decisionTextScan reads a decision body that json.Valid has accepted, in
+// place, and writes the guardrail text, one part per line, as the body of a
+// JSON string. Because the body is valid JSON, the scan needs no syntax
+// checks of its own.
+type decisionTextScan struct {
+	b          []byte
+	i          int
+	content    bytes.Buffer // the opening quote, then the escaped parts
+	wrote      bool         // a part, possibly empty, has been written
+	maxContent int64        // counts the closing quote still to come
+}
+
+func (s *decisionTextScan) space() {
+	for s.i < len(s.b) {
+		switch s.b[s.i] {
+		case ' ', '\t', '\n', '\r':
+			s.i++
+		default:
+			return
+		}
+	}
+}
+
+// next skips whitespace and returns the next byte without consuming it.
+func (s *decisionTextScan) next() byte {
+	s.space()
+	return s.b[s.i]
+}
+
+// more consumes a ',' between members and reports whether another member
+// follows; it consumes the closing delimiter when none does.
+func (s *decisionTextScan) more() bool {
+	switch s.next() {
+	case ',':
+		s.i++
+		return true
+	case '}', ']':
+		s.i++
+		return false
+	}
+	return true // the first member
+}
+
+// open consumes an opening delimiter, which next has just returned, and
+// reports whether the container has members (it consumes the closing
+// delimiter of an empty one).
+func (s *decisionTextScan) open() bool {
+	s.i++
+	if c := s.next(); c == '}' || c == ']' {
+		s.i++
+		return false
+	}
+	return true
+}
+
+// str consumes a string and returns its decoded text as bytes: a sub-slice
+// of the body when it holds no escape and is valid UTF-8, else the copy
+// encoding/json decodes (escapes resolved, each invalid byte as U+FFFD).
+func (s *decisionTextScan) str() []byte {
+	start, escaped := s.pass()
+	if raw := s.b[start+1 : s.i-1]; !escaped && utf8.Valid(raw) {
+		return raw
+	}
+	var decoded string
+	_ = json.Unmarshal(s.b[start:s.i], &decoded) // valid JSON: cannot fail
+	return []byte(decoded)
+}
+
+// pass consumes a string without decoding it, and returns where it started
+// and whether it holds an escape.
+func (s *decisionTextScan) pass() (int, bool) {
+	s.space()
+	start, escaped := s.i, false
+	for s.i++; s.b[s.i] != '"'; s.i++ {
+		if s.b[s.i] == '\\' {
+			escaped = true
+			s.i++
+		}
+	}
+	s.i++
+	return start, escaped
+}
+
+// key consumes a member's key and the ':' after it.
+func (s *decisionTextScan) key() []byte {
+	key := s.str()
+	s.next()
+	s.i++ // ':'
+	return key
+}
+
+func (s *decisionTextScan) read() error {
+	// JSON allows whitespace before the object; open expects its '{'.
+	s.next()
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		key := s.key()
+		var err error
+		switch {
+		case string(key) == "questions":
+			err = s.questions()
+		case models.DecisionContentField(string(key), false):
+			err = s.value(1)
+		default:
+			s.skip()
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// questions reads "questions": an object of questions by ID or an array of
+// them; any other value holds no question text.
+func (s *decisionTextScan) questions() error {
+	c := s.next()
+	if c != '{' && c != '[' {
+		s.skip()
+		return nil
+	}
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		if c == '{' {
+			s.key()
+		}
+		if err := s.question(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// question reads one question: its content fields when it is an object, all
+// of its text otherwise.
+func (s *decisionTextScan) question() error {
+	if s.next() != '{' {
+		return s.value(1)
+	}
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		key := s.key()
+		if !models.DecisionContentField(string(key), true) {
+			s.skip()
+			continue
+		}
+		if err := s.value(1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// value reads one value at depth (a content field's value is depth 1) and
+// writes its text.
+func (s *decisionTextScan) value(depth int) error {
+	switch c := s.next(); c {
+	case '"':
+		return s.write(s.str())
+	case '{', '[':
+		if depth >= maxDecisionTextDepth {
+			return errDecisionTooDeep
+		}
+		if !s.open() {
+			return nil
+		}
+		for s.more() {
+			if c == '{' {
+				if err := s.write(s.key()); err != nil {
+					return err
+				}
+			}
+			if err := s.value(depth + 1); err != nil {
+				return err
+			}
+		}
+		return nil
+	case 't', 'n':
+		s.i += 4
+		return nil
+	case 'f':
+		s.i += 5
+		return nil
+	default: // a number, kept as written
+		start := s.i
+		for s.i < len(s.b) && strings.IndexByte("+-0123456789.eE", s.b[s.i]) >= 0 {
+			s.i++
+		}
+		return s.write(s.b[start:s.i])
+	}
+}
+
+// skip consumes one value that holds no guardrail text.
+func (s *decisionTextScan) skip() {
+	open := 0
+	for {
+		switch c := s.next(); c {
+		case '"':
+			s.pass()
+		case '{', '[':
+			open++
+			s.i++
+		case '}', ']':
+			open--
+			s.i++
+		case ',', ':':
+			s.i++
+			continue
+		case 't', 'n':
+			s.i += 4
+		case 'f':
+			s.i += 5
+		default:
+			for s.i < len(s.b) && strings.IndexByte("+-0123456789.eE", s.b[s.i]) >= 0 {
+				s.i++
+			}
+		}
+		if open == 0 {
+			return
+		}
+	}
+}
+
+// write appends one part, a valid UTF-8 text, JSON-escaped and after a "\n"
+// separator when it is not the first. The cap counts the encoded bytes, the
+// closing quote included.
+func (s *decisionTextScan) write(part []byte) error {
+	sep := 0
+	if s.wrote {
+		sep = 2
+	}
+	if s.maxContent > 0 && int64(s.content.Len()+sep+jsonEscapedLen(part)+1) > s.maxContent {
+		return errDecisionTextTooLarge
+	}
+	if sep != 0 {
+		s.content.WriteString(`\n`)
+	}
+	writeJSONEscaped(&s.content, part)
+	s.wrote = true
+	return nil
+}
+
+// jsonEscapes is how writeJSONEscaped writes a byte that needs an escape
+// inside a JSON string; "" for a byte written as it is. HTML characters are
+// not escaped: the content goes to the guardrails, never into a page.
+var jsonEscapes = func() (e [256]string) {
+	const hex = "0123456789abcdef"
+	for c := range 0x20 {
+		e[c] = `\u00` + string(hex[c>>4]) + string(hex[c&0xf])
+	}
+	e['\b'], e['\f'], e['\n'], e['\r'], e['\t'] = `\b`, `\f`, `\n`, `\r`, `\t`
+	e['"'], e['\\'] = `\"`, `\\`
+	return e
+}()
+
+func jsonEscapedLen(part []byte) int {
+	n := len(part)
+	for _, c := range part {
+		if esc := jsonEscapes[c]; esc != "" {
+			n += len(esc) - 1
+		}
+	}
+	return n
+}
+
+func writeJSONEscaped(buf *bytes.Buffer, part []byte) {
+	start := 0
+	for i, c := range part {
+		if esc := jsonEscapes[c]; esc != "" {
+			buf.Write(part[start:i])
+			buf.WriteString(esc)
+			start = i + 1
+		}
+	}
+	buf.Write(part[start:])
 }
 
 // checkDecisionProviderACL enforces a key's allowed providers. The auth plugin
@@ -252,8 +678,13 @@ func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
 		if !ok {
 			continue
 		}
-		format := apiFormatDecisionFormat(apiFormat, id, pcfg.BaseURL)
+		baseURL := h.orgProviderCache.BaseURL(id, pcfg)
+		format := apiFormatDecisionFormat(apiFormat, id, baseURL)
+		openRouterChat := providers.IsOpenRouterChat(apiFormat, id, baseURL)
 		for _, model := range pcfg.Models {
+			if openRouterChat && !isOpenRouterDecisionModel(db, stripProviderPrefix(model, id)) {
+				continue
+			}
 			if entry, ok := newDecisionModel(db, orgCfg, id, model, format); ok {
 				entries = append(entries, entry)
 			}
@@ -267,11 +698,11 @@ func (h *Handlers) registryDecisionModels() []decisionModel {
 	entries := []decisionModel{}
 	db := h.ModelDB()
 	for _, m := range h.registry.ListAllModels() {
-		p, ok := h.registry.GetProvider(m.OwnedBy)
+		_, format, _, ok := h.registryDecisionFormat(m.OwnedBy, stripProviderPrefix(m.ID, m.OwnedBy))
 		if !ok {
 			continue
 		}
-		if entry, ok := newDecisionModel(db, nil, m.OwnedBy, m.ID, decisionFormatOf(p, m.OwnedBy, "")); ok {
+		if entry, ok := newDecisionModel(db, nil, m.OwnedBy, m.ID, format); ok {
 			entries = append(entries, entry)
 		}
 	}
@@ -284,22 +715,33 @@ func newDecisionModel(db *modeldb.ModelDB, orgCfg *tenant.OrgConfig, providerID,
 	if format == "" {
 		return decisionModel{}, false
 	}
+	// A Models entry may carry the provider's own prefix
+	// ("openrouter/typesafe/jev-1.13"); the call sends it upstream without it.
+	bare := stripProviderPrefix(model, providerID)
+	id := providerID + "/" + bare
 	var known *modeldb.PricingInfo
 	if db != nil {
-		known, _ = db.DecisionPricing(model)
+		// The names a call of this entry goes by, in the cost plugin's order
+		// (decisionModelNames: upstream, then provider-qualified), so the
+		// listing shows the price it charges.
+		known, _ = db.DecisionPricingAny(bare, id)
 	}
 	if format == models.DecisionFormatOpenAI && known == nil {
 		// An OpenAI provider lists chat models too; only decision ones count.
 		return decisionModel{}, false
 	}
 	entry := decisionModel{
-		ID:       providerID + "/" + stripProviderPrefix(model, providerID),
+		ID:       id,
 		Object:   "model",
 		Provider: providerID,
 		Format:   format,
 	}
 	if orgCfg != nil && orgCfg.CostTracking != nil && orgCfg.CostTracking.Enabled {
-		for _, name := range []string{model, entry.ID} {
+		// The cost plugin's order (decisionOrgPriceNames) for a call of this
+		// entry by its listed id or its configured name: that id, then the
+		// name sent upstream. Only a dated resolved name, which a listing
+		// cannot know, comes first.
+		for _, name := range []string{entry.ID, bare} {
 			if custom := orgCfg.CostTracking.CustomPricing[name]; custom != nil {
 				entry.Pricing = &decisionModelPricing{InputPerMTok: custom.InputPerMTok, OutputPerMTok: custom.OutputPerMTok}
 				return entry, true

@@ -898,7 +898,7 @@ describe("AddProviderDialog System One presets", () => {
     expect(baseUrl.required).toBe(true);
     expect(apiFormatField().textContent).toBe("System One (decision models)");
     expect(
-      screen.getByText(/the gateway posts to this URL plus \/v1\/systemone/),
+      screen.getByText(/the gateway uses its System One dialect path/),
     ).toBeTruthy();
     // No built-in list for an endpoint we know nothing about.
     expect(chipLabels()).toEqual([]);

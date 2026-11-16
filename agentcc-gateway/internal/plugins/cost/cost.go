@@ -209,11 +209,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		// An unpriced decision model is marked unpriced like any other, never
 		// recorded as free.
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
-		for _, m := range decisionModelNames(rc) {
-			if cost, ok = db.CalculateDecisionCost(m, usage.PromptTokens, usage.CompletionTokens); ok {
-				break
-			}
-		}
+		// Exact prices for every name first, then normalized Jev names, so an
+		// override on any name the call goes by is never shadowed.
+		cost, ok = db.CalculateDecisionCostAny(decisionModelNames(rc), usage.PromptTokens, usage.CompletionTokens)
 	default: // "chat" or empty
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()
@@ -377,15 +375,17 @@ func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string
 // tryOrgPricing checks per-org custom pricing for the model.
 // Returns (cost, true) if org pricing was found and applied; (0, false) to fall through to global.
 func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tenant.CostTrackingConfig) (float64, bool) {
-	pricing := ct.CustomPricing[model]
-	if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
-		pricing = ct.CustomPricing[rc.Model]
-	}
-	if pricing == nil && rc.EndpointType == "decision" {
-		for _, m := range decisionModelNames(rc) {
+	var pricing *tenant.CustomPricing
+	if rc.EndpointType == "decision" {
+		for _, m := range decisionOrgPriceNames(rc) {
 			if pricing = ct.CustomPricing[m]; pricing != nil {
 				break
 			}
+		}
+	} else {
+		pricing = ct.CustomPricing[model]
+		if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
+			pricing = ct.CustomPricing[rc.Model]
 		}
 	}
 	if pricing == nil {
@@ -409,6 +409,44 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	cost := float64(promptTokens)*pricing.InputPerMTok/1_000_000 +
 		float64(completionTokens)*pricing.OutputPerMTok/1_000_000
 	return cost, true
+}
+
+// decisionOrgPriceNames is the order an org's custom decision prices are
+// looked up in. It does not depend on the form of the vendor's answer: a
+// resolved name counts first only when it is a name of its own (a dated
+// release such as "typesafe/jev-1.13-20260917"), not when the answer left the
+// model out (ResolvedModel is then the upstream name) or echoed a name the
+// call was sent as. Then GET /v1/decisions/models's order for the entry
+// (newDecisionModel): the provider-qualified upstream name the listing shows
+// as the id, then the upstream name. Only then the caller's own name, which
+// for a call by the listed id or the configured name is one of those two;
+// then the remaining names of decisionModelNames.
+func decisionOrgPriceNames(rc *models.RequestContext) []string {
+	names := make([]string, 0, 6)
+	add := func(name string) {
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	upstream := ""
+	if rc.DecisionRequest != nil {
+		upstream = rc.DecisionRequest.UpstreamModel
+	}
+	if rc.ResolvedModel != upstream && rc.ResolvedModel != rc.Model {
+		add(rc.ResolvedModel)
+	}
+	if rc.Provider != "" && upstream != "" {
+		// The listing's id is always the provider plus the name sent
+		// upstream, even when that name starts with the provider's own
+		// prefix ("openrouter/openrouter/auto").
+		add(rc.Provider + "/" + upstream)
+	}
+	add(upstream)
+	add(rc.Model)
+	for _, name := range decisionModelNames(rc) {
+		add(name)
+	}
+	return names
 }
 
 // decisionModelNames lists the names a decision call's model goes by: the

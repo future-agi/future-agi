@@ -20,6 +20,24 @@
       }
     },
     {
+      "name": "openrouter",
+      "config": {
+        "base_url": "https://openrouter.ai",
+        "api_format": "systemone",
+        "api_key": "synthetic-openrouter-key",
+        "models": ["typesafe/jev-1.13", "~typesafe/jev-latest"]
+      }
+    },
+    {
+      "name": "openrouter-chat",
+      "config": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_format": "openai",
+        "api_key": "synthetic-openrouter-chat-key",
+        "models": ["meta-llama/llama-3.3-70b-instruct", "typesafe/jev-1.13", "~typesafe/jev-latest"]
+      }
+    },
+    {
       "name": "custom-systemone",
       "config": {
         "base_url": "https://decider.example.com",
@@ -32,6 +50,7 @@
   "dns": {
     "api.typesafe.ai": ["104.18.32.7"],
     "api.perplexity.ai": ["104.18.26.48"],
+    "openrouter.ai": ["104.18.32.7"],
     "decider.example.com": ["93.184.215.14"]
   },
   "pushed": {
@@ -51,6 +70,26 @@
         "base_url": "https://api.perplexity.ai",
         "api_format": "systemone",
         "models": ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      },
+      "openrouter": {
+        "api_key": "synthetic-openrouter-key",
+        "base_url": "https://openrouter.ai",
+        "api_format": "systemone",
+        "models": ["typesafe/jev-1.13", "~typesafe/jev-latest"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      },
+      "openrouter-chat": {
+        "api_key": "synthetic-openrouter-chat-key",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_format": "openai",
+        "models": ["meta-llama/llama-3.3-70b-instruct", "typesafe/jev-1.13", "~typesafe/jev-latest"],
         "timeout": 60,
         "enabled": true,
         "max_concurrent": 100,
@@ -76,6 +115,14 @@
     "perplexity-decider": {
       "dialect": "perplexity",
       "endpoint": "https://api.perplexity.ai/v1/decisions"
+    },
+    "openrouter": {
+      "dialect": "openrouter",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions"
+    },
+    "openrouter-chat": {
+      "dialect": "openrouter",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions"
     },
     "custom-systemone": {
       "dialect": "generic",

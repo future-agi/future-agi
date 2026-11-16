@@ -54,6 +54,11 @@ export const RESPONSES_ONLY_CATALOGUES = [
 // lists the model, so it is offered next to the live list.
 export const DECISION_MODEL_CATALOGUES = [
   { names: ["openai"], hosts: ["api.openai.com"], models: ["gpt-6-luna"] },
+  {
+    names: ["openrouter"],
+    hosts: ["openrouter.ai"],
+    models: ["typesafe/jev-1.13", "typesafe/jev-1.14", "~typesafe/jev-latest"],
+  },
 ];
 
 // The host of a base URL, or "" when there is not one yet. The field is typed a

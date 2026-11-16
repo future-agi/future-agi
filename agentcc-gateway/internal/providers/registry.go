@@ -33,6 +33,9 @@ type Registry struct {
 	modelMap       map[string]string   // model name → provider ID
 	modelProviders map[string][]string // model name → all provider IDs that serve it
 	router         *routing.Router     // nil if no routing configured
+	// decisionProviders are the System One providers config.yaml's
+	// OpenAI-format OpenRouter connections serve decisions with, by ID.
+	decisionProviders map[string]Provider
 }
 
 // NewRegistry creates a registry from config.
@@ -60,6 +63,18 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 			return nil, fmt.Errorf("creating provider %q: %w", name, err)
 		}
 		r.providers[name] = p
+		if IsOpenRouterChat(pcfg.APIFormat, name, pcfg.BaseURL) {
+			// A bad decision route must not stop the gateway: the provider's
+			// chat traffic still works, and its decisions are refused.
+			if dp, err := NewOpenRouterDecisionProvider(name, pcfg); err != nil {
+				slog.Error("OpenRouter decision route not available", "provider", name, "error", err)
+			} else {
+				if r.decisionProviders == nil {
+					r.decisionProviders = make(map[string]Provider)
+				}
+				r.decisionProviders[name] = dp
+			}
+		}
 
 		attrs := []any{"name", name, "format", pcfg.APIFormat, "base_url", pcfg.BaseURL}
 		if IsLocalProvider(pcfg) {
@@ -177,6 +192,19 @@ func (r *Registry) RegisterProvider(id string, p Provider, modelNames []string) 
 func (r *Registry) GetProvider(id string) (Provider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	p, ok := r.providers[id]
+	return p, ok
+}
+
+// DecisionProvider returns the provider that serves decisions for a provider
+// ID: the System One provider of an OpenAI-format OpenRouter connection, or
+// else the provider itself.
+func (r *Registry) DecisionProvider(id string) (Provider, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if p, ok := r.decisionProviders[id]; ok {
+		return p, true
+	}
 	p, ok := r.providers[id]
 	return p, ok
 }
@@ -322,6 +350,11 @@ func (r *Registry) Close() error {
 	for name, p := range r.providers {
 		if err := p.Close(); err != nil {
 			slog.Warn("error closing provider", "name", name, "error", err)
+		}
+	}
+	for name, p := range r.decisionProviders {
+		if err := p.Close(); err != nil {
+			slog.Warn("error closing decision provider", "name", name, "error", err)
 		}
 	}
 	return nil

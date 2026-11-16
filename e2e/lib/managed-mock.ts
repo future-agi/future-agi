@@ -41,16 +41,20 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   requireSafe(same(Object.keys(guardrails).sort(), ['default_timeout', 'enabled', 'fail_open']) &&
     guardrails.enabled === true && guardrails.fail_open === true && guardrails.default_timeout === '5s',
   'unexpected guardrails configuration');
-  requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'perplexity', 'typesafe']),
+  requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'openrouter-chat', 'perplexity', 'typesafe']),
     'provider set is not mock-only');
   for (const [name, provider] of Object.entries(cfg.providers) as [string, any][]) {
     requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
       'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
-    requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
-      provider.api_format === (name === 'openai' ? 'openai' : 'systemone'),
+    // openrouter-chat is an OpenAI-format OpenRouter connection as the
+    // dashboard preset saves it (a /api/v1 base_url on the same mock).
+    const chatFormat = name === 'openai' || name === 'openrouter-chat';
+    requireSafe(provider.base_url === (name === 'openrouter-chat' ? 'http://mock-llm:8080/api/v1' : 'http://mock-llm:8080') &&
+      provider.api_key === 'e2e-mock' && provider.api_format === (chatFormat ? 'openai' : 'systemone'),
     'upstream route or key is not the deterministic mock');
     const pinned: Record<string, string[]> = {
       openrouter: ['openai/gpt-6-luna-decisions', 'typesafe/jev-1.13', 'typesafe/jev-1.14', '~typesafe/jev-latest'],
+      'openrouter-chat': ['typesafe/jev-1.13', '~typesafe/jev-latest'],
       perplexity: ['pplx-decider-flash-v1.2', 'pplx-decider-v1.2'],
       typesafe: ['jev-1.13.0', 'jev-1.14.0', 'jev-latest'],
     };

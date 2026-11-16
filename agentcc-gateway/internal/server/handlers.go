@@ -63,6 +63,11 @@ type Handlers struct {
 	policyStore        *policy.Store
 	streamGuardrailCfg config.StreamingGuardrailConfig
 
+	// orgInputGuardrails reports whether an org has an enabled input-stage
+	// check (the guardrail plugin's HasOrgInputChecks). Nil: any enabled org
+	// check is taken to apply to input.
+	orgInputGuardrails func(orgID string) bool
+
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
 

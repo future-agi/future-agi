@@ -109,6 +109,9 @@ func TestDecisionProvidersPushedByTheBackend(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
+	if want, ok := fixture.Gateway["openrouter"]; !ok || want.Dialect != "openrouter" || want.Endpoint != "https://openrouter.ai/api/alpha/decisions" {
+		t.Fatalf("missing systemone OpenRouter decision contract: %+v", want)
+	}
 
 	// Decoded as PUT /-/orgs/{id}/config decodes it.
 	var contract gatewayadmin.OrgConfig
@@ -131,10 +134,21 @@ func TestDecisionProvidersPushedByTheBackend(t *testing.T) {
 	defer cache.EvictAll()
 	for id, want := range fixture.Gateway {
 		pcfg := org.Providers[id]
-		if pcfg == nil || pcfg.APIFormat != APIFormatSystemOne || !pcfg.Enabled || !pcfg.HasCredentials() {
+		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
 			t.Fatalf("%s arrived as %+v", id, pcfg)
 		}
-		p, err := cache.GetOrCreateWithTenantConfig("org-presets", id, pcfg.APIKey, pcfg)
+		// The dashboard's OpenRouter preset saves the OpenAI format: its
+		// decisions go through the System One provider built for it.
+		var p Provider
+		var err error
+		switch {
+		case pcfg.APIFormat == APIFormatSystemOne:
+			p, err = cache.GetOrCreateWithTenantConfig("org-presets", id, pcfg.APIKey, pcfg)
+		case IsOpenRouterChat(pcfg.APIFormat, id, pcfg.BaseURL):
+			p, err = cache.GetOrCreateOpenRouterDecision("org-presets", id, pcfg.APIKey, pcfg)
+		default:
+			t.Fatalf("%s arrived as %+v", id, pcfg)
+		}
 		if err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
