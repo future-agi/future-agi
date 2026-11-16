@@ -101,3 +101,27 @@ export const CALL_WORKERS_COPY = {
   workersNotObserved: (names) => `Not observed: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
 };
+
+// The Participants tab's layout: how deep a row indents, how fast a fold opens, the JSON button's size.
+// Indent levels in the table's narrow Worker column; deeper rows stay at the last one.
+export const MAX_ROW_INDENT = 3;
+
+export const MOTION_MS = 180;
+export const NO_MOTION_SX = {
+  "@media (prefers-reduced-motion: reduce)": { transition: "none !important" },
+};
+
+export const JSON_BUTTON_SX = {
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 500,
+  height: 20,
+  minHeight: 20,
+  minWidth: 0,
+  px: 0.75,
+  py: 0,
+  borderRadius: "5px",
+  borderColor: "divider",
+  color: "text.secondary",
+  "& .MuiButton-startIcon": { mr: 0.5, ml: 0 },
+};
