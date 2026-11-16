@@ -134,11 +134,10 @@ export const CALL_WORKERS_COPY = {
   // Each failed or unsure check on the step its evidence points to, or why it is on none.
   placedChecks: "Failed and unsure checks",
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
-  placedOn: (worker, tool) => `on ${worker}'s ${tool} call`,
+  // Nothing the harness records ties a check to a step yet, so each says so rather than being guessed onto one.
   untied: {
-    no_moment: () =>
-      "Not tied to a step: the check doesn't point to a moment in the call",
-    never_called: (tool) => `Not tied to a step: ${tool} was never called`,
+    no_moment:
+      "Not tied to a step: nothing recorded ties this check to a moment in the call",
   },
   // Past its action deadline: the world refused its later calls; its execution was not stopped.
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,

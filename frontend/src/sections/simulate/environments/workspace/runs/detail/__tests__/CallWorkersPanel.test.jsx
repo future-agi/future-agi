@@ -947,17 +947,16 @@ describe("CallWorkersPanel", () => {
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });
 
-    it("shows each failed check on its step's worker, and an unplaced one with why, never guessing a worker", () => {
+    it("shows each failed check with why it is on no step, and its worker only when it is that worker's own", () => {
       result = {
         data: timeline({
           placements: [
             {
-              name: "call_get_order",
+              name: "read_only",
               status: "failed",
-              step: LOOKUP.seq,
+              step: null,
               worker_id: "r/order_lookup",
-              untied: null,
-              tool: "get_order",
+              untied: "no_moment",
             },
             {
               name: "explained_refusal",
@@ -972,13 +971,11 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      const [placed, untied] = screen.getAllByTestId("placed-check");
-      expect(placed.dataset.step).toBe(String(LOOKUP.seq));
-      expect(placed).toHaveTextContent(
-        C.placedOn("Order-lookup worker", "get_order"),
-      );
-      expect(untied.dataset.step).toBe("");
-      expect(untied).toHaveTextContent(C.untied.no_moment());
+      const [own, task] = screen.getAllByTestId("placed-check");
+      expect(own).toHaveTextContent("Order-lookup worker");
+      expect(own).toHaveTextContent(C.untied.no_moment);
+      expect(task).not.toHaveTextContent("Order-lookup worker");
+      expect(task.dataset.step).toBe("");
     });
 
     it("shows a worker's failed check failed and named by its worker, beside the call's passing verdict", () => {

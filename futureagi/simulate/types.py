@@ -320,8 +320,8 @@ class FailurePlacement(TypedDict):
     step: int | None
     # Null when the record does not say which worker: shown as Unknown, never guessed.
     worker_id: str | None
-    untied: Literal["no_moment", "never_called"] | None
-    tool: NotRequired[str]
+    # `no_moment`: nothing recorded ties the check to a step of the call.
+    untied: Literal["no_moment"] | None
 
 
 class CallWorkersRecord(WorkerTimeline, WorkerSteps):

@@ -1038,50 +1038,20 @@ class TestWorkerRecordAsServed:
 
 
 class TestFailurePlacements:
-    STEPS = [
-        {"kind": "handoff", "key": 1, "worker_id": "searcher"},
-        {
-            "kind": "tool_call",
-            "key": 2,
-            "worker_id": "searcher",
-            "call": {"tool": "book", "status": "ok"},
-        },
-        {
-            "kind": "tool_call",
-            "key": 3,
-            "worker_id": None,
-            "call": {"tool": "book", "status": "error"},
-        },
-    ]
-
-    def place(self, *goals):
-        return failure_placements(self.STEPS, goals)
-
-    def test_a_tool_check_sits_on_the_failed_call_of_that_tool_and_its_worker_reads_unknown_when_unsaid(
-        self,
-    ):
-        [placed] = self.place(
-            {"name": "call_book", "passed": False, "subject_kind": "task"}
+    def test_a_failed_or_unsure_check_is_never_tied_to_a_step_by_its_name(self):
+        # Named after a tool that failed in the call: still not tied, since nothing recorded says it is about it.
+        named, judged = failure_placements(
+            [
+                {"name": "call_book", "passed": False, "subject_kind": "task"},
+                {
+                    "name": "explained",
+                    "passed": None,
+                    "result": "inconclusive",
+                    "subject_kind": "task",
+                },
+            ]
         )
-        assert (placed["step"], placed["worker_id"], placed["untied"]) == (
-            3,
-            None,
-            None,
-        )
-
-    def test_a_tool_never_called_and_a_check_with_no_moment_are_not_tied_to_a_step(
-        self,
-    ):
-        never, judged = self.place(
-            {"name": "Call refund", "passed": False, "subject_kind": "task"},
-            {
-                "name": "explained",
-                "passed": None,
-                "result": "inconclusive",
-                "subject_kind": "task",
-            },
-        )
-        assert (never["step"], never["untied"]) == (None, "never_called")
+        assert (named["step"], named["untied"]) == (None, "no_moment")
         assert (judged["step"], judged["untied"], judged["status"]) == (
             None,
             "no_moment",
@@ -1089,24 +1059,28 @@ class TestFailurePlacements:
         )
 
     def test_a_passed_or_not_applicable_check_is_not_placed(self):
-        assert not self.place(
-            {"name": "call_book", "passed": True, "subject_kind": "task"},
-            {
-                "name": "x",
-                "passed": None,
-                "result": "not_applicable",
-                "subject_kind": "task",
-            },
+        assert not failure_placements(
+            [
+                {"name": "call_book", "passed": True, "subject_kind": "task"},
+                {
+                    "name": "x",
+                    "passed": None,
+                    "result": "not_applicable",
+                    "subject_kind": "task",
+                },
+            ]
         )
 
-    def test_a_worker_s_own_check_keeps_its_worker_when_no_step_is_named(self):
-        [placed] = self.place(
-            {
-                "name": "read_only",
-                "passed": False,
-                "subject_kind": "worker",
-                "worker_id": "searcher",
-            }
+    def test_a_worker_s_own_check_keeps_its_worker(self):
+        [placed] = failure_placements(
+            [
+                {
+                    "name": "read_only",
+                    "passed": False,
+                    "subject_kind": "worker",
+                    "worker_id": "searcher",
+                }
+            ]
         )
         assert (placed["worker_id"], placed["step"]) == ("searcher", None)
 

@@ -162,10 +162,7 @@ class FailurePlacementSerializer(serializers.Serializer):
     step = serializers.IntegerField(allow_null=True)
     # Null when the record does not say which worker: shown as Unknown.
     worker_id = serializers.CharField(allow_null=True)
-    untied = serializers.ChoiceField(
-        choices=("no_moment", "never_called"), allow_null=True
-    )
-    tool = serializers.CharField(required=False)
+    untied = serializers.ChoiceField(choices=("no_moment",), allow_null=True)
 
 
 class CallWorkersQuerySerializer(serializers.Serializer):

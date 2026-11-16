@@ -32,32 +32,26 @@ WorkerChecks.propTypes = {
   workers: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
 
-/** Each failed or unsure check on the step its evidence points to, or why it is on none. */
+/** Each failed or unsure check, with its worker when it is that worker's own, and why it is on no step. */
 export function PlacedChecks({ placements, names }) {
   return (
     <Stack spacing={0.5} data-testid="placed-checks">
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
         {C.placedChecks}
       </Typography>
-      {placements.map((one, index) => {
-        // A missing worker is Unknown, never guessed.
-        const worker = one.worker_id
-          ? names.ofWorker(one.worker_id)
-          : C.unknown;
-        return (
-          <Typography
-            key={`${one.name}-${index}`}
-            data-testid="placed-check"
-            data-step={one.step ?? ""}
-            sx={{ typography: "s3", color: "text.secondary" }}
-          >
-            {C.checkStatus[one.status]} · {one.name} ·{" "}
-            {one.untied
-              ? C.untied[one.untied](one.tool)
-              : C.placedOn(worker, one.tool)}
-          </Typography>
-        );
-      })}
+      {placements.map((one, index) => (
+        <Typography
+          key={`${one.name}-${index}`}
+          data-testid="placed-check"
+          data-step={one.step ?? ""}
+          sx={{ typography: "s3", color: "text.secondary" }}
+        >
+          {C.checkStatus[one.status]} · {one.name}
+          {/* A worker's own check names its worker; any other names none rather than a guessed one. */}
+          {one.worker_id ? ` · ${names.ofWorker(one.worker_id)}` : ""}
+          {one.untied ? ` · ${C.untied[one.untied]}` : ""}
+        </Typography>
+      ))}
     </Stack>
   );
 }

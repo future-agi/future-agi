@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Literal, cast
 
@@ -36,8 +36,6 @@ _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
 _CUT_SHORT: frozenset[WorkerState] = frozenset(
     {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
 )
-# The design's rule: a check named "Call <tool>" (or `call_<tool>`) is about that tool's call.
-_CALL_CHECK = re.compile(r"^call[\s_]+(\S+)$", re.IGNORECASE)
 # The ends that count as a hand-off that did not finish, in the headline count and on its row alike.
 _NOT_FINISHED: frozenset[HandOffEnd] = frozenset({"failed", "no_return"})
 # A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
@@ -512,10 +510,9 @@ def _with_ends(
             step["end_state"] = cast("WorkerState", state)
 
 
-def failure_placements(
-    steps: Sequence[WorkerStep], sub_goals: Iterable[SubGoalEntry]
-) -> list[FailurePlacement]:
-    """Each failed or unsure sub-goal on the step and worker its evidence points to, else not tied, with the reason."""
+def failure_placements(sub_goals: Iterable[SubGoalEntry]) -> list[FailurePlacement]:
+    """Each failed or unsure sub-goal, on its worker when it is that worker's own check. No step: neither the sub-goal
+    catalogue nor the receipt records which tool call a check is about, and a check's name is never read for one."""
     placements: list[FailurePlacement] = []
     for goal in sub_goals:
         if goal["passed"] is False:
@@ -524,37 +521,15 @@ def failure_placements(
             status = "inconclusive"
         else:
             continue
-        placement: FailurePlacement = {
-            "name": goal["name"],
-            "status": status,
-            "step": None,
-            "worker_id": goal.get("worker_id"),
-            "untied": None,
-        }
-        named = _CALL_CHECK.match(goal["name"].strip())
-        if named is None:
-            # No recorded check names a moment in the call yet, so nothing else can be placed without guessing.
-            placement["untied"] = "no_moment"
-        else:
-            tool = named.group(1)
-            placement["tool"] = tool
-            calls = [
-                step
-                for step in steps
-                if step["kind"] == "tool_call"
-                and step.get("call", {}).get("tool") == tool
-            ]
-            failed = [
-                step for step in calls if step.get("call", {}).get("status") == "error"
-            ]
-            hits = failed or calls
-            if not hits:
-                placement["untied"] = "never_called"
-            else:
-                # The step's own worker, which is Unknown (null) when the record does not say.
-                placement["step"] = hits[0]["key"]
-                placement["worker_id"] = hits[0]["worker_id"]
-        placements.append(placement)
+        placements.append(
+            {
+                "name": goal["name"],
+                "status": status,
+                "step": None,
+                "worker_id": goal.get("worker_id"),
+                "untied": "no_moment",
+            }
+        )
     return placements
 
 
@@ -602,7 +577,7 @@ def served_record(
         **timeline,
         **steps,
         "workers": workers,
-        "placements": failure_placements(steps["steps"], goals),
+        "placements": failure_placements(goals),
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),
         "pending": pending,
