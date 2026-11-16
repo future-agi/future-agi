@@ -54,6 +54,7 @@ def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
         tool_outputs=call_execution.tool_outputs,
         provider_call_data=call_execution.provider_call_data,
         monitor_call_data=call_execution.monitor_call_data,
+        call_metadata=call_execution.call_metadata,
         avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
         user_interruption_count=call_execution.user_interruption_count,
         user_interruption_rate=call_execution.user_interruption_rate,

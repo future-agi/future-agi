@@ -49,7 +49,7 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_worker_steps import worker_steps
-from simulate.services.harness_workers import WORKERS_KEY
+from simulate.services.harness_workers import stored_record
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -725,6 +725,13 @@ class CallWorkerRoundSerializer(serializers.Serializer):
     response = CallWorkerTurnSerializer(allow_null=True)
 
 
+class CallWorkersQuerySerializer(serializers.Serializer):
+    attempt = serializers.UUIDField(
+        required=False,
+        help_text="An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.",
+    )
+
+
 class CallWorkersResponseSerializer(serializers.Serializer):
     workers = CallWorkerSerializer(many=True)
     events = CallWorkerEventSerializer(many=True)
@@ -1148,15 +1155,17 @@ class CallExecutionV3WorkersView(APIView):
     permission_classes = [IsAuthenticated]
 
     @validated_request(
+        query_serializer=CallWorkersQuerySerializer,
         responses={
             200: CallWorkersResponseSerializer,
-            204: "No hand-off to other agents was seen in this call, or its record is still arriving",
+            204: "No hand-off to other agents was seen in this call, its record is still arriving, or the earlier "
+            "attempt asked for kept none",
         },
         operation_id="simulate_v3_call_execution_workers",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
         call = _call_for_request(request, call_execution_id)
-        timeline = (call.call_metadata or {}).get(WORKERS_KEY)
+        timeline = stored_record(call, request.validated_query_data.get("attempt"))
         if not timeline:
             return Response(status=status.HTTP_204_NO_CONTENT)
         steps = worker_steps(

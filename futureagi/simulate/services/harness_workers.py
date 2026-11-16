@@ -21,7 +21,9 @@ from simulate.types import (
 )
 
 if TYPE_CHECKING:
-    from simulate.models import HostedHarnessJob
+    from uuid import UUID
+
+    from simulate.models import CallExecution, HostedHarnessJob
 
 logger = structlog.get_logger(__name__)
 
@@ -990,6 +992,19 @@ SECOND_READ = 600
 # One call's span read: at most this many spans (past it the timeline is `partial`), for at most this long.
 MAX_SPANS = 5000
 SPAN_READ_CAP_MS = 30_000
+
+
+def stored_record(
+    call: CallExecution, attempt: UUID | None = None
+) -> WorkerTimeline | None:
+    """The call's worker record, or an earlier attempt's as its rerun snapshot kept it; None when none was kept."""
+    if attempt is None:
+        metadata = call.call_metadata
+    else:
+        snapshot = call.snapshots.filter(id=attempt).only("call_metadata").first()
+        metadata = snapshot.call_metadata if snapshot is not None else None
+    record = metadata.get(WORKERS_KEY) if isinstance(metadata, dict) else None
+    return cast(WorkerTimeline, record) if record else None
 
 
 def _span_dict(span: Any) -> WorkerSpan:

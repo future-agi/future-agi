@@ -632,6 +632,66 @@ def test_another_workspace_or_organization_cannot_read_a_call_s_workers(
     assert auth_client.get(url).status_code == 404
 
 
+@pytest.mark.django_db
+def test_a_rerun_keeps_the_earlier_attempt_s_worker_record_and_trial_state(
+    user, workspace, storage, settings, auth_client
+):
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.services.harness_workers import WORKERS_KEY
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-rerun-kept", storage), key="k")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    timeline = {
+        **worker_timeline(SPANS, DECLARED, run_key=RUN),
+        "collected_at": "2026-10-31T12:00:00Z",
+    }
+    trial = {"state_changes": [{"who": "worker:refund", "committed": 1}]}
+    call.call_metadata = {WORKERS_KEY: timeline, TRIAL_STATE_KEY: trial}
+    call.save(update_fields=["call_metadata"])
+
+    clear_call_for_rerun(call)
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+    current = auth_client.get(url)
+    earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
+
+    # The new attempt starts with no record; the earlier one reads as it was, with its trial state kept beside it.
+    assert current.status_code == 204
+    assert earlier.status_code == 200, earlier.content
+    assert {one["id"] for one in earlier.json()["workers"]} == {
+        one["id"] for one in timeline["workers"]
+    }
+    assert snapshot.call_metadata[TRIAL_STATE_KEY] == trial
+
+
+@pytest.mark.django_db
+def test_an_attempt_snapshotted_before_records_were_kept_or_of_another_call_reads_none(
+    user, workspace, storage, settings, auth_client
+):
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-rerun-old", storage), key="o")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    old = CallExecutionSnapshot.objects.create(
+        call_execution=call, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
+    )
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+
+    assert auth_client.get(url, {"attempt": str(old.id)}).status_code == 204
+    # An attempt id from no snapshot of this call never reads another call's record.
+    assert auth_client.get(url, {"attempt": str(call.id)}).status_code == 204
+
+
 def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instrumentation_writes_them():
     # traceAI's OpenAI Agents nesting: the SDK's workflow is an agent span above the coordinator, a chain sits between
     # each delegating tool call and its worker, and agent spans carry an empty object for input and output.
