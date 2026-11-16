@@ -11,6 +11,7 @@ from ..datamappers import BasicDataMapper
 from ..generators.litellm_generator import LiteLLMGenerator
 from ..base.evaluator import Evaluator
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
+from tfc.utils.evaluation_denials import EvaluationDenied
 from .stepper import BayesianStepper
 
 # Type for the per-trial callback
@@ -397,6 +398,10 @@ class BayesianSearchOptimizer(BaseOptimizer):
                     for idx, res in enumerate(results)
                 },
             )
+        except EvaluationDenied:
+            # A policy refusal is not a 0.0 trial score: optuna would keep
+            # running (and paying for) every remaining trial.
+            raise
         except Exception as e:
             logging.error(f"Failed to score prompt: {e}")
             return None

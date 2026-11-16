@@ -9245,6 +9245,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           403: {
             $ref: "#/definitions/FalconErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/FalconErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -17672,6 +17675,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -17680,6 +17686,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -25942,6 +25951,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -25950,6 +25962,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -26779,6 +26794,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/SDKErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
           },
@@ -26936,6 +26957,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/SDKErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
@@ -57801,6 +57828,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "number",
           },
         },
+        cdc_lag_verified: {
+          title: "Cdc lag verified",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
+          },
+        },
         routing: {
           title: "Routing",
           type: "object",
@@ -57825,9 +57859,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cdc_lag: {
           title: "Cdc lag",
+          description:
+            "Per-table lag in seconds; -1 means unverified, including empty tables.",
           type: "object",
           additionalProperties: {
             type: "number",
+          },
+        },
+        cdc_lag_verified: {
+          title: "Cdc lag verified",
+          description:
+            "True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
           },
         },
         routing: {
@@ -83367,6 +83412,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SDKEvalTemplate",
+        },
+      },
+    },
+    SDKEvaluationDenialResponse: {
+      required: ["status", "code"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        errors: {
+          title: "Errors",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        dimension: {
+          title: "Dimension",
+          type: "string",
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+        },
+        completed_results: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        failed_index: {
+          title: "Failed index",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
