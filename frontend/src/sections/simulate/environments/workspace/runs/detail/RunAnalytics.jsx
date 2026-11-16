@@ -321,16 +321,17 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const headlines = [
     {
       key: "pass_rate",
-      label: "Calls passed",
-      // no_score means nothing to score, not missing data.
-      value: passRate?.no_score
-        ? STATUS_META.no_score.label
-        : format(passRate?.value, "percent"),
-      reported: passRate?.value != null || Boolean(passRate?.no_score),
+      label: "Trials passed",
+      // The run's one trial pass, as its header and the runs list read it; no_score means nothing to score.
+      value:
+        summary.trial_pass_rate == null && passRate?.no_score
+          ? STATUS_META.no_score.label
+          : format(summary.trial_pass_rate, "percent"),
+      reported: summary.trial_pass_rate != null || Boolean(passRate?.no_score),
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,
-      coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
+      coverage: `${summary.trials_passed} / ${summary.trials_evaluated} evaluated · ${summary.trials_inconclusive} inconclusive`,
       note: passRate?.note,
     },
     {

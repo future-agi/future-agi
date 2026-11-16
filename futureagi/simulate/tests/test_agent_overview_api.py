@@ -286,6 +286,12 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "outcome_status": None,
         "pass_rate": None,
         "scored": None,
+        # Its trials as the run's own page reads them: none ran to a verdict yet.
+        "trials_passed": 0,
+        "trials_evaluated": 0,
+        "trials_inconclusive": 0,
+        "trials_excluded_not_comparable": 0,
+        "trial_pass_rate": None,
         "started_at": None,
         "completed_at": None,
     }

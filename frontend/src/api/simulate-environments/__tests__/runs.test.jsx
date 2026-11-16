@@ -89,6 +89,7 @@ describe("executionToRun", () => {
       outcome_skipped: 2,
       outcome_status: "failed",
       pass_rate: 75,
+      trial_pass_rate: 75,
       scored: 8,
     });
     expect([
@@ -103,6 +104,7 @@ describe("executionToRun", () => {
       status: "Completed",
       outcome_status: "no_score",
       pass_rate: null,
+      trial_pass_rate: null,
       scored: 0,
     });
     expect(run.status).toBe("failed");
@@ -140,7 +142,12 @@ describe("executionToRun", () => {
   });
 
   it("falls back to `calls_attempted` for voice executions", () => {
-    const run = executionToRun({ id: "ex-5", status: "Completed", calls_attempted: 8, success_rate: 100 });
+    const run = executionToRun({
+      id: "ex-5",
+      status: "Completed",
+      calls_attempted: 8,
+      success_rate: 100,
+    });
     expect(run.total).toBe(8);
   });
 
@@ -164,12 +171,19 @@ describe("executionToRun", () => {
   });
 
   it("carries the run-level duration (seconds) the summary table shows", () => {
-    const run = executionToRun({ id: "ex-6", status: "Completed", total_chats: 4, success_rate: 100, duration: 11.9 });
+    const run = executionToRun({
+      id: "ex-6",
+      status: "Completed",
+      total_chats: 4,
+      success_rate: 100,
+      duration: 11.9,
+    });
     expect(run.durationS).toBe(11.9);
   });
 
   it("maps the raw lifecycle to the Status column's runState", () => {
-    const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
+    const state = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
     expect(state("Evaluating")).toBe("grading");
@@ -183,7 +197,8 @@ describe("executionToRun", () => {
   });
 
   it("marks only a pending or running run as stoppable", () => {
-    const stoppable = (status) => executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
+    const stoppable = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
     expect(stoppable("Pending")).toBe(true);
     expect(stoppable("Running")).toBe(true);
     // Grading finishes on its own; the server refuses to stop it.
@@ -211,7 +226,12 @@ describe("executionToRun", () => {
   });
 
   it("leaves durationS null when the execution row has no duration", () => {
-    const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
+    const run = executionToRun({
+      id: "ex-7",
+      status: "Completed",
+      total_chats: 4,
+      success_rate: 100,
+    });
     expect(run.durationS).toBeNull();
   });
 
@@ -261,7 +281,10 @@ describe("executionToRun", () => {
 
 describe("useEnvironmentRuns", () => {
   it("fetches executions when the env carries platform.runTestId and maps them in the server's newest-first order", async () => {
-    const env = { id: "env-1", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-1",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -292,12 +315,27 @@ describe("useEnvironmentRuns", () => {
         count: 12,
         covered_scenario_count: 7,
         results: [
-          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
+          {
+            id: "ex-12",
+            status: "Completed",
+            start_time: "2026-02-03T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-11",
+            status: "Failed",
+            start_time: "2026-02-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 40,
+          },
         ],
       },
     });
-    const env = { id: "env-c", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-c",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -308,9 +346,12 @@ describe("useEnvironmentRuns", () => {
   });
 
   it("counts the local runs and leaves covered scenarios to the client without a run-test", () => {
-    const { result } = renderHook(() => useEnvironmentRuns({ id: "env-x" }, { runs: [] }), {
-      wrapper: makeWrapper(),
-    });
+    const { result } = renderHook(
+      () => useEnvironmentRuns({ id: "env-x" }, { runs: [] }),
+      {
+        wrapper: makeWrapper(),
+      },
+    );
     expect(result.current.count).toBe(0);
     expect(result.current.coveredScenarioCount).toBeNull();
   });
@@ -325,13 +366,34 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 12,
         results: [
-          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
-          { id: "ex-10", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-12",
+            status: "Completed",
+            start_time: "2026-02-03T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-11",
+            status: "Failed",
+            start_time: "2026-02-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 40,
+          },
+          {
+            id: "ex-10",
+            status: "Completed",
+            start_time: "2026-02-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-g", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-g",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -350,12 +412,27 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 12,
         results: [
-          { id: "ex-2", status: "Completed", start_time: "2026-01-02T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-1", status: "Completed", start_time: "2026-01-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-2",
+            status: "Completed",
+            start_time: "2026-01-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-1",
+            status: "Completed",
+            start_time: "2026-01-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-p",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(
       () => useEnvironmentRuns(env, { runs: [] }, { page: 1, pageSize: 10 }),
       { wrapper: makeWrapper() },
@@ -365,13 +442,20 @@ describe("useEnvironmentRuns", () => {
     expect(axios.get).toHaveBeenCalledWith(expect.any(String), {
       params: { page: 2, limit: 10 },
     });
-    expect(result.current.runs.map((run) => run.label)).toEqual(["Run 2", "Run 1"]);
+    expect(result.current.runs.map((run) => run.label)).toEqual([
+      "Run 2",
+      "Run 1",
+    ]);
   });
 
   it("keeps the current page on screen while the next one loads", async () => {
-    const env = { id: "env-k", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-k",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result, rerender } = renderHook(
-      ({ page }) => useEnvironmentRuns(env, { runs: [] }, { page, pageSize: 10 }),
+      ({ page }) =>
+        useEnvironmentRuns(env, { runs: [] }, { page, pageSize: 10 }),
       { wrapper: makeWrapper(), initialProps: { page: 0 } },
     );
     await waitFor(() => expect(result.current.runs.length).toBeGreaterThan(0));
@@ -392,12 +476,27 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 2,
         results: [
-          { id: "ex-pending", status: "Pending", start_time: null, total_chats: 0, success_rate: 0 },
-          { id: "ex-done", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-pending",
+            status: "Pending",
+            start_time: null,
+            total_chats: 0,
+            success_rate: 0,
+          },
+          {
+            id: "ex-done",
+            status: "Completed",
+            start_time: "2026-02-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-p",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -421,7 +520,10 @@ describe("useEnvironmentRuns", () => {
   });
 
   it("renders MOCK_RUNS behind ?mockRuns=1 without fetching", () => {
-    const env = { id: "env-3", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-3",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(["/?mockRuns=1"]),
     });
@@ -458,4 +560,3 @@ describe("runSimulationTarget", () => {
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
   });
 });
-

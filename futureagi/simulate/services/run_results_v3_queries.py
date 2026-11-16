@@ -78,6 +78,8 @@ from simulate.services.run_reliability_v3 import (
     NOT_COMPARABLE,
     build_reliability,
     comparable_trials,
+    trial_outcomes,
+    trial_pass_from,
 )
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
@@ -1816,6 +1818,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     ]
     comparable, excluded = comparable_trials(queryset)
     reliability = build_reliability(comparable, execution.trials, excluded)
+    run_trials = trial_pass_from(*trial_outcomes(queryset))
     comparison = build_run_comparison(execution, queryset)
     return {
         "execution": {
@@ -1827,6 +1830,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         "summary": {
             **summary,
             "evaluators": len(configs),
+            **run_trials,
             # The run's verdict from its calls, by the rule the runs list reads.
             "outcome_status": run_outcome(
                 status=execution.status, counts=call_outcome_counts(summary["outcomes"])

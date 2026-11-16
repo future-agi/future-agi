@@ -17,6 +17,7 @@ from rest_framework import serializers
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import RunTest
 from simulate.serializers.harness_job import RunVersionLabelSerializer
+from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.serializers.filters import filter_list_field, json_object_field
 
@@ -134,7 +135,7 @@ class AddEvalConfigResponseSerializer(serializers.Serializer):
     )
 
 
-class TestExecutionItemResponseSerializer(serializers.Serializer):
+class TestExecutionItemResponseSerializer(TrialPassFieldsSerializer):
     """
     Response shape for a single item in GET /run-tests/{run_test_id}/executions/.
     Exactly matches the dict built in RunTestExecutionsView.get().

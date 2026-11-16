@@ -46,6 +46,7 @@ from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
@@ -500,7 +501,7 @@ class AnalyticsExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
-class AnalyticsSummarySerializer(RunSummarySerializer):
+class AnalyticsSummarySerializer(RunSummarySerializer, TrialPassFieldsSerializer):
     evaluators = serializers.IntegerField()
     outcome_status = serializers.ChoiceField(
         choices=OUTCOME_STATUSES,

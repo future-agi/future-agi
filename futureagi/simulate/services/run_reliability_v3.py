@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, TypedDict
 
 from django.db.models import Q, QuerySet, TextField, Value
 from django.db.models.fields.json import KT
@@ -81,6 +82,55 @@ def comparable_trials(queryset: QuerySet) -> tuple[QuerySet, int]:
     return queryset.exclude(NOT_COMPARABLE), queryset.filter(NOT_COMPARABLE).count()
 
 
+class TrialPass(TypedDict):
+    """A run's trials as its header reads them: passed over passed and failed. Errored and inconclusive trials say
+    nothing about the agent and are counted apart; trials that did not start from the seed are left out."""
+
+    trials_passed: int
+    trials_evaluated: int
+    trials_inconclusive: int
+    trials_excluded_not_comparable: int
+    # Percent, two places; None when no trial was evaluated.
+    trial_pass_rate: float | None
+
+
+def trial_pass_from(
+    outcomes: Mapping[str, int], excluded_not_comparable: int
+) -> TrialPass:
+    """The run's trial pass from its comparable trials' outcomes, by the one rule every surface reads."""
+    passed, failed = outcomes.get("passed", 0), outcomes.get("failed", 0)
+    evaluated = passed + failed
+    return {
+        "trials_passed": passed,
+        "trials_evaluated": evaluated,
+        "trials_inconclusive": outcomes.get("error", 0)
+        + outcomes.get("inconclusive", 0),
+        "trials_excluded_not_comparable": excluded_not_comparable,
+        "trial_pass_rate": round(passed * 100 / evaluated, 2) if evaluated else None,
+    }
+
+
+def trial_outcomes(queryset: QuerySet) -> tuple[dict[str, int], int]:
+    """The comparable trials of a run's calls by outcome, and how many trials were left out as not comparable."""
+    from django.db.models import Count
+
+    comparable, excluded = comparable_trials(queryset)
+    counts = dict(
+        comparable.order_by()
+        .values_list("result_outcome")
+        .annotate(count=Count("id"))
+        .values_list("result_outcome", "count")
+    )
+    return counts, excluded
+
+
+def trial_pass(execution: Any) -> TrialPass:
+    """One run's trial pass, read from its calls as the run's own page reads them."""
+    from simulate.services.run_results_v3_queries import run_calls_queryset
+
+    return trial_pass_from(*trial_outcomes(run_calls_queryset(execution)))
+
+
 def build_reliability(
     queryset: QuerySet, trials: int, excluded_not_comparable: int = 0
 ) -> dict[str, Any]:
@@ -135,6 +185,13 @@ def build_reliability(
     # A scenario with an inconclusive trial cannot show k of k passing.
     complete = [row for row in rows if pass_hat_k_shown and row["evaluated"] == k]
     all_passed = sum(row["passed"] == k for row in complete)
+    pooled = trial_pass_from(
+        {
+            outcome: sum(scenario[outcome] for scenario in counts.values())
+            for outcome in OUTCOME_LABELS
+        },
+        excluded_not_comparable,
+    )
     return {
         "trials": trials,
         "scenarios": len(rows),
@@ -149,7 +206,7 @@ def build_reliability(
         "k": k,
         # Infra, simulator and evidence failures say nothing about the agent, so
         # they sit outside every denominator below.
-        "inconclusive": sum(row["error"] + row["inconclusive"] for row in rows),
+        "inconclusive": pooled["trials_inconclusive"],
         "pass_hat_1": (
             round(
                 sum(row["passed"] / row["evaluated"] for row in conclusive)
@@ -167,9 +224,9 @@ def build_reliability(
         "pass_hat_k_passed": all_passed,
         # Scenarios pass^k could not judge, so the header can say what it covers.
         "pass_hat_k_excluded": len(rows) - len(complete) if pass_hat_k_shown else 0,
-        # Pooled counts for runs too small for rates, so the header need not sum rows.
-        "trials_passed": sum(row["passed"] for row in conclusive),
-        "trials_evaluated": sum(row["evaluated"] for row in conclusive),
+        # Pooled counts for runs too small for rates, so the header need not sum rows: the run's one trial pass.
+        "trials_passed": pooled["trials_passed"],
+        "trials_evaluated": pooled["trials_evaluated"],
         "excluded_not_comparable": excluded_not_comparable,
         "pass_rate_interval": scenario_interval(
             [(row["passed"], row["evaluated"]) for row in rows]

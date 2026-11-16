@@ -48,6 +48,7 @@ const executionsPayload = () => ({
       success_rate: 100,
       outcome_status: "passed",
       pass_rate: 74,
+      trial_pass_rate: 74,
     },
     {
       id: "ex-old",
@@ -58,6 +59,7 @@ const executionsPayload = () => ({
       success_rate: 60,
       outcome_status: "failed",
       pass_rate: 55,
+      trial_pass_rate: 55,
     },
   ],
   count: 2,
@@ -136,14 +138,12 @@ describe("buildRunStats", () => {
           outcome_skipped: 0,
           outcome_status: "running",
           pass_rate: 67,
+          trial_pass_rate: 67,
           scored: 3,
         },
       ],
     })[0];
-    const stats = buildRunStats(
-      { total_calls: 6, failed_calls: 0 },
-      row,
-    );
+    const stats = buildRunStats({ total_calls: 6, failed_calls: 0 }, row);
 
     expect(stats).toMatchObject({
       total: 6,
