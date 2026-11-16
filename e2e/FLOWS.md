@@ -2947,11 +2947,6 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-003 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
-
-**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
-
-**Spec:** `flows/simulate/pairing-readiness.spec.ts:44`
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
 **Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
@@ -2962,26 +2957,6 @@
 
 **User steps:**
 
-1. seed a built, certified Environment whose contract routes issue_refund to production, and a built one whose pairing was never certified (e2e/lib/harness_environment_seed.py)
-2. read the certified pairing's readiness (GET capabilities)
-3. read the uncertified pairing's readiness
-4. ask for it to be checked again (POST capabilities/recheck)
-5. read its readiness while the check runs
-6. try to run a scenario on that pairing
-
-**Backend state verified:**
-
-- the certified pairing names the seeded default versions, reads its evidence from the pair certificate, and its measured rows are exactly five Supported and tool routing Blocked as production_only, answer blocked
-- the uncertified pairing reads not_run and unchecked
-- recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
-- the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
-- the run answers 409 pair_validating, retryable, with when to retry and the check it waits on, and creates no run job
-
-### SIM-E2E-004 — the cases a pairing holds back are bucketed and paged by scenario number
-
-**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases
-
-**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`
 1. seed two sessions in a minted Observe project; one user turn carries a minted ask and a minted email
 2. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
 3. open the project's Sessions and select the two seeded rows
@@ -3008,24 +2983,6 @@
 
 **User steps:**
 
-1. seed a built, certified Environment of 53 refund and 2 lookup scenarios whose contract routes issue_refund to production (e2e/lib/harness_environment_seed.py)
-2. read the pairing's readiness for the whole suite (GET capabilities)
-3. page through the blocked cases (GET capabilities/cases?bucket=blocked, then cursor=next)
-4. read the eligible cases
-
-**Backend state verified:**
-
-- the buckets add up to requested: 2 eligible and 53 blocked of 55, each list naming exactly the seeded keys
-- tool routing holds back 53 of 55
-- the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
-- the eligible page is the two lookups, held by nothing
-- the page numbers are the stored suite members' numbers
-
-### SIM-E2E-006 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
-
-**Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
-
-**Spec:** `flows/simulate/pairing-readiness.spec.ts:150`
 1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
 2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
 3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
@@ -3051,22 +3008,6 @@
 
 **User steps:**
 
-1. seed a built Environment whose pairing's last check failed on issue_refund (e2e/lib/harness_environment_seed.py, failed_check)
-2. read the pairing's readiness (GET capabilities)
-3. try to run a scenario on that pairing
-4. ask for it to be checked again (POST capabilities/recheck)
-
-**Backend state verified:**
-
-- the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
-- the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
-- recheck answers 202 with a new validating job, and the bundle is pending again
-
-### SIM-E2E-024 — a run started with a case held back says so in its header, and a run from before says nothing
-
-**Goal:** A developer who starts a run on a pairing that holds a case back reads, on the run itself, the readiness it started under and the cases it held back; a run started before runs kept readiness shows no tag
-
-**Spec:** `flows/simulate/run-readiness-header.spec.ts:12`
 1. seed a built, versioned environment (lib/environment-seed.ts) and a dataset with text columns chat, intent and expected, and three rows
 2. open the dataset and tick the two rows whose chat holds a minted ask
 3. choose Create environment test, pick the environment, chat as the conversation, intent as a label and expected as the expected outcome, leave production off and import
@@ -3092,20 +3033,6 @@
 
 **User steps:**
 
-1. seed a built, certified Environment of 1 refund and 1 lookup whose contract routes issue_refund to production, with one finished run from before readiness was kept (e2e/lib/harness_environment_seed.py)
-2. open the Environment and click Run simulation
-3. run both scenarios from the run dialog
-4. land on the new run and open its readiness tag
-5. open the finished run from before
-
-**Backend state verified:**
-
-- the new run job keeps the readiness it was created with: answer blocked, and its selection holds back exactly the refund, by tool_routing
-
-**Browser observations:**
-
-- the new run's header reads "Started with 1 limit" and its popover "1 of 2 cases held back"
-- the run from before has no readiness tag
 1. seed a built, versioned environment (lib/environment-seed.ts) and two transcript imports, A then B, through the create route
 2. open the environment's Scenarios tab and read the Draft imports strip
 3. resume A: its review opens
@@ -3323,3 +3250,135 @@
 - her decision reads Refused
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
+
+### SIM-E2E-024 — a run started with a case held back says so in its header, and a run from before says nothing
+
+**Goal:** A developer who starts a run on a pairing that holds a case back reads, on the run itself, the readiness it started under and the cases it held back; a run started before runs kept readiness shows no tag
+
+**Spec:** `flows/simulate/run-readiness-header.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 1 refund and 1 lookup whose contract routes issue_refund to production, with one finished run from before readiness was kept (e2e/lib/harness_environment_seed.py)
+2. open the Environment and click Run simulation
+3. run both scenarios from the run dialog
+4. land on the new run and open its readiness tag
+5. open the finished run from before
+
+**Backend state verified:**
+
+- the new run job keeps the readiness it was created with: answer blocked, and its selection holds back exactly the refund, by tool_routing
+
+**Browser observations:**
+
+- the new run's header reads "Started with 1 limit" and its popover "1 of 2 cases held back"
+- the run from before has no readiness tag
+
+### SIM-E2E-030 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
+
+**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment whose contract routes issue_refund to production, and a built one whose pairing was never certified (e2e/lib/harness_environment_seed.py)
+2. read the certified pairing's readiness (GET capabilities)
+3. read the uncertified pairing's readiness
+4. ask for it to be checked again (POST capabilities/recheck)
+5. read its readiness while the check runs
+6. try to run a scenario on that pairing
+
+**Backend state verified:**
+
+- the certified pairing names the seeded default versions, reads its evidence from the pair certificate, and its measured rows are exactly five Supported and tool routing Blocked as production_only, answer blocked
+- the uncertified pairing reads not_run and unchecked
+- recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
+- the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
+- the run answers 409 pair_validating, retryable, with when to retry and the check it waits on, and creates no run job
+
+### SIM-E2E-031 — the cases a pairing holds back are bucketed and paged by scenario number
+
+**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases
+
+**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 53 refund and 2 lookup scenarios whose contract routes issue_refund to production (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness for the whole suite (GET capabilities)
+3. page through the blocked cases (GET capabilities/cases?bucket=blocked, then cursor=next)
+4. read the eligible cases
+
+**Backend state verified:**
+
+- the buckets add up to requested: 2 eligible and 53 blocked of 55, each list naming exactly the seeded keys
+- tool routing holds back 53 of 55
+- the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
+- the eligible page is the two lookups, held by nothing
+- the page numbers are the stored suite members' numbers
+
+### SIM-E2E-032 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
+
+**Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:150`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built Environment whose pairing's last check failed on issue_refund (e2e/lib/harness_environment_seed.py, failed_check)
+2. read the pairing's readiness (GET capabilities)
+3. try to run a scenario on that pairing
+4. ask for it to be checked again (POST capabilities/recheck)
+
+**Backend state verified:**
+
+- the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
+- the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
+- recheck answers 202 with a new validating job, and the bundle is pending again
+
+### SIM-E2E-033 — run readiness shows each worker's tools as Allowed, Blocked or Not enforced, never Supported
+
+**Goal:** A developer testing a multi-agent app sees, per worker, which tools the test world holds it to, and is told to rebuild an environment sealed before worker limits
+
+**Spec:** `flows/simulate/readiness-worker-boundaries.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers and ALK's root door.json, worker-limits.json and tool proxy files sealed (e2e/lib/harness_environment_seed.py, workers=sealed)
+2. seed one with the same workers sealed before worker limits (workers=old_seal)
+3. read each pairing's readiness (GET capabilities)
+
+**Backend state verified:**
+
+- the sealed pairing reads both workers Partial held_at_world_cooperative, the lookup worker's lookup_order Allowed and issue_refund Blocked, and no worker Supported
+- the old seal reads both workers Untested sealed_before_worker_limits with a rebuild fix and every tool Not enforced
+
+### SIM-E2E-034 — a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it
+
+**Goal:** A developer testing a multi-agent app who selects only the cases a blocked worker holds back is told which worker holds them and why, instead of a refusal that names nothing
+
+**Spec:** `flows/simulate/worker-hold-names-the-worker.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers whose tool service ALK sealed outside the world's door, 2 refund cases that give the refund worker a budget (each sealed held in worker-limits.json) and 2 lookups (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness (GET capabilities)
+3. start a run of only the refund cases (POST run)
+
+**Backend state verified:**
+
+- readiness counts 2 cases held back by the refund worker and 2 eligible
+- the run is refused all_cases_blocked, and the message names the Refund worker with the held reason
