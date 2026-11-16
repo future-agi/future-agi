@@ -168,22 +168,31 @@ describe("launch checks", () => {
   });
 
   it("asks the builder for more cases only when the run has too few to fix", () => {
-    const scenario = (key, failing) => ({
+    const scenario = (key, failing = []) => ({
       key,
-      failing_sub_goals: failing ? ["escalated"] : [],
+      failing_sub_goals: failing,
     });
     const run = (...scenarios) => ({ scenarios, limits: FLOOR });
     expect(
       addCasesMessage(
-        run(scenario("refund", true), scenario("eta", true), scenario("ok")),
+        run(
+          scenario("refund", ["escalated", "policy_cited"]),
+          scenario("eta", ["eta_quoted"]),
+          scenario("ok"),
+        ),
       ),
     ).toBe(
-      "Add more cases like refund, eta, which fail in this run, checking the same sub-goals. Improving the agent needs at least 3 failing cases.",
+      "Add 3 more cases like each of these, which fail in this run, checking the same sub-goals: refund (escalated, policy_cited); eta (eta_quoted). Improving the agent needs at least 3 failing cases.",
     );
     // Enough to pick from, or nothing to model new cases on.
+    const failing = ["escalated"];
     expect(
       addCasesMessage(
-        run(scenario("a", true), scenario("b", true), scenario("c", true)),
+        run(
+          scenario("a", failing),
+          scenario("b", failing),
+          scenario("c", failing),
+        ),
       ),
     ).toBeNull();
     expect(addCasesMessage(run(scenario("ok")))).toBeNull();

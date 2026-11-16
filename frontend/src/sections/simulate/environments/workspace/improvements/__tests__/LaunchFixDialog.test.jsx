@@ -416,7 +416,7 @@ describe("LaunchFixDialog", () => {
       {
         state: {
           builderMessage: expect.stringContaining(
-            `like ${kept[0].key}, ${kept[1].key},`,
+            `${kept[0].key} (${kept[0].failing_sub_goals.join(", ")}); ${kept[1].key}`,
           ),
         },
       },
