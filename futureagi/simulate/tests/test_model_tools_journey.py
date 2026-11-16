@@ -213,7 +213,10 @@ def test_a_trial_s_world_changes_link_its_kept_end_state_and_an_older_trial_read
     )
 
     assert _trial_state(kept)["end_state_url"] == "http://storage/end-state"
-    assert _trial_state(kept)["state_changes"] == FAULTED["state_changes"]
+    assert _trial_state(kept)["state_changes"] == [
+        {**one, "name": "The agent"} if one["who"] == "agent" else one
+        for one in FAULTED["state_changes"]
+    ]
     # A trial whose end state was not kept, and one from before World changes were recorded, read as they did.
     assert "end_state_url" not in _trial_state(call({TRIAL_STATE_KEY: FAULTED}))
     assert _trial_state(call({})) is None and _trial_state(call(None)) is None

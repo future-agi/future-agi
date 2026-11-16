@@ -40,7 +40,7 @@ def test_a_chat_row_an_actor_wrote_is_that_actor_s_turn_by_id_without_the_label_
 
     person, actor, task = transcript_turns(rows, [SAM], chat=True)
 
-    assert "speaker_role" not in person
+    assert person["speaker_role"] == "user"
     assert (actor["speaker_role"], actor["actor_id"], actor["speaker_name"]) == (
         "actor",
         "partner",
@@ -64,7 +64,13 @@ def test_a_person_who_quotes_the_label_stays_the_person_and_an_unknown_actor_is_
         "content": [{"role": "user", "actor": "nobody", "content": "hi"}],
     }
 
-    assert transcript_turns([quoted, stranger], [SAM], chat=True) == [quoted, stranger]
+    turns = transcript_turns([quoted, stranger], [SAM], chat=True)
+
+    assert [turn["content"] for turn in turns] == [
+        quoted["content"],
+        stranger["content"],
+    ]
+    assert [turn["speaker_role"] for turn in turns] == ["user", "user"]
 
 
 def test_a_voice_actor_turn_carries_its_role_and_channel():
@@ -77,18 +83,37 @@ def test_a_voice_actor_turn_carries_its_role_and_channel():
     assert (turn["actor_role"], turn["channel"]) == ("partner", "chat")
 
 
-def test_each_recorded_call_says_whose_it_is_and_an_old_refused_action_reads_refused():
-    agent, acted, old = tagged_function_calls(
+def test_each_recorded_call_says_whose_it_is_and_an_old_action_reads_refused_or_not_recorded():
+    agent, acted, old, unlogged = tagged_function_calls(
         [
             {"name": "get_order", "actor_id": "agent"},
-            {"name": "refunds.change", "actor_id": "approver", "outcome": "committed"},
+            {
+                "name": "refunds.change",
+                "actor_id": "approver",
+                "actor_name": "Pat",
+                "outcome": "committed",
+            },
             {"name": "refunds.change", "actor_id": "approver", "refused": True},
+            {"name": "refunds.change", "actor_id": "approver"},
         ]
     )
 
-    assert agent["kind"] == "agent_call" and "outcome" not in agent
-    assert (acted["kind"], acted["outcome"]) == ("world_actor_action", "committed")
-    assert (old["kind"], old["outcome"]) == ("world_actor_action", "refused")
+    assert (
+        agent["kind"] == "agent_call"
+        and "outcome" not in agent
+        and "actor_name" not in agent
+    )
+    assert (acted["kind"], acted["outcome"], acted["actor_name"]) == (
+        "world_actor_action",
+        "committed",
+        "Pat",
+    )
+    assert (old["kind"], old["outcome"], old["actor_name"]) == (
+        "world_actor_action",
+        "refused",
+        "approver",
+    )
+    assert unlogged["outcome"] == "not_recorded"
 
 
 def test_world_state_splits_pre_run_messages_and_names_a_fallback_the_world_did_not_commit():
@@ -227,6 +252,24 @@ def test_commits_with_no_record_change_say_the_agent_keeps_its_records_outside_t
 
     assert [one["code"] for one in outside["notices"]] == ["changed_outside_world"]
     assert changed["notices"] == [] and nothing["notices"] == []
+
+
+def test_the_agent_s_participant_heading_reads_as_a_heading_and_an_actor_keeps_its_own_name():
+    state = trial_state(
+        _call(
+            {
+                "state_changes": [
+                    {"who": "agent", "name": "the agent", "committed": 0},
+                    {"who": "sam", "name": "Sam Taylor", "committed": 0},
+                ]
+            }
+        )
+    )
+
+    assert [one["name"] for one in state["state_changes"]] == [
+        "The agent",
+        "Sam Taylor",
+    ]
 
 
 def test_a_world_state_that_is_not_an_object_reads_as_not_recorded():

@@ -35,6 +35,8 @@ const {
   useSaveDrafts,
   useDiscardDraft,
   useEditActor,
+  useActorCheck,
+  checkActor,
   actorsKey,
   draftsKey,
   toDrafts,
@@ -352,10 +354,24 @@ describe("useRunPlan", () => {
       null,
       "e1",
       null,
+      null,
     ]);
     expect(
       client.getQueryData(runPlanKey("env-1", { environment: "e1" })),
     ).toEqual(PLAN);
+  });
+
+  it("asks about the chosen scenarios only, by their keys", async () => {
+    axios.get.mockResolvedValue({ data: PLAN });
+    const { result } = renderHook(
+      () => useRunPlan("env-1", {}, { scenarioKeys: ["k1", "k2"] }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/run-plan/",
+      { params: { scenario_keys: "k1,k2" } },
+    );
   });
 
   it("asks with no params for the defaults", async () => {
@@ -1475,23 +1491,29 @@ describe("useEditActor", () => {
     return result;
   };
 
-  it("sends each change with the revision it was read at, and seeds the cast with the answer", async () => {
+  it("sends each change as typed changes with the revision it was read at, a create's own id when typed, and seeds the cast with the answer", async () => {
     const answer = { actors: [], revision: 4 };
-    const actor = { id: "manager", name: "Priya" };
+    const changes = { name: "Priya" };
     axios.post.mockResolvedValue({ data: answer });
     axios.put.mockResolvedValue({ data: answer });
     axios.delete.mockResolvedValue({ data: answer });
 
-    await edit({ op: "create", actor, revision: 3 });
-    await edit({ op: "replace", actor, actorId: "manager", revision: 3 });
+    await edit({ op: "create", changes, id: "manager", revision: 3 });
+    await edit({ op: "create", changes, revision: 3 });
+    await edit({ op: "replace", changes, actorId: "manager", revision: 3 });
     await edit({ op: "delete", actorId: "manager", revision: 3 });
 
-    expect(axios.post).toHaveBeenCalledWith(ACTORS, {
-      actor,
+    expect(axios.post).toHaveBeenNthCalledWith(1, ACTORS, {
+      changes,
+      id: "manager",
+      expected_revision: 3,
+    });
+    expect(axios.post).toHaveBeenNthCalledWith(2, ACTORS, {
+      changes,
       expected_revision: 3,
     });
     expect(axios.put).toHaveBeenCalledWith(`${ACTORS}manager/`, {
-      actor,
+      changes,
       expected_revision: 3,
     });
     expect(axios.delete).toHaveBeenCalledWith(`${ACTORS}manager/`, {
@@ -1507,7 +1529,7 @@ describe("useEditActor", () => {
 
     const result = await edit({
       op: "replace",
-      actor: {},
+      changes: {},
       actorId: "manager",
       revision: 3,
     });
@@ -1522,7 +1544,70 @@ describe("useEditActor", () => {
   it("leaves the drafts alone when the actor itself was refused", async () => {
     axios.put.mockRejectedValue({ error: "actor_invalid", statusCode: 400 });
     const spy = vi.spyOn(client, "invalidateQueries");
-    await edit({ op: "replace", actor: {}, actorId: "manager", revision: 3 });
+    await edit({ op: "replace", changes: {}, actorId: "manager", revision: 3 });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("useActorCheck", () => {
+  it("asks on open, then once typing pauses about the latest request only, and counts only a verdict on that request", async () => {
+    const verdict = {
+      problems: [],
+      conflicts: [],
+      suggested_id: "sam",
+      over_by: 0,
+    };
+    axios.post.mockResolvedValue({ data: verdict });
+    const { result, rerender } = renderHook(
+      ({ request }) => useActorCheck("env-1", request),
+      {
+        wrapper,
+        initialProps: { request: { op: "create", changes: { name: "S" } } },
+      },
+    );
+    rerender({ request: { op: "create", changes: { name: "Sa" } } });
+    rerender({ request: { op: "create", changes: { name: "Sam" } } });
+    expect(result.current.verdict).toBeNull();
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(result.current.verdict).toEqual(verdict));
+    // The form's first request is asked at once; the keystrokes after it, once they pause.
+    expect(
+      axios.post.mock.calls.map(([url, body]) => [url, body.changes.name]),
+    ).toEqual([
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "S"],
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "Sam"],
+    ]);
+    rerender({ request: { op: "create", changes: { name: "Samir" } } });
+    expect(result.current.verdict).toBeNull();
+  });
+
+  it("asks nothing for a request the form cannot build", () => {
+    const { result } = renderHook(() => useActorCheck("env-1", null), {
+      wrapper,
+    });
+    expect(result.current).toMatchObject({ verdict: null, pending: false });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkActor", () => {
+  it("names the actor for a replace or delete, sends no changes for a delete, and no revision", async () => {
+    axios.post.mockResolvedValue({ data: {} });
+    await checkActor("env-1", {
+      op: "replace",
+      actorId: "manager",
+      changes: { role: "lead" },
+      shareActions: ["crm.approve"],
+    });
+    await checkActor("env-1", { op: "delete", actorId: "manager" });
+    expect(axios.post.mock.calls.map(([, body]) => body)).toEqual([
+      {
+        op: "replace",
+        actor_id: "manager",
+        changes: { role: "lead" },
+        share_actions: ["crm.approve"],
+      },
+      { op: "delete", actor_id: "manager" },
+    ]);
   });
 });

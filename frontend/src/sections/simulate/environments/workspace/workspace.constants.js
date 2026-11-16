@@ -427,6 +427,11 @@ export const AGENT_VERSIONS_COPY = {
 export const RUN_DIALOG_COPY = {
   title: "Run simulation",
   seed: "Seed (optional)",
+  // The seed folded to one line until someone edits it.
+  seedLine: "Seed",
+  seedNew: "New seed",
+  edit: "Edit",
+  done: "Done",
   seedHelp: "The same seed draws the same personas and variations again",
   seedInvalid: "A seed is a whole number from 0 to 9223372036854775807",
   pieces: {
@@ -440,8 +445,10 @@ export const RUN_DIALOG_COPY = {
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
   disabled: "Versioning is switched off, so the run uses the current versions.",
-  checking: "Checking these versions…",
-  planError: "Couldn't check these versions for warnings.",
+  checking: "Checking these versions and what the run would block…",
+  planError:
+    "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
+  retryPlan: "Try again",
   refused: "These versions can't run.",
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
@@ -458,6 +465,13 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  // The tools that reach production, as one line: how many of the chosen scenarios they hold back.
+  heldBack: (n, tools) =>
+    n
+      ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
+      : `${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production, so this test blocks ${tools.length === 1 ? "its" : "their"} calls`,
+  details: "Details",
+  hideDetails: "Hide details",
   // A tool that reaches production: the test blocks its calls, and says how to test it.
   blockedTool: (tool) =>
     `Blocked: ${tool} reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.`,

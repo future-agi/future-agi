@@ -23,6 +23,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.call_detail import (
     call_actors,
@@ -494,6 +495,10 @@ class AnalyticsExecutionSerializer(serializers.Serializer):
 
 class AnalyticsSummarySerializer(RunSummarySerializer):
     evaluators = serializers.IntegerField()
+    outcome_status = serializers.ChoiceField(
+        choices=OUTCOME_STATUSES,
+        help_text="The run's verdict from its calls: no_score when it completed with only unscored calls.",
+    )
 
 
 class RiskSerializer(RunSummarySerializer):

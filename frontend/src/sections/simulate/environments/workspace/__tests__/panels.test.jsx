@@ -97,8 +97,8 @@ function renderPanels(props = {}) {
 describe("WorkspacePanels", () => {
   afterEach(() => runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns));
 
-  it("opens the actors tab for a versioned environment", () => {
-    renderPanels({ env: { ...ENV, versioning: { enabled: true } }, tab: "actors" });
+  it("opens the actors tab when the environment says it has one", () => {
+    renderPanels({ env: { ...ENV, actorsTab: "edit" }, tab: "actors" });
     expect(screen.getByRole("tab", { name: "Actors" })).toBeInTheDocument();
     expect(screen.getByText("actors-body")).toBeInTheDocument();
   });

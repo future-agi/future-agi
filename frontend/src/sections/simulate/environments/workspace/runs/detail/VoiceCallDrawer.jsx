@@ -114,7 +114,7 @@ export default function VoiceCallDrawer({
           />
         ),
       },
-      // Every trial has World changes: what changed, or why it was not recorded.
+      // Every trial has World state: what changed, or why it was not recorded.
       {
         label: TRIAL_CHANGES_COPY.tab,
         value: "world_changes",

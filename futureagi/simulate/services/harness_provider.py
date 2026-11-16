@@ -2149,14 +2149,30 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
+        from simulate.selectors.environment_documents import contract_data
+        from simulate.services.harness_actor_rules import actor_rules
+        from simulate.services.harness_environment import environment_actor_side
+        from simulate.services.harness_tool_reach import door_targets
+
+        page = list(page or [])
+        # The environment's files are read only for a page that has actors to resolve.
+        actor_cast, rules = (
+            environment_actor_side(job)
+            if any(one.actors for one in page)
+            else ([], actor_rules({}))
+        )
+        targets = door_targets(contract_data(job), rules)
         rows = grouped(
             [
                 (
-                    {**scenario_row(one), "draft_change": one.draft_change}
+                    {
+                        **scenario_row(one, targets=targets, actor_cast=actor_cast),
+                        "draft_change": one.draft_change,
+                    }
                     if drafted is not None
-                    else scenario_row(one)
+                    else scenario_row(one, targets=targets, actor_cast=actor_cast)
                 )
-                for one in page or []
+                for one in page
             ],
             group_by,
         )
@@ -2330,6 +2346,8 @@ class HostedHarnessProvider:
                             "scenario": str(change.get("scenario") or ""),
                             "outcome": "refused",
                             "why": "nothing in this suite answers to that",
+                            "code": "scenario_unknown",
+                            "field": None,
                         }
                     )
                     continue
@@ -2343,6 +2361,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "refused",
                             "why": "no scenario of that name in this suite",
+                            "code": "scenario_unknown",
+                            "field": None,
                         }
                     )
                     continue
@@ -2354,6 +2374,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                                "code": "needs_rework",
+                                "field": None,
                             }
                         )
                         continue
@@ -2361,7 +2383,13 @@ class HostedHarnessProvider:
                     by_name.pop(name, None)
                     touched = True
                     receipts.append(
-                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                        {
+                            "scenario": name,
+                            "outcome": "applied",
+                            "why": "dropped",
+                            "code": "applied",
+                            "field": None,
+                        }
                     )
                     continue
                 if op == "set_field":
@@ -2375,6 +2403,8 @@ class HostedHarnessProvider:
                                     "scenario": name,
                                     "outcome": "refused",
                                     "why": f"{field} changes what the run does, so it needs a re-proof",
+                                    "code": "needs_rework",
+                                    "field": field,
                                 }
                             )
                             continue
@@ -2384,11 +2414,13 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": f"{field} is not editable: it is proved, not described",
+                                "code": "not_editable",
+                                "field": field,
                             }
                         )
                         continue
                     if field == "faults":
-                        from simulate.services.harness_actors import faults_problem
+                        from simulate.services.harness_tool_reach import faults_problem
 
                         problem = faults_problem(change.get("value"))
                         if problem:
@@ -2397,6 +2429,8 @@ class HostedHarnessProvider:
                                     "scenario": name,
                                     "outcome": "refused",
                                     "why": f"the test world cannot apply this test condition: {problem}",
+                                    "code": "fault_invalid",
+                                    "field": "faults",
                                 }
                             )
                             continue
@@ -2408,6 +2442,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "applied",
                             "why": f"{field} updated",
+                            "code": "applied",
+                            "field": field,
                         }
                     )
                     continue
@@ -2418,6 +2454,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": "the persona is what the agent hears, so it needs a re-proof",
+                                "code": "needs_rework",
+                                "field": "persona",
                             }
                         )
                         continue
@@ -2429,6 +2467,8 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": f"not editable on a persona: {', '.join(unknown)}",
+                                "code": "not_editable",
+                                "field": "persona",
                             }
                         )
                         continue
@@ -2448,6 +2488,8 @@ class HostedHarnessProvider:
                             "scenario": name,
                             "outcome": "applied",
                             "why": "persona updated",
+                            "code": "applied",
+                            "field": "persona",
                         }
                     )
                     continue
@@ -2456,6 +2498,8 @@ class HostedHarnessProvider:
                         "scenario": name,
                         "outcome": "refused",
                         "why": f"unknown change {op!r}",
+                        "code": "unknown_change",
+                        "field": None,
                     }
                 )
             # Only the scenarios this amend changed pass the gates again.
@@ -2488,6 +2532,8 @@ class HostedHarnessProvider:
                                     "scenario": name,
                                     "outcome": "refused",
                                     "why": "; ".join(problems),
+                                    "code": "edit_invalid",
+                                    "field": None,
                                 }
                                 for name, problems in rejected
                             ]
@@ -2524,6 +2570,7 @@ class HostedHarnessProvider:
                                     **one,
                                     "outcome": "refused",
                                     "why": f"nothing changed: {kept}",
+                                    "code": "not_saved",
                                 }
                                 if one.get("outcome") == "applied"
                                 else one
@@ -2579,6 +2626,7 @@ class HostedHarnessProvider:
                                 **one,
                                 "outcome": "refused",
                                 "why": f"nothing changed: {why}",
+                                "code": "not_saved",
                             }
                             if one.get("outcome") == "applied"
                             else one

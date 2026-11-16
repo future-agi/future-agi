@@ -7,6 +7,7 @@ import json
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
+from simulate.services import harness_actor_rules, harness_actors
 from simulate.services.harness_versioning import drafts
 from simulate.tests.test_harness_actors import BASE, MANAGER, _add, _built
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
@@ -166,13 +167,12 @@ def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_
 def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_sealed_with(
     user, workspace, storage, auth_client
 ):
-    from simulate.services import harness_actors
     from simulate.services.harness_versioning.versions import record_authoring
     from simulate.tests import test_harness_versioning_record as record_tests
     from simulate.tests.test_harness_actors import CRM_CONTRACT
     from simulate.tests.test_harness_versioning_record import _authoring
 
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     rules["actor_models"] = ["gemini-4.0-flash"]
     environment = record_tests._environment(user, workspace, "actor-models-sealed")
     record_authoring(
@@ -196,7 +196,7 @@ def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_
     earlier = _built(user, workspace, "actor-models-earlier")
     assert auth_client.get(f"{BASE}/{earlier.id}/actors/").json()[
         "actor_models"
-    ] == list(harness_actors.ACTOR_MODELS)
+    ] == list(harness_actor_rules.ACTOR_MODELS)
 
 
 def _upload(auth_client, environment, name, content, **extra):
@@ -227,7 +227,7 @@ def test_an_uploaded_file_lands_in_its_kind_s_folder_whatever_path_its_name_carr
     assert added == ["knowledge/b.md", "knowledge/scenario.json"]
     assert all(files[path] == before[path] for path in before)
     # The service strips a path itself, whatever the transport did to the name first.
-    from simulate.services.harness_actors import upload_environment_file
+    from simulate.services.harness_actor_uploads import upload_environment_file
 
     upload_environment_file(
         environment,
@@ -392,7 +392,6 @@ def _scenario_names_manager(environment, user):
 
 
 def _remove_manager(environment, user):
-    from simulate.services import harness_actors
 
     return harness_actors.write_actor_edit(
         environment,

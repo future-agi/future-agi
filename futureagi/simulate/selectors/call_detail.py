@@ -19,6 +19,10 @@ from simulate.utils.stored_transcript_roles import call_actor_label
 logger = structlog.get_logger(__name__)
 
 AGENT = "agent"
+# The agent's participant heading; the harness records it lower-case, mid-sentence style.
+AGENT_NAME = "The agent"
+# A world actor's action logged before the world kept outcomes, and not refused.
+OUTCOME_NOT_RECORDED = "not_recorded"
 HISTORY = "history"
 
 
@@ -58,8 +62,12 @@ def tagged_function_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         actor = call.get("actor_id")
         acted = bool(actor) and actor != AGENT
         one = {**call, "kind": "world_actor_action" if acted else "agent_call"}
-        if acted and not one.get("outcome") and call.get("refused"):
-            one["outcome"] = "refused"
+        if acted:
+            one["actor_name"] = call.get("actor_name") or actor
+            if not one.get("outcome"):
+                one["outcome"] = (
+                    "refused" if call.get("refused") else OUTCOME_NOT_RECORDED
+                )
         tagged.append(one)
     return tagged
 
@@ -90,6 +98,8 @@ def transcript_turns(
     turns = []
     for source in rows:
         row = dict(source)
+        # A chat row names its speaker only by `role`; every turn says it as `speaker_role` too.
+        row.setdefault("speaker_role", row.get("role"))
         if chat:
             items = [
                 item for item in row.get("content") or [] if isinstance(item, dict)
@@ -235,6 +245,11 @@ def trial_state(call: CallExecution) -> dict[str, Any] | None:
         )
         return None
     shown = dict(state)
+    shown["state_changes"] = [
+        {**one, "name": AGENT_NAME} if one.get("who") == AGENT else one
+        for one in state.get("state_changes") or []
+        if isinstance(one, dict)
+    ]
     decisions = [one for one in state.get("decisions") or [] if isinstance(one, dict)]
     shown["pre_run"] = [
         _decision(one) for one in decisions if one.get("play") == HISTORY

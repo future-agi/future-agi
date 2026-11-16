@@ -231,21 +231,28 @@ def _versions(pins: ResolvedPins | None) -> dict[str, Any]:
 
 
 def preview_run(
-    environment: HostedHarnessJob, picks: VersionPicks | None = None
+    environment: HostedHarnessJob,
+    picks: VersionPicks | None = None,
+    *,
+    scenario_keys: list[str] | None = None,
+    hidden: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """The versions a run of ``picks`` would use, its warnings and whether its bundle
-    is cached; ``bundle_cached`` is ``None`` when the run is not assembled."""
-    from simulate.services.harness_actors import blocked_tools
+    """The versions a run of ``picks`` would use, its warnings, whether its bundle is
+    cached (``None`` when the run is not assembled) and whether a run of
+    ``scenario_keys`` (None: every scenario) would start, with the production-only
+    tools it meets; ``hidden`` scenarios, which the caller may not read, are left out
+    of both. Without versioning the versions are all ``None`` and there are no
+    warnings; the verdict is the same."""
+    from simulate.services.harness_tool_reach import run_verdict
 
     pins = resolve_run_pins(environment, picks=picks)
-    blocked = blocked_tools(environment, pins)
     return {
         "versions": _versions(pins),
         "warnings": run_warnings(environment, pins),
         "bundle_cached": (
             pins.cached if pins is not None and _assembles(pins) else None
         ),
-        **({"blocked_tools": blocked} if blocked else {}),
+        **run_verdict(environment, pins, scenario_keys=scenario_keys, hidden=hidden),
     }
 
 

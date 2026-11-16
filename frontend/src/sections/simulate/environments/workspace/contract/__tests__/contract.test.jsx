@@ -16,9 +16,27 @@ const voiceEnv = {
     "Never disclose another caller's data.",
     "Only refund verified callers.",
   ],
-  seed: {
-    tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }],
-  },
+  // The world's own tables and each tool's status, as the environment's detail states them.
+  worldTables: [
+    { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
+  ],
+  worldTotalRows: 240,
+  toolStatus: [
+    {
+      tool: "lookup_account",
+      status: "simulated",
+      reset_between_trials: true,
+      runs_at: null,
+      writes: false,
+    },
+    {
+      tool: "issue_refund",
+      status: "simulated",
+      reset_between_trials: true,
+      runs_at: null,
+      writes: true,
+    },
+  ],
 };
 
 const renderPanel = (props = {}) =>
@@ -114,17 +132,18 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Writes data")).toBeNull();
   });
 
-  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
+  it("shows where a tool runs only when the contract says, in its words", () => {
     renderPanel({
       env: {
         ...voiceEnv,
-        toolEntrypoints: [
-          { tool: "issue_refund", module: "billing", callable: "refund" },
+        toolStatus: [
+          { ...voiceEnv.toolStatus[0] },
+          { ...voiceEnv.toolStatus[1], runs_at: "billing.refund" },
         ],
       },
     });
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no entrypoint, so it carries no invented location.
+    // lookup_account has no place it runs, so it carries no invented location.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 

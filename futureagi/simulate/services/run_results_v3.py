@@ -646,6 +646,28 @@ def _actor_missing_reason(receipt: Mapping[str, Any]) -> str | None:
     )
 
 
+# The unscored sub-goal results a call with no score counts, in order, each with its words.
+_UNSCORED_RESULTS = (
+    ("not_applicable", "not applicable"),
+    ("inconclusive", "inconclusive"),
+    ("unmeasured", "not measured"),
+)
+
+
+def _unscored_reason(
+    outcome: str, sub_goal_results: list[dict[str, Any]]
+) -> str | None:
+    """What a call with no pass or fail has instead, counted by sub-goal result: "2 not applicable, 1 inconclusive";
+    None for any other outcome, or when no sub-goal says."""
+    if outcome != "no_score":
+        return None
+    counts = [
+        (sum(1 for goal in sub_goal_results if goal.get("result") == result), words)
+        for result, words in _UNSCORED_RESULTS
+    ]
+    return ", ".join(f"{count} {words}" for count, words in counts if count) or None
+
+
 # Failures whose message the harness writes for the reader of a run, shown as it is.
 _READER_FAILURES = frozenset({"duplicate_commit", "evidence_unmeasured"})
 
@@ -812,6 +834,7 @@ def build_call_rows(
             call, live_eval_configs, specs, scoring=scoring, names=names
         )
         receipt_sub_goals = receipt_sub_goal_names(metadata)
+        outcome = call_outcome(call, live_eval_configs, specs)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = {
                 "id": evaluation["id"],
@@ -837,7 +860,7 @@ def build_call_rows(
                 # TODO: drop once clients read sub_goal_results.
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
-                "outcome": call_outcome(call, live_eval_configs, specs),
+                "outcome": outcome,
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
@@ -848,7 +871,8 @@ def build_call_rows(
                     _STOPPED
                     if call.status == CallExecution.CallStatus.CANCELLED
                     else None
-                ),
+                )
+                or _unscored_reason(outcome, sub_goal_results),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,

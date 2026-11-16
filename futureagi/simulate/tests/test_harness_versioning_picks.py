@@ -1053,6 +1053,10 @@ class TestWarnings:
             "versions": {"agent": None, "environment": None, "suite": None},
             "warnings": [],
             "bundle_cached": None,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
         }
 
 
@@ -1089,6 +1093,10 @@ class TestRunPlan:
                 }
             ],
             "bundle_cached": True,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
         }
 
     def test_a_pick_writes_nothing(
@@ -1130,16 +1138,29 @@ class TestRunPlan:
         assert not_pickable.status_code == 422
         assert not_pickable.json()["error"] == "version_not_pickable"
 
-    def test_versioning_off_is_not_found(
+    def test_versioning_off_answers_the_verdict_and_refuses_a_pick(
         self, auth_client, user, workspace, storage, settings
     ):
         environment = _environment(user, workspace, "pk-plan-off", storage)
         settings.HARNESS_VERSIONING_ENABLED = False
 
         response = self._plan(auth_client, environment)
+        picked = self._plan(
+            auth_client, environment, suite_version_id=str(environment.suite_version_id)
+        )
 
-        assert response.status_code == 404
-        assert response.json()["error"] == "versioning_disabled"
+        assert response.status_code == 200, response.content
+        assert response.json() == {
+            "versions": {"agent": None, "environment": None, "suite": None},
+            "warnings": [],
+            "bundle_cached": None,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
+        }
+        assert picked.status_code == 404
+        assert picked.json()["error"] == "versioning_disabled"
 
     def test_another_workspace_is_not_found(
         self, auth_client, user, workspace, storage
@@ -1529,3 +1550,106 @@ class TestProductionOnly:
                 "scenarios": [{"key": _key(NAMES[0]), "name": NAMES[0]}],
             }
         ]
+
+
+class TestRunPlanVerdict:
+    """The plan says, for the scenarios a run would select, which blocked tools they meet, how many are held back
+    and whether the run would start: the same rule the run itself applies."""
+
+    _blocked = TestProductionOnly._blocked
+
+    def _verdict(self, auth_client, environment, s1, **params):
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/",
+            {"suite_version_id": str(s1.id), **params},
+        )
+        assert response.status_code == 200, response.content
+        body = response.json()
+        return (
+            body["blocked_tools"],
+            body["runnable"],
+            body["blocked_code"],
+            body["held_back"],
+        )
+
+    def test_a_selection_every_scenario_of_which_needs_a_blocked_tool_is_not_runnable(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-all")
+
+        assert self._verdict(
+            auth_client, environment, s1, scenario_keys=_key(NAMES[0])
+        ) == (
+            [
+                {
+                    "tool": "issue_refund",
+                    "scenarios": [{"key": _key(NAMES[0]), "name": NAMES[0]}],
+                }
+            ],
+            False,
+            "production_only",
+            1,
+        )
+
+    def test_a_mixed_selection_runs_and_holds_back_the_one_that_needs_it(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-mix")
+
+        tools, runnable, code, held = self._verdict(
+            auth_client,
+            environment,
+            s1,
+            scenario_keys=f"{_key(NAMES[0])},{_key(NAMES[1])}",
+        )
+
+        assert (runnable, code, held) == (True, None, 1)
+        assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
+
+    def test_a_selection_that_needs_no_blocked_tool_names_none(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-none")
+
+        assert self._verdict(
+            auth_client, environment, s1, scenario_keys=_key(NAMES[1])
+        ) == ([{"tool": "issue_refund", "scenarios": []}], True, None, 0)
+
+    def test_the_verdict_matches_the_run(self, auth_client, user, workspace, storage):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-run")
+        keys = [_key(NAMES[0])]
+
+        _, runnable, _, _ = self._verdict(
+            auth_client, environment, s1, scenario_keys=",".join(keys)
+        )
+        run = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": keys, "trials": 1, "suite_version_id": str(s1.id)},
+        )
+
+        assert runnable is False
+        assert run.status_code == 409
+
+    def test_an_absent_selection_reads_every_scenario(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-every")
+
+        tools, runnable, code, held = self._verdict(auth_client, environment, s1)
+
+        # One of the two needs the tool, so the whole suite still runs.
+        assert (runnable, code, held) == (True, None, 1)
+        assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
+
+    def test_too_many_scenarios_are_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-many")
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/",
+            {"scenario_keys": ",".join(f"k{n}" for n in range(1001))},
+        )
+
+        assert response.status_code == 400

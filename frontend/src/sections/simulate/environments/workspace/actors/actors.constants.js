@@ -29,8 +29,6 @@ export const ACTORS_COPY = {
       live_turns_per_trial: "Default: 20",
     },
     none: "none",
-    badNumber: "A number above 0, or none",
-    badWholeNumber: "A whole number above 0, or none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",
     callerModel: "The caller's model",
@@ -89,7 +87,19 @@ export const ACTORS_COPY = {
       "No connection: your change is kept and saves once you are back online",
     everyoneAbout:
       "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
-    add: "Add an actor",
+    add: "Add actor",
+    // The two sides an actor is on, each listed under its own heading, the caller's side first.
+    sides: {
+      caller: {
+        label: "On the caller's side",
+        note: "Someone nearby, who takes the phone, or a second person in the chat",
+      },
+      world: {
+        label: "In the world",
+        note: "A manager who approves, a teammate on Slack, another company's system",
+      },
+    },
+    emptySide: "No one here yet.",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
@@ -99,10 +109,6 @@ export const ACTORS_COPY = {
     mayDo: "May do",
     nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
-    inUse: (name, count) =>
-      `${name} is in ${count === 1 ? "1 scenario" : `${count} scenarios`}. Take them out of ${count === 1 ? "it" : "those scenarios"} first, by editing the scenario or asking the builder chat.`,
-    namedBy: (name, names) =>
-      `${names.join(", ")} still ${names.length === 1 ? "names" : "name"} ${name}, as who answers instead or who brings them in. Change ${names.length === 1 ? "that" : "those"} first.`,
     showView: "What they see",
     hideView: "Hide what they see",
     sees: "Sees",
@@ -111,28 +117,6 @@ export const ACTORS_COPY = {
     loudnessShare: (ratio) =>
       `${Math.round(ratio * 100)}% as loud as the caller`,
     loudnessAutomatic: "Loudness automatic",
-    atStart: "From the start",
-    whenCalled: (action) => `When the agent calls ${action}`,
-    // Every trigger kind in its own words; a kind a newer release adds shows by its own name.
-    comesInLabel: (trigger) => {
-      const { kind, tool, seconds, on_call: onCall, p } = trigger || {};
-      switch (kind || "always") {
-        case "always":
-          return ACTORS_COPY.worldActors.atStart;
-        case "on_tool":
-          return onCall > 1
-            ? `On call ${onCall} of ${tool}`
-            : ACTORS_COPY.worldActors.whenCalled(tool);
-        case "after_seconds":
-          return `After ${seconds ?? 0} second${seconds === 1 ? "" : "s"}`;
-        case "contacted":
-          return "When contacted";
-        case "probability":
-          return `In about ${Math.round((p ?? 1) * 100)}% of calls`;
-        default:
-          return kind.replace(/_/g, " ");
-      }
-    },
     ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
     othersPrivate: (fields, count) =>
@@ -154,21 +138,23 @@ export const ACTORS_COPY = {
         "The caller's situation, without the caller's own details",
     },
     form: {
-      createTitle: "Add someone in the world",
+      createTitle: "Add actor",
+      createSubtitle: (side) => `${side} · added to this environment's draft`,
       moreDetails: "More details",
       lessDetails: "Hide more details",
       moreDetailsHelp:
         'Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and "Brought in by" is for reading only.',
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
-      // The rule's words are the schema's own, when it sends them.
+      // The rule's words are the server's own.
       idHelp: (rule) =>
-        `Made from the name; change it now if you like. ${rule ? `${rule.charAt(0).toUpperCase()}${rule.slice(1)}. ` : ""}It never changes once saved.`,
-      idTaken: (name) => `Already used by ${name}; choose another id`,
-      // Ids the environment keeps for itself read as taken by it.
-      idReservedBy: "the environment itself (the agent or the caller)",
-      idInvalid: (rule) =>
-        rule ? `Use ${rule}` : "This id isn't allowed; choose another",
+        [
+          "Made from the name; change it now if you like.",
+          rule,
+          "It never changes once saved.",
+        ]
+          .filter(Boolean)
+          .join(" "),
       permittedUnknown: (ids) =>
         `${ids.join(", ")} ${ids.length === 1 ? "is not an action" : "are not actions"} of this world, so a run cannot use ${ids.length === 1 ? "it" : "them"}; remove ${ids.length === 1 ? "it" : "them"} or pick from the list`,
       idFixed:
@@ -179,7 +165,6 @@ export const ACTORS_COPY = {
       roleRequired: "Role",
       roleHelp:
         "Who they are, in a few words, such as a manager or a family member",
-      atLimit: (max) => `At most ${max} characters`,
       tooLong: (over) =>
         `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",
@@ -203,7 +188,7 @@ export const ACTORS_COPY = {
       factsHelp: "Facts they can use, such as the refund limit is $500",
       files: "Files they can read (optional)",
       filesHelp:
-        "The environment's own documents. What only the grader reads and the harness's files are never offered.",
+        "The environment's own documents. What only the grader reads and the files the test itself uses are never offered.",
       recordsRead: "Records they can read (optional)",
       recordsHelp:
         "Record collections in the world they can look up during a run",
@@ -249,11 +234,6 @@ export const ACTORS_COPY = {
       triggerWhere: "Matching (optional)",
       triggerWhereHelp:
         'Field values the record holds, such as {"status": "pending"}',
-      triggerNeeds: {
-        tool: "Pick the action that brings them in",
-        words: "Type at least one word",
-        collection: "Pick the records that bring them in",
-      },
       takesAction: (action) => `${action} is taken for them`,
       fallbackArguments: "Taken with (JSON)",
       fallbackArgumentsHelp:
@@ -265,20 +245,18 @@ export const ACTORS_COPY = {
       maxTurns: "Most turns in a call (optional)",
       maxLines: "Most lines in a call (optional)",
       noLimitHelp: "Empty is no limit of their own",
-      wholeNumber: "A whole number above 0, or empty for no limit",
       timeout: "Waits, in seconds (optional)",
-      badTimeout: "A number of seconds, 0 or more",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",
       fallback: "If they do not answer",
       fallbacks: { silent: "Nothing happens", decline: "They decline" },
       answeredBy: (name) => `${name} answers instead`,
-      fallbackLabel: (id) =>
-        ACTORS_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
       channel: "How they join the conversation",
       noChannel: "Doesn't speak in the conversation",
-      joinsFixed: (count) =>
-        `In ${count === 1 ? "1 scenario" : `${count} scenarios`}, so how they join stays as it is. Take them out of ${count === 1 ? "that scenario" : "those scenarios"} first to change it.`,
+      problemsTitle: "Fix these before saving",
+      checking: "Checking…",
+      checkFailed: "Couldn't check this change. Try again in a moment.",
+      retryCheck: "Try again",
       play: "How they act in the world",
       plays: {
         mocked: "Only the actions each scenario gives them",

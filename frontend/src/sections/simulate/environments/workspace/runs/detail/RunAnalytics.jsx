@@ -322,12 +322,11 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     {
       key: "pass_rate",
       label: "Calls passed",
-      // Calls ran with no pass or fail: nothing to score, which is not missing data.
-      value:
-        passRate?.value == null && summary.outcomes?.no_score
-          ? STATUS_META.no_score.label
-          : format(passRate?.value, "percent"),
-      reported: passRate?.value != null || !!summary.outcomes?.no_score,
+      // A rate the server marks no_score had nothing to score, which is not missing data.
+      value: passRate?.no_score
+        ? STATUS_META.no_score.label
+        : format(passRate?.value, "percent"),
+      reported: passRate?.value != null || Boolean(passRate?.no_score),
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,

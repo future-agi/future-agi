@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import SectionCard from "../../components/SectionCard";
-import { callActorWhen } from "../scenarios/callActorLabels";
 import { ACTORS_COPY } from "./actors.constants";
 
 const R = ACTORS_COPY.relations;
@@ -11,23 +10,9 @@ const quiet = {
   wordBreak: "break-word",
 };
 
-// Who an actor's permitted actions reach: another actor whose identity in that service is what the action addresses.
-export const contactsOf = (actor, cast) => {
-  const services = new Set(
-    (actor.permitted_actions || []).map((one) => String(one).split(".")[0]),
-  );
-  return cast.filter(
-    (other) =>
-      other.id !== actor.id &&
-      Object.keys(other.identities || {}).some((service) =>
-        services.has(service),
-      ),
-  );
-};
-
 /**
- * The relationship view: who can contact whom, each actor's role and when it comes in. Read-only, drawn
- * from the records themselves.
+ * The relationship view: who can contact whom, each actor's role and when it comes in. Read-only, as the cast states
+ * it: `reaches` names the actors each one's actions reach, and `when_label` when it comes in.
  */
 export default function ActorRelations({ cast }) {
   if (!cast.length) return null;
@@ -38,9 +23,7 @@ export default function ActorRelations({ cast }) {
     <SectionCard title={R.title} subtitle={R.subtitle}>
       <Stack spacing={1.25} sx={{ px: 1.5, py: 1.25 }}>
         {cast.map((actor) => {
-          const reaches = contactsOf(actor, cast).map(
-            (one) => one.name || one.id,
-          );
+          const reaches = actor.reaches.map((id) => names[id] || id);
           return (
             <Stack key={actor.id} spacing={0.25}>
               <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -48,14 +31,7 @@ export default function ActorRelations({ cast }) {
                   .filter(Boolean)
                   .join(" · ")}
               </Typography>
-              <Typography sx={quiet}>
-                {R.comesIn(
-                  callActorWhen(
-                    actor.activation?.trigger || { kind: "always" },
-                    actor.channel,
-                  ),
-                )}
-              </Typography>
+              <Typography sx={quiet}>{R.comesIn(actor.when_label)}</Typography>
               {actor.parent && (
                 <Typography sx={quiet}>
                   {R.broughtBy(names[actor.parent] || actor.parent)}

@@ -2620,6 +2620,7 @@ class TestRunResultsV3Views:
                 "arguments": {"order_id": "AB-1"},
                 "result": {"status": "shipped"},
                 "duration_ms": 309,
+                "kind": "agent_call",
             }
         ]
 

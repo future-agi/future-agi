@@ -1,5 +1,5 @@
 export const TRIAL_CHANGES_COPY = {
-  tab: "World changes",
+  tab: "World state",
   heading: "What changed in the world",
   noticesHeading: "Worth knowing about this trial",
   about:
@@ -53,7 +53,7 @@ export const TRIAL_CHANGES_COPY = {
     declined: "No answer: the request was declined",
     fallback_action: "No answer: their fallback action was taken for them",
     // The fallback was tried for them and the world did not commit it.
-    fallbackNotCommitted: (outcome) =>
+    fallback_not_committed: (outcome) =>
       `No answer: their fallback action was tried for them and ${outcome}`,
     unresolved_at_end: "Still waited on when the trial ended",
     answered_by: (who) => `No answer: ${who} answered instead`,
@@ -88,17 +88,15 @@ export const TRIAL_CHANGES_COPY = {
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
-  // No record at all: a trial from before World changes were kept on every trial.
-  notRecorded: "World changes were not recorded for this trial.",
+  // No record at all: a trial from before World state was kept on every trial.
+  notRecorded: "World state was not recorded for this trial.",
   // The agent runs its tools where the test world cannot see them.
   inProcess:
-    "World changes are not recorded for this agent: its tools run inside it, where the test world cannot see them.",
+    "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
   unreadable:
     "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
   start: {
     seeded: "Started from the seeded records, as every trial does",
-    differs: (tables) =>
-      `Did not start from the seeded records: ${tables.join(", ")} differed. Results of this trial may not repeat.`,
     unknown:
       "Whether this trial started from the seeded records could not be checked.",
   },

@@ -1,9 +1,4 @@
-import { slugify } from "../../helpers/slugify";
 import { genderLabel } from "../scenarios/personaLabels";
-import { ACTORS_COPY } from "./actors.constants";
-
-// A world actor's id rule; the server applies it to every actor.
-const ID_SOURCE = "actors.json";
 
 export const lines = (value) =>
   (value || "")
@@ -40,86 +35,12 @@ export const seenValue = (input, value) => {
     .join(" · ");
 };
 
-// `never_sees`: grader material, sent as scenario fields and files apart, and other actors' private fields
-// (`<name>.<field>`).
-export const hidden = (neverSees) => {
-  const grader = new Set();
-  // Grader material reads as words, a file without its extension, so `sub_goals.json` and `sub_goals` are one line.
-  for (const name of neverSees?.scenario_fields || []) grader.add(words(name));
-  for (const name of neverSees?.files || [])
-    grader.add(name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
-  const others = {};
-  for (const name of neverSees?.other_actors || []) {
-    const at = name.lastIndexOf(".");
-    (others[name.slice(0, at)] ||= []).push(words(name.slice(at + 1)));
-  }
-  // Every other actor keeps the same fields to itself, so one line per field set, not one per actor.
-  const groups = {};
-  for (const fields of Object.values(others)) {
-    const key = fields.join(", ");
-    groups[key] = (groups[key] || 0) + 1;
-  }
-  return { grader: [...grader], others: Object.entries(groups) };
-};
-
-// An id made from a name, unique in the cast (`sam_lee`, `sam_lee_2`).
-export const idFrom = (name, taken) => {
-  const base = slugify(name, { separator: "_", fallback: "actor" }).slice(
-    0,
-    60,
-  );
-  let id = base;
-  for (let n = 2; taken.has(id); n += 1) id = `${base}_${n}`;
-  return id;
-};
-
-// The id rule from the record schemas the cast is sent with; none means the server alone checks.
-export const idRule = (records) => {
-  const pattern = records?.[ID_SOURCE]?.properties?.id?.pattern;
-  return pattern ? new RegExp(pattern) : null;
-};
-
-// The id rule in the schema's own words; none when the schema does not describe it.
-export const idRuleText = (records) =>
-  records?.[ID_SOURCE]?.properties?.id?.description || "";
-
-// An actor with a channel speaks in the conversation; every actor has every other field.
-export const speaks = (actor) => Boolean(actor?.channel);
+// The "Comes in" choice for a stored trigger the form cannot make (the cast says so per actor): kept as it is.
+export const KEPT = "kept";
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
 // The persona fields an actor's voice is picked from.
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
-
-// The "Comes in" choice for a trigger the form can't make itself (a chance, a later call): kept as it is.
-export const KEPT_TRIGGER = "__kept__";
-
-// The five ways an actor comes in, as each runtime can evaluate them: someone who speaks runs on the agent's
-// turns and words; someone acting through the world on its actions, contacts and time.
-export const MODES = {
-  speaking: ["always", "on_tool", "on_keyword", "mid_journey", "conditional"],
-  world: ["always", "on_tool", "contacted", "after_seconds", "conditional"],
-};
-export const modesFor = (channel) => (channel ? MODES.speaking : MODES.world);
-
-const triggerFields = (trigger) => {
-  const kind = trigger?.kind || "always";
-  const plain =
-    [...MODES.speaking, ...MODES.world].includes(kind) &&
-    !(kind === "on_tool" && trigger.on_call > 1);
-  return {
-    mode: plain ? kind : KEPT_TRIGGER,
-    triggerTool: trigger?.tool || "",
-    triggerWords: (trigger?.words || []).join(", "),
-    triggerTurn: trigger?.turn ?? 1,
-    triggerSeconds: trigger?.seconds ?? 0,
-    triggerCollection: trigger?.collection || "",
-    triggerWhere:
-      trigger?.where && Object.keys(trigger.where).length
-        ? JSON.stringify(trigger.where)
-        : "",
-  };
-};
-
 const TRIGGER_FIELDS = [
   "mode",
   "triggerTool",
@@ -130,43 +51,50 @@ const TRIGGER_FIELDS = [
   "triggerWhere",
 ];
 
-// The trigger the form's fields make; null when the mode is the one kept as it was.
+// A nullable value as an input holds it.
+const typed = (value) => (value == null ? "" : value);
+
+// Empty is no value of its own; the server says when a field needs one.
+const orNull = (text) => (String(text).trim() === "" ? null : text);
+const numberOrNull = (text) =>
+  String(text).trim() === "" ? null : Number(text);
+
+// The trigger the form's fields make. Only read once `whereProblem` has nothing to say, so the text is a JSON object.
+// A number goes as typed, and an emptied one as null: the server says when one is out of range or missing.
 export const triggerOf = (read) => {
   switch (read("mode")) {
-    case "always":
-      return { kind: "always" };
     case "on_tool":
       return { kind: "on_tool", tool: read("triggerTool") };
     case "on_keyword":
       return {
         kind: "on_keyword",
-        words: String(read("triggerWords") || "")
+        words: String(read("triggerWords"))
           .split(",")
           .map((one) => one.trim())
           .filter(Boolean),
       };
     case "mid_journey":
-      return { kind: "mid_journey", turn: Number(read("triggerTurn")) || 1 };
-    case "contacted":
-      return { kind: "contacted" };
+      return { kind: "mid_journey", turn: numberOrNull(read("triggerTurn")) };
     case "after_seconds":
       return {
         kind: "after_seconds",
-        seconds: Number(read("triggerSeconds")) || 0,
+        seconds: numberOrNull(read("triggerSeconds")),
       };
-    case "conditional":
-      // Only read once `triggerProblem` has nothing to say, so the text is a JSON object here.
+    case "conditional": {
+      // Blank or spaces is no match at all.
+      const where = String(read("triggerWhere")).trim();
       return {
         kind: "conditional",
         collection: read("triggerCollection"),
-        where: read("triggerWhere") ? JSON.parse(read("triggerWhere")) : {},
+        where: where ? JSON.parse(where) : {},
       };
+    }
     default:
-      return null;
+      return { kind: read("mode") };
   }
 };
 
-// Why the form's conditional "where" cannot be saved, or "".
+// Why the form's conditional "where" is not yet JSON the request can carry, or "".
 export const whereProblem = (text) => {
   if (!String(text || "").trim()) return "";
   try {
@@ -179,217 +107,7 @@ export const whereProblem = (text) => {
   }
 };
 
-// Why a typed per-actor cap cannot be saved, or nothing: empty is no limit, anything else is a whole number above 0.
-// A wait is any number of seconds from 0, which waits as long as the call lasts; empty is 0.
-export const timeoutProblem = (typed) => {
-  const text = String(typed ?? "").trim();
-  if (!text) return null;
-  const number = Number(text);
-  return Number.isFinite(number) && number >= 0
-    ? null
-    : ACTORS_COPY.worldActors.form.badTimeout;
-};
-
-// The server's bound on one actor record, counted the same way: compact JSON, in characters.
-export const ACTOR_RECORD_MAX_CHARS = 65536;
-
-// How far the record the form would save is over that bound, or 0. A form whose fields cannot make a record yet
-// (half-typed JSON) is 0: its own field says what is wrong.
-export const recordOverBy = (actor, fields, context) => {
-  try {
-    const record = toRecord(actor, fields, context);
-    return Math.max(
-      0,
-      [...JSON.stringify(record)].length - ACTOR_RECORD_MAX_CHARS,
-    );
-  } catch {
-    return 0;
-  }
-};
-
-export const capProblem = (typed) => {
-  const text = String(typed ?? "").trim();
-  if (!text) return null;
-  const number = Number(text);
-  return Number.isInteger(number) && number > 0
-    ? null
-    : ACTORS_COPY.worldActors.form.wholeNumber;
-};
-
-// What a chosen way of coming in still needs before it can be saved, by field; nothing when it is complete.
-export const triggerProblem = (read) => {
-  const words = ACTORS_COPY.worldActors.form.triggerNeeds;
-  switch (read("mode")) {
-    case "on_tool":
-      return read("triggerTool") ? {} : { triggerTool: words.tool };
-    case "on_keyword":
-      return String(read("triggerWords") || "")
-        .split(",")
-        .some((one) => one.trim())
-        ? {}
-        : { triggerWords: words.words };
-    case "conditional": {
-      const problems = {};
-      if (!read("triggerCollection"))
-        problems.triggerCollection = words.collection;
-      const where = whereProblem(read("triggerWhere"));
-      if (where) problems.triggerWhere = where;
-      return problems;
-    }
-    default:
-      return {};
-  }
-};
-
-// A fact the form can show: one with text. Any other entry is kept where it is, untouched.
-const isWrittenFact = (one) =>
-  one?.kind === "facts" && typeof one.text === "string" && one.text.trim();
-
-// The files and record collections an actor's knowledge names, as the form picks them.
-const readFiles = (knowledge) =>
-  (knowledge || [])
-    .filter((one) => one?.kind === "files")
-    .flatMap((one) => one.paths || []);
-export const recordKey = (one) => `${one.store || ""}.${one.collection || ""}`;
-const readRecords = (knowledge) =>
-  (knowledge || []).filter((one) => one?.kind === "records").map(recordKey);
-
-// The knowledge with what the form picked for files and records in place of what it named before; facts and any
-// other entry stay where they were. A record keeps the rest of its entry (a `where`) when it is still picked.
-const withReadable = (knowledge, files, records, sources) => {
-  const kept = knowledge.filter(
-    (one) => one?.kind !== "files" && one?.kind !== "records",
-  );
-  const before = Object.fromEntries(
-    knowledge
-      .filter((one) => one?.kind === "records")
-      .map((one) => [recordKey(one), one]),
-  );
-  const offered = Object.fromEntries(
-    (sources?.records || []).map((one) => [recordKey(one), one]),
-  );
-  return [
-    ...kept,
-    ...(files.length ? [{ kind: "files", paths: files }] : []),
-    ...records.map(
-      (key) =>
-        before[key] || {
-          kind: "records",
-          store: offered[key]?.store ?? key.split(".")[0],
-          collection:
-            offered[key]?.collection ?? key.split(".").slice(1).join("."),
-        },
-    ),
-  ];
-};
-
-// What each form field starts from, read from the record.
-export const initialFields = (actor) => {
-  const activation = actor?.activation || {};
-  const timing = actor?.behaviour?.response_timing || {};
-  const constraints = actor?.constraints || {};
-  const persona = actor?.persona || {};
-  return {
-    id: "",
-    name: actor?.name || "",
-    role: actor?.role || "",
-    channel: actor?.channel || "",
-    loudness_ratio: actor?.loudness_ratio ?? null,
-    ...Object.fromEntries(VOICE_FIELDS.map((one) => [one, persona[one] || ""])),
-    kind: actor?.kind || "person",
-    parent: actor?.parent || "",
-    goal: actor?.goal || "",
-    ...Object.fromEntries(
-      CONSTRAINTS.map((one) => [one, (constraints[one] || []).join("\n")]),
-    ),
-    facts: (actor?.knowledge || [])
-      .filter(isWrittenFact)
-      .map((one) => one.text)
-      .join("\n"),
-    files: readFiles(actor?.knowledge),
-    recordsRead: readRecords(actor?.knowledge),
-    style: actor?.behaviour?.style || "",
-    timing: timing.kind || "immediate",
-    seconds: timing.seconds ?? 0,
-    permitted: actor?.permitted_actions || [],
-    play: actor?.play || "mocked",
-    ...triggerFields(activation.trigger),
-    timeout: activation.timeout_seconds ?? 0,
-    fallback: activation.fallback || "silent",
-    fallback_arguments: Object.keys(activation.fallback_arguments || {}).length
-      ? JSON.stringify(activation.fallback_arguments)
-      : "",
-    model: actor?.model || "",
-    max_turns: actor?.max_turns ?? "",
-    max_lines: actor?.max_lines ?? "",
-  };
-};
-
-const differs = (one, other) =>
-  String(one ?? "").trim() !== String(other ?? "").trim();
-
-// Whether anything typed differs from where it started; typing something and deleting it again is no change.
-export const hasEdits = (actor, fields) => {
-  const start = initialFields(actor);
-  return Object.keys(fields).some((name) => differs(fields[name], start[name]));
-};
-
-// Ids a new actor can't take: every other actor's, and those the environment keeps for itself.
-export const takenIds = (context) =>
-  new Set([
-    ...(context.others || []).map((one) => one.id),
-    ...(context.reservedIds || []),
-  ]);
-
-// A typed id, else the one made from the name; a saved id never changes.
-export const actorId = (actor, fields, context) =>
-  actor?.id ||
-  (fields.id || "").trim() ||
-  idFrom(fields.name, takenIds(context));
-
-// The typed lines as fact entries, in the typed order. A fact whose text is still there stays the same entry, so it
-// keeps its other keys; its text may span lines, so the longest are tried first.
-const factsFrom = (facts, typed) => {
-  const unused = [...facts].sort(
-    (a, b) => lines(b.text).length - lines(a.text).length,
-  );
-  const entries = [];
-  let at = 0;
-  while (at < typed.length) {
-    const start = at;
-    const same = unused.find((one) =>
-      lines(one.text).every((line, n) => typed[start + n] === line),
-    );
-    if (same) {
-      unused.splice(unused.indexOf(same), 1);
-      entries.push(same);
-      at += lines(same.text).length;
-    } else {
-      entries.push({ kind: "facts", text: typed[at] });
-      at += 1;
-    }
-  }
-  return entries;
-};
-
-// The facts go in the places facts held, any extra after the rest, so other knowledge keeps its order.
-const withFacts = (knowledge, typed) => {
-  const entries = factsFrom(knowledge.filter(isWrittenFact), typed);
-  const placed = knowledge.flatMap((one) => {
-    if (!isWrittenFact(one)) return [one];
-    return entries.length ? [entries.shift()] : [];
-  });
-  return [...placed, ...entries];
-};
-
-/**
- * The record a save sends. An existing actor is its own record with only the really edited fields laid over it, so
- * nothing the form merely displayed is rewritten; a new actor sends everything a create carries.
- * @param {Object} actor The record the form is editing, `{}`-like for a new one.
- * @param {Object} fields What the form holds, by field name.
- * @param {{ others?: Object[], loudness?: { channels?: string[] } }} context
- */
-// A fallback action's arguments as typed: a JSON object, or empty for none; null when it is not one.
+// A fallback action's arguments as typed: a JSON object, `{}` when empty; null when the text is not one.
 export const parsedArguments = (text) => {
   if (!String(text ?? "").trim()) return {};
   try {
@@ -402,115 +120,202 @@ export const parsedArguments = (text) => {
   }
 };
 
-export const toRecord = (actor, fields, context) => {
-  const start = initialFields(actor);
-  const isNew = !actor.id;
-  const edited = (name) => name in fields && differs(fields[name], start[name]);
-  const read = (name) => (edited(name) ? fields[name] : start[name]);
-  const writes = (...names) => isNew || names.some(edited);
-  const record = { ...actor };
-  if (isNew) record.id = actorId(actor, fields, context);
-  if (writes("name")) record.name = read("name").trim();
-  if (writes("role")) record.role = read("role").trim();
-  // The server refuses a record whose set persona name differs from its name, and the form has no field for it.
-  if (edited("name") && String(actor.persona?.name ?? "").trim())
-    record.persona = { ...actor.persona, name: record.name };
+// The fallback as the form's choice holds it: its kind and value together, so a picked action and a picked actor are
+// told apart by the list they were picked from, never by guessing. `silent:silent`, `action:<id>`, `actor:<id>`.
+export const fallbackKey = ({ kind, value }) => `${kind}:${value}`;
+const fallbackValue = (key) => key.slice(key.indexOf(":") + 1);
+export const fallbackActs = (key) => key.startsWith("action:");
 
-  // Every actor has the same fields; a channel only adds how it speaks in the conversation.
-  if (writes("channel")) {
-    if (read("channel")) record.channel = read("channel");
-    else delete record.channel;
-  }
-  if (
-    writes(...VOICE_FIELDS) &&
-    (record.persona || VOICE_FIELDS.some((name) => read(name)))
-  ) {
-    record.persona = { ...record.persona };
-    for (const name of VOICE_FIELDS) {
-      if (read(name)) record.persona[name] = read(name);
-      else delete record.persona[name];
-    }
-  }
-  if (
-    writes("channel", "loudness_ratio") &&
-    (read("channel") || actor.loudness_ratio != null)
-  )
-    record.loudness_ratio = (context.loudness?.channels || []).includes(
-      read("channel"),
-    )
-      ? read("loudness_ratio")
-      : null;
-
-  if (writes("kind")) record.kind = read("kind");
-  if (writes("parent")) record.parent = read("parent") || null;
-  if (writes("goal")) record.goal = read("goal");
-  if (writes(...CONSTRAINTS)) {
-    record.constraints = { ...actor.constraints };
-    for (const name of CONSTRAINTS) {
-      if (writes(name)) record.constraints[name] = lines(read(name));
-    }
-  }
-  if (writes("facts"))
-    record.knowledge = withFacts(actor.knowledge || [], lines(read("facts")));
-  if (edited("files") || edited("recordsRead"))
-    record.knowledge = withReadable(
-      record.knowledge || actor.knowledge || [],
-      read("files"),
-      read("recordsRead"),
-      context.knowledgeSources,
-    );
-  if (writes("style", "timing", "seconds")) {
-    record.behaviour = { ...actor.behaviour };
-    if (writes("style")) record.behaviour.style = read("style");
-    if (writes("timing", "seconds"))
-      record.behaviour.response_timing =
-        read("timing") === "delayed"
-          ? { kind: "delayed", seconds: Number(read("seconds")) || 0 }
-          : { kind: "immediate", seconds: 0 };
-  }
-  if (writes("permitted")) record.permitted_actions = read("permitted");
-  if (edited("play")) record.play = read("play");
-  if (writes(...TRIGGER_FIELDS, "timeout", "fallback", "fallback_arguments")) {
-    record.activation = { ...actor.activation };
-    if (
-      TRIGGER_FIELDS.some((name) => edited(name)) ||
-      (isNew && read("mode") !== KEPT_TRIGGER)
-    ) {
-      const trigger = triggerOf(read);
-      if (trigger) record.activation.trigger = trigger;
-    }
-    if (writes("timeout"))
-      record.activation.timeout_seconds = Number(read("timeout")) || 0;
-    if (writes("fallback")) record.activation.fallback = read("fallback");
-    // A fallback's arguments belong to the action they were written for: a new fallback starts without them.
-    if (edited("fallback") && !edited("fallback_arguments"))
-      delete record.activation.fallback_arguments;
-    if (edited("fallback_arguments")) {
-      const given = parsedArguments(read("fallback_arguments"));
-      if (given && Object.keys(given).length)
-        record.activation.fallback_arguments = given;
-      else delete record.activation.fallback_arguments;
-    }
-  }
-  // Empty is the environment's model, and no limit of its own.
-  if (edited("model")) {
-    if (read("model")) record.model = read("model");
-    else delete record.model;
-  }
-  for (const name of ["max_turns", "max_lines"]) {
-    if (!edited(name)) continue;
-    const value = Number(read(name));
-    if (read(name) !== "" && value > 0) record[name] = value;
-    else delete record[name];
-  }
-  return record;
+// What a new actor's form starts from: nothing is sent for a field left as it is, so the service's defaults apply.
+const NEW_FIELDS = {
+  id: "",
+  name: "",
+  role: "",
+  channel: "",
+  loudness_ratio: null,
+  gender: "",
+  age_group: "",
+  accent: "",
+  kind: "person",
+  parent: "",
+  goal: "",
+  may_agree: "",
+  private: "",
+  escalate_when: "",
+  stop_when: "",
+  facts: "",
+  files: [],
+  records: [],
+  style: "",
+  timing: "immediate",
+  seconds: 0,
+  permitted: [],
+  play: "mocked",
+  mode: "always",
+  triggerTool: "",
+  triggerWords: "",
+  triggerTurn: 1,
+  triggerSeconds: 0,
+  triggerCollection: "",
+  triggerWhere: "",
+  timeout: 0,
+  fallback: "silent:silent",
+  fallback_arguments: "",
+  model: "",
+  max_turns: "",
+  max_lines: "",
 };
 
-// The environment as the scenarios list and drawer read it: with versioning, every actor in the draft's cast, so a
-// scenario's actor who never speaks (an approver) shows by name with its own activation and fallback.
-export const withCast = (env, cast) =>
-  cast?.actors ? { ...env, callActors: cast.actors } : env;
+// What each form field starts from, read from the cast's typed actor.
+export const initialFields = (actor) => {
+  // A new actor starts on its side's default way of joining.
+  if (!actor?.id) return { ...NEW_FIELDS, channel: typed(actor?.channel) };
+  const { activation, behaviour, constraints } = actor;
+  const { trigger } = activation;
+  return {
+    id: "",
+    name: actor.name,
+    role: actor.role,
+    channel: typed(actor.channel),
+    loudness_ratio: actor.loudness_ratio,
+    ...Object.fromEntries(
+      VOICE_FIELDS.map((one) => [one, typed(actor.persona?.[one])]),
+    ),
+    kind: actor.kind,
+    parent: typed(actor.parent),
+    goal: actor.goal,
+    ...Object.fromEntries(
+      CONSTRAINTS.map((one) => [one, constraints[one].join("\n")]),
+    ),
+    facts: actor.facts.join("\n"),
+    files: actor.files,
+    records: actor.records,
+    style: behaviour.style,
+    timing: behaviour.response_timing.kind,
+    seconds: behaviour.response_timing.seconds,
+    permitted: actor.permitted_actions,
+    play: actor.play,
+    mode: actor.editable_trigger ? trigger.kind : KEPT,
+    // A trigger keeps only its own kind's keys; another kind's field starts where a new actor's does.
+    triggerTool: "tool" in trigger ? trigger.tool : NEW_FIELDS.triggerTool,
+    triggerWords:
+      "words" in trigger ? trigger.words.join(", ") : NEW_FIELDS.triggerWords,
+    triggerTurn: "turn" in trigger ? trigger.turn : NEW_FIELDS.triggerTurn,
+    triggerSeconds:
+      "seconds" in trigger ? trigger.seconds : NEW_FIELDS.triggerSeconds,
+    triggerCollection:
+      "collection" in trigger
+        ? trigger.collection
+        : NEW_FIELDS.triggerCollection,
+    triggerWhere:
+      trigger.where && Object.keys(trigger.where).length
+        ? JSON.stringify(trigger.where)
+        : "",
+    timeout: activation.timeout_seconds,
+    fallback: fallbackKey(actor.fallback),
+    fallback_arguments:
+      activation.fallback_arguments &&
+      Object.keys(activation.fallback_arguments).length
+        ? JSON.stringify(activation.fallback_arguments)
+        : "",
+    model: typed(actor.model),
+    max_turns: typed(actor.max_turns),
+    max_lines: typed(actor.max_lines),
+  };
+};
 
-// The tab shows what it can edit (versioning keeps a draft) or list (actors read-only).
-export const showActorsTab = (env) =>
-  Boolean(env?.versioning?.enabled && env?.id) || env?.callActors?.length > 0;
+const differs = (one, other) =>
+  Array.isArray(one) || Array.isArray(other)
+    ? JSON.stringify(one) !== JSON.stringify(other)
+    : String(one ?? "").trim() !== String(other ?? "").trim();
+
+// Whether anything typed differs from where it started; typing something and deleting it again is no change.
+export const hasEdits = (actor, fields) => {
+  const start = initialFields(actor);
+  return Object.keys(fields).some((name) => differs(fields[name], start[name]));
+};
+
+/**
+ * The typed patch a save sends: only the fields the person really edited, by the request's own names. The service
+ * merges it into the stored record and keeps everything it does not name. A new actor also carries the side it was
+ * added on.
+ * @param {Object} actor The cast's actor the form is editing; `{side}` for a new one.
+ * @param {Object} fields What the form holds, by field name, for the fields touched.
+ */
+export const changesOf = (actor, fields) => {
+  const start = initialFields(actor);
+  const edited = (name) => name in fields && differs(fields[name], start[name]);
+  const read = (name) => (name in fields ? fields[name] : start[name]);
+  // A new actor carries its side, and the way of joining it started on unless that was changed below.
+  const changes = actor?.id
+    ? {}
+    : {
+        side: actor.side,
+        ...(start.channel ? { channel: start.channel } : {}),
+      };
+  if (edited("name")) changes.name = read("name").trim();
+  if (edited("role")) changes.role = read("role").trim();
+  if (edited("channel")) changes.channel = orNull(read("channel"));
+  for (const name of VOICE_FIELDS) {
+    if (edited(name)) changes[name] = read(name);
+  }
+  if (edited("loudness_ratio")) changes.loudness_ratio = read("loudness_ratio");
+  if (edited("kind")) changes.kind = read("kind");
+  if (edited("parent")) changes.parent = orNull(read("parent"));
+  if (edited("goal")) changes.goal = read("goal");
+  for (const name of CONSTRAINTS) {
+    if (edited(name)) changes[name] = lines(read(name));
+  }
+  if (edited("facts")) changes.facts = lines(read("facts"));
+  if (edited("files")) changes.files = read("files");
+  if (edited("records"))
+    changes.records = read("records").map(({ store, collection }) => ({
+      store,
+      collection,
+    }));
+  if (edited("style")) changes.style = read("style");
+  if (edited("timing") || edited("seconds"))
+    changes.response_timing = {
+      kind: read("timing"),
+      seconds: read("timing") === "delayed" ? numberOrNull(read("seconds")) : 0,
+    };
+  if (edited("permitted")) changes.permitted_actions = read("permitted");
+  if (edited("play")) changes.play = read("play");
+  if (TRIGGER_FIELDS.some(edited) && read("mode") !== KEPT)
+    changes.trigger = triggerOf(read);
+  if (edited("timeout"))
+    changes.timeout_seconds = numberOrNull(read("timeout"));
+  if (edited("fallback")) changes.fallback = fallbackValue(read("fallback"));
+  if (edited("fallback_arguments")) {
+    const given = parsedArguments(read("fallback_arguments"));
+    changes.fallback_arguments =
+      given && Object.keys(given).length ? given : null;
+  }
+  if (edited("model")) changes.model = orNull(read("model"));
+  for (const name of ["max_turns", "max_lines"]) {
+    if (edited(name)) changes[name] = numberOrNull(read(name));
+  }
+  return changes;
+};
+
+// Which form field a server problem is about, by the request field it names; one not listed is shown above Save.
+export const PROBLEM_FIELDS = {
+  id: "id",
+  name: "name",
+  role: "role",
+  channel: "channel",
+  kind: "kind",
+  facts: "facts",
+  files: "files",
+  records: "records",
+  response_timing: "seconds",
+  permitted_actions: "permitted",
+  play: "play",
+  trigger: "mode",
+  timeout_seconds: "timeout",
+  fallback: "fallback",
+  fallback_arguments: "fallback_arguments",
+  model: "model",
+  max_turns: "max_turns",
+  max_lines: "max_lines",
+};

@@ -16,7 +16,7 @@ import {
   TEST_CONDITION_HINTS,
   TEST_CONDITION_MODES,
   TIMEOUT_MODES,
-  faultTargets,
+  modesFor,
   testConditionLine,
   testConditionRoute,
 } from "./testConditions.constants";
@@ -30,21 +30,23 @@ const EMPTY = {
   message: "",
 };
 
-// The fault as the scenario file keeps it: only the fields its mode reads.
+// A number as typed, an emptied one as null.
+const asNumber = (typed) =>
+  String(typed).trim() === "" ? null : Number(typed);
+
+// The fault as the scenario file keeps it: only the fields its mode reads, the numbers as typed. The server checks
+// their bounds and its refusal is shown on the test conditions.
 function asFault(form) {
   const fault = {
     action: form.action,
     mode: form.mode,
-    on_call: Math.max(1, Number(form.on_call) || 1),
+    on_call: asNumber(form.on_call),
   };
   if (TIMEOUT_MODES.includes(form.mode)) {
-    fault.delay_seconds = Math.min(
-      30,
-      Math.max(0, Number(form.delay_seconds) || 0),
-    );
+    fault.delay_seconds = asNumber(form.delay_seconds);
   }
   if (form.mode === "error") {
-    fault.status = Math.min(599, Math.max(400, Number(form.status) || 500));
+    fault.status = asNumber(form.status);
     if (form.message) fault.message = form.message;
   }
   return fault;
@@ -60,9 +62,22 @@ export default function TestConditionsEditor({
   error = "",
 }) {
   const [form, setForm] = useState(null);
-  const targets = faultTargets(env);
+  const targets = env?.faultTargets;
   const set = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
+  const modes = modesFor(
+    form && targets?.find((one) => one.action === form.action),
+  );
+  // Another tool may not offer the mode picked for the last one: the first it offers is taken instead.
+  const pickTool = (event) => {
+    const target = targets.find((one) => one.action === event.target.value);
+    const offered = modesFor(target);
+    setForm((current) => ({
+      ...current,
+      action: event.target.value,
+      mode: offered.includes(current.mode) ? current.mode : offered[0],
+    }));
+  };
 
   return (
     <Stack spacing={1.5} data-testid="test-conditions">
@@ -111,7 +126,7 @@ export default function TestConditionsEditor({
             variant="outlined"
             color="inherit"
             onClick={() => setForm(EMPTY)}
-            startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
           >
             {TEST_CONDITIONS_COPY.add}
           </Button>
@@ -132,10 +147,10 @@ export default function TestConditionsEditor({
             size="small"
             label={TEST_CONDITIONS_COPY.tool}
             value={form.action}
-            onChange={set("action")}
+            onChange={pickTool}
             inputProps={{ "data-testid": "test-condition-tool" }}
           >
-            {targets.map((target) => (
+            {targets?.map((target) => (
               <MenuItem
                 key={target.action}
                 value={target.action}
@@ -159,9 +174,9 @@ export default function TestConditionsEditor({
             onChange={set("mode")}
             helperText={TEST_CONDITION_HINTS[form.mode]}
           >
-            {Object.entries(TEST_CONDITION_MODES).map(([mode, label]) => (
+            {modes.map((mode) => (
               <MenuItem key={mode} value={mode}>
-                {label}
+                {TEST_CONDITION_MODES[mode]}
               </MenuItem>
             ))}
           </TextField>
@@ -230,9 +245,15 @@ TestConditionsEditor.propTypes = {
   faults: PropTypes.arrayOf(PropTypes.object).isRequired,
   onChange: PropTypes.func.isRequired,
   env: PropTypes.shape({
-    doorReach: PropTypes.object,
-    toolEntrypoints: PropTypes.array,
-    tools: PropTypes.array,
+    // The tools a test condition can name: {tool, action, reachable, writes}.
+    faultTargets: PropTypes.arrayOf(
+      PropTypes.shape({
+        tool: PropTypes.string,
+        action: PropTypes.string,
+        reachable: PropTypes.bool,
+        writes: PropTypes.bool,
+      }),
+    ),
   }),
   disabled: PropTypes.bool,
   error: PropTypes.string,

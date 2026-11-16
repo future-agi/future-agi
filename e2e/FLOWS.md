@@ -2972,11 +2972,11 @@
 - the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
-### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World changes reads a read apart from a write
+### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
-**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World changes says what the agent only read apart from what it committed
+**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
 
-**Spec:** `flows/simulate/actors-world-changes.spec.ts:20`
+**Spec:** `flows/simulate/actors-world-changes.spec.ts:22`
 
 **Tags:** —
 
@@ -2984,21 +2984,25 @@
 
 1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
 2. read the cast (GET actors)
-3. read the scenarios (GET harness-jobs/<id>/scenarios)
-4. read the trial (GET v3/call-executions/<id>)
-5. open the Scenarios tab
-6. open the trial's World changes
+3. check an edit to the actor (POST actor-validation)
+4. read the scenarios (GET harness-jobs/<id>/scenarios)
+5. read the trial (GET v3/call-executions/<id>)
+6. open the Actors tab and pick a side from Add actor
+7. open the Scenarios tab
+8. open the trial's World state
 
 **Backend state verified:**
 
 - the cast lists the actor with no channel
+- checking an edit to it finds nothing to fix and writes nothing
 - the refund scenario includes it by id
-- the trial's World changes count 1 committed (issue_refund) and 1 read (lookup_order)
+- the trial's World state count 1 committed (issue_refund) and 1 read (lookup_order)
 
 **Browser observations:**
 
+- Add actor offers the caller's side and the world, and opens Add actor on the side picked
 - the Scenarios table names the actor, never its raw id
-- World changes reads "1 read" and "Committed: issue_refund"
+- World state reads "1 read" and "Committed: issue_refund"
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
@@ -3026,7 +3030,7 @@
 - lookup_order reads "Reads only" and its returned fields with units
 - issue_refund reads Unsupported, never Simulated
 
-### SIM-E2E-019 — World changes shows a faulted call apart from a commit, and an actor's change made during the call
+### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
 
 **Goal:** A developer reads what each trial did to the world: a call the scenario's test condition faulted, counted apart from what was committed, and what a world actor decided and committed during the call
 
@@ -3037,13 +3041,13 @@
 **User steps:**
 
 1. seed a trial whose refund was faulted by its test condition (e2e/lib/harness_environment_seed.py)
-2. open its World changes
+2. open its World state
 3. seed a trial where the world actor approved during the call
-4. open its World changes
+4. open its World state
 
 **Backend state verified:**
 
-- seeded through the backend container; the World changes record is the one ingestion keeps
+- seeded through the backend container; the World state record is the one ingestion keeps
 
 **Browser observations:**
 

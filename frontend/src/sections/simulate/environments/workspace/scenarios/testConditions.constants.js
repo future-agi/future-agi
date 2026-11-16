@@ -21,8 +21,9 @@ export const TEST_CONDITION_HINTS = {
 export const TIMEOUT_MODES = ["timeout_before_commit", "timeout_after_commit"];
 
 export const TEST_CONDITIONS_COPY = {
-  heading: "Test conditions",
-  empty: "No test conditions. The tools answer normally.",
+  // The agent never sees them: they shape how its tools answer in this scenario.
+  heading: "Hidden · test conditions",
+  empty: "Tools behave normally",
   add: "Add a test condition",
   tool: "Tool",
   whatHappens: "What happens",
@@ -32,84 +33,38 @@ export const TEST_CONDITIONS_COPY = {
   message: "Message",
   remove: "Remove",
   inProcess: "This tool runs inside the agent, so it cannot be held",
-  noDoor:
-    "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a tools service to test this.",
   refused: "The test world cannot apply this test condition.",
 };
 
-// The world action a fault names for a tool: a service tool's route with `/` as `.`, else the tool's own name.
-const actionOf = (entry) => {
-  const route = String(entry?.endpoint || "").replace(/^\/+|\/+$/g, "");
-  return route ? route.replace(/\//g, ".") : String(entry?.tool || "");
-};
+// The modes a tool can be given: "Runs, then the answer is lost" only for a tool that changes records, since a read
+// has nothing to lose.
+export const modesFor = (target) =>
+  Object.keys(TEST_CONDITION_MODES).filter(
+    (mode) => mode !== "timeout_after_commit" || Boolean(target?.writes),
+  );
 
-// Each contract tool a fault can name, with whether the world's door stands in front of it.
-export function faultTargets(env) {
-  const reach = env?.doorReach || {};
-  const entries = Array.isArray(env?.toolEntrypoints)
-    ? env.toolEntrypoints
-    : [];
-  const named = entries
-    .filter((entry) => entry?.tool)
-    .map((entry) => ({
-      tool: String(entry.tool),
-      action: actionOf(entry),
-      reachable: Boolean(reach[entry.tool]),
-    }));
-  if (named.length) return named;
-  return (env?.tools || [])
-    .filter((tool) => tool?.name)
-    .map((tool) => ({
-      tool: tool.name,
-      action: tool.name,
-      reachable: Boolean(reach[tool.name]),
-    }));
-}
-
-// The contract tool a fault names: its action is a service route (`orders.refund`) or the tool's own name.
-function faultTool(fault, env) {
-  const action = String(fault?.action || "");
-  const target = faultTargets(env).find((one) => one.action === action);
-  return target?.tool || action;
-}
+// The contract tool a fault names, from the environment's fault targets.
+const targetOf = (fault, env) =>
+  env?.faultTargets?.find((one) => one.action === fault?.action);
 
 // The route a fault holds, shown under its line, when it reads differently from the tool's name.
 export function testConditionRoute(fault, env) {
-  const action = String(fault?.action || "");
-  return faultTool(fault, env) === action ? "" : action;
+  const target = targetOf(fault, env);
+  return target && target.tool !== target.action ? target.action : "";
 }
 
-// One line per fault: "{tool}: {mode label} on call {n}", with the delay for a timeout and the status for an error.
+// One line per fault, from the fields it holds: "{tool}: {mode label} on call {n}", with the delay for a timeout and
+// the status for an error.
 export function testConditionLine(fault, env) {
-  const label = TEST_CONDITION_MODES[fault?.mode] || fault?.mode || "";
-  const onCall = fault?.on_call ?? 1;
-  let line = `${faultTool(fault, env)}: ${label} on call ${onCall}`;
-  if (TIMEOUT_MODES.includes(fault?.mode)) {
-    line += ` after ${fault?.delay_seconds ?? 30} s`;
-  }
-  if (fault?.mode === "error") {
-    line += ` (${fault?.status ?? 500}${fault?.message ? `: ${fault.message}` : ""})`;
-  }
-  return line;
-}
-
-// Whether a scenario needs the world's door somewhere it does not stand: an acting actor (actions, or brought in by
-// one of the agent's tool calls) on an agent whose tools run inside it, or a fault on a tool the door cannot hold.
-export function needsAMissingDoor(row, env) {
-  const reach = env?.doorReach;
-  if (!reach || !Object.keys(reach).length) return false;
-  const targets = faultTargets(env);
-  const byAction = Object.fromEntries(targets.map((one) => [one.action, one]));
-  const byTool = Object.fromEntries(targets.map((one) => [one.tool, one]));
-  const faultOff = (row?.faults || []).some((fault) => {
-    const target = byAction[fault?.action] || byTool[fault?.action];
-    return target ? !target.reachable : false;
-  });
-  const acts = (row?.callActors || []).some(
-    (one) => one?.actions?.length || one?.trigger?.kind === "on_tool",
-  );
-  return (
-    faultOff ||
-    (acts && targets.length > 0 && targets.every((one) => !one.reachable))
-  );
+  const target = targetOf(fault, env);
+  const label = TEST_CONDITION_MODES[fault.mode] || fault.mode;
+  return [
+    `${target ? target.tool : fault.action}: ${label}`,
+    fault.on_call != null && ` on call ${fault.on_call}`,
+    fault.delay_seconds != null && ` after ${fault.delay_seconds} s`,
+    fault.status != null &&
+      ` (${fault.status}${fault.message ? `: ${fault.message}` : ""})`,
+  ]
+    .filter(Boolean)
+    .join("");
 }

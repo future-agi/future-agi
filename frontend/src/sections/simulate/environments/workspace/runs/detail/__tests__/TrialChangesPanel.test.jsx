@@ -340,7 +340,7 @@ describe("TrialChangesPanel", () => {
               actor: "alex",
               play: "timeout",
               fallback: "approvals.change",
-              outcome: "fallback_action",
+              outcome: "fallback_not_committed",
               action_outcome: "refused",
             },
             {
@@ -434,7 +434,8 @@ describe("TrialChangesPanel", () => {
               committed_actions: ["approve"],
             },
           ],
-          decisions: [
+          decisions: [],
+          pre_run: [
             {
               actor: "priya",
               play: "history",
@@ -468,7 +469,8 @@ describe("TrialChangesPanel", () => {
       <TrialChangesPanel
         trialState={{
           state_changes: [],
-          decisions: [
+          decisions: [],
+          pre_run: [
             {
               actor: "lead",
               name: "Sam Lee",
@@ -486,14 +488,7 @@ describe("TrialChangesPanel", () => {
     expect(screen.queryByText(/^lead:/)).toBeNull();
   });
 
-  it("says each actor's model calls, tokens and cost, then the trial's in all", () => {
-    const call = (actor, model, cost) => ({
-      actor,
-      model,
-      tokens_in: 10,
-      tokens_out: 5,
-      cost_usd: cost,
-    });
+  it("says each actor's model use per model, then the trial's in all, as the server sums them", () => {
     render(
       <TrialChangesPanel
         trialState={{
@@ -509,11 +504,25 @@ describe("TrialChangesPanel", () => {
               committed_actions: ["x"],
             },
           ],
-          usage: [
-            call("priya", "m1", 0.001),
-            call("priya", "m1", 0.002),
-            call("ravi", "", 0.0005),
+          usage_summary: [
+            {
+              actor: "priya",
+              name: "Priya",
+              model: "m1",
+              calls: 2,
+              tokens: 30,
+              cost_usd: 0.003,
+            },
+            {
+              actor: "ravi",
+              name: "ravi",
+              model: "",
+              calls: 1,
+              tokens: 15,
+              cost_usd: 0.0005,
+            },
           ],
+          usage_total: { calls: 3, tokens: 45, cost_usd: 0.0035 },
         }}
       />,
     );
@@ -651,10 +660,6 @@ describe("TrialChangesPanel", () => {
       "Started from the seeded records, as every trial does",
     ],
     [
-      { state: "differs", tables: ["orders"] },
-      "Did not start from the seeded records: orders differed. Results of this trial may not repeat.",
-    ],
-    [
       { state: "unknown", tables: [] },
       "Whether this trial started from the seeded records could not be checked.",
     ],
@@ -670,19 +675,51 @@ describe("TrialChangesPanel", () => {
     },
   );
 
-  it("puts a trial that did not start clean under Worth knowing about this trial", () => {
+  it("puts a trial that did not start clean under Worth knowing, in the server's notice", () => {
+    const message =
+      "Did not start from the seeded records: orders differed. Results of this trial may not repeat.";
     render(
       <TrialChangesPanel
         trialState={{
           state_changes: [],
           decisions: [],
           start: { state: "differs", tables: ["orders"] },
+          notices: [{ code: "start_differs", message }],
         }}
       />,
     );
     expect(
       screen.getByText("Worth knowing about this trial"),
     ).toBeInTheDocument();
+    expect(screen.getAllByText(message)).toHaveLength(1);
+  });
+
+  it("says why no record changed when the agent committed outside the test world, in place of no record changed", () => {
+    const message =
+      "The agent committed changes, but no record of the test world changed: its tools keep their records in the agent's own process.";
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 1,
+              committed: 1,
+              committed_actions: ["issue_refund"],
+            },
+          ],
+          decisions: [],
+          records: { changes: [], skipped: [], truncated: 0 },
+          notices: [{ code: "changed_outside_world", message }],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("changed-outside-world")).toHaveTextContent(
+      message,
+    );
+    expect(screen.queryByText("No record changed in this trial.")).toBeNull();
+    expect(screen.queryByText("Worth knowing about this trial")).toBeNull();
   });
 
   it("says what changed could not be read, never that nothing changed", () => {

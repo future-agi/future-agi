@@ -1614,6 +1614,7 @@ def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     from simulate.services.run_dashboard_v3 import build_run_dashboard
+    from simulate.services.run_outcome import call_outcome_counts, run_outcome
 
     queryset = run_calls_queryset(execution)
     configs, _ = build_evaluation_catalog(execution)
@@ -1782,7 +1783,14 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             "started_at": execution.started_at,
             "completed_at": execution.completed_at,
         },
-        "summary": {**summary, "evaluators": len(configs)},
+        "summary": {
+            **summary,
+            "evaluators": len(configs),
+            # The run's verdict from its calls, by the rule the runs list reads.
+            "outcome_status": run_outcome(
+                status=execution.status, counts=call_outcome_counts(summary["outcomes"])
+            )["outcome_status"],
+        },
         "scenario_risk": risk,
         "reliability": reliability,
         "turn_distribution": list(turn_distribution.values()),

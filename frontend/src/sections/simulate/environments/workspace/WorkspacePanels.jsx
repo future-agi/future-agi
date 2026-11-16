@@ -8,7 +8,6 @@ import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
 import ActorsTab from "./actors/ActorsTab";
-import { showActorsTab } from "./actors/actorUtils";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
@@ -87,7 +86,8 @@ export default function WorkspacePanels({
       (t.id !== "runs" || showRuns) &&
       (t.id !== "improvements" || showImprovements) &&
       (t.id !== "versions" || showVersions) &&
-      (t.id !== "actors" || showActorsTab(env)),
+      // The environment says whether the Actors tab shows.
+      (t.id !== "actors" || Boolean(env?.actorsTab)),
   );
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -214,6 +214,8 @@ WorkspacePanels.propTypes = {
       testExecutionId: PropTypes.string,
     }),
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
+    // Whether the Actors tab shows: `edit`, `list` or not at all.
+    actorsTab: PropTypes.oneOf(["edit", "list"]),
   }).isRequired,
   envState: PropTypes.shape({
     agent: PropTypes.shape({ name: PropTypes.string }),

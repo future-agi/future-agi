@@ -9,13 +9,6 @@ const unwrap = (data) => data?.result ?? data;
 
 export const agentDetailQueryKey = (agentId) => ["agents", "detail", agentId];
 
-// Passed over passed plus failed; errored and skipped calls are counted apart.
-export const passRateOf = ({ passed, failed }) => {
-  if (passed == null) return null;
-  const measured = passed + (failed ?? 0);
-  return measured ? Math.round((passed / measured) * 100) : null;
-};
-
 const toVersionRef = (v) => (v ? { id: v.id, number: v.version_number } : null);
 
 export const toRun = (raw) => ({
@@ -33,10 +26,9 @@ export const toRun = (raw) => ({
   errored: raw.outcome_errored ?? null,
   noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
-  passRate: passRateOf({
-    passed: raw.outcome_passed ?? null,
-    failed: raw.outcome_failed,
-  }),
+  // The server's rate, passed over passed plus failed (null when nothing was scored), and its base.
+  passRate: raw.pass_rate,
+  scored: raw.scored,
   startedAt: raw.started_at ?? null,
   completedAt: raw.completed_at ?? null,
 });

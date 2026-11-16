@@ -121,8 +121,8 @@ describe("ChatCallDrawer tabs", () => {
   });
 });
 
-describe("ChatCallDrawer World changes", () => {
-  it("shows World changes on a trial with no actors", async () => {
+describe("ChatCallDrawer World state", () => {
+  it("shows World state on a trial with no actors", async () => {
     mocks.callDetail = {
       trial_state: {
         state_changes: [
@@ -146,12 +146,12 @@ describe("ChatCallDrawer World changes", () => {
         onClose={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "World changes" }));
+    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
     expect(screen.getByText("Committed: issue_refund")).toBeInTheDocument();
     mocks.callDetail = null;
   });
 
-  it("says why World changes were not recorded for an in-process agent", async () => {
+  it("says why World state were not recorded for an in-process agent", async () => {
     mocks.callDetail = {
       trial_state: { recorded: false, why: "in_process_tools" },
     };
@@ -161,16 +161,16 @@ describe("ChatCallDrawer World changes", () => {
         onClose={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "World changes" }));
+    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
     expect(
       screen.getByText(
-        "World changes are not recorded for this agent: its tools run inside it, where the test world cannot see them.",
+        "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
       ),
     ).toBeInTheDocument();
     mocks.callDetail = null;
   });
 
-  it("says World changes were not recorded for an older trial with no record", async () => {
+  it("says World state were not recorded for an older trial with no record", async () => {
     mocks.callDetail = { trial_state: null };
     render(
       <ChatCallDrawer
@@ -178,14 +178,14 @@ describe("ChatCallDrawer World changes", () => {
         onClose={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "World changes" }));
+    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
     expect(
-      screen.getByText("World changes were not recorded for this trial."),
+      screen.getByText("World state was not recorded for this trial."),
     ).toBeInTheDocument();
     mocks.callDetail = null;
   });
 
-  it("says nothing about World changes while the call is still loading", async () => {
+  it("says nothing about World state while the call is still loading", async () => {
     mocks.loading = true;
     render(
       <ChatCallDrawer
@@ -193,9 +193,9 @@ describe("ChatCallDrawer World changes", () => {
         onClose={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "World changes" }));
+    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
     expect(
-      screen.queryByText("World changes were not recorded for this trial."),
+      screen.queryByText("World state was not recorded for this trial."),
     ).toBeNull();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     mocks.loading = false;

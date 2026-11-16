@@ -117,7 +117,7 @@ export default function ChatCallDrawer({
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
-  // Every trial has World changes: what changed, or why it was not recorded.
+  // Every trial has World state: what changed, or why it was not recorded.
   const showChanges = artifact === "world_changes";
 
   // The header and chips paint from the already-loaded row immediately, then

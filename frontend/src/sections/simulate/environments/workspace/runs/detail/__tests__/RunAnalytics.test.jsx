@@ -419,55 +419,48 @@ describe("RunAnalytics", () => {
     ).toBeInTheDocument();
   });
 
-  it("reads No score on Calls passed only when calls ran with no pass or fail", () => {
+  it("reads No score on Calls passed only when the server marks the rate no_score", () => {
     const passedCard = () => screen.getByText("Calls passed").parentElement;
     const nothingYet = structuredClone(analytics);
-    nothingYet.dashboard.metrics[0] = { ...nothingYet.dashboard.metrics[0], value: null, measured: 0 };
-    nothingYet.summary.outcomes = { ...nothingYet.summary.outcomes, no_score: 0 };
+    nothingYet.dashboard.metrics[0] = {
+      ...nothingYet.dashboard.metrics[0],
+      value: null,
+      measured: 0,
+      no_score: false,
+    };
     useRunAnalytics.mockReturnValue({ data: nothingYet, isPending: false, isError: false });
     const { unmount } = render(<RunAnalytics executionId="execution-1" />);
     expect(within(passedCard()).queryByText("No score")).not.toBeInTheDocument();
     unmount();
 
     const unscored = structuredClone(nothingYet);
-    unscored.summary.outcomes.no_score = 2;
+    unscored.dashboard.metrics[0].no_score = true;
     useRunAnalytics.mockReturnValue({ data: unscored, isPending: false, isError: false });
     render(<RunAnalytics executionId="execution-1" />);
     expect(within(passedCard()).getByText("No score")).toBeInTheDocument();
   });
 
-  it.each([
-    ["no pass or fail and nothing running", {}, "No score", "100%"],
-    ["a failed call", { failed: 1 }, "Passed", "0%"],
-    ["an errored call", { error: 1 }, "Passed", "0%"],
-    ["a call still running", { in_progress: 1 }, "Passed", "0%"],
-  ])(
-    "headlines the goal outcome donut for a run with %s",
-    (_name, counts, label, share) => {
-      const data = structuredClone(analytics);
-      const chart = data.dashboard.breakdowns.find(
-        (item) => item.key === "goal_outcome",
-      );
-      chart.headline = { label: "passed", count: 0, share: 0 };
-      chart.segments = [
-        { label: "passed", count: 0, share: 0 },
-        { label: "failed", count: counts.failed ?? 0, share: 0 },
-        { label: "error", count: counts.error ?? 0, share: 0 },
-        { label: "in_progress", count: counts.in_progress ?? 0, share: 0 },
-        { label: "no_score", count: 3, share: 100 },
-      ];
-      useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
-      render(<RunAnalytics executionId="execution-1" />);
-      fireEvent.click(
-        screen.getByRole("button", { name: "Show detailed analytics" }),
-      );
-      const donut = screen.getByRole("region", {
-        name: "Goal outcome breakdown",
-      });
-      expect(within(donut).getByText(label)).toBeInTheDocument();
-      expect(within(donut).getByText(share)).toBeInTheDocument();
-    },
-  );
+  it("headlines the goal outcome donut with the server's headline", () => {
+    const data = structuredClone(analytics);
+    const chart = data.dashboard.breakdowns.find(
+      (item) => item.key === "goal_outcome",
+    );
+    chart.headline = { label: "no_score", count: 3, share: 100 };
+    chart.segments = [
+      { label: "passed", count: 0, share: 0 },
+      { label: "no_score", count: 3, share: 100 },
+    ];
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+    const donut = screen.getByRole("region", {
+      name: "Goal outcome breakdown",
+    });
+    expect(within(donut).getByText("No score")).toBeInTheDocument();
+    expect(within(donut).getByText("100%")).toBeInTheDocument();
+  });
 
   it("renders when the response has no reliability block", () => {
     const data = structuredClone(analytics);

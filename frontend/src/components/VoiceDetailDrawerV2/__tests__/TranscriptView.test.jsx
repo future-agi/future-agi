@@ -226,6 +226,7 @@ describe("world actors in voice transcripts", () => {
         arguments: { percent: 20 },
         result: { approved: false },
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         actor_role: "store manager",
         outcome: "refused",
@@ -261,6 +262,7 @@ describe("world actors in voice transcripts", () => {
         outcome,
         error: outcome === "faulted" ? "timeout" : undefined,
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         start_time_ms: 2000 + i,
       })),
@@ -270,26 +272,36 @@ describe("world actors in voice transcripts", () => {
     expect(screen.getByText("Failed · crm.cancel")).toBeInTheDocument();
   });
 
-  it("shows just the name and the action for a row stored without a role or an outcome", () => {
+  it("shows the name and the action, and says the outcome was not recorded, for a row stored without a role or an outcome", () => {
+    // As the server sends them: a nameless actor by its id, an outcome the world kept none of as not_recorded.
     showActions([
       {
         id: "a",
         name: "crm.lookup",
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
+        outcome: "not_recorded",
         start_time_ms: 2000,
       },
       {
         id: "b",
         name: "crm.hold",
         actor_id: "clerk",
-        actor_name: "",
+        kind: "world_actor_action",
+        actor_name: "clerk",
+        outcome: "a_code_this_page_has_no_word_for",
         start_time_ms: 3000,
       },
     ]);
     expect(screen.getByText("Arjun Mehta")).toBeInTheDocument();
     expect(screen.getByText("clerk")).toBeInTheDocument();
-    expect(screen.getByText("crm.lookup")).toBeInTheDocument();
+    expect(
+      screen.getByText("Outcome not recorded · crm.lookup"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Outcome not recorded · crm.hold"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/undefined|^Action| ·$/)).toBeNull();
     expect(screen.queryByRole("button", { name: /^Details/ })).toBeNull();
   });
@@ -300,6 +312,7 @@ describe("world actors in voice transcripts", () => {
         id: "a",
         name: "crm.lookup",
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         actor_role: "store manager",
         outcome: "committed",
@@ -320,6 +333,7 @@ describe("world actors in voice transcripts", () => {
         name: "crm.approve",
         arguments: { percent: 20 },
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         start_time_ms: 2000,
       },

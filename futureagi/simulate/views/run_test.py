@@ -38,7 +38,6 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
-    HostedHarnessJob,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -150,7 +149,6 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
-from simulate.services.harness_environment import receipt_outcome_counts
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
@@ -159,6 +157,7 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.run_outcome import hosted_receipt_outcomes, outcome_fields
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
     RegradeDispatchFailed,
@@ -5733,13 +5732,9 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
-            hosted_jobs = {
-                job.test_execution_id: job.id
-                for job in HostedHarnessJob.no_workspace_objects.filter(
-                    test_execution_id__in=execution_ids
-                ).only("id", "test_execution_id")
-            }
-            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
+            receipt_outcomes = hosted_receipt_outcomes(
+                execution_ids, organization_id=user_organization.id
+            )
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5956,40 +5951,13 @@ class RunTestExecutionsView(APIView):
                             if test_execution.completed_at
                             else None
                         ),
-                        "outcome_passed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "passed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_failed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "failed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_errored": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "errored", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_skipped": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "skipped", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_no_score": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "no_score", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
+                        **outcome_fields(
+                            status=test_execution.status,
+                            receipts=receipt_outcomes.get(test_execution.id),
+                            calls={
+                                "completed": completed_calls,
+                                "failed": failed_calls,
+                            },
                         ),
                         **_version_labels(version_labels, test_execution.id),
                     }

@@ -1,10 +1,21 @@
 from __future__ import annotations
 
-import json
-
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
+from simulate.constants.harness_environment import (
+    ACTORS_TABS,
+    AGENT_TYPE_CHAT,
+    AGENT_TYPE_VOICE,
+    RUN_KIND_ENVIRONMENT,
+    RUN_KIND_SIMULATE,
+    STATUS_BUILDING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_RUNNING,
+)
+from simulate.constants.run_outcome import OUTCOME_STATUSES
+from simulate.constants.scenario_faults import FAULT_MODES
 from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
@@ -16,16 +27,6 @@ from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
-from simulate.services.harness_environment import (
-    AGENT_TYPE_CHAT,
-    AGENT_TYPE_VOICE,
-    RUN_KIND_ENVIRONMENT,
-    RUN_KIND_SIMULATE,
-    STATUS_BUILDING,
-    STATUS_COMPLETED,
-    STATUS_FAILED,
-    STATUS_RUNNING,
-)
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -104,11 +105,35 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     status = serializers.CharField()
     environment = RunEnvironmentRefSerializer(allow_null=True)
     agent_version = AgentVersionRefSerializer(allow_null=True)
-    outcome_passed = serializers.IntegerField(allow_null=True)
-    outcome_failed = serializers.IntegerField(allow_null=True)
-    outcome_errored = serializers.IntegerField(allow_null=True)
+    outcome_passed = serializers.IntegerField(
+        allow_null=True, help_text="Passed receipts; null for a run without receipts."
+    )
+    outcome_failed = serializers.IntegerField(
+        allow_null=True, help_text="Failed plus errored receipts."
+    )
+    outcome_errored = serializers.IntegerField(
+        allow_null=True, help_text="Errored receipts, also counted in outcome_failed."
+    )
     outcome_skipped = serializers.IntegerField(allow_null=True)
-    outcome_no_score = serializers.IntegerField(allow_null=True)
+    outcome_no_score = serializers.IntegerField(
+        allow_null=True, help_text="Calls that ran with no pass or fail."
+    )
+    outcome_status = serializers.ChoiceField(
+        choices=OUTCOME_STATUSES,
+        allow_null=True,
+        help_text="The run's verdict from its receipts; null for a run without receipts.",
+    )
+    pass_rate = serializers.IntegerField(
+        allow_null=True,
+        min_value=0,
+        max_value=100,
+        help_text="Scored passes over every call that ran to a verdict (passed, failed, errored, skipped), as a "
+        "whole percent; null when there is none or the run has no receipts.",
+    )
+    scored = serializers.IntegerField(
+        allow_null=True,
+        help_text="The pass rate's base; null for a run without receipts.",
+    )
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 
@@ -361,6 +386,79 @@ class HarnessEnvironmentScenarioCallActorSerializer(serializers.Serializer):
     actions = HarnessEnvironmentScenarioActorActionSerializer(many=True, required=False)
 
 
+class HarnessEnvironmentResolvedScenarioActorSerializer(
+    HarnessEnvironmentScenarioCallActorSerializer
+):
+    """A scenario's actor as a scenario row shows it: as the scenario holds it, plus who the actor is and when it
+    comes in in this scenario, resolved against the cast. Response only."""
+
+    class Meta:
+        # Published under the scenario rows' existing definition name, which the resolved fields extend.
+        ref_name = "HarnessEnvironmentScenarioCallActor"
+
+    name = serializers.CharField(
+        help_text="The actor's name; its id when the cast has no such actor."
+    )
+    role = serializers.CharField(allow_blank=True)
+    channel = serializers.CharField(
+        allow_null=True,
+        help_text="How it speaks in the conversation; null: it acts through the world only.",
+    )
+    side = serializers.ChoiceField(choices=("caller", "world"))
+    effective_trigger = HarnessEnvironmentCallActorTriggerSerializer(
+        help_text="The trigger that runs: the scenario's own, else the actor's."
+    )
+    when_label = serializers.CharField(help_text="When it comes in, as a sentence.")
+    timeout_label = serializers.CharField(
+        allow_null=True,
+        help_text="How long it waits and what then happens; null when it never waits.",
+    )
+
+
+class HarnessEnvironmentDoorProblemSerializer(serializers.Serializer):
+    """Why a scenario cannot work on this agent as set."""
+
+    code = serializers.ChoiceField(choices=("fault_unreachable", "actor_no_door"))
+    message = serializers.CharField()
+
+
+class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
+    """Where one contract tool runs in a test."""
+
+    tool = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=("simulated", "in_process", "unsupported", "unknown"),
+        help_text="simulated: the world's door stands in front of it; in_process: it runs inside the agent; "
+        "unsupported: it reaches a system the test world has no copy of; unknown: the build read nothing about it.",
+    )
+    reset_between_trials = serializers.BooleanField(
+        allow_null=True,
+        help_text="Restored to the seeded records before each trial; null when not known.",
+    )
+    runs_at = serializers.CharField(
+        allow_null=True,
+        help_text="The agent's callable or the tools service's method and route.",
+    )
+    writes = serializers.BooleanField(
+        help_text="The tool declares a change to records."
+    )
+
+
+class HarnessEnvironmentFaultTargetSerializer(serializers.Serializer):
+    """A contract tool a scenario's fault can name."""
+
+    tool = serializers.CharField()
+    action = serializers.CharField(
+        help_text="The world action a fault on this tool names."
+    )
+    reachable = serializers.BooleanField(
+        help_text="The world's door stands in front of it, so a fault applies."
+    )
+    writes = serializers.BooleanField(
+        help_text="It changes records, so a timeout after the change commits means something."
+    )
+
+
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
     """One catalogue entry, carrying the code that settles it where there is any.
 
@@ -444,6 +542,8 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         required=False,
         help_text="Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
     )
+    tool_status = HarnessEnvironmentToolStatusSerializer(many=True)
+    fault_targets = HarnessEnvironmentFaultTargetSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     chosen_evals = serializers.ListField(
@@ -483,10 +583,31 @@ class HarnessEnvironmentStoreSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
 
 
+class HarnessEnvironmentTableFieldSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    type = serializers.CharField()
+
+
+class HarnessEnvironmentWorldTableSerializer(serializers.Serializer):
+    """One of the world's own tables: the harness's tables are never listed."""
+
+    name = serializers.CharField()
+    rows = serializers.IntegerField()
+    note = serializers.CharField(
+        allow_null=True, help_text="The store it lives in: capability and engine."
+    )
+    fields = HarnessEnvironmentTableFieldSerializer(
+        many=True,
+        help_text="Its fields as the contract's data schema gives them; empty when it gives none.",
+    )
+
+
 class HarnessEnvironmentWorldSerializer(serializers.Serializer):
     runtime = serializers.DictField()
     personas = HarnessEnvironmentPersonaSerializer(many=True)
     stores = HarnessEnvironmentStoreSerializer(many=True)
+    tables = HarnessEnvironmentWorldTableSerializer(many=True)
+    total_rows = serializers.IntegerField(help_text="The seeded rows across `tables`.")
 
 
 class HarnessEnvironmentSubGoalSerializer(serializers.Serializer):
@@ -507,7 +628,8 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     fixture = serializers.DictField(allow_null=True)
     steps = serializers.IntegerField(allow_null=True)
     sub_goals = HarnessEnvironmentSubGoalSerializer(many=True)
-    actors = HarnessEnvironmentScenarioCallActorSerializer(many=True)
+    actors = HarnessEnvironmentResolvedScenarioActorSerializer(many=True)
+    door_problem = HarnessEnvironmentDoorProblemSerializer(allow_null=True)
     persona = serializers.DictField(allow_null=True)
     situation = serializers.CharField(allow_null=True)
     outcome = serializers.CharField(allow_null=True)
@@ -604,6 +726,173 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+    actors_tab = serializers.ChoiceField(
+        choices=ACTORS_TABS,
+        allow_null=True,
+        help_text="edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
+    )
+
+
+class HarnessScenarioFaultSerializer(serializers.Serializer):
+    """One test condition: what the world does to one of the agent's calls in the scenario."""
+
+    action = serializers.CharField()
+    mode = serializers.ChoiceField(choices=FAULT_MODES)
+    on_call = serializers.IntegerField(required=False, min_value=1)
+    delay_seconds = serializers.FloatField(required=False, min_value=0, max_value=30)
+    status = serializers.IntegerField(required=False, min_value=400, max_value=599)
+    message = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class HarnessScenarioPersonaSerializer(serializers.Serializer):
+    """The caller as the scenario keeps it; every field is optional because older suites carry fewer."""
+
+    name = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
+    age_group = serializers.CharField(required=False, allow_blank=True)
+    occupation = serializers.CharField(required=False, allow_blank=True)
+    location = serializers.CharField(required=False, allow_blank=True)
+    personality = serializers.CharField(required=False, allow_blank=True)
+    communication_style = serializers.CharField(required=False, allow_blank=True)
+    initial_message = serializers.CharField(required=False, allow_blank=True)
+    languages = serializers.ListField(child=serializers.CharField(), required=False)
+    accent = serializers.CharField(required=False, allow_blank=True)
+    multilingual = serializers.BooleanField(required=False)
+    keywords = serializers.ListField(child=serializers.CharField(), required=False)
+    # Free-form by the scenario schema: the builder may put any keys here.
+    metadata = JsonObjectRequestField(required=False)
+    scripted_caller = JsonObjectRequestField(required=False, allow_null=True)
+
+
+class HarnessScenarioCoverageSerializer(serializers.Serializer):
+    """The level the scenario holds on each coverage axis; an axis the suite does not use is absent."""
+
+    task = serializers.CharField(required=False, allow_null=True)
+    counterparty = serializers.CharField(required=False, allow_null=True)
+    disposition = serializers.CharField(required=False, allow_null=True)
+    interface = serializers.CharField(required=False, allow_null=True)
+    interaction = serializers.CharField(required=False, allow_null=True)
+    overlay = serializers.CharField(required=False, allow_null=True)
+    overlay_vector = serializers.CharField(required=False, allow_null=True)
+    overlay_intensity = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessScenarioRowSerializer(serializers.Serializer):
+    """One authored scenario on the Scenarios list."""
+
+    id = serializers.UUIDField()
+    scenario_id = serializers.UUIDField(allow_null=True)
+    scenario_key = serializers.CharField()
+    number = serializers.IntegerField(allow_null=True)
+    name = serializers.CharField(allow_blank=True)
+    use_case = serializers.CharField(allow_blank=True, allow_null=True)
+    instruction = serializers.CharField(allow_blank=True, allow_null=True)
+    branch = serializers.CharField(allow_blank=True, allow_null=True)
+    tests = serializers.CharField(allow_blank=True, allow_null=True)
+    persona = HarnessScenarioPersonaSerializer()
+    coverage = HarnessScenarioCoverageSerializer()
+    sub_goals = serializers.ListField(
+        child=serializers.CharField(), help_text="The names of the sub-goals it checks."
+    )
+    actors = HarnessEnvironmentResolvedScenarioActorSerializer(many=True)
+    faults = HarnessScenarioFaultSerializer(many=True)
+    door_problem = HarnessEnvironmentDoorProblemSerializer(allow_null=True)
+    keywords = serializers.ListField(child=serializers.CharField())
+    background_noise = serializers.CharField(allow_blank=True, allow_null=True)
+    max_turns = serializers.IntegerField(allow_null=True)
+    status = serializers.CharField(
+        help_text="Where it got to: `authored` before any call ran, else its call's status."
+    )
+    call_execution_id = serializers.UUIDField(allow_null=True)
+    group = serializers.CharField(
+        required=False, help_text="Its section on this page, when the page is grouped."
+    )
+    draft_change = serializers.ChoiceField(
+        choices=("added", "changed", "unchanged"),
+        required=False,
+        allow_null=True,
+        help_text="Present while the list shows unsaved changes.",
+    )
+
+
+class HarnessScenarioGroupSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    count = serializers.IntegerField(help_text="Its scenarios on this page.")
+    total = serializers.IntegerField(
+        required=False, help_text="Its scenarios in the whole filtered suite."
+    )
+
+
+class HarnessScenarioFieldSerializer(serializers.Serializer):
+    """A field the list filters on; an enum carries its values counted over the whole filtered suite."""
+
+    value = serializers.CharField()
+    label = serializers.CharField()
+    type = serializers.ChoiceField(choices=("string", "enum"))
+    category = serializers.CharField()
+    choices = serializers.ListField(child=serializers.CharField(), required=False)
+    counts = serializers.DictField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Scenarios per value, keyed by the value.",
+    )
+    choice_labels = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The name to show for each value, keyed by the value (actors only).",
+    )
+
+
+class HarnessScenarioEditingSerializer(serializers.Serializer):
+    """What an amend will take, and what needs a re-proof."""
+
+    editable_fields = serializers.ListField(child=serializers.CharField())
+    persona_fields = serializers.ListField(child=serializers.CharField())
+    persona_choices = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()),
+        help_text="The values each persona field may take, keyed by the field.",
+    )
+    noise_choices = serializers.ListField(child=serializers.CharField())
+    rework_fields = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessScenarioGroupingSerializer(serializers.Serializer):
+    value = serializers.CharField(allow_blank=True)
+    label = serializers.CharField()
+
+
+class HarnessScenarioDraftRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    revision = serializers.IntegerField()
+
+
+class HarnessScenarioListResponseSerializer(serializers.Serializer):
+    """One page of an environment's authored scenarios, with what the list filters and groups by."""
+
+    count = serializers.IntegerField()
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    total_pages = serializers.IntegerField()
+    current_page = serializers.IntegerField()
+    results = HarnessScenarioRowSerializer(many=True)
+    draft = HarnessScenarioDraftRefSerializer(
+        required=False,
+        help_text="The unsaved changes the page shows, when it shows them.",
+    )
+    groups = HarnessScenarioGroupSerializer(many=True)
+    group_by = serializers.CharField(allow_blank=True)
+    scenario_editing = HarnessScenarioEditingSerializer()
+    groupings = HarnessScenarioGroupingSerializer(many=True)
+    level_labels = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it.",
+    )
+
+    def get_fields(self):
+        # `fields` names the serializer's own field map, so the response key is declared here.
+        declared = super().get_fields()
+        declared["fields"] = HarnessScenarioFieldSerializer(many=True)
+        return declared
 
 
 class HarnessVersionPersonSerializer(serializers.Serializer):
@@ -841,10 +1130,28 @@ class HarnessVersionDiffSerializer(serializers.Serializer):
     )
 
 
+RUN_PLAN_MAX_SCENARIOS = 1000
+
+
 class HarnessRunPlanQuerySerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(required=False)
     environment_version_id = serializers.UUIDField(required=False)
     suite_version_id = serializers.UUIDField(required=False)
+    scenario_keys = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The scenarios the run would select, comma-separated; absent or blank selects every scenario.",
+    )
+
+    def validate_scenario_keys(self, value: str) -> list[str] | None:
+        keys = [key.strip() for key in value.split(",") if key.strip()]
+        if not keys:
+            return None
+        if len(keys) > RUN_PLAN_MAX_SCENARIOS:
+            raise serializers.ValidationError(
+                f"Select at most {RUN_PLAN_MAX_SCENARIOS} scenarios."
+            )
+        return keys
 
 
 class HarnessBlockedScenarioSerializer(serializers.Serializer):
@@ -874,9 +1181,19 @@ class HarnessRunPlanSerializer(serializers.Serializer):
     )
     blocked_tools = HarnessBlockedToolSerializer(
         many=True,
-        required=False,
-        help_text="Tools blocked in this controlled test because they reach production; a run whose every "
-        "selected scenario needs one is refused.",
+        help_text="Tools blocked in this controlled test because they reach production, each with the selected "
+        "scenarios that need it; empty when none is. A run whose every selected scenario needs one is refused.",
+    )
+    runnable = serializers.BooleanField(
+        help_text="False when every selected scenario needs a blocked tool: the run would be refused."
+    )
+    blocked_code = serializers.ChoiceField(
+        choices=("production_only",),
+        allow_null=True,
+        help_text="Why the run would be refused; null when it is runnable.",
+    )
+    held_back = serializers.IntegerField(
+        min_value=0, help_text="Selected scenarios that need a blocked tool."
     )
 
 
@@ -1137,156 +1454,3 @@ class HarnessNudgeListQuerySerializer(serializers.Serializer):
 
 class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
-
-
-# Bounds every field of one actor record together, as compact JSON (the editor counts the same way); each
-# field's own limit comes from the sealed rules.
-ACTOR_RECORD_MAX_CHARS = 65_536
-
-
-class HarnessActorRecordField(JsonObjectRequestField):
-    """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
-
-    def to_internal_value(self, data):
-        value = super().to_internal_value(data)
-        size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
-        if size > ACTOR_RECORD_MAX_CHARS:
-            raise serializers.ValidationError(
-                f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
-            )
-        return value
-
-
-class HarnessActorWriteSerializer(serializers.Serializer):
-    actor = HarnessActorRecordField()
-    # The draft revision the actors were read at; an edit made elsewhere since is refused.
-    expected_revision = serializers.IntegerField(
-        required=False, allow_null=True, min_value=0
-    )
-    # Actions this edit gives the actor that only one other actor holds, confirmed as shared by both.
-    share_actions = serializers.ListField(
-        child=serializers.CharField(max_length=200),
-        required=False,
-        max_length=100,
-        help_text=(
-            "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an "
-            "edit is refused with permission_conflict (409) and each conflict."
-        ),
-    )
-
-
-class HarnessActorLimitsWriteSerializer(serializers.Serializer):
-    # The whole limits block, replacing the stored one: each a positive number or null for no limit, `model` one of
-    # the actor models. A field left out of the block takes the channel's default.
-    limits = JsonObjectRequestField(
-        help_text=(
-            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; "
-            "model is one of actor_models. A limit left out takes the channel's default."
-        )
-    )
-    expected_revision = serializers.IntegerField(required=False, min_value=0)
-
-
-class HarnessActorDeleteQuerySerializer(serializers.Serializer):
-    # The draft revision the actors were read at; an edit made elsewhere since is refused.
-    expected_revision = serializers.IntegerField(required=False, min_value=0)
-
-
-class HarnessWorldActionSerializer(serializers.Serializer):
-    """One action the world lets an actor take, named as the world names it, with the tool behind it."""
-
-    action = serializers.CharField()
-    tool = serializers.CharField(allow_blank=True)
-    description = serializers.CharField(allow_blank=True)
-
-
-class HarnessActorRecordSourceSerializer(serializers.Serializer):
-    store = serializers.CharField(allow_blank=True)
-    collection = serializers.CharField()
-
-
-class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
-    files = serializers.ListField(child=serializers.CharField())
-    records = HarnessActorRecordSourceSerializer(many=True)
-
-
-class HarnessActorUnresolvedSerializer(serializers.Serializer):
-    policy = serializers.CharField()
-    why = serializers.CharField(required=False, allow_blank=True)
-    actor = serializers.CharField(required=False, allow_blank=True)
-
-
-class HarnessActorUnresolvedAcceptSerializer(serializers.Serializer):
-    # The policy point accepted as written: it leaves the list waiting for a decision.
-    policy = serializers.CharField(max_length=500)
-    expected_revision = serializers.IntegerField(required=False, min_value=0)
-
-
-class HarnessActorListSerializer(serializers.Serializer):
-    actors = serializers.ListField(child=HarnessActorRecordField())
-    source = serializers.ChoiceField(choices=("draft", "saved"))  # type: ignore[assignment]  # the API field is named source
-    revision = serializers.IntegerField()
-    # Each actor file's record schema, from the rules of the release that sealed the environment.
-    record_schemas = JsonObjectRequestField()
-    # What an actor can be given here: the world's actions, and the call channels an actor speaks on.
-    actions = HarnessWorldActionSerializer(many=True)
-    channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
-    # Which channels have a loudness, and the range a call draws from when none is set.
-    loudness = JsonObjectRequestField()
-    # Ids no actor may take.
-    reserved_ids = serializers.ListField(child=serializers.CharField())
-    # What an actor may be given to read here: the environment's own files and its world's record collections.
-    knowledge_sources = HarnessActorKnowledgeSourcesSerializer()
-    # The environment's actor limits: null is no limit, a missing key the channel's default.
-    limits = JsonObjectRequestField(required=False)
-    # The models an actor may be played on; the first is the default.
-    actor_models = serializers.ListField(child=serializers.CharField(), required=False)
-    # Policy points the builder could not turn into an actor's permissions or knowledge, waiting for the person.
-    unresolved = HarnessActorUnresolvedSerializer(many=True, required=False)
-
-
-class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
-    # An empty file is the service's to refuse, with the other problems of the same upload.
-    file = serializers.FileField(allow_empty_file=True)
-    kind = serializers.ChoiceField(
-        choices=("knowledge",),
-        help_text="What the file is for: `knowledge`, a document an actor may be given to read.",
-    )
-    expected_revision = serializers.IntegerField(min_value=0, required=False)
-
-
-class HarnessEnvironmentFileUploadedSerializer(HarnessActorListSerializer):
-    uploaded_path = serializers.CharField(
-        help_text="Where the file was stored in the environment, as the knowledge sources list it."
-    )
-
-
-class HarnessActorViewQuerySerializer(serializers.Serializer):
-    scenario_key = serializers.CharField(required=False, max_length=255)
-
-
-class HarnessActorSeenSerializer(serializers.Serializer):
-    input = serializers.CharField()
-    value = serializers.JSONField()
-    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source
-        choices=("actor", "scenario", "caller")
-    )
-
-
-class HarnessActorNeverSeesSerializer(serializers.Serializer):
-    """What an actor is never given: the grader's scenario fields and files, and other actors' private fields by
-    name (`<name>.<field>`)."""
-
-    scenario_fields = serializers.ListField(child=serializers.CharField())
-    files = serializers.ListField(child=serializers.CharField())
-    other_actors = serializers.ListField(child=serializers.CharField())
-
-
-class HarnessActorViewSerializer(serializers.Serializer):
-    actor_id = serializers.CharField()
-    permitted_actions = serializers.ListField(child=serializers.CharField())
-    sees = HarnessActorSeenSerializer(many=True)
-    never_sees = HarnessActorNeverSeesSerializer()
-    # Whether a run plays the actor from what it sees; when not, why.
-    played_from_view = serializers.BooleanField()
-    unused_reason = serializers.CharField(allow_null=True)

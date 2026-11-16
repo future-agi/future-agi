@@ -8,28 +8,6 @@ const quiet = {
   wordBreak: "break-word",
 };
 
-// Actors' model calls summed per actor and model, then in all: calls, tokens and cost, never just a count.
-const usageLines = (rows, name) => {
-  const sum = (some) => [
-    some.length,
-    some.reduce(
-      (n, one) => n + (one.tokens_in || 0) + (one.tokens_out || 0),
-      0,
-    ),
-    some.reduce((n, one) => n + (one.cost_usd || 0), 0),
-  ];
-  const groups = new Map();
-  for (const one of rows) {
-    const key = `${one.actor}\u0000${one.model || ""}`;
-    groups.set(key, [...(groups.get(key) || []), one]);
-  }
-  const lines = [...groups].map(([key, some]) => ({
-    key,
-    text: C.usageBy(name(some[0].actor), some[0].model, C.usage(...sum(some))),
-  }));
-  return [...lines, { key: "all", text: C.usageTotal(C.usage(...sum(rows))) }];
-};
-
 // A record's values as one short line, for the before and after columns.
 const values = (row) =>
   row
@@ -41,8 +19,9 @@ const values = (row) =>
         .join(", ")
     : "";
 
-// The records the trial added, changed or removed, each with its values before and after.
-function RecordsSection({ records }) {
+// The records the trial added, changed or removed, each with its values before and after. When the agent committed
+// changes yet no record of the test world changed, the server's notice says why in place of "no record changed".
+function RecordsSection({ records, outside }) {
   const changes = records?.changes || [];
   return (
     <Box data-testid="records-before-after">
@@ -50,7 +29,12 @@ function RecordsSection({ records }) {
         {C.recordsHeading}
       </Typography>
       {changes.length === 0 && (
-        <Typography sx={quiet}>{C.recordsEmpty}</Typography>
+        <Typography
+          sx={outside ? { ...quiet, color: "warning.dark" } : quiet}
+          data-testid={outside ? "changed-outside-world" : undefined}
+        >
+          {outside ? outside.message : C.recordsEmpty}
+        </Typography>
       )}
       {changes.map((one, index) => (
         <Box key={`${one.table}-${index}`} sx={{ mt: 0.75 }}>
@@ -90,6 +74,10 @@ function RecordsSection({ records }) {
 }
 
 RecordsSection.propTypes = {
+  outside: PropTypes.shape({
+    code: PropTypes.string,
+    message: PropTypes.string,
+  }),
   records: PropTypes.shape({
     changes: PropTypes.arrayOf(PropTypes.object),
     skipped: PropTypes.arrayOf(PropTypes.object),
@@ -97,45 +85,40 @@ RecordsSection.propTypes = {
   }),
 };
 
-// Whether the trial started from the seeded records, said first.
-const startLine = (start) => {
-  if (!start?.state) return null;
-  if (start.state === "differs") return C.start.differs(start.tables || []);
-  return C.start[start.state] || null;
-};
+// Whether the trial started from the seeded records, said first; one that did not is among the notices.
+const startLine = (start) =>
+  start && start.state !== "differs" ? C.start[start.state] : null;
 
-// A trial's world changes per participant (the agent and each actor), and what each actor chose. Kept apart:
+// A trial's World state per participant (the agent and each actor), and what each actor chose. Kept apart:
 // attempted, refused and committed are never summed into one number. A trial with no record says why.
 export default function TrialChangesPanel({ trialState }) {
   if (!trialState)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
   if (trialState.recorded === false)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.inProcess}</Typography>;
-  return <WorldChanges trialState={trialState} />;
+  return <WorldState trialState={trialState} />;
 }
 
 TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
 };
 
-function WorldChanges({ trialState }) {
+function WorldState({ trialState }) {
   const changes = trialState?.state_changes || [];
-  const all = trialState?.decisions || [];
-  // A message written before the run is the trial's starting point, shown apart from what actors chose in it.
-  const preRun = all.filter((one) => one.play === "history");
-  const decisions = all.filter((one) => one.play !== "history");
+  const decisions = trialState?.decisions || [];
+  // Messages written before the run: the trial's starting point, shown apart from what actors chose in it.
+  const preRun = trialState?.pre_run || [];
   const approvals = trialState?.approvals || [];
-  const usage = trialState?.usage || [];
+  const usage = trialState?.usage_summary || [];
   const duplicates = trialState?.duplicates || [];
-  // How the trial ran that the reader must know, e.g. a scenario fault that did not take effect: said first. A trial
-  // that did not start from the seeded records is one of them.
   const started = startLine(trialState?.start);
-  const notices = [
-    ...(trialState?.start?.state === "differs"
-      ? [{ code: "start_differs", message: started }]
-      : []),
-    ...(trialState?.notices || []),
-  ].filter((one) => one?.message);
+  // How the trial ran that the reader must know, said first: a fault that did not take effect, a start that differed.
+  // Changes the agent made outside the test world are said where the records are.
+  const allNotices = trialState?.notices || [];
+  const outside = allNotices.find(
+    (one) => one.code === "changed_outside_world",
+  );
+  const notices = allNotices.filter((one) => one !== outside);
   const unreadable = trialState?.unreadable || trialState?.records?.unreadable;
   const records =
     trialState?.records && !trialState.records.unreadable
@@ -157,9 +140,7 @@ function WorldChanges({ trialState }) {
   );
   const headLines = (
     <>
-      {started && trialState?.start?.state !== "differs" && (
-        <Typography sx={quiet}>{started}</Typography>
-      )}
+      {started && <Typography sx={quiet}>{started}</Typography>}
       {unreadable && (
         <Typography sx={{ ...quiet, color: "warning.dark" }}>
           {C.unreadable}
@@ -180,13 +161,13 @@ function WorldChanges({ trialState }) {
       )}
     </>
   );
-  if (!changes.length && !all.length)
+  if (!changes.length && !decisions.length && !preRun.length)
     return (
       <Stack spacing={1.5} sx={{ p: 2 }}>
         {headLines}
         {noticeList}
         {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
-        {records && <RecordsSection records={records} />}
+        {records && <RecordsSection records={records} outside={outside} />}
       </Stack>
     );
   const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
@@ -195,13 +176,10 @@ function WorldChanges({ trialState }) {
     if (one.play === "waiting") return C.waited(one, name);
     if (one.play === "problem") return C.problems[one.problem] || one.why;
     if (one.play !== "timeout") return null;
-    const fallbackResult = C.actionOutcomes[one.action_outcome];
-    if (
-      one.outcome === "fallback_action" &&
-      one.action_outcome !== "committed" &&
-      fallbackResult
-    )
-      return C.outcomes.fallbackNotCommitted(fallbackResult);
+    if (one.outcome === "fallback_not_committed")
+      return C.outcomes.fallback_not_committed(
+        C.actionOutcomes[one.action_outcome],
+      );
     const said = C.outcomes[one.outcome];
     return typeof said === "function" ? said(name(one.fallback)) : said;
   };
@@ -256,7 +234,7 @@ function WorldChanges({ trialState }) {
           )}
         </Box>
       ))}
-      {records && <RecordsSection records={records} />}
+      {records && <RecordsSection records={records} outside={outside} />}
       {preRun.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -307,24 +285,55 @@ function WorldChanges({ trialState }) {
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
             {C.usageHeading}
           </Typography>
-          {usageLines(usage, name).map((line) => (
-            <Typography key={line.key} sx={quiet}>
-              {line.text}
+          {usage.map((line) => (
+            <Typography key={`${line.actor}-${line.model}`} sx={quiet}>
+              {C.usageBy(
+                line.name,
+                line.model,
+                C.usage(line.calls, line.tokens, line.cost_usd),
+              )}
             </Typography>
           ))}
+          {trialState.usage_total && (
+            <Typography sx={quiet}>
+              {C.usageTotal(
+                C.usage(
+                  trialState.usage_total.calls,
+                  trialState.usage_total.tokens,
+                  trialState.usage_total.cost_usd,
+                ),
+              )}
+            </Typography>
+          )}
         </Box>
       )}
     </Stack>
   );
 }
 
-WorldChanges.propTypes = {
+WorldState.propTypes = {
   trialState: PropTypes.shape({
     end_state_url: PropTypes.string,
     state_changes: PropTypes.arrayOf(PropTypes.object),
     decisions: PropTypes.arrayOf(PropTypes.object),
+    pre_run: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
-    usage: PropTypes.arrayOf(PropTypes.object),
+    // Actors' model use summed per actor and model, and in all.
+    usage_summary: PropTypes.arrayOf(
+      PropTypes.shape({
+        actor: PropTypes.string,
+        name: PropTypes.string,
+        model: PropTypes.string,
+        calls: PropTypes.number,
+        tokens: PropTypes.number,
+        cost_usd: PropTypes.number,
+      }),
+    ),
+    usage_total: PropTypes.shape({
+      calls: PropTypes.number,
+      tokens: PropTypes.number,
+      cost_usd: PropTypes.number,
+    }),
     records: PropTypes.object,
     start: PropTypes.shape({
       state: PropTypes.string,

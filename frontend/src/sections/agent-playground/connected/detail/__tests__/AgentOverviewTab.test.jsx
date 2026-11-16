@@ -97,6 +97,8 @@ describe("AgentOverviewTab", () => {
         outcome_failed: 0,
         outcome_errored: 9,
         outcome_no_score: 2,
+        pass_rate: 100,
+        scored: 1,
       },
     ]);
     renderTab();

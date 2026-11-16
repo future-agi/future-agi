@@ -48,8 +48,9 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} completed    `kpis.completed_calls`, both modalities;
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
- * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/measured`.
+ * @property {?number} passRate     0–100; the server's `pass_rate` from the
+ *                                  run's row, null when nothing was scored or
+ *                                  the row is not read yet.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -100,7 +101,8 @@ export function buildRunIdentity(row, envName = null) {
  * summary payloads, falling back to the executions row for the call counts.
  * Pure.
  * @param {?Object} kpis The `test-executions/{id}/kpis/` payload.
- * @param {?Object} perf The `…/performance-summary/` payload.
+ * @param {?Object} perf The `…/performance-summary/` payload; its rate is not
+ *                       read, the run's row carries the server's.
  * @param {?Object} row  The mapped executions row (count fallback).
  * @returns {RunStats}
  */
@@ -112,16 +114,11 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
-  // Passed over passed plus failed, as everywhere else; errored and skipped calls are out.
-  const measured = row?.hasOutcomes ? passed + failed : total;
+  // A run with per-outcome counts carries the server's pass rate and its base.
+  const measured = row?.hasOutcomes ? row.scored : total;
 
-  const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate =
-    row?.hasOutcomes || typeof perfRate !== "number"
-      ? measured
-        ? Math.round((passed / measured) * 100)
-        : 0
-      : Math.round(perfRate);
+  // The server's rate on the run's row; none until the row is read.
+  const passRate = row ? row.passRate : null;
 
   // `completed_calls` is its own KPI field for both modalities — not the chat
   // branch's `connected_calls` (voice's `connected_voice_calls` uses a
@@ -413,17 +410,17 @@ const ACTOR_OUTCOMES = {
   refused: "Refused",
   faulted: "Failed",
   duplicate: "Duplicate",
+  not_recorded: "Outcome not recorded",
 };
-// A world actor's action as one record, or null for the agent's own call. The serializer keeps every field optional:
-// a row logged before the world kept outcomes has only `refused`, and one kept without a name is shown by its id.
+// A world actor's action as one record, or null for the agent's own call: the call's `kind` says which, and its
+// `outcome` how the world took it.
 const worldAction = (call) =>
-  call.actor_id && call.actor_id !== "agent"
+  call.kind === "world_actor_action"
     ? {
-        name: call.actor_name || call.actor_id,
+        name: call.actor_name,
         role: call.actor_role,
-        outcome:
-          ACTOR_OUTCOMES[call.outcome] ||
-          (call.refused ? ACTOR_OUTCOMES.refused : ""),
+        // A code this page has no word for reads as not recorded, never as the raw code.
+        outcome: ACTOR_OUTCOMES[call.outcome] ?? ACTOR_OUTCOMES.not_recorded,
       }
     : null;
 
@@ -462,23 +459,13 @@ export function functionCallTranscriptRows(calls = []) {
   });
 }
 
-/** One stable timeline shared by the chat and voice drawers. */
+/** One stable timeline shared by the chat and voice drawers. Each turn says who spoke: an actor's carries its id,
+ * role and channel. */
 export function callTranscript(raw) {
   const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
-  // An actor's role and how they were heard come from the call, joined by their id;
-  // a turn stored before ids were kept falls back to their name.
-  const callActors = Array.isArray(raw?.call_actors) ? raw.call_actors : [];
-  const byId = new Map(callActors.map((one) => [one.id, one]));
-  const byName = new Map(callActors.map((one) => [one.name, one]));
-  const callActorOf = (turn) =>
-    turn.actor_id ? byId.get(turn.actor_id) : byName.get(turn.speaker_name);
   return [
     ...transcript.map((turn) => ({
       ...turn,
-      ...(turn.speaker_role === "actor" && {
-        actor_role: callActorOf(turn)?.role,
-        channel: callActorOf(turn)?.channel,
-      }),
       start_time_seconds: relativeTime(turn),
       end_time_seconds: relativeTime(turn, true),
     })),
@@ -614,78 +601,22 @@ function messageText(content) {
  * @param {?Object} raw
  * @returns {?CallDetail}
  */
-// An actor's chat line reaches the agent inside the customer's channel, labelled the way the harness labels it.
-const ACTOR_LINE = /^(.+?) \(not the person being served\): ([\s\S]*)$/;
-
-// Everyone the call knows as an actor, by name: its actor list, then the actors behind its world actions.
-function callActorsByName(raw) {
-  const byName = new Map();
-  for (const one of Array.isArray(raw?.call_actors) ? raw.call_actors : []) {
-    if (one?.name)
-      byName.set(one.name, {
-        id: one.id || "",
-        role: one.role || "",
-        channel: one.channel || "",
-      });
-  }
-  for (const call of Array.isArray(raw?.function_calls)
-    ? raw.function_calls
-    : []) {
-    if (call?.actor_name && !byName.has(call.actor_name)) {
-      byName.set(call.actor_name, {
-        id: call.actor_id || "",
-        role: call.actor_role || "",
-        channel: "",
-      });
-    }
-  }
-  return byName;
-}
-
-// A customer turn that is an actor's labelled line is shown as that actor's own turn; anyone the call never had
-// stays the customer's, so a customer quoting the label is never taken for someone else.
-function asActorLine(turn, actorsByName) {
-  if (turn.role !== "customer") return turn;
-  const match = ACTOR_LINE.exec(turn.text || "");
-  const actor = match && actorsByName.get(match[1]);
-  if (!actor) return turn;
-  return {
-    ...turn,
-    role: "actor",
-    speakerName: match[1],
-    actorId: actor.id,
-    actorRole: actor.role,
-    channel: actor.channel,
-    text: match[2],
-  };
-}
-
-// A chat row whose every message is the scenario's own task: no person sent it, so it is never the customer's.
-const isTaskRow = (row) =>
-  Array.isArray(row?.content) &&
-  row.content.length > 0 &&
-  row.content.every((item) => item?.role === "task");
-
 export function mapCallDetail(raw) {
   if (!raw) return null;
 
   const isChat = raw.simulation_call_type === "text";
-  const actorsByName = callActorsByName(raw);
-  const turns = callTranscript(raw).map((t) =>
-    asActorLine(
-      {
-        role: normalizeRole(t.speaker_role ?? (isTaskRow(t) ? "task" : t.role)),
-        speakerName: t.speaker_name || "",
-        actorId: t.actor_id || "",
-        actorRole: t.actor_role || "",
-        channel: t.channel || "",
-        text: messageText(t.content),
-        at: t.start_time_seconds ?? null,
-        toolCalls: t.tool_calls ?? null,
-      },
-      actorsByName,
-    ),
-  );
+  // Each turn names its speaker (`speaker_role`: customer, agent, actor, task, world_actor, …); an actor's turn also
+  // carries its id, role and channel, its text without the label the agent was shown.
+  const turns = callTranscript(raw).map((t) => ({
+    role: normalizeRole(t.speaker_role),
+    speakerName: t.speaker_name || "",
+    actorId: t.actor_id || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
+    text: messageText(t.content),
+    at: t.start_time_seconds ?? null,
+    toolCalls: t.tool_calls ?? null,
+  }));
 
   const words = turns.reduce(
     (a, s) =>

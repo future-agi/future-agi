@@ -6,7 +6,7 @@ import copy
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import count
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from django.contrib.postgres.expressions import ArraySubquery
@@ -27,6 +27,10 @@ from django.utils import timezone
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
 from simulate.types import ScenarioCallActor
+
+if TYPE_CHECKING:
+    from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.harness_tool_reach import FaultTarget
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -1259,9 +1263,20 @@ def level_labels_for(
     return labels
 
 
-def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
-    """One list row. Safe on a scenario indexed before any call was made."""
+def scenario_row(
+    row: HostedHarnessScenario,
+    *,
+    targets: list[FaultTarget] | None,
+    actor_cast: list[ActorRecord],
+) -> dict[str, Any]:
+    """One list row. Safe on a scenario indexed before any call was made. Its actors are resolved against the
+    environment's cast, and a scenario that cannot work on this agent as set says why."""
+    # Imported here: harness_tool_reach loads hosted_harness, whose import chain reaches back to this module.
+    from simulate.services.harness_actor_labels import resolved_scenario_actors
+    from simulate.services.harness_tool_reach import door_problem
+
     persona = row.persona or {}
+    actors = call_actor_entries(row.actors) or []
     return {
         "id": str(row.id),
         "scenario_id": str(row.scenario_id) if row.scenario_id else None,
@@ -1275,8 +1290,14 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
-        "actors": row.actors or [],
+        "actors": [
+            {**entry, **resolved}
+            for entry, resolved in zip(
+                actors, resolved_scenario_actors(actors, actor_cast), strict=True
+            )
+        ],
         "faults": row.faults or [],
+        "door_problem": door_problem(faults=row.faults, actors=actors, targets=targets),
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from simulate.services.harness_versioning import archives
+from simulate.services import (
+    harness_actor_reads,
+    harness_actor_rules,
+    harness_actor_validation,
+    harness_actors,
+)
+from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests import test_harness_versioning_record as record_tests
 from simulate.tests.test_harness_amend_archive import NAMES
@@ -409,7 +415,7 @@ def test_an_actor_a_scenario_includes_is_not_removed(
 
 
 def test_an_actor_counts_every_scenario_it_takes_part_in_however_it_comes_in():
-    from simulate.services.harness_actors import _scenarios_using
+    from simulate.services.harness_actor_rules import scenarios_using
 
     documents = [
         {"scenario_key": "asks", "actors": [{"id": "manager"}]},
@@ -422,10 +428,10 @@ def test_an_actor_counts_every_scenario_it_takes_part_in_however_it_comes_in():
     ]
 
     # The caller is the person in every scenario that a person starts, and in none started by a task or event.
-    assert _scenarios_using(documents, "caller") == ["asks", "thread"]
-    assert _scenarios_using(documents, "manager") == ["asks", "thread"]
-    assert _scenarios_using(documents, "calendar") == ["meeting-ended"]
-    assert _scenarios_using(documents, "coworker") == ["thread"]
+    assert scenarios_using(documents, "caller") == ["asks", "thread"]
+    assert scenarios_using(documents, "manager") == ["asks", "thread"]
+    assert scenarios_using(documents, "calendar") == ["meeting-ended"]
+    assert scenarios_using(documents, "coworker") == ["thread"]
 
 
 def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not_get_it_twice(
@@ -622,12 +628,11 @@ def test_an_actor_who_only_acts_in_the_world_is_told_its_view_is_not_played(
 def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_with(
     user, workspace, storage, auth_client
 ):
-    from simulate.services import harness_actors
     from simulate.services.harness_versioning.versions import record_authoring
     from simulate.tests import test_harness_versioning_record as record_tests
     from simulate.tests.test_harness_versioning_record import _authoring
 
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     rules["evaluator_only"]["scenario_fields"].append("rubric")
     rules["records"]["actors.json"]["properties"]["mood"] = {"type": "string"}
     rules["records"]["actors.json"]["properties"]["loudness_ratio"] = {
@@ -651,8 +656,10 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
 
     # A field the sealing release declares is kept, its limits apply, and what it hides is never seen.
     assert added.status_code == 200, added.content
+    stored = json.loads(drafts.edit_sides(later)["environment"]["actors.json"])
+    # Kept in the record as written; the typed cast shows it once a release types it.
     assert (
-        listed["actors"][0]["mood"] == "patient"
+        stored["actors"][0]["mood"] == "patient"
         and "mood" in listed["record_schemas"]["actors.json"]["properties"]
     )
     assert (loud.status_code, loud.json()["error"]) == (400, "actor_invalid")
@@ -756,16 +763,20 @@ def test_an_actor_is_given_only_actions_the_world_has_and_is_told_which(
 def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is_never_stored(
     user, workspace, storage, auth_client
 ):
-    from simulate.services import harness_actors
     from simulate.services.harness_versioning.drafts import edit_sides
 
     # As the builder chat might have written it: actions a world whose tools run inside the agent does not have.
     in_process = _built(user, workspace, "actors-kept-values-world", contract=None)
     files = edit_sides(in_process)["environment"]
-    rules = harness_actors.actor_rules(files)
+    rules = harness_actor_rules.actor_rules(files)
     renamed = {**MANAGER, "name": "Priya R."}
-    assert harness_actors._new_choices(MANAGER, renamed, files, rules) == []
-    assert harness_actors._new_choices(None, MANAGER, files, rules) != []
+    assert (
+        harness_actor_validation.new_choice_problems(MANAGER, renamed, files, rules)
+        == []
+    )
+    assert (
+        harness_actor_validation.new_choice_problems(None, MANAGER, files, rules) != []
+    )
 
     environment = _built(user, workspace, "actors-kept-values")
     call_actor = {
@@ -778,9 +789,10 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
     listed = listed.get("result", listed)
     [colleague] = [one for one in listed["actors"] if one["id"] == "colleague"]
+    # The cast as read, sent back as changes: nothing a read adds (the scenario count) is ever stored.
     resent = auth_client.put(
         f"{BASE}/{environment.id}/actors/colleague/",
-        {"actor": colleague},
+        {"changes": {"name": colleague["name"], "role": colleague["role"]}},
         format="json",
     )
     bad_channel = auth_client.put(
@@ -846,9 +858,8 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
 
 
 def test_a_call_actor_never_takes_the_name_of_a_caller_it_is_with():
-    from simulate.services import harness_actors
 
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     suite = {
         "scenarios/one/scenario.json": json.dumps(
             {
@@ -864,20 +875,27 @@ def test_a_call_actor_never_takes_the_name_of_a_caller_it_is_with():
     colleague = {"id": "colleague", "name": "Jordan Taylor", "channel": "audio_mix"}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            "simulate.services.harness_actors.suite_documents",
+            "simulate.services.harness_actor_validation.suite_documents",
             lambda files: [json.loads(raw) for raw in files.values()],
         )
         # The caller of a scenario that does not include the actor may share its name.
-        assert harness_actors._new_choices(None, colleague, {}, rules, suite) == []
+        assert (
+            harness_actor_validation.new_choice_problems(
+                None, colleague, {}, rules, suite
+            )
+            == []
+        )
         renamed = {**colleague, "name": "mei lin"}
-        problems = harness_actors._new_choices(colleague, renamed, {}, rules, suite)
+        problems = harness_actor_validation.new_choice_problems(
+            colleague, renamed, {}, rules, suite
+        )
     assert problems == [
         "colleague's name is the caller's in one (Mei Lin); choose another."
     ]
 
 
 def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_how():
-    from simulate.services.harness_actors import world_actions
+    from simulate.services.harness_actor_rules import world_actions
 
     contract = {
         "tool_entrypoints": [
@@ -904,7 +922,7 @@ def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_
 
 
 def test_record_changes_on_the_world_s_own_collections_are_actions_when_the_release_seals_the_rule():
-    from simulate.services.harness_actors import world_actions
+    from simulate.services.harness_actor_rules import world_actions
 
     files = {
         "contract.json": json.dumps(
@@ -947,7 +965,7 @@ def test_record_changes_on_the_world_s_own_collections_are_actions_when_the_rele
 
 
 def test_a_fallback_may_be_one_of_the_actor_s_own_actions_but_not_someone_else_s():
-    from simulate.services.harness_actors import _broken_references
+    from simulate.services.harness_actor_validation import broken_references
 
     rules = {"references": {"activation.fallback": ["silent", "decline"]}}
     dana = {
@@ -956,13 +974,13 @@ def test_a_fallback_may_be_one_of_the_actor_s_own_actions_but_not_someone_else_s
         "permitted_actions": ["approvals.change"],
         "activation": {"fallback": "approvals.change"},
     }
-    assert _broken_references(dana, {"dana"}, rules) == []
+    assert broken_references(dana, {"dana"}, rules) == []
     stranger = {**dana, "activation": {"fallback": "orders.cancel"}}
-    assert _broken_references(stranger, {"dana"}, rules) == [
+    assert broken_references(stranger, {"dana"}, rules) == [
         ("activation.fallback", "orders.cancel")
     ]
     # A release that declares no such field keeps every fallback to another actor.
-    assert _broken_references(dana, {"dana"}, {**rules, "own_actions": []}) == [
+    assert broken_references(dana, {"dana"}, {**rules, "own_actions": []}) == [
         ("activation.fallback", "approvals.change")
     ]
 
@@ -1290,7 +1308,6 @@ def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
 ):
     from unittest.mock import patch
 
-    from simulate.services import harness_actors
     from simulate.services.hosted_harness import HostedHarnessError
 
     environment = _built(user, workspace, "actors-race")
@@ -1333,7 +1350,9 @@ def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
             )
 
     assert refused.value.code == "draft_changed"
-    assert [one["id"] for one in harness_actors.read_actors(environment)["actors"]] == [
+    assert [
+        one["id"] for one in harness_actor_reads.read_actors(environment)["actors"]
+    ] == [
         "manager",
         "coworker",
     ]
@@ -1901,9 +1920,8 @@ def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor
     user, workspace, storage, auth_client
 ):
     from simulate.models import HostedHarnessStageOutput
-    from simulate.services import harness_actors
 
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     rules["record_changes"] = {
         "from": "generic-harness/source-model.json",
         "tables": "tables",
@@ -2090,13 +2108,12 @@ def test_no_conflict_for_an_action_the_actor_already_had_none_holds_or_two_alrea
 def test_an_actor_s_model_is_one_the_environment_offers(
     user, workspace, storage, auth_client
 ):
-    from simulate.services import harness_actors
     from simulate.services.harness_versioning.versions import record_authoring
     from simulate.tests import test_harness_versioning_record as record_tests
     from simulate.tests.test_harness_versioning_record import _authoring
 
     # A release whose actor record takes any model name of up to 120 characters, as today's does.
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     rules["records"]["actors.json"]["properties"]["model"] = {
         "type": ["string", "null"],
         "maxLength": 120,
@@ -2323,7 +2340,7 @@ def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
     ],
 )
 def test_a_scenario_fault_the_world_cannot_apply_is_refused_by_name(fault, problem):
-    from simulate.services.harness_actors import require_valid_faults
+    from simulate.services.harness_tool_reach import require_valid_faults
     from simulate.services.hosted_harness import HostedHarnessError
 
     with pytest.raises(HostedHarnessError) as raised:
@@ -2333,7 +2350,7 @@ def test_a_scenario_fault_the_world_cannot_apply_is_refused_by_name(fault, probl
 
 
 def test_scenario_faults_the_world_can_apply_pass():
-    from simulate.services.harness_actors import require_valid_faults
+    from simulate.services.harness_tool_reach import require_valid_faults
 
     require_valid_faults(
         [
@@ -2370,13 +2387,13 @@ def test_scenario_faults_the_world_can_apply_pass():
     ],
 )
 def test_unavailable_is_a_valid_fault_mode(fault):
-    from simulate.services.harness_actors import require_valid_faults
+    from simulate.services.harness_tool_reach import require_valid_faults
 
     require_valid_faults([{"name": "stock-out", "faults": [fault]}])
 
 
 def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupported():
-    from simulate.services.harness_actors import production_only
+    from simulate.services.harness_tool_reach import production_only
 
     contract = {
         "tool_entrypoints": [
@@ -2450,7 +2467,7 @@ def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupport
 
 
 def test_door_reach_reads_service_tools_only():
-    from simulate.services.harness_actors import door_reach
+    from simulate.services.harness_tool_reach import door_reach
 
     contract = {
         "runtime": {"language": "python"},
@@ -2478,7 +2495,7 @@ def test_door_reach_reads_service_tools_only():
 
 
 def test_door_reach_reads_the_build_s_word_that_the_door_cannot_reach_a_tool():
-    from simulate.services.harness_actors import door_reach
+    from simulate.services.harness_tool_reach import door_reach
 
     entry = {
         "tool": "lookup",
@@ -2549,7 +2566,7 @@ def test_a_huge_record_change_is_cut_at_ingestion_and_says_how_much():
 
 
 def test_a_scenario_needs_a_production_only_tool_only_when_every_path_calls_one():
-    from simulate.services.harness_actors import needed_production_tools
+    from simulate.services.harness_tool_reach import needed_production_tools
 
     blocked = ["issue_refund"]
     solution = [{"tool": "lookup_ride"}, {"tool": "issue_refund"}]

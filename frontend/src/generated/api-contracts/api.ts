@@ -602,6 +602,8 @@ import type {
   HarnessActorLimitsWriteApi,
   HarnessActorListApi,
   HarnessActorUnresolvedAcceptApi,
+  HarnessActorValidateApi,
+  HarnessActorValidationApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
   HarnessAgentCredentialsResponseApi,
@@ -633,6 +635,7 @@ import type {
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentEvalEditApi,
+  HarnessEnvironmentFileUploadedApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
@@ -659,6 +662,8 @@ import type {
   HarnessRunCreateResponseApi,
   HarnessRunPlanApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioAmendResponseApi,
+  HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
@@ -60257,6 +60262,55 @@ export const simulateApiHarnessEnvironmentsAcceptUnresolved = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsValidateActorResponse200 = {
+  data: HarnessActorValidationApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsValidateActorResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsValidateActorResponseSuccess =
+  simulateApiHarnessEnvironmentsValidateActorResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsValidateActorResponseError =
+  simulateApiHarnessEnvironmentsValidateActorResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsValidateActorResponse =
+  | simulateApiHarnessEnvironmentsValidateActorResponseSuccess
+  | simulateApiHarnessEnvironmentsValidateActorResponseError;
+
+export const getSimulateApiHarnessEnvironmentsValidateActorUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/actor-validation/`;
+};
+
+/**
+ * What a create, replace or removal of one actor would say, writing nothing: its problems, the actions it
+would share that `share_actions` does not confirm, the id a create gets, and how far it is over the bound.
+ */
+export const simulateApiHarnessEnvironmentsValidateActor = async (
+  id: string,
+  harnessActorValidateApi: HarnessActorValidateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsValidateActorResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsValidateActorResponse>(
+    getSimulateApiHarnessEnvironmentsValidateActorUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorValidateApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsActorsResponse200 = {
   data: HarnessActorListApi;
   status: 200;
@@ -60442,7 +60496,7 @@ export const getSimulateApiHarnessEnvironmentsReplaceActorUrl = (
 };
 
 /**
- * Replace one actor in the draft; its id never changes.
+ * Replace one actor in the draft, as a whole record or as changes to it; its id never changes.
  */
 export const simulateApiHarnessEnvironmentsReplaceActor = async (
   id: string,
@@ -60989,7 +61043,7 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
 };
 
 export type simulateApiHarnessEnvironmentsUploadFileResponse200 = {
-  data: HarnessActorListApi;
+  data: HarnessEnvironmentFileUploadedApi;
   status: 200;
 };
 
@@ -61261,8 +61315,10 @@ export const getSimulateApiHarnessEnvironmentsRunPlanUrl = (
 };
 
 /**
- * The versions a run of these picks would use and what to warn about; no
-writes. An absent pick is the environment's default.
+ * The versions a run of these picks would use, what to warn about and whether
+a run of the selected scenarios would start; no writes. An absent pick is the
+environment's default. Without versioning only picks are refused: the verdict
+on blocked tools holds for an environment built before versions.
  */
 export const simulateApiHarnessEnvironmentsRunPlan = async (
   id: string,
@@ -62567,7 +62623,7 @@ export const simulateApiHarnessJobsRuns = async (
 };
 
 export type simulateApiHarnessJobsScenariosResponse200 = {
-  data: void;
+  data: HarnessScenarioListResponseApi;
   status: 200;
 };
 
@@ -62612,18 +62668,18 @@ export const simulateApiHarnessJobsScenarios = async (
   );
 };
 
-export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
-  data: HarnessScenarioAmendApi;
-  status: 201;
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse200 = {
+  data: HarnessScenarioAmendResponseApi;
+  status: 200;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200>;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
-  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+  simulateApiHarnessJobsScenariosAmendScenariosResponse200 & {
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =

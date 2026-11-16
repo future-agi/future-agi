@@ -23,6 +23,8 @@ import {
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
+import RunBlockedLine from "./RunBlockedLine";
+import RunSeedLine from "./RunSeedLine";
 import { parseRunSeed } from "./runSeed";
 
 // Only versions a run can take are offered: an active environment or scenario
@@ -100,7 +102,33 @@ export default function RunDialog({
     ).map((piece) => [piece, selected[piece]]),
   );
 
-  const plan = useRunPlan(env?.id, picks, { enabled: open && Boolean(data) });
+  const suite = options.suite.find((one) => one.id === selected.suite);
+  const runAll = scenarioIds === undefined;
+  // Run-all of the default suite runs the server's current list; of another
+  // suite, that suite's scenarios, so it needs them. With versioning on the
+  // list may show unsaved changes, so the default's are named instead.
+  const needsMembers =
+    runAll &&
+    Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
+  const members = useSuiteMembers(env?.id, selected.suite, {
+    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
+  });
+  const memberKeys = members.data?.map((member) => member.scenario_key);
+  const missing =
+    !runAll && memberKeys
+      ? scenarioIds.filter((key) => !memberKeys.includes(key))
+      : [];
+  // Selected scenarios the picked suite lacks are skipped.
+  let runIds = runAll
+    ? undefined
+    : scenarioIds.filter((key) => !missing.includes(key));
+  if (needsMembers) runIds = memberKeys;
+
+  // What the run would block, known before it starts: a picked selection is asked by its keys, a whole suite by none.
+  const plan = useRunPlan(env?.id, picks, {
+    enabled: open && !versions.isLoading,
+    scenarioKeys: runAll ? null : runIds,
+  });
   const warnings = plan.data?.warnings || [];
   const refusedPlan = planRefusal(plan.error);
   const planFailed =
@@ -145,52 +173,18 @@ export default function RunDialog({
     plan.isError,
   ]);
 
-  const suite = options.suite.find((one) => one.id === selected.suite);
-  const runAll = scenarioIds === undefined;
-  // Run-all of the default suite runs the server's current list; of another
-  // suite, that suite's scenarios, so it needs them. With versioning on the
-  // list may show unsaved changes, so the default's are named instead.
-  const needsMembers =
-    runAll &&
-    Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
-  const members = useSuiteMembers(env?.id, selected.suite, {
-    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
-  });
-  const memberKeys = members.data?.map((member) => member.scenario_key);
-  const missing =
-    !runAll && memberKeys
-      ? scenarioIds.filter((key) => !memberKeys.includes(key))
-      : [];
-  // Selected scenarios the picked suite lacks are skipped.
-  let runIds = runAll
-    ? undefined
-    : scenarioIds.filter((key) => !missing.includes(key));
-  if (needsMembers) runIds = memberKeys;
   let blocked = null;
   if (needsMembers && memberKeys?.length === 0) {
     blocked = COPY.emptySuite(named(suite));
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
   }
-  // Tools that reach production are blocked in this controlled test; the plan
-  // names the scenarios that cannot pass without each.
-  const blockedTools =
-    plan.data?.blocked_tools ||
-    (env?.productionOnly || []).map((tool) => ({ tool, scenarios: [] }));
-  const chosen = runIds && new Set(runIds);
-  const usedBy = (entry) =>
-    entry.scenarios
-      .filter((one) => !chosen || chosen.has(one.key))
-      .map((one) => one.name);
-  const needing = new Set(
-    blockedTools.flatMap((entry) => entry.scenarios.map((one) => one.key)),
-  );
-  if (!blocked && chosen?.size && [...chosen].every((key) => needing.has(key)))
-    blocked = COPY.allBlocked(
-      blockedTools
-        .filter((entry) => usedBy(entry).length)
-        .map((entry) => entry.tool),
-    );
+  // Tools that reach production are blocked in this controlled test. The plan
+  // names them for the chosen scenarios, how many it holds back and whether
+  // anything is left to run.
+  const blockedTools = plan.data ? plan.data.blocked_tools : [];
+  if (!blocked && plan.data && !plan.data.runnable)
+    blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
@@ -209,7 +203,8 @@ export default function RunDialog({
   const canSubmit =
     !submitting &&
     !versions.isLoading &&
-    !plan.isLoading &&
+    // Held while the plan is being asked; a plan that failed leaves the block to the run's own refusal.
+    (Boolean(plan.data) || planFailed) &&
     !refusedPlan &&
     !blocked &&
     !seedInvalid &&
@@ -273,16 +268,12 @@ export default function RunDialog({
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
 
-  const blockedToolLines = blockedTools.map((entry) => (
-    <Alert key={entry.tool} severity="warning" data-testid="run-blocked-tool">
-      {[
-        COPY.blockedTool(entry.tool),
-        usedBy(entry).length && COPY.usedBy(usedBy(entry)),
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    </Alert>
-  ));
+  const blockedToolLines = plan.data && (
+    <RunBlockedLine
+      blockedTools={blockedTools}
+      heldBack={plan.data.held_back}
+    />
+  );
 
   const body = () => {
     if (versions.isLoading) {
@@ -321,14 +312,11 @@ export default function RunDialog({
             {line}
           </Typography>
         )}
-        <TextField
-          size="small"
-          label={COPY.seed}
-          value={seed}
-          onChange={(event) => setSeed(event.target.value)}
-          error={seedInvalid}
-          helperText={seedInvalid ? COPY.seedInvalid : COPY.seedHelp}
-          inputProps={{ inputMode: "numeric", "data-testid": "run-seed" }}
+        <RunSeedLine
+          seed={seed}
+          value={seedValue}
+          invalid={seedInvalid}
+          onChange={setSeed}
         />
         {drafts?.any && (
           <Alert severity="info" data-testid="run-drafts-note">
@@ -370,9 +358,21 @@ export default function RunDialog({
             </Stack>
           )}
           {planFailed && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Alert
+              severity="warning"
+              data-testid="run-plan-failed"
+              action={
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => plan.refetch()}
+                >
+                  {COPY.retryPlan}
+                </Button>
+              }
+            >
               {COPY.planError}
-            </Typography>
+            </Alert>
           )}
           {warnings.map((warning) => (
             <Alert
@@ -425,8 +425,6 @@ RunDialog.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
-    // Tools that reach production, blocked in a controlled test.
-    productionOnly: PropTypes.arrayOf(PropTypes.string),
   }),
   // Undefined runs every scenario.
   scenarioIds: PropTypes.arrayOf(PropTypes.string),

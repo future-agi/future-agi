@@ -259,8 +259,17 @@ describe("SharedView simulation call rendering", () => {
         status: "completed",
         turn_count: 2,
         transcript: [
-          { role: "user", content: "Please cancel my plan." },
-          { role: "assistant", content: "Your plan is cancelled." },
+          // As the call detail sends a chat row: its speaker said outright.
+          {
+            role: "user",
+            speaker_role: "user",
+            content: "Please cancel my plan.",
+          },
+          {
+            role: "assistant",
+            speaker_role: "assistant",
+            content: "Your plan is cancelled.",
+          },
         ],
         function_calls: [],
       }),

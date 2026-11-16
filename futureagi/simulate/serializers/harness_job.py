@@ -1056,6 +1056,47 @@ class HarnessScenarioAmendSerializer(serializers.Serializer):
     rework = serializers.BooleanField(required=False, default=True)
 
 
+SCENARIO_AMEND_CODES = (
+    "applied",
+    "fault_invalid",
+    "needs_rework",
+    "not_editable",
+    "scenario_unknown",
+    "unknown_change",
+    "edit_invalid",
+    "not_saved",
+)
+
+
+class HarnessScenarioAmendReceiptSerializer(serializers.Serializer):
+    """What became of one change to one scenario."""
+
+    scenario = serializers.CharField(allow_blank=True)
+    outcome = serializers.ChoiceField(choices=("applied", "queued", "refused"))
+    why = serializers.CharField()
+    code = serializers.ChoiceField(
+        choices=SCENARIO_AMEND_CODES,
+        help_text="applied (also when queued); fault_invalid: the test world cannot apply the test condition; "
+        "needs_rework: the change needs a re-proof; not_editable; scenario_unknown; unknown_change; edit_invalid: "
+        "the edited scenario fails its checks; not_saved: the edit could not be written, nothing changed.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The scenario field the receipt is about: `faults` for a test condition, `persona`, or the set "
+        "field; null for a whole-scenario change.",
+    )
+
+
+class HarnessScenarioAmendDraftSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    revision = serializers.IntegerField()
+
+
+class HarnessScenarioAmendResponseSerializer(serializers.Serializer):
+    receipts = HarnessScenarioAmendReceiptSerializer(many=True)
+    draft = HarnessScenarioAmendDraftSerializer(required=False, allow_null=True)
+
+
 class HarnessStageOutputSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     title = serializers.CharField()

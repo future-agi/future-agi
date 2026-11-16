@@ -48,6 +48,10 @@ _LIST = {
 }
 
 
+# A row read with no contract and no cast: its actors read by their ids, and no door problem can be told.
+_NO_CAST = {"targets": None, "actor_cast": []}
+
+
 def _docs():
     return [
         {"scenario_key": "alone", "name": "alone", "instruction": "Book it."},
@@ -77,9 +81,16 @@ def test_a_suite_indexes_each_scenarios_call_actors_and_filters_by_them(
     index_scenarios(job, _docs())
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
 
-    assert scenario_row(rows.get(scenario_key="with-friend"))["actors"] == [_FRIEND]
+    [friend] = scenario_row(rows.get(scenario_key="with-friend"), **_NO_CAST)["actors"]
+    # The entry as the scenario holds it, plus who the actor is, resolved against the cast (here none).
+    assert {key: friend[key] for key in _FRIEND} == _FRIEND
+    assert (friend["name"], friend["side"], friend["effective_trigger"]) == (
+        "friend",
+        "world",
+        _FRIEND["trigger"],
+    )
     assert rows.get(scenario_key="alone").actors is None
-    assert scenario_row(rows.get(scenario_key="alone"))["actors"] == []
+    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["actors"] == []
 
     def filtered(query: str):
         return _keys(apply_filters(rows, QueryDict(query)))
@@ -996,12 +1007,14 @@ def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
     index_scenarios(job, [dict(_docs()[0], faults=[fault]), _docs()[1]])
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
 
-    assert scenario_row(rows.get(scenario_key="alone"))["faults"] == [fault]
-    assert scenario_row(rows.get(scenario_key="with-friend"))["faults"] == []
+    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["faults"] == [fault]
+    assert (
+        scenario_row(rows.get(scenario_key="with-friend"), **_NO_CAST)["faults"] == []
+    )
 
 
 def test_an_amend_refuses_a_test_condition_the_world_cannot_apply_with_why():
-    from simulate.services.harness_actors import faults_problem
+    from simulate.services.harness_tool_reach import faults_problem
 
     assert faults_problem([{"action": "orders.refund", "mode": "explode"}]).startswith(
         "mode must be"

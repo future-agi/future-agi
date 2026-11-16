@@ -110,7 +110,10 @@ export const scenarioFromApi = (row = {}) => {
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
+    // Each actor resolved against the cast: name, role, channel, side, when it comes in and its timeout, as words.
     callActors: Array.isArray(row.actors) ? row.actors : [],
+    // Why the scenario cannot work as set ({code, message}), or null.
+    doorProblem: row.door_problem,
     faults: Array.isArray(row.faults) ? row.faults : [],
     persona: persona
       ? {

@@ -15,28 +15,26 @@ const MONO = "ui-monospace, Menlo, monospace";
 
 /**
  * "World" internals on the Contract tab: the tables the world holds and the
- * tools the agent has. Everything shown is read from the job's contract and
- * world outputs. Columns appear only when ALK reported the table's fields in
- * `data_schema`; a tool's callable appears only when `tool_entrypoints` names
- * it. Nothing is derived from a name.
+ * tools the agent has, as the environment's detail states them. The tables are
+ * the world's own (`world.tables`, harness tables left out), with their fields
+ * when the build read them; each tool's status, where it runs and whether it is
+ * reset between trials is `contract.tool_status`. Nothing is derived here.
  */
 export default function WorldInternalsSection({ env }) {
-  const schema = schemaRows(env);
+  const tables = env?.worldTables;
   const tools = env?.tools || [];
   const entrypoints = entrypointsByTool(env);
-  const totalRows = schema.reduce((a, t) => a + (t.rows || 0), 0);
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
-      {schema.length > 0 && (
-        <SchemaCard schema={schema} totalRows={totalRows} />
+      {tables?.length > 0 && (
+        <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
       )}
       {tools.length > 0 && (
         <ToolsCard
           tools={tools}
           entrypoints={entrypoints}
-          reach={env?.doorReach || {}}
-          productionOnly={env?.productionOnly || []}
+          statuses={env?.toolStatus}
         />
       )}
     </Stack>
@@ -48,24 +46,6 @@ WorldInternalsSection.propTypes = {
   patch: PropTypes.func,
   locked: PropTypes.bool,
 };
-
-// Seed tables from `world.stores`, joined with the field types the contract's
-// `data_schema` carries for a collection of the same name.
-function schemaRows(env) {
-  const tables = env?.seed?.tables || [];
-  const dataSchema = env?.dataSchema || {};
-  return tables.map((t) => {
-    const fields = dataSchema[t.name];
-    const cols =
-      fields && typeof fields === "object" && !Array.isArray(fields)
-        ? Object.entries(fields).map(([name, type]) => ({
-            name,
-            type: String(type),
-          }))
-        : null;
-    return { name: t.name, rows: t.rows, note: t.note, cols };
-  });
-}
 
 function entrypointsByTool(env) {
   const out = {};
@@ -81,7 +61,7 @@ function SchemaCard({ schema, totalRows }) {
   const [openTable, setOpenTable] = useState(null);
   // The chevron's slot only exists when some table can open; otherwise the
   // icons would sit indented from the header for a chevron nobody sees.
-  const anyExpandable = schema.some((t) => t.cols?.length);
+  const anyExpandable = schema.some((t) => t.fields.length);
   return (
     <SectionCard
       title="World state · database"
@@ -104,7 +84,7 @@ function SchemaCard({ schema, totalRows }) {
         }
       >
         {schema.map((t) => {
-          const expandable = !!t.cols?.length;
+          const expandable = t.fields.length > 0;
           const open = expandable && openTable === t.name;
           return (
             <Box key={t.name}>
@@ -163,7 +143,7 @@ function SchemaCard({ schema, totalRows }) {
                   }}
                   noWrap
                 >
-                  {[expandable ? `${t.cols.length} fields` : null, t.note]
+                  {[expandable ? `${t.fields.length} fields` : null, t.note]
                     .filter(Boolean)
                     .join(" · ")}
                 </Typography>
@@ -175,7 +155,7 @@ function SchemaCard({ schema, totalRows }) {
                     flexShrink: 0,
                   }}
                 >
-                  {(t.rows || 0).toLocaleString()} rows
+                  {t.rows.toLocaleString()} rows
                 </Typography>
               </Stack>
               {expandable && (
@@ -197,7 +177,7 @@ function SchemaCard({ schema, totalRows }) {
                         columnGap: 1.5,
                       }}
                     >
-                      {t.cols.map((c) => (
+                      {t.fields.map((c) => (
                         <Box key={c.name} sx={{ display: "contents" }}>
                           <Typography
                             sx={{
@@ -230,16 +210,48 @@ function SchemaCard({ schema, totalRows }) {
     </SectionCard>
   );
 }
-SchemaCard.propTypes = { schema: PropTypes.array, totalRows: PropTypes.number };
+SchemaCard.propTypes = {
+  // The world's own tables: {name, rows, note, fields: [{name, type}]}.
+  schema: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      rows: PropTypes.number.isRequired,
+      note: PropTypes.string,
+      fields: PropTypes.arrayOf(
+        PropTypes.shape({ name: PropTypes.string, type: PropTypes.string }),
+      ).isRequired,
+    }),
+  ).isRequired,
+  totalRows: PropTypes.number.isRequired,
+};
 
 /* ── tools ──────────────────────────────────────────────────────────── */
 
-function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
+// How each status reads on its chip, and its colour; `unknown` has no chip.
+const STATUS_CHIP = {
+  simulated: {
+    label: T.labels.simulated,
+    color: "success.dark",
+    bg: "success.lighter",
+  },
+  in_process: {
+    label: T.labels.inProcess,
+    color: "warning.dark",
+    bg: "warning.lighter",
+  },
+  unsupported: {
+    label: T.labels.unsupported,
+    color: "error.dark",
+    bg: "error.lighter",
+  },
+};
+
+function ToolsCard({ tools, entrypoints, statuses }) {
   const [openTool, setOpenTool] = useState(null);
   return (
     <SectionCard
       title="Tools"
-      subtitle="The tools the agent declares, and where each one runs when ALK could read it"
+      subtitle={T.subtitle}
       action={
         <Typography
           sx={{
@@ -259,16 +271,10 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
       >
         {tools.map((tool) => {
           const entry = entrypoints[tool.name];
-          const runsAt = entry?.callable
-            ? `${entry.module ? `${entry.module}.` : ""}${entry.callable}`
-            : entry?.endpoint
-              ? `${entry.service ? `${entry.service} ` : ""}${entry.method || "POST"} /${entry.endpoint}`
-              : null;
+          const status = statuses?.find((one) => one.tool === tool.name);
+          const runsAt = status?.runs_at;
+          const chip = status && STATUS_CHIP[status.status];
           const open = openTool === tool.name;
-          // Behind the world's door it acts on the seeded test world; otherwise it runs inside the agent.
-          const unsupported = productionOnly.includes(tool.name);
-          const known = !unsupported && tool.name in reach;
-          const behindDoor = Boolean(reach[tool.name]);
           return (
             <Box key={tool.name}>
               <Stack
@@ -287,7 +293,9 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
               >
                 <Iconify
                   icon={
-                    open ? "eva:chevron-down-fill" : "eva:chevron-right-fill"
+                    open
+                      ? "solar:alt-arrow-down-linear"
+                      : "solar:alt-arrow-right-linear"
                   }
                   width={16}
                   sx={{ color: "text.secondary", flexShrink: 0 }}
@@ -313,28 +321,13 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
                 >
                   {tool.desc}
                 </Typography>
-                {known && (
-                  <Box
-                    component="span"
-                    sx={{
-                      px: 0.75,
-                      height: 18,
-                      borderRadius: "4px",
-                      typography: "s3",
-                      fontWeight: 500,
-                      lineHeight: "18px",
-                      flexShrink: 0,
-                      color: behindDoor ? "success.dark" : "warning.dark",
-                      bgcolor: behindDoor
-                        ? "success.lighter"
-                        : "warning.lighter",
-                    }}
+                {chip && (
+                  <Tooltip
+                    arrow
+                    title={
+                      status.status === "unsupported" ? T.unsupportedWhy : ""
+                    }
                   >
-                    {behindDoor ? T.labels.simulated : T.labels.inProcess}
-                  </Box>
-                )}
-                {unsupported && (
-                  <Tooltip arrow title={T.unsupportedWhy}>
                     <Box
                       component="span"
                       sx={{
@@ -345,11 +338,11 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
                         fontWeight: 500,
                         lineHeight: "18px",
                         flexShrink: 0,
-                        color: "error.dark",
-                        bgcolor: "error.lighter",
+                        color: chip.color,
+                        bgcolor: chip.bg,
                       }}
                     >
-                      {T.labels.unsupported}
+                      {chip.label}
                     </Box>
                   </Tooltip>
                 )}
@@ -380,12 +373,7 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
                 )}
               </Stack>
               <Collapse in={open}>
-                <ToolDetail
-                  tool={tool}
-                  entry={entry}
-                  known={known}
-                  behindDoor={behindDoor}
-                />
+                <ToolDetail tool={tool} entry={entry} status={status} />
               </Collapse>
             </Box>
           );
@@ -395,9 +383,9 @@ function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
   );
 }
 
-// One tool's contract: its inputs with types and units, what it changes, when it refuses, what it needs first and
-// what happens to it between trials.
-function ToolDetail({ tool, entry, known, behindDoor }) {
+// One tool's contract: its arguments with types and units, what it changes, when it refuses, what it needs first and
+// whether it is reset between trials.
+function ToolDetail({ tool, entry, status }) {
   const args = tool.args || [];
   const units = tool.argUnits || {};
   const types = tool.argTypes || {};
@@ -428,7 +416,7 @@ function ToolDetail({ tool, entry, known, behindDoor }) {
       }}
     >
       {field(
-        T.inputs,
+        T.arguments,
         args.length ? (
           <Stack spacing={0.25}>
             {args.map((name) => (
@@ -462,7 +450,7 @@ function ToolDetail({ tool, entry, known, behindDoor }) {
         ),
       )}
       {field(
-        T.changesRecords,
+        T.changes,
         <Stack spacing={0.25}>
           {text(effectLabel(entry?.effect))}
           {tool.effects && (
@@ -475,19 +463,31 @@ function ToolDetail({ tool, entry, known, behindDoor }) {
       {tool.refuses && field(T.refusesWhen, text(tool.refuses))}
       {tool.requires?.length > 0 &&
         field(T.needsFirst, text(tool.requires.join(", ")))}
-      {known && field(T.betweenTrials, text(behindDoor ? T.reset : T.notReset))}
+      {status &&
+        status.reset_between_trials !== null &&
+        field(
+          T.resetLabel,
+          text(status.reset_between_trials ? T.reset : T.notReset),
+        )}
     </Box>
   );
 }
+const TOOL_STATUS_SHAPE = PropTypes.shape({
+  tool: PropTypes.string.isRequired,
+  status: PropTypes.oneOf(["simulated", "in_process", "unsupported", "unknown"])
+    .isRequired,
+  reset_between_trials: PropTypes.bool,
+  runs_at: PropTypes.string,
+  writes: PropTypes.bool,
+});
 ToolDetail.propTypes = {
   tool: PropTypes.object.isRequired,
   entry: PropTypes.object,
-  known: PropTypes.bool,
-  behindDoor: PropTypes.bool,
+  status: TOOL_STATUS_SHAPE,
 };
 ToolsCard.propTypes = {
   tools: PropTypes.array,
   entrypoints: PropTypes.object,
-  reach: PropTypes.object,
-  productionOnly: PropTypes.arrayOf(PropTypes.string),
+  // Per contract tool, as the environment's detail states it; absent before the detail is ready.
+  statuses: PropTypes.arrayOf(TOOL_STATUS_SHAPE),
 };

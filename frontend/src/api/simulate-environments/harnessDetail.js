@@ -72,7 +72,10 @@ const toScenarioRow = (row) => ({
     label: sg?.what || sg?.name,
     kind: sg?.kind,
   })),
+  // Each actor resolved against the cast, with when and how long it waits in the server's own words.
   callActors: Array.isArray(row?.actors) ? row.actors : [],
+  // Why the scenario cannot work as set ({code, message}), or null.
+  doorProblem: row?.door_problem,
 });
 
 // evaluations.selected[] → the applied-eval rows useAppliedEvals/EvalRow read.
@@ -163,6 +166,16 @@ export function harnessDetailToEnvironment(detail) {
     doorReach: contract?.door_reach || null,
     // Tools that reach a system the environment has no copy of: Unsupported for this controlled test.
     productionOnly: contract?.production_only || [],
+    // Per contract tool: how it answers during a run, whether it is reset between trials, where it runs and whether
+    // it writes ({tool, status, reset_between_trials, runs_at, writes}).
+    toolStatus: contract?.tool_status,
+    // The tools a test condition can name ({tool, action, reachable, writes}).
+    faultTargets: contract?.fault_targets,
+    // The world's own tables ({name, rows, note, fields: [{name, type}]}), harness tables left out, and their rows.
+    worldTables: world?.tables,
+    worldTotalRows: world?.total_rows,
+    // Whether the Actors tab shows: `edit`, `list` or null.
+    actorsTab: detail.actors_tab,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

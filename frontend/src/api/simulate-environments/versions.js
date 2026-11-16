@@ -4,6 +4,7 @@ import { camelCase } from "lodash";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
+import { useDebounce } from "src/hooks/use-debounce";
 
 /**
  * The version history of one environment: its agent, environment and scenario
@@ -101,6 +102,12 @@ const acceptUnresolvedPath = (envId) =>
 const environmentFilesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
 
+// Resolved when called, so a route the generated contract does not list yet fails that request, not the page.
+const actorValidationPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-validation/", {
+    id: envId,
+  });
+
 const runPlanPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/run-plan/", { id: envId });
 
@@ -157,10 +164,17 @@ export const changeCredentials = async (envId, environmentValues, files) =>
 export const createAgentVersion = async (envId, body) =>
   (await axios.post(agentVersionsPath(envId), body)).data;
 
-// What a run of these picks would use and what to warn about.
-export const getRunPlan = async (envId, picks) =>
-  (await axios.get(runPlanPath(envId), { params: versionPickFields(picks) }))
-    .data;
+// What a run of these picks would use and what to warn about, for the chosen scenarios (all when none are named):
+// the tools it blocks, the scenarios held back by them and whether the run can start.
+export const getRunPlan = async (envId, picks, scenarioKeys) =>
+  (
+    await axios.get(runPlanPath(envId), {
+      params: {
+        ...versionPickFields(picks),
+        ...(scenarioKeys ? { scenario_keys: scenarioKeys.join(",") } : {}),
+      },
+    })
+  ).data;
 
 export const getNudges = async (envId) =>
   (await axios.get(nudgesPath(envId))).data;
@@ -202,35 +216,35 @@ export const getActors = async (envId) =>
 export const getActorView = async (envId, actorId) =>
   (await axios.get(actorPath(envId, actorId))).data;
 /**
- * Create, replace or delete one actor in the environment draft; resolves to the cast after it.
- * `revision` is the draft revision the cast was read at, so an edit made elsewhere is refused with
- * `draft_changed`, never overwritten.
+ * Create, replace or delete one actor in the environment draft; resolves to the cast after it. A create or replace
+ * sends `changes`, only the fields the person edited, and the service merges them into the stored record; a create may
+ * name its `id`, else the service makes one from the name. `revision` is the draft revision the cast was read at, so an
+ * edit made elsewhere is refused with `draft_changed`, never overwritten.
  * @param {string} envId
- * @param {{ op: "create"|"replace"|"delete", actor?: Object, actorId?: string, revision: number }} change
+ * @param {{ op: "create"|"replace"|"delete", changes?: Object, id?: string, actorId?: string, revision: number,
+ *   shareActions?: string[] }} change
  */
 export const editActor = async (
   envId,
-  { op, actor, actorId, revision, shareActions },
+  { op, changes, id, actorId, revision, shareActions },
 ) => {
-  // Actions only one other actor holds, confirmed in the form as shared by both.
-  const shared = shareActions?.length ? { share_actions: shareActions } : {};
+  const extra = {
+    // Actions only one other actor holds, confirmed in the form as shared by both.
+    ...(shareActions?.length ? { share_actions: shareActions } : {}),
+    expected_revision: revision,
+  };
   if (op === "create") {
     return (
       await axios.post(actorsPath(envId), {
-        actor,
-        expected_revision: revision,
-        ...shared,
+        changes,
+        ...(id ? { id } : {}),
+        ...extra,
       })
     ).data;
   }
   if (op === "replace") {
-    return (
-      await axios.put(actorPath(envId, actorId), {
-        actor,
-        expected_revision: revision,
-        ...shared,
-      })
-    ).data;
+    return (await axios.put(actorPath(envId, actorId), { changes, ...extra }))
+      .data;
   }
   return (
     await axios.delete(actorPath(envId, actorId), {
@@ -238,6 +252,28 @@ export const editActor = async (
     })
   ).data;
 };
+
+/**
+ * The server's verdict on an actor edit, written nowhere: the same create, replace or delete a save would send, checked
+ * against the draft. Resolves to `{problems, conflicts, suggested_id, over_by}`; an unknown actor is 404
+ * `actor_not_found`.
+ * @param {string} envId
+ * @param {{ op: "create"|"replace"|"delete", changes?: Object, id?: string, actorId?: string,
+ *   shareActions?: string[] }} change
+ */
+export const checkActor = async (
+  envId,
+  { op, changes, id, actorId, shareActions },
+) =>
+  (
+    await axios.post(actorValidationPath(envId), {
+      op,
+      ...(op === "create" ? {} : { actor_id: actorId }),
+      ...(op === "delete" ? {} : { changes }),
+      ...(id ? { id } : {}),
+      ...(shareActions?.length ? { share_actions: shareActions } : {}),
+    })
+  ).data;
 
 // The environment's actor limits in the draft: each a number or null for no limit, and the actors' model.
 export const setActorLimits = async (envId, { limits, revision }) =>
@@ -299,10 +335,11 @@ export const draftsKey = (envId) => [
 export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
 export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
-export const runPlanKey = (envId, picks = {}) => [
+export const runPlanKey = (envId, picks = {}, scenarioKeys = null) => [
   ...environmentVersionsKey(envId),
   "run-plan",
   ...VERSION_PIECES.map((piece) => picks?.[piece] || null),
+  scenarioKeys,
 ];
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
@@ -457,10 +494,14 @@ export function useSuiteMembers(envId, versionId, { enabled = true } = {}) {
   });
 }
 
-export function useRunPlan(envId, picks, { enabled = true } = {}) {
+export function useRunPlan(
+  envId,
+  picks,
+  { enabled = true, scenarioKeys = null } = {},
+) {
   return useQuery({
-    queryKey: runPlanKey(envId, picks),
-    queryFn: () => getRunPlan(envId, picks),
+    queryKey: runPlanKey(envId, picks, scenarioKeys),
+    queryFn: () => getRunPlan(envId, picks, scenarioKeys),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },
@@ -858,6 +899,37 @@ export function useEditActor(envId) {
       }
     },
   });
+}
+
+// How long the form waits after the last keystroke before asking the server whether the edit can be saved.
+export const ACTOR_CHECK_DELAY_MS = 400;
+
+/**
+ * The server's verdict on the edit a form holds (`checkActor`), asked when the form opens, once typing pauses, and
+ * again whenever the cast is read again (the check sits under the cast's key). Only a verdict on exactly `request`
+ * counts: while typing, while the check runs and after it fails there is none, and `retry` asks again.
+ * @param {string} envId
+ * @param {?Object} request What a save would send (`useEditActor`'s change without its revision); null asks nothing.
+ * @returns {{ verdict: ?Object, pending: boolean, isError: boolean, error: ?Object, retry: () => void }}
+ */
+export function useActorCheck(envId, request) {
+  const asked = request ? JSON.stringify(request) : null;
+  const settled = useDebounce(asked, ACTOR_CHECK_DELAY_MS);
+  const query = useQuery({
+    queryKey: [...actorsKey(envId), "check", settled],
+    queryFn: () => checkActor(envId, JSON.parse(settled)),
+    enabled: Boolean(envId && settled),
+    retry: retryServerFailures,
+    meta: { errorHandled: true },
+  });
+  const current = Boolean(asked) && settled === asked && !query.isFetching;
+  return {
+    verdict: current && query.isSuccess ? query.data : null,
+    pending: Boolean(asked) && !(current && (query.isSuccess || query.isError)),
+    isError: current && query.isError,
+    error: query.error,
+    retry: () => query.refetch(),
+  };
 }
 
 /**

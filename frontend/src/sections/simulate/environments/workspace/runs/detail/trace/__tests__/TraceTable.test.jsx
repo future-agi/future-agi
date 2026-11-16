@@ -899,17 +899,16 @@ describe("TraceTable skipped scenarios", () => {
 });
 
 describe("TraceTable calls with no pass or fail", () => {
-  it("reads No score with what it has instead", () => {
+  it("reads No score with the reason the server gives", () => {
     render(
       table({
         rows: [
           {
             ...row("ns"),
             status: "no_score",
+            outcomeReason: "2 not applicable, 1 inconclusive",
             subGoalResults: [
               { name: "noticed", passed: null, result: "not_applicable" },
-              { name: "checked", passed: null, result: "not_applicable" },
-              { name: "asked", passed: null, result: "inconclusive" },
             ],
           },
         ],

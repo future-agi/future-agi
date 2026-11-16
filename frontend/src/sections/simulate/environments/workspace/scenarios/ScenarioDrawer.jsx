@@ -4,16 +4,10 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
-import {
-  callActorTimeout,
-  callActorWhen,
-  effectiveTrigger,
-} from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { ACTORS_COPY } from "../actors/actors.constants";
 import {
   TEST_CONDITIONS_COPY,
-  needsAMissingDoor,
   testConditionLine,
   testConditionRoute,
 } from "./testConditions.constants";
@@ -94,11 +88,7 @@ export default function ScenarioDrawer({
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({
-    callActors: PropTypes.array,
-    doorReach: PropTypes.object,
-    toolEntrypoints: PropTypes.array,
-  }),
+  env: PropTypes.shape({ faultTargets: PropTypes.array }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
@@ -106,15 +96,15 @@ ScenarioDrawer.propTypes = {
 
 function ScenarioSheet({ row, env }) {
   const persona = row.persona?.name ? row.persona : null;
-  const listed = Object.fromEntries(
-    (env?.callActors || []).map((one) => [one.id, one]),
-  );
-  const names = Object.fromEntries(
-    Object.values(listed).map((one) => [one.id, one.name || one.id]),
-  );
   const goals = normaliseSubTasks(row.subTasks);
-  // The scenario needs the world's door where this agent has none: said under its actors or test conditions.
-  const noDoor = needsAMissingDoor(row, env);
+  // Why the scenario cannot work as set, as the server says it: under its actors or its test conditions.
+  const problem = row.doorProblem;
+  const problemLine = (code) =>
+    problem?.code === code && (
+      <Typography className="sd-val" sx={{ color: "warning.main" }}>
+        {problem.message}
+      </Typography>
+    );
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
   const idealOutcome = row.outcome || row.expected;
@@ -188,22 +178,22 @@ function ScenarioSheet({ row, env }) {
                   component="span"
                   sx={{ color: "text.primary", fontWeight: 600 }}
                 >
-                  {listed[one.id]?.name || one.id}
+                  {one.name}
                 </Box>
-                {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
-                {` · ${callActorWhen(effectiveTrigger(one, listed[one.id]), listed[one.id]?.channel)}`}
+                {one.role ? ` · ${one.role}` : ""}
+                {` · ${one.when_label}`}
               </Typography>
-              {callActorTimeout(listed[one.id], names) && (
+              {one.timeout_label && (
                 <Typography className="sd-val" sx={{ color: "text.secondary" }}>
-                  {callActorTimeout(listed[one.id], names)}
+                  {one.timeout_label}
                 </Typography>
               )}
-              {(one.instruction || listed[one.id]?.goal) && (
+              {one.instruction && (
                 <Typography
                   className="sd-val"
                   sx={{ color: "text.secondary", whiteSpace: "pre-line" }}
                 >
-                  {one.instruction || listed[one.id]?.goal}
+                  {one.instruction}
                 </Typography>
               )}
               {(one.actions || []).map((step, index) => (
@@ -221,18 +211,14 @@ function ScenarioSheet({ row, env }) {
               ))}
             </Box>
           ))}
-          {noDoor && (
-            <Typography className="sd-val" sx={{ color: "warning.main" }}>
-              {TEST_CONDITIONS_COPY.noDoor}
-            </Typography>
-          )}
+          {problemLine("actor_no_door")}
         </Stack>
       </Row>
     ),
-    row.faults?.length > 0 && (
-      <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
-        <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
-          {row.faults.map((fault, index) => (
+    <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
+      <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
+        {row.faults?.length > 0 ? (
+          row.faults.map((fault, index) => (
             <Box key={`${fault.action}-${index}`}>
               <Typography className="sd-val">
                 {testConditionLine(fault, env)}
@@ -246,15 +232,15 @@ function ScenarioSheet({ row, env }) {
                 </Typography>
               )}
             </Box>
-          ))}
-          {noDoor && !row.callActors?.length && (
-            <Typography className="sd-val" sx={{ color: "warning.main" }}>
-              {TEST_CONDITIONS_COPY.noDoor}
-            </Typography>
-          )}
-        </Stack>
-      </Row>
-    ),
+          ))
+        ) : (
+          <Typography className="sd-val">
+            {TEST_CONDITIONS_COPY.empty}
+          </Typography>
+        )}
+        {problemLine("fault_unreachable")}
+      </Stack>
+    </Row>,
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
@@ -286,11 +272,7 @@ function ScenarioSheet({ row, env }) {
 
 ScenarioSheet.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({
-    callActors: PropTypes.array,
-    doorReach: PropTypes.object,
-    toolEntrypoints: PropTypes.array,
-  }),
+  env: PropTypes.shape({ faultTargets: PropTypes.array }),
 };
 
 function Row({ label, children }) {

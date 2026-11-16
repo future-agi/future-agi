@@ -11,9 +11,7 @@ import {
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import { useActors } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
-import { withCast } from "../actors/actorUtils";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
@@ -117,12 +115,6 @@ export default function ScenariosStep({
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
-  // With versioning, names come from the draft's cast, as the Actors tab shows them: a draft rename or a draft-only
-  // actor reads the same here before Save.
-  const { data: cast } = useActors(env?.id, {
-    enabled: Boolean(env?.versioning?.enabled),
-  });
-  const envWithCast = useMemo(() => withCast(env, cast), [cast, env]);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -458,13 +450,10 @@ export default function ScenariosStep({
     try {
       const data = await amend.mutateAsync({ rework, changes });
       surfaceReceipts(data, "Saved");
-      const refused = (data?.receipts || [])
-        .filter((one) => one.outcome === "refused")
-        .map((one) => ({
-          ...one,
-          // The server names a refused test condition in its why.
-          field: /test condition/i.test(one.why || "") ? "faults" : one.field,
-        }));
+      // Each receipt names the field it is about (`faults` for a test condition), so the editor shows it there.
+      const refused = (data?.receipts || []).filter(
+        (one) => one.outcome === "refused",
+      );
       return { refused };
     } catch (error) {
       const code = error?.response?.data?.code || error?.code;
@@ -611,7 +600,7 @@ export default function ScenariosStep({
               <PagedScenarioViews
                 pageData={pageData}
                 selection={sel}
-                env={envWithCast}
+                env={env}
                 view={view}
                 hiddenGroupIds={hiddenGroupIds}
                 onHideGroup={toggleGroupHidden}
@@ -654,7 +643,7 @@ export default function ScenariosStep({
       />
       <ScenarioDrawer
         row={openRow}
-        env={envWithCast}
+        env={env}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);
@@ -670,7 +659,7 @@ export default function ScenariosStep({
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
-        env={envWithCast}
+        env={env}
       />
       <ConfirmDialog
         open={!!pendingDelete}

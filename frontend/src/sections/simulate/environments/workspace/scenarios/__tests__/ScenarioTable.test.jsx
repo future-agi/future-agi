@@ -13,7 +13,6 @@ const renderTable = (props = {}) => {
   render(
     <ScenarioTable
       rows={rows}
-      env={env}
       onEdit={() => {}}
       onRemove={() => {}}
       selectedIds={[]}
@@ -71,7 +70,6 @@ describe("ScenarioTable — hide group", () => {
       <ScenarioTable
         rows={rows}
         groups={groups}
-        env={env}
         onEdit={() => {}}
         onRemove={() => {}}
         onHideGroup={onHideGroup}
@@ -118,16 +116,15 @@ describe("ScenarioTable — opening a row", () => {
 });
 
 describe("ScenarioTable actors", () => {
-  it("names who else is in a scenario under its summary", () => {
+  it("names who else is in a scenario under its summary, as the row resolves them", () => {
     renderTable({
       rows: [
         {
           ...rows[0],
-          callActors: [{ id: "friend", instruction: "", trigger: {} }],
+          callActors: [{ id: "friend", name: "Rowan", instruction: "" }],
         },
         rows[1],
       ],
-      env: { ...env, callActors: [{ id: "friend", name: "Rowan" }] },
     });
     expect(screen.getAllByText("With Rowan")).toHaveLength(1);
   });

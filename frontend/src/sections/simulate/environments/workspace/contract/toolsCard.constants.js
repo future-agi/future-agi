@@ -2,11 +2,12 @@
 // between trials, read from the contract.
 
 export const TOOLS_CARD_COPY = {
-  inputs: "Inputs",
+  subtitle: "The tools the agent declares, and where each one runs",
+  arguments: "Arguments",
   noInputs: "Takes no inputs",
   returns: "Returns",
   returnsNotDeclared: "Not recorded for this environment version",
-  changesRecords: "Changes records",
+  changes: "Changes",
   effect: {
     read: "Reads only",
     write: "Can change records",
@@ -14,7 +15,7 @@ export const TOOLS_CARD_COPY = {
   },
   refusesWhen: "Refuses when",
   needsFirst: "Needs first",
-  betweenTrials: "Between trials",
+  resetLabel: "Reset",
   reset: "Reset to the seeded records before each trial",
   notReset: "Not reset by the test world",
   labels: {
