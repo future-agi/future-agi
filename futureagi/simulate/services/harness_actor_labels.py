@@ -208,7 +208,7 @@ def when_label(
     start = (
         "At the start"
         if scheduled
-        else f"Present from the start: after the agent's {'second' if handoff else 'first'} turn"
+        else f"After the agent's {'second' if handoff else 'first'} turn"
         if channel
         else "Present from the start"
     )

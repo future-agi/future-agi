@@ -70052,7 +70052,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         held_back: {
           title: "Held back",
-          description: "Selected scenarios that need a blocked tool.",
+          description:
+            "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
           type: "integer",
           minimum: 0,
         },
@@ -109418,16 +109419,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessScenarioField: {
-      required: ["value", "label", "type", "category"],
+      required: ["value", "type", "category", "label"],
       type: "object",
       properties: {
         value: {
           title: "Value",
-          type: "string",
-          minLength: 1,
-        },
-        label: {
-          title: "Label",
           type: "string",
           minLength: 1,
         },
@@ -109465,6 +109461,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -139598,7 +139599,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessFaultMode: {
       description:
         "The modes the world can apply to it: none when it cannot hold its calls; an answer lost after the change only when it writes.",
-      required: ["mode", "label", "hint", "fields"],
+      required: ["mode", "hint", "label", "fields"],
       type: "object",
       properties: {
         mode: {
@@ -139611,11 +139612,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "error",
             "approval_required",
           ],
-        },
-        label: {
-          title: "Label",
-          type: "string",
-          minLength: 1,
         },
         hint: {
           title: "Hint",
@@ -139630,6 +139626,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessApprovalOption",
           },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
         },
         fields: {
           description:

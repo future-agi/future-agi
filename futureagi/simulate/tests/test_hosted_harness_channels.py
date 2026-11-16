@@ -1957,27 +1957,29 @@ def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
         )
         is None
     )
-    run_id = uuid.uuid4()
-    job.payload = {**job.payload, "metadata": {"platform_run_id": str(run_id)}}
-    job.save(update_fields=["payload"])
+    # The job names no platform run; the trial finds its end state by the job that sent its receipt.
+    assert "platform_run_id" not in (job.payload.get("metadata") or {})
 
-    def trial(organization_id, workspace_id, test_execution_id=run_id):
+    def trial(organization_id, workspace_id, job_id=job.id):
         run_test = SimpleNamespace(
             organization_id=organization_id, workspace_id=workspace_id
         )
         return SimpleNamespace(
-            call_metadata={"harness_trial_state": {"state_changes": [], **sealed}},
-            test_execution_id=test_execution_id,
+            call_metadata={
+                "harness_trial_state": {"state_changes": [], **sealed},
+                "hosted_harness_receipt": {"job_id": str(job_id)},
+            },
             test_execution=SimpleNamespace(run_test=run_test),
         )
 
     linked = _trial_state(trial(job.organization_id, job.workspace_id))
     assert linked["end_state_url"] and digest in linked["end_state_url"]
-    # The same digest named by another organisation's, workspace's or run's trial links nothing.
+    # The same digest named by another organisation's, workspace's or job's trial links nothing.
     for other in (
         trial(uuid.uuid4(), job.workspace_id),
         trial(job.organization_id, uuid.uuid4()),
         trial(job.organization_id, job.workspace_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, "not-a-job"),
     ):
         assert "end_state_url" not in _trial_state(other)
 

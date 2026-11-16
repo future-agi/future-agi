@@ -14,6 +14,7 @@ from django.db import transaction
 
 from simulate.models import (
     HostedHarnessConversation,
+    HostedHarnessConversationEvent,
     HostedHarnessConversationMessage,
     HostedHarnessJob,
 )
@@ -75,39 +76,109 @@ def _proved_at(proof: dict[str, object]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def _published(
+    message: HostedHarnessConversationMessage, turn: HostedHarnessConversationEvent
+) -> bool:
+    """Whether the turn's save has landed: the environment records each chat's last published checkpoint, and the
+    turn's own is the last it committed before it ended (as `promote_turn_checkpoint` picks it). A turn that
+    committed none saved nothing, so nothing is still to land."""
+    committed = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation_id=message.conversation_id,
+        kind="checkpoint_committed",
+        sequence__lt=turn.sequence,
+        payload__has_key="digest",
+    )
+    if turn.invocation_id:
+        committed = committed.filter(invocation_id=turn.invocation_id)
+    last = committed.order_by("-sequence").values_list("sequence", flat=True).first()
+    if last is None:
+        return True
+    job = HostedHarnessJob.no_workspace_objects.select_related("environment").get(
+        id=message.conversation.job_id
+    )
+    environment = job.environment or job
+    checkpoints = ((environment.payload or {}).get("metadata") or {}).get(
+        "conversation_checkpoints"
+    ) or {}
+    published = checkpoints.get(str(message.conversation_id)) or {}
+    return int(published.get("sequence") or 0) >= last
+
+
+def _not_saved(message: HostedHarnessConversationMessage) -> str | None:
+    """What the chat said when this request's own save was refused: a failed reply before the next request."""
+    replies = _Message.no_workspace_objects.filter(
+        conversation_id=message.conversation_id,
+        role=_Message.Role.ASSISTANT,
+        state=_Message.State.FAILED,
+        sequence__gt=message.sequence,
+    )
+    next_request = (
+        _Message.no_workspace_objects.filter(
+            conversation_id=message.conversation_id,
+            role=_Message.Role.USER,
+            sequence__gt=message.sequence,
+        )
+        .order_by("sequence")
+        .values_list("sequence", flat=True)
+        .first()
+    )
+    if next_request is not None:
+        replies = replies.filter(sequence__lt=next_request)
+    return replies.order_by("sequence").values_list("content", flat=True).first()
+
+
 def _outcome(
     message: HostedHarnessConversationMessage,
     files: ScenarioFiles,
     records: list[StartingRecord],
 ) -> tuple[Literal["pending", "proven", "refused"], str | None]:
-    """Pending while the turn runs. Once it ends: proven when the scenario now starts from the record and a proof made
-    after the request holds; refused otherwise, saying why."""
+    """Pending until the turn's save has landed with a proof made after the request. Refused only when the builder
+    failed, its save was refused, the proof fails, or its landed change does not start from the record or wasn't
+    proven. Proven when the scenario starts from the record and that proof holds."""
     if message.state in _RUNNING:
         return "pending", None
-    if message.state == _Message.State.FAILED:
+    turn = (
+        HostedHarnessConversationEvent.no_workspace_objects.filter(
+            conversation_id=message.conversation_id,
+            kind="turn_completed",
+            payload__command_message_id=str(message.id),
+        )
+        .order_by("-sequence")
+        .first()
+    )
+    if message.state == _Message.State.FAILED or (
+        turn is not None and (turn.payload or {}).get("outcome") != "success"
+    ):
         return "refused", "The builder couldn't finish this request."
+    if turn is None:
+        return "pending", None
+    refused_save = _not_saved(message)
+    if refused_save:
+        return "refused", refused_save
+    if not _published(message, turn):
+        return "pending", None
     wanted = message.payload["_record"]
+    proof = _proof(files, message.payload["_scenario_key"])
+    proved = _proved_at(proof) if proof is not None else None
+    fresh = proved is not None and proved >= message.created_at - PROOF_CLOCK_SKEW
+    if fresh and proof is not None and proof.get("holds") is not True:
+        return "refused", str(
+            proof.get("why") or ""
+        ) or "The reworked scenario didn't pass its proof."
     starts = any(
         one["table"] == wanted["table"]
         and one["key"] == wanted["key"]
         and one["status"] == "seeded"
         for one in records
     )
-    proof = _proof(files, message.payload["_scenario_key"])
-    proved = _proved_at(proof) if proof is not None else None
-    fresh = proved is not None and proved >= message.created_at - PROOF_CLOCK_SKEW
     if not starts:
         return (
             "refused",
-            f"The builder finished without starting this scenario from {wanted['table']} "
-            f"{wanted['key_field']} {wanted['key']}.",
+            "The builder's change did not start the scenario from that record.",
         )
     if not fresh:
-        return "refused", "The builder changed the scenario but didn't prove it."
-    if proof is not None and proof.get("holds") is True:
-        return "proven", None
-    why = str(proof.get("why") or "") if proof is not None else ""
-    return "refused", why or "The reworked scenario didn't pass its proof."
+        return "refused", "The builder's change wasn't proven."
+    return "proven", None
 
 
 def _request(
@@ -236,7 +307,11 @@ def file_rework(
         files.document.get("scenario_key") or files.document.get("name") or ""
     )
     earlier = _latest_message(job, own_key)
-    if earlier is not None and earlier.state in _RUNNING:
+    # Pending as the panel reads it: running, or ended with its save still to land.
+    if (
+        earlier is not None
+        and _outcome(earlier, files, scenario_records(files)[0])[0] == "pending"
+    ):
         raise HostedHarnessError(
             "rework_pending",
             "The builder is still reworking this scenario; wait for it to finish.",

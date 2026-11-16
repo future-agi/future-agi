@@ -71,7 +71,10 @@ export default function ActorForm({
   const request = actor ? requestOf() : null;
   const check = useActorCheck(envId, request);
   const { verdict } = check;
-  const problems = verdict ? verdict.problems : [];
+  // Problems wait until something is edited or Save is tried, so a form opens clean.
+  const [tried, setTried] = useState(false);
+  const problems = verdict && (tried || changed) ? verdict.problems : [];
+  const waiting = Boolean(verdict?.problems.length) && problems.length === 0;
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
@@ -243,10 +246,12 @@ export default function ActorForm({
             }
             onCancel={onClose}
             onSave={() =>
-              onSave(
-                request,
-                conflicts.map((one) => one.action),
-              )
+              waiting
+                ? setTried(true)
+                : onSave(
+                    request,
+                    conflicts.map((one) => one.action),
+                  )
             }
           />
         </Stack>

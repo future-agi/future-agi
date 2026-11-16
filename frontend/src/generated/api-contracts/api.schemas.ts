@@ -19554,8 +19554,6 @@ export const HarnessFaultModeApiFieldsItem = {
  */
 export interface HarnessFaultModeApi {
   mode: HarnessFaultModeApiMode;
-  /** @minLength 1 */
-  label: string;
   /**
    * The line shown under the choice.
    * @minLength 1
@@ -19563,6 +19561,8 @@ export interface HarnessFaultModeApi {
   hint: string;
   /** On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it. */
   approval_options?: HarnessApprovalOptionApi[];
+  /** @minLength 1 */
+  label: string;
   /** The fault values this mode reads; the editor asks for these and no others. */
   fields: HarnessFaultModeApiFieldsItem[];
 }
@@ -21873,7 +21873,7 @@ export interface HarnessRunPlanApi {
   /** Why the run would be refused; null when it is runnable. */
   blocked_code: HarnessRunPlanApiBlockedCode;
   /**
-   * Selected scenarios that need a blocked tool.
+   * Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.
    * @minimum 0
    */
   held_back: number;
@@ -23169,8 +23169,6 @@ export type HarnessScenarioFieldApiChoiceLabels = { [key: string]: string };
 export interface HarnessScenarioFieldApi {
   /** @minLength 1 */
   value: string;
-  /** @minLength 1 */
-  label: string;
   type: HarnessScenarioFieldApiType;
   /** @minLength 1 */
   category: string;
@@ -23179,6 +23177,8 @@ export interface HarnessScenarioFieldApi {
   counts?: HarnessScenarioFieldApiCounts;
   /** The name to show for each value, keyed by the value (actors only). */
   choice_labels?: HarnessScenarioFieldApiChoiceLabels;
+  /** @minLength 1 */
+  label: string;
 }
 
 export interface HarnessScenarioListResponseApi {

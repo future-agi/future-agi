@@ -108,16 +108,18 @@ describe("ActorForm", () => {
     expect(
       screen.getByLabelText("Most lines in a call (optional)"),
     ).toHaveValue(3);
-    expect(screen.queryByLabelText("Most turns in a call (optional)")).toBeNull();
+    expect(
+      screen.queryByLabelText("Most turns in a call (optional)"),
+    ).toBeNull();
   });
 
   it("offers the voice choices the cast lists, with Any for none", () => {
     verdict = CLEAN;
     renderForm(newActor("caller", "audio_mix"));
     fireEvent.mouseDown(screen.getByLabelText("Age"));
-    expect(
-      screen.getAllByRole("option").map((one) => one.textContent),
-    ).toEqual(["Any", "18-25", "60+"]);
+    expect(screen.getAllByRole("option").map((one) => one.textContent)).toEqual(
+      ["Any", "18-25", "60+"],
+    );
   });
 
   it("names a nameless actor's form by its id", () => {
@@ -170,6 +172,25 @@ describe("ActorForm", () => {
       "Pick the agent turn they come in on.",
     );
     expect(screen.queryByTestId("actor-problems")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+  });
+
+  it("opens a new actor clean, and asks for a name on its field once Save is tried", () => {
+    verdict = {
+      ...CLEAN,
+      problems: [{ field: "name", message: "Give them a name." }],
+    };
+    const onSave = vi.fn();
+    renderForm(newActor("world"), { onSave });
+    expect(screen.queryByText("Give them a name.")).toBeNull();
+    expect(screen.queryByTestId("actor-problems")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(
+      "Give them a name.",
+    );
     expect(
       screen.getByRole("button", { name: "Save to draft" }),
     ).toBeDisabled();
@@ -259,7 +280,9 @@ describe("ActorForm", () => {
     verdict = CLEAN;
     const data = cast([], {
       channel_options: CHANNEL_OPTIONS.map((one) =>
-        one.channel === "audio_mix" ? { ...one, label: "Beside the caller" } : one,
+        one.channel === "audio_mix"
+          ? { ...one, label: "Beside the caller" }
+          : one,
       ),
     });
     renderForm(newActor("caller", "audio_mix", data), { data });
