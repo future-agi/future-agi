@@ -7,6 +7,7 @@ from rest_framework import serializers
 from simulate.types import (
     HandOffEnd,
     RefusalCode,
+    SubGoalUnscored,
     TextFormat,
     WorkerAttribution,
     WorkerCleanupStatus,
@@ -23,6 +24,13 @@ from tfc.utils.serializer_fields import JsonValueField
 class CleanupSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=get_args(WorkerCleanupStatus))
     at = serializers.CharField(allow_null=True)
+
+
+class WorkerCheckSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    # Null when nothing passed or failed it; `result` then says why.
+    passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(choices=get_args(SubGoalUnscored), required=False)
 
 
 class CallWorkerSerializer(serializers.Serializer):
@@ -44,6 +52,8 @@ class CallWorkerSerializer(serializers.Serializer):
     stopped_at = serializers.FloatField(required=False)
     # A cut-short worker's cleanup, computed when served; absent for a worker that returned or never ran.
     cleanup = CleanupSerializer(required=False)
+    # Its own checks in this call, beside the call's verdict and never deciding it.
+    checks = WorkerCheckSerializer(many=True)
 
 
 class ShownTextSerializer(serializers.Serializer):

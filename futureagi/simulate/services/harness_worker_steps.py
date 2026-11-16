@@ -20,6 +20,7 @@ from simulate.types import (
     ShownText,
     SubGoalEntry,
     TurnSummary,
+    WorkerCheck,
     WorkerEvent,
     WorkerRelationship,
     WorkerState,
@@ -565,9 +566,19 @@ def served_record(
         cut_off=cut_off,
     )
     _with_ends(steps["steps"], timeline["workers"])
+    goals = list(sub_goals)
+    # A worker's own checks sit beside the call's verdict and never decide it, so each is served on its worker.
+    checks: dict[str, list[WorkerCheck]] = {}
+    for goal in goals:
+        if "worker_id" in goal:
+            check: WorkerCheck = {"name": goal["name"], "passed": goal["passed"]}
+            if "result" in goal:
+                check["result"] = goal["result"]
+            checks.setdefault(goal["worker_id"], []).append(check)
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
         served = one.copy()
+        served["checks"] = checks.get(one["id"], [])
         # Past its deadline is told apart: the world refused its later calls, it was not stopped.
         served["cut_short"] = (
             one.get("state") in _CUT_SHORT and one.get("state") != "deadline_passed"
@@ -577,7 +588,7 @@ def served_record(
         **timeline,
         **steps,
         "workers": workers,
-        "placements": failure_placements(steps["steps"], sub_goals),
+        "placements": failure_placements(steps["steps"], goals),
         "stopped_by_user": stopped_by_user,
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),

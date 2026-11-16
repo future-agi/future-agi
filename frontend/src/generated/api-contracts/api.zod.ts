@@ -61410,6 +61410,15 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         ])
         .optional(),
       cut_short: zod.boolean(),
+      checks: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          passed: zod.boolean(),
+          result: zod
+            .enum(["not_applicable", "inconclusive", "unmeasured"])
+            .optional(),
+        }),
+      ),
     }),
   ),
   events: zod.array(

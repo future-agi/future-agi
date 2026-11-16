@@ -197,6 +197,14 @@ class WorkerCleanup(TypedDict):
     at: str | None
 
 
+class WorkerCheck(TypedDict):
+    """One of a worker's own checks in a call: beside the call's verdict, never deciding it."""
+
+    name: str
+    passed: bool | None
+    result: NotRequired[SubGoalUnscored]
+
+
 class HarnessWorker(TypedDict):
     worker_id: str
     id: str
@@ -215,6 +223,8 @@ class HarnessWorker(TypedDict):
     # Served only: a cut-short worker's cleanup, and whether the trial's end stopped it before it returned.
     cleanup: NotRequired[WorkerCleanup | None]
     cut_short: NotRequired[bool]
+    # Served only: its own checks in this call.
+    checks: NotRequired[list[WorkerCheck]]
 
 
 class WorkerEvent(TypedDict, total=False):

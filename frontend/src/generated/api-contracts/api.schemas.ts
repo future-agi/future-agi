@@ -28160,6 +28160,22 @@ export const CallWorkerApiState = {
   not_observed: "not_observed",
 } as const;
 
+export type WorkerCheckApiResult =
+  (typeof WorkerCheckApiResult)[keyof typeof WorkerCheckApiResult];
+
+export const WorkerCheckApiResult = {
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
+} as const;
+
+export interface WorkerCheckApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean;
+  result?: WorkerCheckApiResult;
+}
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -28175,6 +28191,7 @@ export interface CallWorkerApi {
   tokens?: number;
   state?: CallWorkerApiState;
   cut_short: boolean;
+  checks: WorkerCheckApi[];
 }
 
 export type CallWorkerEventApiType =
