@@ -58,10 +58,13 @@ export const TRIAL_CHANGES_COPY = {
     `Committed writes: ${n} (tools with recorded effects)`,
   sharedTruncated:
     "More records not shown: this trial's record reached its size limit",
-  sharedActionsTruncated:
-    "More calls on this record not shown: its record reached its size limit",
-  sharedRecordTruncated:
-    "More records or calls may not be shown: this trial's record reached its size limit",
+  // Each record's served `truncation`; a cut list of records ("records") is said once, for the trial.
+  sharedRecordCut: {
+    actions:
+      "More calls on this record not shown: its record reached its size limit",
+    unknown:
+      "More records or calls may not be shown: this trial's record reached its size limit",
+  },
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",

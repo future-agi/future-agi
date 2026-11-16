@@ -23,6 +23,7 @@ from simulate.services.run_results_v3_queries import call_actor_delivery
 from simulate.types import (
     SharedRecord,
     SharedRecordAction,
+    SharedRecordTruncation,
     StoppedWorker,
     worker_subject_id,
 )
@@ -1012,7 +1013,21 @@ def _shared_record(record: Mapping[str, Any], names: Mapping[str, str]) -> Share
     ]
     shared = cast(SharedRecord, {**record, "actions": actions})
     shared["actions_truncated"] = _sealed_flag(record, "actions_truncated")
+    shared["truncation"] = _shared_record_truncation(
+        shared["actions_truncated"], record.get("truncated") is True
+    )
     return shared
+
+
+def _shared_record_truncation(
+    actions_truncated: bool | None, truncated: bool
+) -> SharedRecordTruncation | None:
+    """Which bound cut a shared record: its own actions, the trial's list of records, or not known on an older trial."""
+    if actions_truncated:
+        return "actions"
+    if not truncated:
+        return None
+    return "unknown" if actions_truncated is None else "records"
 
 
 def _sealed_flag(sealed: Mapping[str, Any], key: str) -> bool | None:

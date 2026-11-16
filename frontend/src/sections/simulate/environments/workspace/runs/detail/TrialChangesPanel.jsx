@@ -242,11 +242,10 @@ function WorldState({ trialState }) {
                   {C.sharedAction(action, action.name)}
                 </Typography>
               ))}
-              {record.actions_truncated && (
-                <Typography sx={quiet}>{C.sharedActionsTruncated}</Typography>
-              )}
-              {record.actions_truncated == null && record.truncated && (
-                <Typography sx={quiet}>{C.sharedRecordTruncated}</Typography>
+              {C.sharedRecordCut[record.truncation] && (
+                <Typography sx={quiet}>
+                  {C.sharedRecordCut[record.truncation]}
+                </Typography>
               )}
               <Typography sx={quiet}>
                 {C.committedWrites(record.committed_writes)}

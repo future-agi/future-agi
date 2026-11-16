@@ -207,6 +207,11 @@ class StoppedWorker(TypedDict):
     reason: str
 
 
+# Which bound cut a shared record: its own actions, the trial's list of records, or a trial sealed before the
+# harness said which.
+SharedRecordTruncation = Literal["actions", "records", "unknown"]
+
+
 class SharedRecordAction(TypedDict):
     who: str
     name: str
@@ -228,6 +233,8 @@ class SharedRecord(TypedDict):
     truncated: bool
     # As the harness sealed it: this record's own actions were cut; None for a trial sealed before the flag.
     actions_truncated: NotRequired[bool | None]
+    # Which bound cut it, read from the two flags; None when nothing was cut.
+    truncation: NotRequired[SharedRecordTruncation | None]
 
 
 class WorkerCleanup(TypedDict):

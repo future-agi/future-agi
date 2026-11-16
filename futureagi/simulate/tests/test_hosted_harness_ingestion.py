@@ -160,6 +160,10 @@ def test_the_sealed_truncation_flags_are_kept_and_served_as_sealed(
         True,
         False,
     ]
+    assert [one["truncation"] for one in served["shared_records"]] == [
+        "actions",
+        "records",
+    ]
 
 
 def test_a_trial_sealed_before_the_flags_serves_neither_as_known() -> None:
@@ -168,3 +172,11 @@ def test_a_trial_sealed_before_the_flags_serves_neither_as_known() -> None:
     assert served["shared_records_truncated"] is None
     assert served["shared_records"][0]["actions_truncated"] is None
     assert served["shared_records"][0]["truncated"] is True
+    assert served["shared_records"][0]["truncation"] == "unknown"
+
+
+def test_a_shared_record_nothing_cut_serves_no_truncation() -> None:
+    served = _served_trial(
+        {"shared_records": [_shared_record(1, False, actions_truncated=False)]}
+    )
+    assert served["shared_records"][0]["truncation"] is None

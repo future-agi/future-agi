@@ -14,7 +14,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorFallbackSerializer,
     HarnessActorLimitsSerializer,
 )
-from simulate.types import CallActorDelivery
+from simulate.types import CallActorDelivery, SharedRecordTruncation
 
 FUNCTION_CALL_KINDS = ("agent_call", "world_actor_action")
 
@@ -416,6 +416,13 @@ class SharedRecordSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
         help_text="This record's own actions were cut; null for a trial sealed before the harness said so.",
+    )
+    truncation = serializers.ChoiceField(
+        choices=get_args(SharedRecordTruncation),
+        allow_null=True,
+        default=None,
+        help_text="Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed "
+        "before the harness said which; null when nothing was cut.",
     )
 
 

@@ -822,6 +822,7 @@ describe("TrialChangesPanel shared records", () => {
     committed_writes: 1,
     truncated: false,
     actions_truncated: false,
+    truncation: null,
   };
 
   it("names each participant's call on a record two of them touched, and shows nothing when none did", () => {
@@ -835,23 +836,44 @@ describe("TrialChangesPanel shared records", () => {
   });
 
   it("says only a record's calls were cut when only its actions were, and more records only when the list was", () => {
-    const cut = { ...record, truncated: true, actions_truncated: true };
+    const cut = {
+      ...record,
+      truncated: true,
+      actions_truncated: true,
+      truncation: "actions",
+    };
     const { unmount } = render(<TrialChangesPanel trialState={trial([cut])} />);
     expect(
-      screen.getByText(TRIAL_CHANGES_COPY.sharedActionsTruncated),
+      screen.getByText(TRIAL_CHANGES_COPY.sharedRecordCut.actions),
     ).toBeInTheDocument();
     expect(screen.queryByText(TRIAL_CHANGES_COPY.sharedTruncated)).toBeNull();
     unmount();
     render(
       <TrialChangesPanel
-        trialState={trial([{ ...record, truncated: true }], true)}
+        trialState={trial(
+          [{ ...record, truncated: true, truncation: "records" }],
+          true,
+        )}
       />,
     );
     expect(
       screen.getByText(TRIAL_CHANGES_COPY.sharedTruncated),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(TRIAL_CHANGES_COPY.sharedActionsTruncated),
+      screen.queryByText(TRIAL_CHANGES_COPY.sharedRecordCut.actions),
     ).toBeNull();
+  });
+
+  it("says more records or calls may be missing when the API does not know which bound cut a record", () => {
+    render(
+      <TrialChangesPanel
+        trialState={trial([
+          { ...record, truncated: true, actions_truncated: null, truncation: "unknown" },
+        ])}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedRecordCut.unknown),
+    ).toBeInTheDocument();
   });
 });
