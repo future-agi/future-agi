@@ -88,7 +88,7 @@
     {
       "path": "futureagi/tracer/management/commands/ch25_backfill_traces.py",
       "before_sha256": "7cc7a723e6c94848f996348c5267c013906bfa5318249540ab4fbb6e90c2ec0d",
-      "after_sha256": "467e300bd5068575c1e034a2beda01ac53da0c092c240f4ebfb544d50e2d913e",
+      "after_sha256": "4daecabba25a6b4b10adc439c805dc9e225de694e3e1d02cbc6c044b90100cca",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
