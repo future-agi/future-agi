@@ -8,12 +8,14 @@ it must floor them at the acceptance ``last_run`` records, not at the older
 time and not at the recovery itself. Synthetic data only.
 """
 
+import asyncio
 from datetime import timedelta
 
 import pytest
 from django.core.cache import cache
 from django.db import connection
 from django.utils import timezone
+from temporalio.testing import ActivityEnvironment
 
 from tfc.temporal.eval_tasks import client as workflow_client
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -128,7 +130,7 @@ def test_recovery_floors_pre_deploy_rerun_at_the_rerun(
 
 @pytest.mark.parametrize(
     "case",
-    ["never_started", "started_after_acceptance", "cursor_kept", "future_last_run"],
+    ["started_after_acceptance", "cursor_kept", "future_last_run"],
 )
 def test_recovery_keeps_coverage_already_accepted(
     project, custom_eval_config, clock, restarts, case
@@ -137,12 +139,6 @@ def test_recovery_keeps_coverage_already_accepted(
     task = stored_task(project, custom_eval_config)
     created = task.created_at
     fields, expected = {
-        # Creation stamps last_run just before the row's created_at; a task
-        # whose first dispatch failed covers arrivals since its creation.
-        "never_started": (
-            {"start_time": None, "last_run": created - timedelta(seconds=1)},
-            created,
-        ),
         # The workflow's RUNNING transition followed the acceptance.
         "started_after_acceptance": (
             {"start_time": created + timedelta(seconds=5), "last_run": created},
@@ -232,6 +228,133 @@ def test_cursor_resetting_rerun_persists_its_floor_before_dispatch(
     clock["value"] = rerun + timedelta(hours=1)
     assert recover_task(task, stale_running_seconds=7200)["restarted"]
     assert restarts == [(EvalTaskStatus.RUNNING, rerun, None)]
+
+
+@pytest.mark.parametrize("with_cursor", [False, True])
+def test_never_started_rows_are_skipped_not_given_a_recovery_activation(
+    project, custom_eval_config, clock, restarts, with_cursor
+):
+    old = clock["value"] - timedelta(days=60)
+    task = stored_task(
+        project,
+        custom_eval_config,
+        created_at=old,
+        start_time=None,
+        last_run=old + timedelta(days=1),
+        continuous_cursor=old if with_cursor else None,
+    )
+    before = EvalTask.all_objects.filter(pk=task.pk).values().get()
+
+    outcome = recover_task(task, stale_running_seconds=7200)
+
+    assert outcome["skipped"] and not outcome["restarted"], outcome
+    assert restarts == []
+    assert EvalTask.all_objects.filter(pk=task.pk).values().get() == before
+
+
+@pytest.mark.parametrize(
+    "acceptance", ["missing", "before_creation", "later_acceptance", "future"]
+)
+def test_legacy_unstamped_row_is_activated_by_the_actual_status_activity(
+    project, custom_eval_config, clock, restarts, acceptance
+):
+    from tfc.temporal.eval_tasks.activities import set_eval_task_status_activity
+    from tfc.temporal.eval_tasks.types import SetStatusInput
+
+    now = clock["value"]
+    created = now - timedelta(days=30)
+    last_run, expected = {
+        "missing": (None, created),
+        "before_creation": (created - timedelta(seconds=1), created),
+        "later_acceptance": (now - timedelta(days=2), now - timedelta(days=2)),
+        "future": (now + timedelta(days=1), now),
+    }[acceptance]
+    task = stored_task(
+        project,
+        custom_eval_config,
+        created_at=created,
+        start_time=None,
+        last_run=last_run,
+        continuous_cursor=None,
+    )
+    assert recover_task(task, stale_running_seconds=7200)["skipped"]
+    assert restarts == []
+
+    # This is the actual workflow activity, including its thread bridge and
+    # _set_task_status_sync's close_old_connections calls. The module's
+    # transaction=True is required: a TestCase transaction is not visible on
+    # that connection. No mocked status writer or inferred backfill marker.
+    result = asyncio.run(
+        ActivityEnvironment().run(
+            set_eval_task_status_activity,
+            SetStatusInput(
+                task_id=str(task.pk),
+                status=EvalTaskStatus.RUNNING,
+                expected_status=EvalTaskStatus.PENDING,
+            ),
+        )
+    )
+
+    assert result.changed and result.status == EvalTaskStatus.RUNNING
+    task.refresh_from_db()
+    assert task.start_time == expected
+    assert task.continuous_cursor is None
+    assert recover_task(task, stale_running_seconds=7200)["restarted"]
+    assert restarts == [(EvalTaskStatus.RUNNING, expected, None)]
+
+
+@pytest.mark.parametrize("status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED])
+def test_actual_startup_activity_cannot_activate_a_stopped_unstamped_row(
+    project, custom_eval_config, clock, restarts, status
+):
+    from tfc.temporal.eval_tasks.activities import set_eval_task_status_activity
+    from tfc.temporal.eval_tasks.types import SetStatusInput
+
+    task = stored_task(project, custom_eval_config, status=status, start_time=None)
+    result = asyncio.run(
+        ActivityEnvironment().run(
+            set_eval_task_status_activity,
+            SetStatusInput(
+                task_id=str(task.pk),
+                status=EvalTaskStatus.RUNNING,
+                expected_status=EvalTaskStatus.PENDING,
+            ),
+        )
+    )
+
+    assert not result.changed and result.status == status
+    task.refresh_from_db()
+    assert task.start_time is None
+    assert recover_task(task, stale_running_seconds=7200)["skipped"]
+    assert restarts == []
+
+
+def test_metadata_only_rerun_can_leave_a_legacy_row_unstamped(
+    auth_client, project, custom_eval_config, clock, restarts, monkeypatch
+):
+    old = clock["value"] - timedelta(days=30)
+    task = stored_task(
+        project, custom_eval_config, created_at=old, start_time=None, last_run=old
+    )
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync",
+        lambda current, **kwargs: None,
+    )
+    response = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/",
+        {
+            "eval_task_id": str(task.pk),
+            "edit_type": "edit_rerun",
+            "name": "renamed unstamped synthetic task",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    task.refresh_from_db()
+    assert task.start_time is None
+    assert recover_task(task, stale_running_seconds=7200)["skipped"]
+    assert restarts == []
 
 
 def test_rerun_that_keeps_the_cursor_keeps_the_floor(

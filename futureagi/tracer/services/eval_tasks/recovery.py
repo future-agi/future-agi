@@ -17,9 +17,9 @@ from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.selectors.eval_tasks.stranded import (
     STALE_CONTINUOUS_CURSOR,
+    automatic_recovery_eligibility,
     find_stranded_tasks,
     only_unreclaimable_claims_remain,
-    sweepable_statuses,
 )
 from tracer.services.eval_tasks.configuration import continuous_coverage_floor
 from tracer.services.eval_tasks.reaper import (
@@ -103,8 +103,10 @@ def continuous_activation_floor(task: EvalTask, *, now: datetime) -> datetime | 
     so the floor is not ``now``. ``start_time`` is that acceptance once
     anything has stamped it (the workflow's first RUNNING transition, a
     conversion in ``update_task_configuration``, or a cursor-resetting rerun in
-    ``update_eval_task``); a task that never started falls back to
-    ``created_at``.
+    ``update_eval_task``). Automatic recovery only admits a non-NULL marker;
+    it never supplies a first activation for an unstamped row. The shared floor
+    helper also serves ordinary activation, where a created_at fallback is
+    valid, but that fallback is not recovery eligibility.
 
     With a cursor, the reconciler floors at the cursor and ``start_time`` only
     bounds it from below, so it is kept as it is. Without one, rows written
@@ -192,6 +194,19 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         "deferred": False,
         "skipped": False,
     }
+    # Direct callers cannot bypass the selector's activation rule. Use durable
+    # primary state, not a possibly stale caller instance, and do not describe,
+    # reap or manufacture an activation marker for an ineligible row.
+    if not (
+        EvalTask.no_workspace_objects.filter(
+            automatic_recovery_eligibility(), id=task.id
+        )
+        .using("default")
+        .exists()
+    ):
+        outcome["skipped"] = True
+        return outcome
+
     if describe_eval_task_workflow_sync(task.id) == WF_PROGRESSING:
         # Reported, not merely skipped: a healthy draining task is a candidate
         # that costs one describe and nothing else, so without this the tick
@@ -205,7 +220,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
     with transaction.atomic():
         current = (
             EvalTask.no_workspace_objects.select_for_update()
-            .filter(id=task.id, status__in=sweepable_statuses())
+            .filter(automatic_recovery_eligibility(), id=task.id)
             .first()
         )
         if current is None:
@@ -230,7 +245,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         with transaction.atomic():
             current = (
                 EvalTask.no_workspace_objects.select_for_update()
-                .filter(id=task.id, status__in=sweepable_statuses())
+                .filter(automatic_recovery_eligibility(), id=task.id)
                 .first()
             )
             if current is None:
@@ -266,7 +281,9 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         # hide a committed pause/delete. A later pause wins the guarded status
         # transition and active-state checks; never replace an execution.
         if not (
-            EvalTask.no_workspace_objects.filter(id=task.id, status=task.status)
+            EvalTask.no_workspace_objects.filter(
+                automatic_recovery_eligibility(), id=task.id, status=task.status
+            )
             .using("default")
             .exists()
         ):

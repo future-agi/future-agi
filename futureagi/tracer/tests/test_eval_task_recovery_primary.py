@@ -3,6 +3,7 @@
 import pytest
 from django.db import connections, router, transaction
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from tfc.temporal.eval_tasks import client
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
@@ -10,7 +11,10 @@ from tracer.services.eval_tasks.recovery import recover_task
 
 
 @pytest.mark.django_db(transaction=True, databases=["default", "default_direct"])
-@pytest.mark.parametrize("stop", [None, EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED])
+@pytest.mark.parametrize(
+    "stop",
+    [None, EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, "soft_deleted", "unstamped"],
+)
 def test_dispatch_guard_reads_primary_and_respects_committed_stop(
     project, monkeypatch, stop
 ):
@@ -21,6 +25,7 @@ def test_dispatch_guard_reads_primary_and_respects_committed_stop(
         sampling_rate=100,
         run_type=RunType.CONTINUOUS,
         status=EvalTaskStatus.PENDING,
+        start_time=timezone.now(),
         row_type=RowType.SPANS,
     )
 
@@ -48,12 +53,17 @@ def test_dispatch_guard_reads_primary_and_respects_committed_stop(
             stop
             and sql.startswith('UPDATE "tracer_eval_task"')
             and '"start_time"' in sql
+            and '"status"' in sql
         ):
+            changes = {
+                "soft_deleted": {"deleted": True},
+                "unstamped": {"start_time": None},
+            }.get(stop, {"status": stop})
             transaction.on_commit(
                 lambda: (
                     EvalTask.no_workspace_objects.using("default")
                     .filter(pk=task.pk)
-                    .update(status=stop)
+                    .update(**changes)
                 )
             )
         return result
@@ -69,12 +79,14 @@ def test_dispatch_guard_reads_primary_and_respects_committed_stop(
         return [
             q["sql"]
             for q in queries
-            if "SELECT 1 AS" in q["sql"] and "tracer_eval_task" in q["sql"]
+            if "SELECT 1 AS" in q["sql"]
+            and '"tracer_eval_task"."status" = ' in q["sql"]
         ]
 
     assert guards(primary), (
         "Final lifecycle guard must read the primary's committed state"
     )
+    assert all('"start_time" IS NOT NULL' in sql for sql in guards(primary))
     assert guards(reader) == [], (
         "A lagged reader can suppress valid recovery or miss a pause"
     )

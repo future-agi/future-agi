@@ -77,7 +77,6 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
-        "withdraw_failed_create_eval_tasks",
     ],
 )
 def test_mutation_guard_rejects_unsafe_management_commands(command):
@@ -103,7 +102,6 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
-        "withdraw_failed_create_eval_tasks",
     ],
 )
 def test_operator_bootstrap_authorizes_only_explicit_commands(monkeypatch, command):

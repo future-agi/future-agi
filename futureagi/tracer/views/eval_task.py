@@ -97,7 +97,6 @@ from tracer.services.eval_tasks.sampling.policy import (
     normalize_policy_update,
     population_changed,
 )
-from tracer.services.eval_tasks.withdrawal import withdraw_tasks
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1946,11 +1945,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
             # The workflow's first step materializes entries, so create returns
             # immediately even for large tasks.
-            try:
-                start_eval_task_workflow_sync(eval_task)
-            except Exception:
-                self._withdraw_undispatched_task(eval_task)
-                raise
+            start_eval_task_workflow_sync(eval_task)
 
             return self._gm.success_response({"id": eval_task.id})
 
@@ -1964,25 +1959,6 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request("Evaluation task could not be created")
-
-    @staticmethod
-    def _withdraw_undispatched_task(eval_task):
-        """Delete a task whose create is about to be reported as failed.
-
-        The caller is told the task was not created, so it must not exist. The
-        stranded sweep activates idle continuous tasks, so a leftover PENDING
-        row would start running beside the task a retry creates, and every span
-        would be evaluated, and billed, twice. Withdrawn as a list delete
-        withdraws, so neither the Tasks list nor the sweep sees it. A start
-        that did reach Temporal fails at its first task read (reconcile or
-        claim), which never returns a deleted row.
-        """
-        try:
-            withdraw_tasks([eval_task.id])
-        except Exception:
-            logger.exception(
-                "eval_task.create_withdraw_failed", eval_task_id=str(eval_task.id)
-            )
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(

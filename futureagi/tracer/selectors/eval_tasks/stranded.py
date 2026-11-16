@@ -41,6 +41,19 @@ def sweepable_statuses() -> list[str]:
     return statuses
 
 
+def automatic_recovery_eligibility() -> Q:
+    """Require an existing activation/coverage marker for every recovery path.
+
+    This is not Temporal acknowledgement: conversions and explicit reruns can
+    stamp coverage before dispatch. Conversely, last_run, age, entries, cursor
+    presence and Temporal NOT_FOUND cannot make an unstamped row eligible.
+    Legacy and accepted-but-never-activated rows deliberately need an explicit
+    owner-directed activation; recovery must not invent one for a failed create.
+    Managers still enforce soft-delete exclusion.
+    """
+    return Q(status__in=sweepable_statuses(), start_time__isnull=False)
+
+
 def find_stranded_tasks(
     *,
     limit: int | None = None,
@@ -57,7 +70,7 @@ def find_stranded_tasks(
     every tick forever. With a one-slot cap, the caller alternates groups.
 
     Cursor age only rules a task *out*: an idle continuous task is checked
-    when it is not RUNNING (PENDING after a Resume, rerun or create, or FAILED
+    when it is not RUNNING (PENDING after a Resume or rerun, or FAILED
     when opted in), when its cursor is NULL (no reconcile has parked one yet),
     or when the cursor is older than ``STALE_CONTINUOUS_CURSOR``. A fresher
     cursor on a RUNNING task shows that its workflow polled within that window,
@@ -70,11 +83,12 @@ def find_stranded_tasks(
     Drained historical tasks stay excluded. Both managers exclude soft-deleted
     rows and ignore ambient workspace scope.
 
-    One rule set for every candidate, whichever group found it: each task
-    appears at most once per tick (a task with undrained entries is backlog,
-    never also idle), its lifecycle is rechecked here and again under a row
-    lock in ``recover_task``, and a restart coalesces onto any live execution
-    rather than replacing it.
+    One rule set for every candidate, whichever group found it: an existing
+    start_time marker is mandatory (including for backlog and opted-in FAILED
+    rows), and each task appears at most once per tick (a task with undrained
+    entries is backlog, never also idle). Its lifecycle is rechecked here and
+    again under a row lock in ``recover_task``. A restart coalesces onto any
+    live execution rather than replacing it.
 
     ``held_ids`` are tasks Temporal reported live within the hold window, and
     ``held_failed_ids`` failed tasks the sweep already restarted as often as it
@@ -87,7 +101,7 @@ def find_stranded_tasks(
     if limit <= 0:
         return []
     tasks = EvalTask.no_workspace_objects.filter(
-        status__in=sweepable_statuses()
+        automatic_recovery_eligibility()
     ).exclude(id__in=list(held_ids))
     held_failed_ids = list(held_failed_ids)
     if held_failed_ids:
@@ -176,6 +190,7 @@ def only_unreclaimable_claims_remain(
 
 __all__ = [
     "STALE_CONTINUOUS_CURSOR",
+    "automatic_recovery_eligibility",
     "find_stranded_tasks",
     "only_unreclaimable_claims_remain",
     "sweepable_statuses",

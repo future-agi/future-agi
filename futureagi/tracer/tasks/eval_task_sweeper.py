@@ -13,6 +13,10 @@ that makes a stranded task visible at all.
 
 Per tick, bounded and idempotent:
 
+* require a non-NULL ``start_time`` activation/coverage marker for every
+  automatic recovery candidate, including backlog and opted-in failed tasks;
+  this is not a Temporal acknowledgement, and unstamped legacy or accepted but
+  never activated tasks deliberately require owner-directed activation;
 * share ``EVAL_TASK_SWEEP_MAX_TASKS`` between tasks with undrained entries
   (oldest activity first) and idle continuous tasks whose cursor is missing or
   has not moved for ``STALE_CONTINUOUS_CURSOR`` (a rotating liveness check),

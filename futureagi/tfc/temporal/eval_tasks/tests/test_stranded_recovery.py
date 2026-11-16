@@ -224,7 +224,9 @@ class TestSweepRecoversFreshlyAbandonedClaims:
         [entry] = await sync_to_async(make_pending_entries)(
             eval_task, 1, status=EvalEntryStatus.RUNNING
         )
-        await _set_task(task_id, status=EvalTaskStatus.RUNNING)
+        await _set_task(
+            task_id, status=EvalTaskStatus.RUNNING, start_time=timezone.now()
+        )
         await _age([entry.id], age_seconds)
 
         async with _worker(env, _SWEEP_QUEUE):
@@ -267,7 +269,9 @@ class TestSweepRecoversFreshlyAbandonedClaims:
         [fresh] = await sync_to_async(make_pending_entries)(
             eval_task, 1, status=EvalEntryStatus.RUNNING
         )
-        await _set_task(task_id, status=EvalTaskStatus.RUNNING)
+        await _set_task(
+            task_id, status=EvalTaskStatus.RUNNING, start_time=timezone.now()
+        )
         await _age([fresh.id], 300)
 
         async with _worker(env, _SWEEP_QUEUE):
@@ -426,7 +430,9 @@ class TestIdleContinuousCatchup:
                 status=status,
                 run_type=RunType.CONTINUOUS,
                 created_at=floor,
-                start_time=floor if has_cursor else None,
+                # Both cases have activated coverage; missing cursor means
+                # activation succeeded but no reconcile parked a cursor yet.
+                start_time=floor,
                 continuous_cursor=floor if has_cursor else None,
             )
             return EvalLogger.objects.get(id=rows[0].id).updated_at
@@ -493,7 +499,10 @@ class TestIdleContinuousCatchup:
         _point_the_client_at(monkeypatch, env)
         task_id = str(eval_task.id)
         await _set_task(
-            task_id, status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS
+            task_id,
+            status=EvalTaskStatus.PENDING,
+            run_type=RunType.CONTINUOUS,
+            start_time=timezone.now(),
         )
         assert await _sweepable(task_id)
         # No worker yet: both starts can race, but neither may replace the
