@@ -207,10 +207,16 @@ def door_reach(contract: Any) -> dict[str, bool]:
     return reach
 
 
+# Engines that are an API someone else runs, never a store the environment stands up a copy of.
+_REMOTE_API_ENGINES = frozenset(
+    {"http", "https", "rest", "grpc", "graphql", "websocket", "soap"}
+)
+
+
 def production_only(contract: Any) -> list[str]:
-    """The contract tools that reach a system the environment cannot stand up a copy of: a dependency with no engine
-    and no seam the build recognises, other than the agent's own tools service. A test never calls those; they read
-    Unsupported for this controlled test."""
+    """The contract tools that reach a system the environment cannot stand up a copy of: a dependency with no store
+    engine and seam the build recognises (a remote API is never one), other than the agent's own tools service. A test
+    never calls those; they read Unsupported for this controlled test."""
     contract = contract if isinstance(contract, dict) else {}
     served = {
         str(entry.get("service"))
@@ -227,6 +233,8 @@ def production_only(contract: Any) -> list[str]:
             if isinstance(dependency, dict)
             and not (
                 dependency.get("engine")
+                and str(dependency.get("engine")).strip().lower()
+                not in _REMOTE_API_ENGINES
                 and any((dependency.get("reached") or {}).get(name) for name in seams)
             )
             and str(dependency.get("name") or "") not in served
