@@ -829,6 +829,10 @@ class TrialStateSerializer(serializers.Serializer):
     )
     decisions = ActorDecisionSerializer(many=True, required=False)
     approvals = ApprovalLineSerializer(many=True, required=False)
+    end_state_url = serializers.URLField(
+        required=False,
+        help_text="The world's records at the trial's end and its action log, kept for grading it again.",
+    )
     usage = ActorUsageSerializer(many=True, required=False)
     limits = serializers.DictField(
         required=False,
@@ -1181,17 +1185,26 @@ def build_call_execution_detail(
             "function_calls": function_calls(call),
             "call_actors": _call_call_actors(call.call_metadata),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
-            "trial_state": (
-                (call.call_metadata or {}).get(TRIAL_STATE_KEY)
-                if isinstance(call.call_metadata, dict)
-                else None
-            ),
+            "trial_state": _trial_state(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],
         }
     )
     return data
+
+
+def _trial_state(call_metadata: Any) -> dict[str, Any] | None:
+    """The trial's World changes, with where its end state is kept (the world's records at its end and its action
+    log) when the harness stored one."""
+    metadata = call_metadata if isinstance(call_metadata, dict) else {}
+    state = metadata.get(TRIAL_STATE_KEY)
+    if not isinstance(state, dict):
+        return state
+    artifacts = metadata.get("hosted_harness_artifacts")
+    end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
+    url = end.get("url") if isinstance(end, dict) else None
+    return {**state, "end_state_url": url} if url else state
 
 
 class CallExecutionV3DetailView(APIView):

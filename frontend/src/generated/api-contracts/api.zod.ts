@@ -53996,6 +53996,14 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         }),
       )
       .optional(),
+    end_state_url: zod
+      .string()
+      .url()
+      .min(1)
+      .optional()
+      .describe(
+        "The world's records at the trial's end and its action log, kept for grading it again.",
+      ),
     usage: zod
       .array(
         zod.object({

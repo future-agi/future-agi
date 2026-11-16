@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 import { TRIAL_CHANGES_COPY as C } from "./trialChanges.constants";
 
 const quiet = {
@@ -163,6 +163,19 @@ function WorldChanges({ trialState }) {
       {unreadable && (
         <Typography sx={{ ...quiet, color: "warning.dark" }}>
           {C.unreadable}
+        </Typography>
+      )}
+      {trialState?.end_state_url && (
+        <Typography sx={quiet}>
+          {C.endStateLead}{" "}
+          <Link
+            href={trialState.end_state_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+          >
+            {C.endState}
+          </Link>
         </Typography>
       )}
     </>

@@ -25764,6 +25764,11 @@ export interface TrialStateApi {
   start?: TrialStartApi;
   decisions?: ActorDecisionApi[];
   approvals?: ApprovalLineApi[];
+  /**
+   * The world's records at the trial's end and its action log, kept for grading it again.
+   * @minLength 1
+   */
+  end_state_url?: string;
   usage?: ActorUsageApi[];
   /** The actor limits this trial ran with; null is no limit. */
   limits?: TrialStateApiLimits;

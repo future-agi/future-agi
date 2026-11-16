@@ -97153,6 +97153,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApprovalLine",
           },
         },
+        end_state_url: {
+          title: "End state url",
+          description:
+            "The world's records at the trial's end and its action log, kept for grading it again.",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
         usage: {
           type: "array",
           items: {

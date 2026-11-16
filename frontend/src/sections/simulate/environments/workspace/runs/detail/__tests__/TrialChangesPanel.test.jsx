@@ -37,6 +37,35 @@ describe("TrialChangesPanel", () => {
     expect(screen.queryByText(/^Committed:/)).toBeNull();
   });
 
+  it("links the world as the trial ended when its end state was kept, and says nothing of it otherwise", () => {
+    const changes = [
+      {
+        who: "agent",
+        name: "the agent",
+        attempted: 1,
+        committed: 1,
+        refused: 0,
+        faulted: 0,
+        duplicate: 0,
+        committed_actions: ["issue_refund"],
+      },
+    ];
+    const { unmount } = render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: changes,
+          end_state_url: "http://localhost:9005/bucket/end-state",
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("link", { name: "download its records and action log" }),
+    ).toHaveAttribute("href", "http://localhost:9005/bucket/end-state");
+    unmount();
+    render(<TrialChangesPanel trialState={{ state_changes: changes }} />);
+    expect(screen.queryByText(/The world as this trial ended/)).toBeNull();
+  });
+
   it("keeps attempted, refused and committed apart per participant and says what each actor chose", () => {
     render(
       <TrialChangesPanel

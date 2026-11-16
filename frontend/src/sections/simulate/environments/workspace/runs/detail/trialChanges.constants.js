@@ -99,6 +99,9 @@ export const TRIAL_CHANGES_COPY = {
     unknown:
       "Whether this trial started from the seeded records could not be checked.",
   },
+  // The world's records at the trial's end and its action log, kept so a fixed check can grade the trial again.
+  endStateLead: "The world as this trial ended is kept:",
+  endState: "download its records and action log",
   recordsHeading: "Records before and after",
   recordsEmpty: "No record changed in this trial.",
   recordKinds: { added: "Added", changed: "Changed", removed: "Removed" },
