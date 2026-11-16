@@ -92,6 +92,11 @@ class Evidence:
     # The world door's sealed `door.json` and `permissions.json`; None when absent or not read.
     door: Mapping[str, Any] | None = None
     worker_permissions: Mapping[str, Any] | None = None
+    # ALK's own decisions sealed with the bundle: `door.json`, `worker-limits.json` and the tool proxy's
+    # `actions.json` (world action to tool); None for a bundle sealed before ALK wrote them.
+    door_outcome: Mapping[str, Any] | None = None
+    worker_limits: Mapping[str, Any] | None = None
+    actions_to_tools: Mapping[str, Any] | None = None
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -116,7 +121,13 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
 
 _FILES = ("tools", "actions", "routed", "unobserved")
 # Read by key, never through `_items`: each is a mapping or None.
-_DOOR_FILES = ("door", "worker_permissions")
+_DOOR_FILES = (
+    "door",
+    "worker_permissions",
+    "door_outcome",
+    "worker_limits",
+    "actions_to_tools",
+)
 # Kept rows and cached reads from before the door files were read lack them, so they are read once more.
 _FILES_VERSION = assembly.CERTIFICATION_FILES_VERSION
 
@@ -218,6 +229,9 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
                 TOOL_ROUTING,
                 assembly.DOOR_FILE_PATH,
                 assembly.PERMISSIONS_FILE_PATH,
+                assembly.DOOR_OUTCOME_PATH,
+                assembly.WORKER_LIMITS_PATH,
+                assembly.ACTIONS_FILE_PATH,
             },
             _MAX_CERTIFICATION_BYTES,
         )
@@ -294,6 +308,9 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             certificate=bundle.certificate or {},
             door=_mapping(files.get("door")),
             worker_permissions=_mapping(files.get("worker_permissions")),
+            door_outcome=_mapping(files.get("door_outcome")),
+            worker_limits=_mapping(files.get("worker_limits")),
+            actions_to_tools=_mapping(files.get("actions_to_tools")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -322,6 +339,9 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         certificate=certificate if isinstance(certificate, Mapping) else {},
         door=_mapping(files.get("door")),
         worker_permissions=_mapping(files.get("worker_permissions")),
+        door_outcome=_mapping(files.get("door_outcome")),
+        worker_limits=_mapping(files.get("worker_limits")),
+        actions_to_tools=_mapping(files.get("actions_to_tools")),
     )
 
 
