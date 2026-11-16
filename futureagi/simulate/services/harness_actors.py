@@ -1388,9 +1388,9 @@ def upload_environment_file(
     content: bytes,
     user: User | None,
     expected_revision: int | None,
-) -> Cast:
+) -> tuple[Cast, str]:
     """Put one uploaded file into the environment draft under its kind's folder and return the cast, whose knowledge
-    sources then list it. Refuses `upload_kind_unknown`, `upload_invalid` (400) and `draft_changed` (409); a file of
+    sources then list it, and the path the file was stored at. Refuses `upload_kind_unknown`, `upload_invalid` (400) and `draft_changed` (409); a file of
     the same name is replaced."""
     spec = UPLOAD_KINDS.get(kind)
     if spec is None:
@@ -1435,9 +1435,10 @@ def upload_environment_file(
             f"{base}: an actor may not be given a file by this name; rename it",
             status_code=400,
         )
-    return _written(
+    cast = _written(
         environment, {**environment_files, path: content}, suite_files, refs, user
     )
+    return cast, path
 
 
 def _stamped(

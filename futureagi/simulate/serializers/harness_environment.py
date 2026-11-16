@@ -1245,6 +1245,22 @@ class HarnessActorListSerializer(serializers.Serializer):
     unresolved = HarnessActorUnresolvedSerializer(many=True, required=False)
 
 
+class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
+    # An empty file is the service's to refuse, with the other problems of the same upload.
+    file = serializers.FileField(allow_empty_file=True)
+    kind = serializers.ChoiceField(
+        choices=("knowledge",),
+        help_text="What the file is for: `knowledge`, a document an actor may be given to read.",
+    )
+    expected_revision = serializers.IntegerField(min_value=0, required=False)
+
+
+class HarnessEnvironmentFileUploadedSerializer(HarnessActorListSerializer):
+    uploaded_path = serializers.CharField(
+        help_text="Where the file was stored in the environment, as the knowledge sources list it."
+    )
+
+
 class HarnessActorViewQuerySerializer(serializers.Serializer):
     scenario_key = serializers.CharField(required=False, max_length=255)
 

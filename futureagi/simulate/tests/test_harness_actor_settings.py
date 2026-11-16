@@ -103,6 +103,8 @@ def test_an_uploaded_document_is_offered_to_actors_and_kept_in_the_draft(
     )
     assert upload.status_code == 200, upload.content
     assert "knowledge/pricing policy.md" in upload.json()["knowledge_sources"]["files"]
+    # The response says where the file was stored, so the page never guesses it.
+    assert upload.json()["uploaded_path"] == "knowledge/pricing policy.md"
     files = drafts.edit_sides(environment)["environment"]
     assert files["knowledge/pricing policy.md"].startswith(b"Discounts above 15%")
 
@@ -127,10 +129,12 @@ def test_an_upload_of_the_wrong_kind_format_or_size_is_refused(
         {"file": SimpleUploadedFile(name, content), "kind": kind},
         format="multipart",
     )
-    assert upload.status_code == 400 and upload.json()["error"] in (
-        "upload_invalid",
-        "upload_kind_unknown",
-    )
+    assert upload.status_code == 400
+    # A kind the request does not offer is refused by the request's own validation, naming the field.
+    if kind == "knowledge":
+        assert upload.json()["error"] == "upload_invalid"
+    else:
+        assert "kind" in str(upload.json())
 
 
 def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_to_another(

@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from django.utils import timezone
-from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -39,6 +38,8 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentEvalEditSerializer,
+    HarnessEnvironmentFileUploadedSerializer,
+    HarnessEnvironmentFileUploadSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
@@ -549,27 +550,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         url_path="files",
         parser_classes=[MultiPartParser],
     )
-    @swagger_auto_schema(
+    @validated_request(
+        request_serializer=HarnessEnvironmentFileUploadSerializer,
+        responses={200: HarnessEnvironmentFileUploadedSerializer},
         operation_id="simulate_api_harness-environments_upload_file",
-        manual_parameters=[
-            openapi.Parameter(
-                "file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True
-            ),
-            openapi.Parameter(
-                "kind",
-                openapi.IN_FORM,
-                type=openapi.TYPE_STRING,
-                required=True,
-                description="What the file is for: `knowledge`, a document an actor may be given to read.",
-            ),
-            openapi.Parameter(
-                "expected_revision",
-                openapi.IN_FORM,
-                type=openapi.TYPE_INTEGER,
-                required=False,
-            ),
-        ],
-        responses={200: HarnessActorListSerializer},
     )
     def upload_file(self, request, pk=None):
         """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
@@ -583,29 +567,18 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        upload = request.FILES.get("file")
-        if upload is None:
-            raise HostedHarnessError(
-                "upload_invalid", "choose a file to upload", status_code=400
-            )
-        revision = request.data.get("expected_revision")
-        try:
-            expected = int(revision) if revision not in (None, "") else None
-        except (TypeError, ValueError):
-            raise HostedHarnessError(
-                "upload_invalid", "expected_revision is a number", status_code=400
-            ) from None
-        return Response(
-            upload_environment_file(
-                job,
-                kind=str(request.data.get("kind") or ""),
-                name=str(upload.name or ""),
-                # Read one byte past the bound, so a larger file is refused without reading all of it.
-                content=upload.read(UPLOAD_MAX_BYTES + 1),
-                user=request.user,
-                expected_revision=expected,
-            )
+        data = request.validated_data
+        upload = data["file"]
+        cast, path = upload_environment_file(
+            job,
+            kind=data["kind"],
+            name=str(upload.name or ""),
+            # Read one byte past the bound, so a larger file is refused without reading all of it.
+            content=upload.read(UPLOAD_MAX_BYTES + 1),
+            user=request.user,
+            expected_revision=data.get("expected_revision"),
         )
+        return Response({**cast, "uploaded_path": path})
 
     def _actor_edit(self, request, pk, *, op, actor_id=None):
         from simulate.services.harness_actors import write_actor_edit
