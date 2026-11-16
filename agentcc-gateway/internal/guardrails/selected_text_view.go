@@ -18,7 +18,7 @@ import (
 func usesSelectedTextView(g Guardrail) bool {
 	// Leaves import this package, so importing their concrete types here would
 	// create a cycle. Exact package/type identity confines this compatibility
-	// adapter to the five installed implementations, never a custom override or
+	// adapter to these installed implementations, never a custom override or
 	// an unavailable/invalid-config wrapper with the same registry name.
 	typ := reflect.TypeOf(g)
 	if typ == nil || typ.Kind() != reflect.Pointer {
@@ -29,7 +29,7 @@ func usesSelectedTextView(g Guardrail) bool {
 	switch typ.PkgPath() + "." + typ.Name() {
 	case base + "topic.TopicGuardrail", base + "language.LanguageGuardrail",
 		base + "sysprompt.SystemPromptGuardrail", base + "leakage.LeakageGuardrail",
-		base + "hallucination.HallucinationGuardrail":
+		base + "hallucination.HallucinationGuardrail", base + "validation.ValidationGuardrail":
 		return true
 	}
 	return false
@@ -39,11 +39,53 @@ func usesSelectedTextView(g Guardrail) bool {
 // org/static guardrails. They are immutable projections, never wire remediation.
 func selectedCheckInput(rc *models.RequestContext, withResponse bool) *CheckInput {
 	input := checkInput(rc, withResponse)
+	input.InspectionOnly = rc.GuardrailInspectionOnly || rc.GuardrailRequest != nil || rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)
 	if rc.SelectedGuardrailRequest != nil {
 		input.Request = rc.SelectedGuardrailRequest
 		input.InspectionOnly = true
 	}
+	if withResponse && rc.SelectedGuardrailResponse != nil {
+		input.Response = rc.SelectedGuardrailResponse
+		input.InspectionOnly = true
+	}
 	return input
+}
+
+// Capture native inspection content before legacy org/static remediators update
+// their working projection. Those rewrites never change the native wire body.
+// Copy even an explicit selected view: its parameters may alias the legacy view.
+// Rebind existing completeness evidence to the owned copy, but never create it
+// for an incomplete, stale or unsupported payload.
+func preserveSelectedProjection(rc *models.RequestContext, stage Stage) {
+	input := selectedCheckInput(rc, stage == StagePost)
+	if !input.InspectionOnly {
+		return
+	}
+	payload := inspectionPayload(rc, stage)
+	complete := rc.Inspection.IsComplete(inspectionStage(stage), payload)
+	snapshot := &CheckInput{}
+	if stage == StagePost {
+		snapshot.Response = input.Response
+	} else {
+		snapshot.Request = input.Request
+	}
+	owned, err := cloneCheckInput(snapshot)
+	if err != nil {
+		if stage == StagePost {
+			rc.GuardrailOutputUnsupported = "native output inspection snapshot is unavailable"
+		} else {
+			rc.GuardrailInputUnsupported = "native input inspection snapshot is unavailable"
+		}
+		return
+	}
+	if stage == StagePost {
+		rc.SelectedGuardrailResponse = owned.Response
+	} else {
+		rc.SelectedGuardrailRequest = owned.Request
+	}
+	if complete {
+		rc.Inspection.Complete(inspectionStage(stage), inspectionPayload(rc, stage))
+	}
 }
 
 type selectedTextCheck struct{ Guardrail }

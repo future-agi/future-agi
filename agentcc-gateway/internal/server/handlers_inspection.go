@@ -60,6 +60,9 @@ func (h *Handlers) processInspection(ctx context.Context, rc *models.RequestCont
 		if rc.GuardrailResponse != nil {
 			response = rc.GuardrailResponse
 		}
+		if rc.SelectedGuardrailResponse != nil {
+			response = rc.SelectedGuardrailResponse
+		}
 		if rc.GuardrailOutputUnsupported == "" && completeTextResponse(response) {
 			rc.Inspection.Complete(models.InspectionOutput, response)
 		}
@@ -548,7 +551,7 @@ func nativeOutputProjection(dialect string, body []byte) (*models.ChatCompletion
 func setNativeOutputProjection(rc *models.RequestContext, dialect string, body []byte) {
 	projection, complete := nativeOutputProjection(dialect, body)
 	if complete {
-		rc.GuardrailResponse = projection
+		rc.SelectedGuardrailResponse = projection
 		return
 	}
 	// Retain the legacy observation projection, but never certify it for selected

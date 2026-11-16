@@ -182,9 +182,9 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleCompletionStream(ctx, w, rc, provider)
 	} else if native, ok := provider.(nativeTextCompletionProvider); ok {
-		// This path forwards req, not rc.Request. Redacting its chat projection
-		// must not hide original content from a later blocking check. Streaming
-		// and non-native completions above/below still forward the mutable chat body.
+		// This path forwards req, not rc.Request. Only selected checks inspect
+		// immutable original content; legacy org/static checks keep their working
+		// projection and remediation sequence. Streaming/non-native paths are mutable.
 		rc.GuardrailInspectionOnly = true
 		if messages, inspectable := textInputMessages(req.Prompt); inspectable {
 			// Keep ToChatRequest's joined prompt for legacy org/static checks.
@@ -230,8 +230,8 @@ func isLegacyCompletionModel(model string) bool {
 // equivalent ChatCompletionResponse so downstream post-plugins
 // (cost/credits/logging/prometheus) that key off rc.Response.Usage and
 // rc.Response.Model keep working uniformly — they don't need to branch on
-// completion vs chat format. Every returned choice is projected; inspecting
-// only the first choice would leave batched prompts and n>1 output unchecked.
+// completion vs chat format. The legacy response contains choice zero only;
+// selected policies receive every choice through their separate output view.
 func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider nativeTextCompletionProvider, req *models.CompletionRequest) {
 	var nativeResp *models.CompletionResponse
 
@@ -243,22 +243,30 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 			return err
 		}
 		nativeResp = resp
-		choices := make([]models.Choice, 0, len(resp.Choices))
+		text, finish := "", ""
+		if len(resp.Choices) > 0 {
+			text, finish = resp.Choices[0].Text, resp.Choices[0].FinishReason
+		}
+		rc.Response = &models.ChatCompletionResponse{
+			ID:      resp.ID,
+			Object:  "chat.completion",
+			Created: resp.Created,
+			Model:   resp.Model,
+			Choices: []models.Choice{{
+				Index: 0, Message: textMessage("assistant", text), FinishReason: finish,
+			}},
+			Usage:             resp.Usage,
+			SystemFingerprint: resp.SystemFingerprint,
+		}
+		selected := *rc.Response
+		selected.Choices = make([]models.Choice, 0, len(resp.Choices))
 		for _, choice := range resp.Choices {
-			choices = append(choices, models.Choice{
+			selected.Choices = append(selected.Choices, models.Choice{
 				Index: choice.Index, Message: textMessage("assistant", choice.Text),
 				FinishReason: choice.FinishReason, Logprobs: choice.Logprobs,
 			})
 		}
-		rc.Response = &models.ChatCompletionResponse{
-			ID:                resp.ID,
-			Object:            "chat.completion",
-			Created:           resp.Created,
-			Model:             resp.Model,
-			Choices:           choices,
-			Usage:             resp.Usage,
-			SystemFingerprint: resp.SystemFingerprint,
-		}
+		rc.SelectedGuardrailResponse = &selected
 		rc.ResolvedModel = resp.Model
 		return nil
 	}

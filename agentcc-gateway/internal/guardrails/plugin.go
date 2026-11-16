@@ -62,6 +62,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 		return pipeline.ResultContinue()
 	}
 	ctx = p.withResolvedKeyPolicies(ctx, rc)
+	preserveSelectedProjection(rc, StagePre)
 	wasComplete := rc.Inspection.IsComplete(models.InspectionInput, inspectionPayload(rc, StagePre))
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
@@ -102,6 +103,7 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	preserveSelectedProjection(rc, StagePost)
 	wasComplete := rc.Inspection.IsComplete(models.InspectionOutput, inspectionPayload(rc, StagePost))
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
@@ -403,12 +405,11 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // own body, Request is nil and Response holds usage only; the handler puts the
 // text in GuardrailRequest and GuardrailResponse instead.
 //
-// Remediation is supported only for wire-backed content. Projections must
-// remain unchanged across checks, or a later Block would inspect different
-// content from the bytes the handler actually sends.
+// Legacy org/static checks retain their mutable working view, including on
+// native routes. Selected checks use a separately owned original-wire view.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
-	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata, InspectionOnly: rc.GuardrailInspectionOnly || rc.GuardrailRequest != nil || rc.Request == nil || (withResponse && rc.GuardrailResponse != nil)}
-	if rc.GuardrailRequest != nil {
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
+	if input.Request == nil {
 		input.Request = rc.GuardrailRequest
 	}
 	if withResponse {

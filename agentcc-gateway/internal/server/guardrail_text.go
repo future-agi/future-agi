@@ -31,33 +31,42 @@ func guardrailRequest(dialect string, body []byte) *models.ChatCompletionRequest
 // responsesGuardrailRequest is the text of a Responses request: its
 // instructions, then each input item, a plain string input included.
 func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatCompletionRequest {
-	out := &models.ChatCompletionRequest{
-		Model: req.Model, User: req.User, Stream: req.Stream,
-		Temperature: req.Temperature, TopP: req.TopP,
-	}
-	// Keep supported evaluator context under its original wire names. Responses
-	// tools are not chat tools, and max_output_tokens is not a chat parameter.
-	out.Extra = make(map[string]json.RawMessage)
-	if len(req.Metadata) > 0 {
-		out.Extra["metadata"] = req.Metadata
-	}
-	if req.MaxOutputTokens != nil {
-		out.Extra["max_output_tokens"], _ = json.Marshal(req.MaxOutputTokens)
-	}
-	if req.Store != nil {
-		out.Extra["store"], _ = json.Marshal(req.Store)
-	}
-	if req.PreviousResponseID != "" {
-		out.Extra["previous_response_id"], _ = json.Marshal(req.PreviousResponseID)
+	return responsesTextView(req, false)
+}
+
+func selectedResponsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatCompletionRequest {
+	return responsesTextView(req, true)
+}
+
+func responsesTextView(req *models.ResponsesRequest, selected bool) *models.ChatCompletionRequest {
+	out := &models.ChatCompletionRequest{Model: req.Model}
+	if selected {
+		out.User, out.Stream = req.User, req.Stream
+		out.Temperature, out.TopP = req.Temperature, req.TopP
+		// Keep evaluator context and empty messages only in the selected view.
+		// Legacy org/static checks retain the dev projection, not this envelope.
+		out.Extra = make(map[string]json.RawMessage)
+		if len(req.Metadata) > 0 {
+			out.Extra["metadata"] = req.Metadata
+		}
+		if req.MaxOutputTokens != nil {
+			out.Extra["max_output_tokens"], _ = json.Marshal(req.MaxOutputTokens)
+		}
+		if req.Store != nil {
+			out.Extra["store"], _ = json.Marshal(req.Store)
+		}
+		if req.PreviousResponseID != "" {
+			out.Extra["previous_response_id"], _ = json.Marshal(req.PreviousResponseID)
+		}
 	}
 	if req.Instructions != "" {
 		out.Messages = append(out.Messages, textMessage("system", req.Instructions))
 	}
 	var input string
 	if json.Unmarshal(req.Input, &input) == nil {
-		// Empty strings are still an inspectable text shape. Shape evidence is
-		// validated separately; do not mistake an empty prompt for no projection.
-		out.Messages = append(out.Messages, textMessage("user", input))
+		if input != "" || selected {
+			out.Messages = append(out.Messages, textMessage("user", input))
+		}
 		return out
 	}
 	var items []struct {
@@ -81,7 +90,7 @@ func responsesGuardrailRequest(req *models.ResponsesRequest) *models.ChatComplet
 		if role == "" {
 			role = "user"
 		}
-		if text != "" || item.Type == "" || item.Type == "message" {
+		if text != "" || (selected && (item.Type == "" || item.Type == "message")) {
 			out.Messages = append(out.Messages, textMessage(role, text))
 		}
 	}

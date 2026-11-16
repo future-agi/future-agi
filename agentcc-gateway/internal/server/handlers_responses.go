@@ -56,6 +56,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 	rc.GuardrailRequest = responsesGuardrailRequest(&req)
+	rc.SelectedGuardrailRequest = selectedResponsesGuardrailRequest(&req)
 	if !completeResponsesInput(&req) {
 		rc.GuardrailInputUnsupported = "Responses input contains content without a complete text projection"
 	}

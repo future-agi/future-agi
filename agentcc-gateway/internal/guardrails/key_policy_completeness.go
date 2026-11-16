@@ -55,6 +55,9 @@ func inspectionStage(stage Stage) models.InspectionStage {
 
 func inspectionPayload(rc *models.RequestContext, stage Stage) any {
 	if stage == StagePost {
+		if rc.SelectedGuardrailResponse != nil {
+			return rc.SelectedGuardrailResponse
+		}
 		if rc.GuardrailResponse != nil {
 			return rc.GuardrailResponse
 		}

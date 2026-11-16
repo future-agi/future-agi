@@ -77,6 +77,9 @@ type RequestContext struct {
 	// key policies. It must not replace legacy org/static inspection views or the
 	// typed request forwarded to the provider (completions, embeddings, speech).
 	SelectedGuardrailRequest *ChatCompletionRequest `json:"-"`
+	// SelectedGuardrailResponse holds complete native output without expanding
+	// the legacy response used by org/static checks, accounting and observers.
+	SelectedGuardrailResponse *ChatCompletionResponse `json:"-"`
 
 	// Inspection is typed, request-local policy evidence, never caller metadata.
 	Inspection *InspectionState `json:"-"`
@@ -84,6 +87,8 @@ type RequestContext struct {
 	// GuardrailInspectionOnly marks a Request projection that is not the body
 	// forwarded by the selected route (native legacy completions). Keeping Request
 	// available to other plugins does not make its remediation wire-backed.
+	// Only selected checks use this marker; legacy checks retain their mutable
+	// working projection and remediation order.
 	GuardrailInspectionOnly bool
 	// Unsupported reasons describe route capabilities, never client content.
 	// Selected-key checks must not treat token IDs or binary output as empty text.
@@ -201,6 +206,7 @@ func (rc *RequestContext) Release() {
 	rc.GuardrailRequest = nil
 	rc.GuardrailResponse = nil
 	rc.SelectedGuardrailRequest = nil
+	rc.SelectedGuardrailResponse = nil
 	rc.Inspection = nil
 	rc.GuardrailInspectionOnly = false
 	rc.GuardrailInputUnsupported = ""

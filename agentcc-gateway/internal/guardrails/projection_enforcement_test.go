@@ -42,8 +42,15 @@ func TestInspectionProjectionCannotHideFromLaterKeyBlock(t *testing.T) {
 				if result.Action != pipeline.ShortCircuit || result.Error == nil {
 					t.Fatalf("projection rewrite hid violation: %+v", result)
 				}
-				if got := string(rc.GuardrailRequest.Messages[0].Content); got != `"secret"` {
-					t.Fatalf("projection changed: %s", got)
+				if got := string(rc.SelectedGuardrailRequest.Messages[0].Content); got != `"secret"` {
+					t.Fatalf("selected original changed: %s", got)
+				}
+				wantLegacy := `"secret"`
+				if source == "org" || source == "static" {
+					wantLegacy = `"rewritten"` // dev's working-view remediation is retained
+				}
+				if got := string(rc.GuardrailRequest.Messages[0].Content); got != wantLegacy {
+					t.Fatalf("legacy projection=%s want=%s", got, wantLegacy)
 				}
 				blocked := false
 				for _, r := range rc.GuardrailResults {

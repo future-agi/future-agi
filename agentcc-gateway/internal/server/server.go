@@ -449,7 +449,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Structured decisions, on the customer's own provider key only.
 	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
 	router.Handle("POST", "/v1/decisions", handlers.Decisions)
-	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
+	router.handleInspected("GET", "/v1/decisions/models", handlers.DecisionModels, RouteInspection{Auth: inspectionAuthMiddleware})
 	router.HandleInspected("POST", "/v1/responses", handlers.CreateResponse, textInspection("responses.create"))
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
@@ -464,7 +464,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/messages/count_tokens", handlers.AnthropicCountTokens) // count_tokens before /v1/messages
 	router.HandleInspected("POST", "/v1/messages", handlers.AnthropicMessages, textInspection("messages.create"))
 
-	router.Handle("POST", "/v1/count_tokens", handlers.CountTokens)
+	router.handleInspected("POST", "/v1/count_tokens", handlers.CountTokens, RouteInspection{Auth: inspectionAuthMiddleware})
 	modelCatalogInspection := RouteInspection{Auth: inspectionAuthCatalog, Contract: models.InspectionContract{
 		Input: models.InspectionNotApplicable, Output: models.InspectionNotApplicable,
 		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
@@ -563,10 +563,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("DELETE", "/v1/videos/{video_id}", handlers.DeleteVideo)
 
 	// Scheduled completions API.
-	router.Handle("POST", "/v1/scheduled", handlers.SubmitScheduled)
-	router.Handle("GET", "/v1/scheduled", handlers.ListScheduledJobs)
-	router.Handle("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob)
-	router.Handle("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob)
+	router.handleInspected("POST", "/v1/scheduled", handlers.SubmitScheduled, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled", handlers.ListScheduledJobs, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
 
 	// Async inference endpoints.
 	router.handleInspected("GET", "/v1/async/{job_id}", handlers.GetAsyncJob, RouteInspection{Auth: inspectionAuthStored})
@@ -787,7 +787,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		router.handleInspected("POST", endpoint, mcpServer.HandlePost, RouteInspection{Auth: inspectionAuthMCP})
-		router.handleInspected("GET", endpoint, mcpServer.HandleSSE, RouteInspection{Auth: inspectionAuthMCP})
+		router.handleInspected("GET", endpoint, mcpServer.HandleSSE, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		// Admin endpoints for MCP.
 		router.Handle("GET", "/-/mcp/status", func(w http.ResponseWriter, r *http.Request) {
@@ -951,16 +951,16 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		router.Handle("GET", "/.well-known/agent.json", a2aServer.HandleAgentCard)
-		router.Handle("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard)
+		router.handleInspected("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard, RouteInspection{Auth: inspectionAuthMiddleware})
 		// All JSON-RPC methods remain opaque at dispatch. Do not parse/buffer a
 		// body merely to exempt a method: historical task artifacts are content.
-		a2aInspection := RouteInspection{Discriminator: "opaque-a2a-method", Contract: models.InspectionContract{Reason: "A2A request and historical artifacts lack complete inspection"}}
+		a2aInspection := RouteInspection{Auth: inspectionAuthMiddleware, Discriminator: "opaque-a2a-method", Contract: models.InspectionContract{Reason: "A2A request and historical artifacts lack complete inspection"}}
 		for _, method := range []string{a2a.MethodMessageSend, a2a.MethodTasksSend, a2a.MethodMessageStream, a2a.MethodTasksGet, a2a.MethodTasksCancel} {
 			a2aInspection.Variants = append(a2aInspection.Variants, models.InspectionContract{Operation: method, Reason: a2aInspection.Contract.Reason})
 		}
 		router.handleInspected("POST", "/a2a", a2aServer.HandleMessage, a2aInspection)
 		router.handleInspected("POST", "/v1/a2a", a2aServer.HandleMessage, a2aInspection)
-		router.Handle("GET", "/v1/agents", a2aServer.ListAgents)
+		router.handleInspected("GET", "/v1/agents", a2aServer.ListAgents, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		slog.Info("a2a protocol enabled", "agents", len(cfg.A2A.Agents))
 	}

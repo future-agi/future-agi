@@ -66,6 +66,18 @@ func anyKeyAuthenticates(keyStore *auth.KeyStore, candidates []string) bool {
 	return false
 }
 
+// AuthenticateRequestAPIKey returns the first valid candidate in KeyAuth order.
+// Use this only for routes whose sole authentication gate is KeyAuth; handlers
+// with their own credential precedence must retain that narrower contract.
+func AuthenticateRequestAPIKey(keyStore *auth.KeyStore, r *http.Request) (*auth.APIKey, string) {
+	for _, raw := range extractRequestAPIKeys(r) {
+		if key := keyStore.Authenticate(raw); key != nil {
+			return key, raw
+		}
+	}
+	return nil, ""
+}
+
 // AuthorizationAPIKey parses the schemes accepted by KeyAuth. The boolean
 // reports a recognized scheme, even with an empty key, so callers preserving
 // credential precedence cannot silently fall through to a different identity.

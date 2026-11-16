@@ -63,7 +63,9 @@ func TestInspectionR4CatalogAuthorizationHTTP(t *testing.T) {
 			}{
 				{"missing", nil, 401},
 				{"invalid", map[string]string{"Authorization": "bearer invalid"}, 401},
-				{"invalid-priority", map[string]string{"Authorization": "bearer invalid", "x-api-key": "sk-agentcc-runtime-a"}, 401},
+				// Catalog has no second rejecting auth gate on dev: KeyAuth tries
+				// every candidate. R5 restores that acceptance, not a strict override.
+				{"invalid-priority-fallback", map[string]string{"Authorization": "bearer invalid", "x-api-key": "sk-agentcc-runtime-a"}, 200},
 				{"valid-priority", map[string]string{"Authorization": "bearer sk-agentcc-runtime-a", "x-api-key": "invalid"}, 200},
 				{"api-key", map[string]string{"x-api-key": "sk-agentcc-runtime-a"}, 200},
 				{"caller-metadata", map[string]string{"x-agentcc-metadata": `{"auth_key_id":"key_1","org_id":"org-runtime"}`}, 401},

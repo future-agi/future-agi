@@ -15,15 +15,16 @@ import (
 )
 
 const (
-	inspectionAuthStandard = "authorization-then-x-api-key"
-	inspectionAuthGenAI    = "query-key-then-google-key-then-authorization"
-	inspectionAuthSpeech   = "speech-sdk-key"
-	inspectionAuthRealtime = "bearer-then-query-api-key"
-	inspectionAuthMCP      = "case-insensitive-bearer"
-	inspectionAuthStored   = "bearer-else-x-api-key"
-	inspectionAuthCatalog  = "middleware-authorization-else-x-api-key"
-	inspectionAuthPublic   = "public"
-	inspectionAuthAdmin    = "separate-admin-auth"
+	inspectionAuthStandard   = "authorization-then-x-api-key"
+	inspectionAuthMiddleware = "middleware-first-valid-key"
+	inspectionAuthGenAI      = "query-key-then-google-key-then-authorization"
+	inspectionAuthSpeech     = "speech-sdk-key"
+	inspectionAuthRealtime   = "bearer-then-query-api-key"
+	inspectionAuthMCP        = "case-insensitive-bearer"
+	inspectionAuthStored     = "bearer-else-x-api-key"
+	inspectionAuthCatalog    = "catalog-middleware-first-valid-key"
+	inspectionAuthPublic     = "public"
+	inspectionAuthAdmin      = "separate-admin-auth"
 )
 
 func defaultInspectionAuth(pattern string) string {
@@ -38,8 +39,8 @@ func defaultInspectionAuth(pattern string) string {
 }
 
 // RouteInspection is derived from an actual registration. Unknown is the safe
-// default. Auth describes the handler's credential precedence, not middleware's
-// broader 'any candidate authenticates' check. Discriminator names operations
+// default. Auth describes the handler's credential precedence, or explicitly
+// the middleware-only contract when there is no second gate. Discriminator names operations
 // sharing one HTTP template; their capability is resolved before dispatch.
 type RouteInspection struct {
 	Method        string                      `json:"method"`
@@ -102,14 +103,6 @@ func inspectionAuthorization(r *http.Request, mode string) string {
 			return "Bearer " + strings.TrimSpace(header[7:])
 		}
 		return ""
-	case inspectionAuthCatalog:
-		if key, ok := middleware.AuthorizationAPIKey(r.Header.Get("Authorization")); ok {
-			return "Bearer " + key
-		}
-		if key := r.Header.Get("x-api-key"); key != "" {
-			return "Bearer " + key
-		}
-		return ""
 	case inspectionAuthStored:
 		if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 			return header
@@ -127,6 +120,22 @@ func inspectionAuthorization(r *http.Request, mode string) string {
 		}
 		return ""
 	}
+}
+
+// Middleware-only routes accept every KeyAuth credential form and fall through
+// invalid candidates exactly as KeyAuth does. Other routes authenticate again
+// in their handler, so keep their case-sensitive schemes and precedence intact.
+func inspectionCredential(r *http.Request, mode string, keys *auth.KeyStore) (*auth.APIKey, string) {
+	if mode == inspectionAuthMiddleware || mode == inspectionAuthCatalog {
+		key, raw := middleware.AuthenticateRequestAPIKey(keys, r)
+		return key, "Bearer " + raw
+	}
+	authorization := inspectionAuthorization(r, mode)
+	raw, bearer := strings.CutPrefix(authorization, "Bearer ")
+	if !bearer {
+		return nil, authorization
+	}
+	return keys.Authenticate(raw), authorization
 }
 
 func (registration RouteInspection) contractFor(r *http.Request) models.InspectionContract {
@@ -165,12 +174,7 @@ func (rt *Router) configureInspection(engine *pipeline.Engine, keys *auth.KeySto
 		// These are the existing public/separately authenticated surfaces, not
 		// content-capability exemptions. No API-key principal exists on them.
 		if keys != nil && registration.Auth != inspectionAuthPublic && registration.Auth != inspectionAuthAdmin && !middleware.IsLicenseAuthorized(r.Context()) {
-			authorization := inspectionAuthorization(r, registration.Auth)
-			rawKey, bearer := strings.CutPrefix(authorization, "Bearer ")
-			var key *auth.APIKey
-			if bearer {
-				key = keys.Authenticate(rawKey)
-			}
+			key, authorization := inspectionCredential(r, registration.Auth, keys)
 			if key == nil {
 				models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
 				return
