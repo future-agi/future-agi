@@ -2971,3 +2971,57 @@
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 - the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
+
+### SIM-E2E-008 — a run with too few failing cases to fix sends the builder a request for more like them
+
+**Goal:** A developer whose run has too few failing cases to start a fix sends the builder a request for more cases like them
+
+**Spec:** `flows/simulate/add-cases-to-builder.spec.ts:161`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run of the environment with 2 failing cases
+2. open Debug failures
+3. press Improve
+4. read the launch form footer
+5. press Add cases with the builder
+6. read the confirmation
+7. press Open the builder
+8. read the builder chat
+
+**Browser observations:**
+
+- the footer reads that a fix needs at least 3 failing cases, ends with "Add cases with the builder", and Start improvement is disabled
+- the link asks first: the confirmation says the page will be left, the choices dropped, and that the user saves, runs again and improves from the new run, while the URL stays on the run
+- Open the builder lands on the environment's Scenarios tab
+- the builder chat holds exactly the request naming refund-over-200 (escalated) and identity-phone (verified_identity), unsent
+- no fix is launched (no POST to agent-fix-runs)
+
+### SIM-E2E-009 — a trial only its must-pass check refused ships on the developer's reason
+
+**Goal:** A developer ships a fix's trial that broke only must-pass checks, giving a reason, and sees which trial is now the default and who shipped it, when and why
+
+**Spec:** `flows/simulate/ship-anyway.spec.ts:169`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished fix with a winner and a trial only must-pass refused
+2. read that trial's row
+3. press Ship
+4. pick that trial in the Trial dropdown
+5. read the checks it broke
+6. type the reason
+7. press Make default
+8. read the header and the trial's row
+
+**Browser observations:**
+
+- Trial 2's row reads "Broke must-pass: on-time-cancel: escalated"
+- Ship opens on the winner; picking Trial 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed
+- exactly one POST goes to Trial 2's make-default, with exactly the minted reason as override_reason
+- the header reads "Trial 2 is the default"
+- Trial 2's row reads "Shipped anyway by E2E Developer" with the minted reason
