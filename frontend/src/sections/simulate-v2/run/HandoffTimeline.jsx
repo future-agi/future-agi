@@ -358,8 +358,8 @@ export default function HandoffTimeline({
   );
   /* Failed sub-goals placed on the step their evidence points to. */
   const placed = useMemo(
-    () => placeFailures(seq, failures || []),
-    [seq, failures],
+    () => placeFailures(seq, sample ? [] : failures || []),
+    [seq, failures, sample],
   );
   /* Every trial of this scenario (proposal 8): its sequence and failures. */
   const trialSeqs = useMemo(
@@ -453,7 +453,7 @@ export default function HandoffTimeline({
         <SubGoalLines placed={placed} nameOf={seq.nameOf} onGo={setPicked} />
         {p.partial && <Quiet>{p.partial}</Quiet>}
       </Stack>
-      {routes && (
+      {routes && !sample && (
         <TrialRoutes
           routes={routes}
           current={trialIdx}
