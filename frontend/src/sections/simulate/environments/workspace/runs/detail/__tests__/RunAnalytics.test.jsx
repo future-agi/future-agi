@@ -19,6 +19,16 @@ const analytics = {
   dashboard: {
     metrics: [
       {
+        key: "trial_pass",
+        label: "Trials passed",
+        value: 66.67,
+        unit: "percent",
+        measured: 3,
+        total: 4,
+        note: "Passed, out of trials that passed or failed.",
+        no_score: false,
+      },
+      {
         key: "pass_rate",
         label: "Calls passed",
         value: 66.67,
@@ -433,7 +443,6 @@ describe("RunAnalytics", () => {
       measured: 0,
       no_score: false,
     };
-    nothingYet.summary.trial_pass_rate = null;
     useRunAnalytics.mockReturnValue({
       data: nothingYet,
       isPending: false,

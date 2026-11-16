@@ -15,7 +15,7 @@ class RunDashboardMetricSerializer(serializers.Serializer):
     note = serializers.CharField(allow_blank=True)
     no_score = serializers.BooleanField(
         help_text="True when the value is null because the calls ran with no pass or fail: no score, not missing "
-        "data. Set only on the pass rate."
+        "data. Set only on the pass rates (calls and trials)."
     )
 
 

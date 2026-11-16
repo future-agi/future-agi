@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, TypedDict
 
 from django.db.models import Q, QuerySet, TextField, Value
@@ -124,11 +124,43 @@ def trial_outcomes(queryset: QuerySet) -> tuple[dict[str, int], int]:
     return counts, excluded
 
 
-def trial_pass(execution: Any) -> TrialPass:
-    """One run's trial pass, read from its calls as the run's own page reads them."""
+def trial_passes(executions: Sequence[Any]) -> dict[Any, TrialPass]:
+    """Each listed run's trial pass, read from its calls as the run's own page reads them: one grouped count per
+    run test the runs belong to, however many runs are listed."""
+    from django.db.models import Count
+
     from simulate.services.run_results_v3_queries import run_calls_queryset
 
-    return trial_pass_from(*trial_outcomes(run_calls_queryset(execution)))
+    by_run_test: dict[Any, list[Any]] = defaultdict(list)
+    for execution in executions:
+        by_run_test[execution.run_test_id].append(execution)
+    outcomes: dict[Any, dict[str, int]] = defaultdict(dict)
+    excluded: dict[Any, int] = defaultdict(int)
+    for runs in by_run_test.values():
+        rows = (
+            run_calls_queryset(runs[0], [run.id for run in runs])
+            .order_by()
+            .values_list("test_execution_id", "result_outcome")
+            .annotate(
+                comparable=Count("id", filter=~NOT_COMPARABLE),
+                left_out=Count("id", filter=NOT_COMPARABLE),
+            )
+            .values_list(
+                "test_execution_id", "result_outcome", "comparable", "left_out"
+            )
+        )
+        for run_id, outcome, comparable, left_out in rows:
+            outcomes[run_id][outcome] = outcomes[run_id].get(outcome, 0) + comparable
+            excluded[run_id] += left_out
+    return {
+        execution.id: trial_pass_from(outcomes[execution.id], excluded[execution.id])
+        for execution in executions
+    }
+
+
+def trial_pass(execution: Any) -> TrialPass:
+    """One run's trial pass, read from its calls as the run's own page reads them."""
+    return trial_passes([execution])[execution.id]
 
 
 def build_reliability(

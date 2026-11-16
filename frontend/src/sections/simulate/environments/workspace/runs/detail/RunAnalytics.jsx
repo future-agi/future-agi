@@ -267,7 +267,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const metricsByKey = Object.fromEntries(
     dashboard.metrics.map((metric) => [metric.key, metric]),
   );
-  const passRate = metricsByKey.pass_rate;
+  const trialPass = metricsByKey.trial_pass;
   const dropOff = metricsByKey.drop_off;
   const costPerPass = metricsByKey.cost_per_pass;
   const comparison = dashboard.comparison;
@@ -320,19 +320,19 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   ].filter(Boolean);
   const headlines = [
     {
-      key: "pass_rate",
-      label: "Trials passed",
-      // The run's one trial pass, as its header and the runs list read it; no_score means nothing to score.
-      value:
-        summary.trial_pass_rate == null && passRate?.no_score
-          ? STATUS_META.no_score.label
-          : format(summary.trial_pass_rate, "percent"),
-      reported: summary.trial_pass_rate != null || Boolean(passRate?.no_score),
+      key: "trial_pass",
+      // The run's one trial pass, as its header and the runs list read it; label and note served with it.
+      label: trialPass?.label,
+      // no_score means nothing to score, not missing data.
+      value: trialPass?.no_score
+        ? STATUS_META.no_score.label
+        : format(trialPass?.value, "percent"),
+      reported: trialPass?.value != null || Boolean(trialPass?.no_score),
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,
       coverage: `${summary.trials_passed} / ${summary.trials_evaluated} evaluated · ${summary.trials_inconclusive} inconclusive`,
-      note: passRate?.note,
+      note: trialPass?.note,
     },
     {
       key: "drop_off",

@@ -80,6 +80,12 @@ def test_a_run_with_an_inconclusive_trial_reads_the_same_on_the_list_the_header_
         served["trials_evaluated"],
         served["trials_inconclusive"],
     ) == (3, 4, 1)
+    tiles = {metric["key"]: metric for metric in analytics["dashboard"]["metrics"]}
+    assert (tiles["trial_pass"]["label"], tiles["trial_pass"]["value"]) == (
+        "Trials passed",
+        served["trial_pass_rate"],
+    )
+    assert tiles["pass_rate"]["label"] == "Calls passed"
 
 
 @pytest.mark.django_db
@@ -97,3 +103,34 @@ def test_a_run_with_no_inconclusive_trial_keeps_the_pass_rate_it_always_had(
         == analytics["summary"]["pass_rate"]
         == 75
     )
+
+
+def _queries_for(executions):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from simulate.services.run_reliability_v3 import trial_passes
+
+    with CaptureQueriesContext(connection) as captured:
+        passes = trial_passes(executions)
+    return len(captured.captured_queries), passes
+
+
+@pytest.mark.django_db
+def test_listing_more_runs_reads_their_trial_pass_in_the_same_number_of_queries(run):
+    first = _trials(run, ["passed", "failed"])
+    others = [
+        TestExecution.objects.create(
+            run_test=first.run_test, status=TestExecution.ExecutionStatus.COMPLETED
+        )
+        for _ in range(3)
+    ]
+    for other in others:
+        _trials((other, run[1]), ["passed", "passed", "inconclusive"])
+
+    one, _ = _queries_for([first])
+    four, passes = _queries_for([first, *others])
+
+    assert four == one
+    assert passes[first.id]["trial_pass_rate"] == 50
+    assert [passes[other.id]["trials_inconclusive"] for other in others] == [1, 1, 1]

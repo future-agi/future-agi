@@ -58,7 +58,7 @@ from simulate.services.harness_scenarios import (
     call_actor_entries,
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
-from simulate.services.run_reliability_v3 import trial_pass
+from simulate.services.run_reliability_v3 import trial_passes
 from simulate.types import ContractCallActor
 
 if TYPE_CHECKING:
@@ -201,6 +201,7 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
         ).select_related("environment")
     }
     counts = receipt_outcome_counts(job.id for job in jobs.values())
+    trials = trial_passes(executions)
     run_numbers = dict(
         TestExecution.no_workspace_objects.filter(id__in=ids)
         .annotate(
@@ -245,7 +246,7 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
                 # A run without receipts has no counts here, so no verdict and no rate.
                 calls=None,
             ),
-            **trial_pass(execution),
+            **trials[execution.id],
             "started_at": _isoformat(execution.started_at),
             "completed_at": _isoformat(execution.completed_at),
         }

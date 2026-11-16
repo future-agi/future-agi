@@ -1848,7 +1848,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, comparison
+            queryset, summary, evaluations, risk, comparison, trials=run_trials
         ),
         "failure_breakdown": [
             {

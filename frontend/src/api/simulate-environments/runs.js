@@ -68,10 +68,10 @@ export function executionToRun(raw) {
     executionId: raw?.id,
     status: raw.outcome_status,
     // The run's trial pass, 0-100, as its own page reads it; null when no trial passed or failed.
-    passRate: raw.trial_pass_rate ?? null,
-    trialsPassed: raw.trials_passed ?? null,
-    trialsEvaluated: raw.trials_evaluated ?? null,
-    trialsInconclusive: raw.trials_inconclusive ?? null,
+    passRate: raw.trial_pass_rate,
+    trialsPassed: raw.trials_passed,
+    trialsEvaluated: raw.trials_evaluated,
+    trialsInconclusive: raw.trials_inconclusive,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
     runState: runStateFor(raw.status),

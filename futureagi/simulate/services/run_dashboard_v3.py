@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 
 from django.db.models import (
@@ -401,6 +402,7 @@ def build_run_dashboard(
     evaluations: list,
     risk: list,
     comparison: dict | None = None,
+    trials: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
     queryset = (
@@ -527,6 +529,26 @@ def build_run_dashboard(
         # Nothing was scored and some calls ran with no pass or fail: no score, which is not missing data.
         no_score=summary["pass_rate"] is None and bool(outcomes["no_score"]),
     )
+    if trials is not None:
+        # The run's one trial pass, as its header and the runs list read it; distinct from the calls rate above.
+        left_out = (
+            trials["trials_inconclusive"] + trials["trials_excluded_not_comparable"]
+        )
+        metric(
+            "trial_pass",
+            "Trials passed",
+            trials["trial_pass_rate"],
+            "percent",
+            trials["trials_evaluated"],
+            "Passed, out of trials that passed or failed."
+            + (
+                f" {trials['trials_inconclusive']} errored or inconclusive and"
+                f" {trials['trials_excluded_not_comparable']} not started from the seeded records are left out."
+                if left_out
+                else ""
+            ),
+            no_score=trials["trial_pass_rate"] is None and bool(outcomes["no_score"]),
+        )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
         "ran_cleanly",

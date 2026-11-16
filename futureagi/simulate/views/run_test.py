@@ -169,7 +169,7 @@ from simulate.services.run_regrade import (
 )
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
-from simulate.services.run_reliability_v3 import trial_pass
+from simulate.services.run_reliability_v3 import trial_passes
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -5736,6 +5736,7 @@ class RunTestExecutionsView(APIView):
             receipt_outcomes = hosted_receipt_outcomes(
                 execution_ids, organization_id=user_organization.id
             )
+            trials = trial_passes(result_page or [])
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5960,7 +5961,7 @@ class RunTestExecutionsView(APIView):
                                 "failed": failed_calls,
                             },
                         ),
-                        **trial_pass(test_execution),
+                        **trials[test_execution.id],
                         **_version_labels(version_labels, test_execution.id),
                     }
                 )
