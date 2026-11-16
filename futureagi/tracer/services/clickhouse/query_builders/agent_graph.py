@@ -1,14 +1,15 @@
-"""One-snapshot aggregate Agent Graph query for direct-write ClickHouse.
+"""Aggregate Agent Graph query for direct-write ClickHouse.
 
 ``edges`` are exact parent -> child topology transitions. ``path_edges`` stays
 empty because span hierarchy does not prove chronological execution paths;
 publishing the hierarchy twice under different labels would be misleading.
 
-Both, together with node metrics, are produced by one ClickHouse statement and
-one physical ``spans`` reference.  This matters on ClickHouse 25.3: named CTEs
-are expanded at every use, so separate edge/node statements (or a CTE reused by
-three UNION branches) can observe different ReplacingMergeTree part snapshots.
-The query below collapses every physical identity with ``argMax(_version)``,
+Both, together with node metrics, are produced by one ClickHouse statement.
+Ordinarily it uses one physical ``spans`` reference: ClickHouse 25.3 expands
+named CTEs at every use, so repeated references can observe different parts.
+For a Tag leaf, two disjoint hour scans avoid reading historical Tag JSON;
+these can observe separate parts snapshots during concurrent writes. The query
+collapses every physical identity with ``argMax(_version)``,
 applies mutable filters only after that collapse, packs each accepted trace into
 one compact array, and emits node/hierarchy/path events through one final
 ``arrayJoin``.
@@ -21,6 +22,7 @@ from typing import Any
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
+    selected_root_match_sql,
 )
 from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
     graph_monetary_rows_sql,
@@ -57,10 +59,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         project_id: str,
         filters: list[dict] | None = None,
         annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+        project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = list(filters or [])
+        self.project_version_id = project_version_id
         self.annotation_label_ids = (
             None if annotation_label_ids is None else tuple(annotation_label_ids)
         )
@@ -85,6 +89,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
     def _latest_projection(
         row_predicates: tuple[str, ...],
         contribution_predicates: tuple[str, ...],
+        root_order_expression: str = "",
     ) -> tuple[str, str, int]:
         """Return argMax tuple expressions, aliases, and tombstone position."""
 
@@ -122,6 +127,9 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             )
         )
         aliases.extend(("prompt_tokens", "completion_tokens", "graph_cost_flags"))
+        if root_order_expression:
+            expressions.append(root_order_expression)
+            aliases.append("graph_root_order")
         for index, predicate in enumerate(row_predicates):
             expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             aliases.append(f"graph_row_match_{index}")
@@ -163,12 +171,16 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             # every contributing child of each matched trace.
             observe_type="trace",
             annotation_label_ids=self.annotation_label_ids,
+            window_start=self.start_date,
+            window_end=self.end_date,
+            project_version_id=self.project_version_id,
         )
         self.params.update(plan.params)
 
         tuple_sql, projection_sql, tombstone_index = self._latest_projection(
             plan.predicates,
             plan.contribution_predicates,
+            plan.root_order_expression,
         )
         output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
         contribution_terms = [
@@ -181,10 +193,22 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         contribution_condition = " AND ".join(
             f"({term})" for term in contribution_terms
         )
+        if len(plan.event_window_only) != len(plan.predicates):
+            raise AssertionError("agent graph predicate scopes must align")
         match_columns = []
         match_having = []
         for index in range(len(plan.predicates)):
+            if index in plan.selected_root_predicates:
+                selected_match = selected_root_match_sql(
+                    f"max(tuple(graph_root_order, graph_row_match_{index}))"
+                )
+                match_columns.append(f"{selected_match} AS graph_match_{index}")
+                continue
             match_condition = f"graph_row_match_{index} = 1"
+            if plan.event_window_only[index]:
+                # A Tag witness counts only inside the requested window, as
+                # in the trace list and the Observe trace graph.
+                match_condition = f"({match_condition}) AND ({output_window})"
             match_columns.append(
                 "            max(toUInt8(ifNull(("
                 f"{match_condition}), 0))) AS graph_match_{index}"
@@ -205,6 +229,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # relation, Map, and JSON membership may be witnessed by any current
         # descendant at any timestamp. Keep the graph contribution array
         # request-window bounded, but never time-bound those membership flags.
+        # The effective Tag leaf is the exception (``event_window_only``).
         root_window_column = (
             "            max(toUInt8(ifNull(((parent_span_id IS NULL OR "
             "parent_span_id = '') AND ("
@@ -227,12 +252,65 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # must then replay candidate membership across all child timestamps;
         # ``groupArrayIf`` below still prevents those remote witnesses from
         # becoming graph nodes or edges.
+        # Tag leaves keep this unpruned read too: out-of-window intermediate
+        # spans still prove monetary ancestry (graph_monetary_rows_sql), even
+        # though they can no longer witness the Tag leaf.
         physical_window = ""
         if not plan.predicates:
             physical_window = (
                 "\n                  AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
                 "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
             )
+
+        def physical_versions(projection: str, hour_condition: str) -> str:
+            return f"""
+                SELECT
+                    project_id,
+                    trace_id,
+                    argMax(
+                        tuple(
+{projection}
+                        ),
+                        {self.VERSION_COLUMN}
+                    ) AS graph_latest_row
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}
+                  {hour_condition}
+                GROUP BY
+                    project_id,
+                    observation_type,
+                    service_name,
+                    toStartOfHour(start_time),
+                    trace_id,
+                    id
+            """
+
+        if any(plan.event_window_only):
+            # Physical identities include start hour. Split disjoint hours
+            # before the collapse so remote monetary/attribute witnesses stay
+            # available without reading Tag JSON for their historical versions.
+            hour_window = (
+                "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))"
+                " AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
+            )
+            remote_predicates = tuple(
+                "0" if window_only else predicate
+                for predicate, window_only in zip(
+                    plan.predicates, plan.event_window_only, strict=True
+                )
+            )
+            remote_projection, _, _ = self._latest_projection(
+                remote_predicates,
+                plan.contribution_predicates,
+                plan.root_order_expression,
+            )
+            versions_sql = (
+                physical_versions(tuple_sql, f"AND {hour_window}")
+                + "\nUNION ALL\n"
+                + physical_versions(remote_projection, f"AND NOT ({hour_window})")
+            )
+        else:
+            versions_sql = physical_versions(tuple_sql, physical_window)
 
         monetary_rows = graph_monetary_rows_sql(
             source="graph_latest_spans",
@@ -251,6 +329,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 "prompt_tokens",
                 "completion_tokens",
                 "graph_cost_flags",
+                *(("graph_root_order",) if plan.root_order_expression else ()),
                 *(f"graph_row_match_{index}" for index in range(len(plan.predicates))),
                 *(
                     f"graph_contribution_match_{index}"
@@ -325,25 +404,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 trace_id,
 {projection_sql}
             FROM (
-                SELECT
-                    project_id,
-                    trace_id,
-                    argMax(
-                        tuple(
-{tuple_sql}
-                        ),
-                        {self.VERSION_COLUMN}
-                    ) AS graph_latest_row
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}
-                  {physical_window}
-                GROUP BY
-                    project_id,
-                    observation_type,
-                    service_name,
-                    toStartOfHour(start_time),
-                    trace_id,
-                    id
+{versions_sql}
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ),

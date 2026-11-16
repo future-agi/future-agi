@@ -38,6 +38,16 @@ class SamplingStatementTooLarge(EvalTaskSelectionRejected):
     """The compiled sampling statement exceeds its compiler budget."""
 
 
+# Tag overlay failures that the same window and filter always reproduce.
+DETERMINISTIC_TAG_READ_CODES = frozenset(
+    {"tag_overlay_budget_exceeded", "tag_scope_required"}
+)
+
+
+class SamplingTagFilterTooBroad(EvalTaskSelectionRejected):
+    """A Tag filter's live assignments exceed the overlay budget."""
+
+
 class SamplingReadCeilingExceeded(EvalTaskSelectionRejected):
     """A sampling read would exceed its configured row/byte ceiling."""
 

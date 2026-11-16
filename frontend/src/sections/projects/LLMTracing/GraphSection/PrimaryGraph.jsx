@@ -60,6 +60,7 @@ import {
   getExactAggregationReadState,
   getQueryCompletedAt,
   getRenderableGraphData,
+  nonRetryableQueryErrorMessage,
   awaitAggregationRequestWithDeadline,
 } from "src/utils/queryReadState";
 import { parseTraceGraphResponse } from "src/api/project/observe-contracts";
@@ -607,6 +608,7 @@ const PrimaryGraph = ({
     data: graphData,
     isLoading,
     isError: rawGraphError,
+    error: rawGraphQueryError,
     refetch,
   } = useQuery({
     queryKey: [
@@ -888,7 +890,8 @@ const PrimaryGraph = ({
       graphReadState !== "complete" &&
       graphReadState !== "pending");
   const graphStatusMessage = graphReadFailed
-    ? QUERY_FAILED_RETRY_MESSAGE
+    ? (rawGraphError && nonRetryableQueryErrorMessage(rawGraphQueryError)) ||
+      QUERY_FAILED_RETRY_MESSAGE
     : aggregationPollingPaused
       ? AGGREGATION_POLLING_PAUSED_MESSAGE
       : !displaySnapshot &&

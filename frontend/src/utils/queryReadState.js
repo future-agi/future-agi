@@ -29,6 +29,21 @@ export const ATTRIBUTE_LOOKUP_UNAVAILABLE_MESSAGE =
 export const QUERY_FAILED_RETRY_MESSAGE =
   "We couldn't load this data. Please retry in a moment.";
 
+// Request errors whose server copy explains a lasting condition. A retry
+// cannot help, so show that copy instead of the generic retry message.
+const NON_RETRYABLE_QUERY_ERROR_CODES = new Set(["tag_filter_too_broad"]);
+
+export const nonRetryableQueryErrorMessage = (error) => {
+  // The shared Axios interceptor (src/utils/axios) rejects with the flattened
+  // response body ({...data, statusCode, transportCode}). Accept that shape
+  // and a raw Axios error ({response: {data}}).
+  const data = error?.response?.data ?? error;
+  if (!NON_RETRYABLE_QUERY_ERROR_CODES.has(data?.code)) return null;
+  return typeof data?.message === "string" && data.message
+    ? data.message
+    : null;
+};
+
 export const AGGREGATION_PREPARING_MESSAGE = "Loading results…";
 
 export const AGGREGATION_POLLING_PAUSED_MESSAGE =

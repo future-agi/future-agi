@@ -848,6 +848,39 @@ and pin the chart, review the exact migration path, and establish recovery befor
 changing the release. The chart does not inherit Compose's automatic-update
 qualification.
 
+When introducing the trace/span tag editor to an existing install, perform
+this manual [tag reconciliation](UPGRADING.md#direct-helm) with a one-off Job
+rendered from the **new** chart's bootstrap Job (not a new Helm hook):
+
+1. Obtain the owner's maintenance-outage and recovery decision. Enforce the
+   [cold writer barrier](UPGRADING.md#legacy-tag-cutover-barrier): close admission,
+   suspend controllers/autoscalers, stop **all legacy and new editor/request
+   writers** plus workers/collectors/gateway/external writers, and drain requests.
+   Keep datastores available. The runbook scales the actual chart Deployments;
+   `backend.replicas: 0` alone does not stop workers or prevent HPA restart.
+2. Apply reviewed schema prerequisites in isolated Jobs, without serving the new
+   editor. Run `python manage.py reconcile_legacy_trace_tags --dry-run`, then
+   **stop for human count review**. Apply separately with
+   `python manage.py reconcile_legacy_trace_tags` only after approval.
+3. Review all resumed segments. Any `changed during scan` requires investigation
+   and a full repeat without `--after-id`; missing CH rows need separate repair
+   or continued exclusion from editor access. Verify a fresh full dry-run reports
+   zero differences/changes. Successful Job exit alone is insufficient.
+4. Only after final reconciliation is complete and reviewed may you upgrade/start
+   new pods. Keep external admission closed through fresh display/filter checks,
+   discard stale tabs/caches and queued requests, require reload/refetch, then
+   obtain sign-off to expose the editor. Argo CD/Flux must use the same barrier;
+   bootstrap hooks and two online passes do not protect this handoff.
+
+The new editor writes manual assignments rather than PG `tracer_trace.tags`;
+Langfuse ingestion still updates PG tags and mirrors traces to ClickHouse.
+See the runbook for Job/operator commands, collector-reset limits, and downgrade
+recovery. Preserve/export primary `tracer_entity_tag_assignment` before downgrade:
+the old app ignores it, reverse migration drops it, and no reverse reconciliation
+is provided. [Standalone](UPGRADING.md#standalone) likewise requires stopping
+`app` and completing reconciliation before starting the new editor; its bootstrap
+script does not perform this handoff.
+
 - **Supported paths:** follow the release-specific migration and chart upgrade
   notes. A patch or adjacent minor version is not itself proof of compatibility.
 - **Migrations:** existing pods can keep serving while the bootstrap job runs.

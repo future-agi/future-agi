@@ -1101,6 +1101,95 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
         "session_graph_root_estimate_sql": _SESSION_OR_USER,
     },
+    "tracer.services.clickhouse.v2.effective_tags": {
+        "live_tag_source_sql": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "latest live span identities with projected tag sources, bound to "
+                "the view/builder's authorized project set, a finite time window "
+                "and, for list classifiers, the candidate traces; singular tag "
+                "includes children, native tags selects the canonical root. "
+                "Sampling supplies its snapshot-bound sampling_source for the "
+                "previewed or stored EvalTask's project: preview/creation resolves "
+                "the visible project manager and simulation creates no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "prepare_effective_tag_params": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "navigation target discovery through the span-list classifier's "
+                "execution hook: maps a finite candidate_span_ids set to trace ids "
+                "only within the EffectiveTagRelation's authorized project set "
+                "and bounded hour partitions, with candidate and deadline limits. "
+                "It conservatively discovers versions; the caller's exact target "
+                "classifier still validates liveness, event time and physical key"
+            ),
+        ),
+        "canonical_root_sql": filed(
+            PROJECT_SET,
+            why="the canonical root of each trace in live_tag_source_sql's scope",
+        ),
+        "live_tag_roots_sql": filed(
+            PROJECT_SET,
+            why=(
+                "identity-only live roots (start time, parent, deleted) of the "
+                "authorized project set in the overlay's window, with no tag "
+                "sources: the scope of the windowed legacy suppressions"
+            ),
+        ),
+        "trace_overlay_sql": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "a root's assignment keys or the curated traces.tags of the "
+                "leaf's own authorized project set and candidate traces"
+            ),
+        ),
+        "_legacy_match_query": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "curated traces.tags matches of a window-scan tag leaf's "
+                "authorized project set, optionally limited to a finite batch of "
+                "trace ids its PostgreSQL assignments name; it decides which "
+                "assignments suppress a matching curated tag"
+            ),
+        ),
+        "read_tag_overlay": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "liveness in the graph window of the trace roots and span "
+                "identities the authorized project's assignments name"
+            ),
+        ),
+        "_assignment_vocabulary": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why=(
+                "liveness of the picker's UI-tagged entities, limited to trace "
+                "ids the authorized project's assignments name"
+            ),
+        ),
+        "_legacy_vocabulary": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why=(
+                "curated trace tag names of traces with a live root in the "
+                "picker's authorized project set and window"
+            ),
+        ),
+        "effective_tag_values": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why="tag picker vocabulary over the picker's authorized project set",
+        ),
+    },
     "tracer.services.clickhouse.filter_value_reads": {
         "_latest_span_value_cte": _FILTER_VALUE_PICKER,
         "_latest_voice_value_cte": _FILTER_VALUE_PICKER,
@@ -1184,9 +1273,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "status": _OUTBOX_BOOKKEEPING,
     },
     "tracer.services.clickhouse.query_builders.agent_graph": {
-        "AgentGraphQueryBuilder.build": filed(
+        "AgentGraphQueryBuilder.build.<locals>.physical_versions": filed(
             PROJECT_SET,
-            why="Agent Graph statement for the project ids the chart view passes in",
+            why=(
+                "Agent Graph statement's physical span read (one hour range of it "
+                "under a Tag filter) for the project ids the chart view passes in"
+            ),
         ),
     },
     "tracer.services.clickhouse.query_builders.annotation_graph": {
@@ -1641,6 +1733,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             NOT_A_USER_READ,
             why="dead code: no file names it",
         ),
+    },
+    "tracer.services.clickhouse.v2.query_builders.filters": {
+        "ClickHouseFilterBuilderV2._effective_tag_condition": _FILTER_LEAF,
     },
     "tracer.services.clickhouse.v2.query_builders.eval_metrics": {
         "EvalMetricsQueryBuilderV2._filter_fragment": filed(
@@ -2128,7 +2223,17 @@ ENTRY_POINTS = {
         ),
     ),
     "read_span_detail": (None, frozenset({_SPAN_READS})),
-    "read_physical_span_detail": (None, frozenset({_SPAN_READS})),
+    "read_physical_span_detail": (
+        None,
+        frozenset(
+            {
+                _SPAN_READS,
+                # Tag writes reuse the bounded resolver only after authorizing the
+                # visible Project and write role; references confer no access.
+                "tracer/services/clickhouse/v2/entity_tag_targets.py",
+            }
+        ),
+    ),
     # The functions that turn a run into the hidden project's id. A module that
     # lists a run's traces adds itself here in the change that first calls them.
     "simulation_scope_for_run": (None, _RUN_SCOPE_CALLERS),
@@ -3212,6 +3317,9 @@ ROW_TYPES = {
     "prism.AgentccProject.tracer_project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
+    # Explicit user tag writes authorize through the visible Project manager;
+    # collector/simulation ingestion never creates a manual assignment.
+    "tracer.EntityTagAssignment.project": USER_MADE,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,
     # Made from an error cluster, so only for a project the clustering job visits.
     "tracer.ErrorFeedIssueEvent.project": JOB_THROUGH_MANAGERS,

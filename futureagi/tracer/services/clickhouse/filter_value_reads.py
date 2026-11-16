@@ -23,11 +23,15 @@ from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_COST_CENTS_FILTER_EXPRESSION,
     VOICE_ENDED_REASON_FILTER_EXPRESSION,
 )
-from tracer.services.clickhouse.query_service import QueryExecutor
+from tracer.services.clickhouse.query_service import QueryExecutor, QueryResult
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
     is_read_budget_error,
+)
+from tracer.services.clickhouse.v2.effective_tags import (
+    TagVocabularyCache,
+    effective_tag_values,
 )
 from tracer.services.clickhouse.v2.id_remap_sql import (
     NIL_UUID,
@@ -84,6 +88,7 @@ _SYSTEM_VALUE_SOURCE_COLUMNS = {
     "user": "end_user_id",
     "user_id": "end_user_id",
     "tag": "tags",
+    "tags": "tags",
     "prompt_name": "prompt_version_id",
     "prompt_version": "prompt_version_id",
     "prompt_label": "prompt_label_id",
@@ -264,7 +269,9 @@ def _system_value_expression(metric_name: str) -> tuple[str, str]:
         )
         value = resolved_id_expr("latest_spans.raw_value", "filter_value_session_remap")
         return value, join
-    if metric_name == "tag":
+    if metric_name in {"tag", "tags"}:
+        # Raw spans.tags vocabulary: the domain the dashboard widget compiler
+        # matches. Observe pickers use effective_tag_values instead.
         return (
             "arrayJoin(JSONExtract(latest_spans.raw_value, 'Array(String)'))",
             "",
@@ -291,6 +298,7 @@ def read_span_system_filter_values(
     lookback_days: int = 7,
     now: datetime | None = None,
     deadline: ReadDeadline | None = None,
+    effective_tags: bool = True,
 ) -> FilterValueRead:
     """Return exact latest-state values within one finite partition window.
 
@@ -316,6 +324,29 @@ def read_span_system_filter_values(
     project_scope = tuple(dict.fromkeys(str(value) for value in project_ids if value))
     if not project_scope:
         return FilterValueRead((), True, None, window_start, window_end)
+
+    if metric_name in {"tag", "tags"} and effective_tags:
+        tag_deadline = deadline or ReadDeadline.start(FILTER_VALUE_READ_TIMEOUT_MS)
+        values = effective_tag_values(
+            analytics.execute_ch_query,
+            project_ids=project_scope,
+            metric_name=metric_name,
+            window_start=window_start,
+            window_end=window_end,
+            deadline=tag_deadline,
+            search=search,
+            limit=int(limit) + 1,
+            settings=FILTER_VALUE_READ_SETTINGS,
+        )
+        truncated = len(values) > int(limit)
+        return FilterValueRead(
+            values[: int(limit)],
+            not truncated,
+            "sample_limit" if truncated else None,
+            window_start,
+            window_end,
+            has_more=truncated,
+        )
 
     if voice_expression is None:
         value_expression, join = _system_value_expression(metric_name)
@@ -632,8 +663,12 @@ def read_span_system_filter_value_cursor_page(
     seen_value_contains: Callable[[str], bool] | None = None,
     seen_value_count: int | None = None,
     deadline: ReadDeadline | None = None,
+    effective_tags: bool = True,
 ) -> FilterValueCursorPageRead:
     """Walk exact system values over a frozen retained-data window.
+
+    ``effective_tags=False`` keeps ``tag``/``tags`` on the raw ``spans.tags``
+    vocabulary, which is what dashboard widget filters and breakdowns match.
 
     Each statement owns one bounded time slice.  Successful empty slices grow
     geometrically; dense failures narrow the *same* unconsumed frontier.  The
@@ -720,6 +755,7 @@ def read_span_system_filter_value_cursor_page(
     emitted_digests: list[str] = []
     after = value_after
     query_count = 0
+    assignment_cache = TagVocabularyCache(start, end)
 
     while current_end > start and len(emitted) < int(page_size):
         current_start = (
@@ -778,15 +814,36 @@ def read_span_system_filter_value_cursor_page(
                 break
             raise
         try:
-            result = analytics.execute_ch_query(
-                query,
-                params,
-                timeout_ms=query_timeout_ms,
-                settings={
-                    **FILTER_VALUE_READ_SETTINGS,
-                    "max_result_rows": FILTER_VALUE_CURSOR_SCAN_LIMIT,
-                },
-            )
+            if metric_name in {"tag", "tags"} and effective_tags:
+                tag_values = effective_tag_values(
+                    analytics.execute_ch_query,
+                    project_ids=project_scope,
+                    metric_name=metric_name,
+                    window_start=current_start,
+                    window_end=current_end,
+                    deadline=deadline,
+                    search=search,
+                    after=after,
+                    limit=FILTER_VALUE_CURSOR_SCAN_LIMIT,
+                    settings=FILTER_VALUE_READ_SETTINGS,
+                    assignment_cache=assignment_cache,
+                )
+                result = QueryResult(
+                    data=[{"val": value} for value in tag_values],
+                    row_count=len(tag_values),
+                    backend_used="clickhouse",
+                    query_time_ms=0,
+                )
+            else:
+                result = analytics.execute_ch_query(
+                    query,
+                    params,
+                    timeout_ms=query_timeout_ms,
+                    settings={
+                        **FILTER_VALUE_READ_SETTINGS,
+                        "max_result_rows": FILTER_VALUE_CURSOR_SCAN_LIMIT,
+                    },
+                )
         except Exception as exc:
             if not is_read_budget_error(exc):
                 raise

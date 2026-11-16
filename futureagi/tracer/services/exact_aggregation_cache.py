@@ -1059,9 +1059,13 @@ def mark_refresh_failed(payload: Any) -> Any:
     return copied
 
 
-def _decorate_refresh_state(payload: Any, status: str | None) -> Any:
+def _decorate_refresh_state(
+    payload: Any, status: str | None, *, error_code: str | None = None
+) -> Any:
     copied = deepcopy(payload)
     metadata: dict[str, Any] = {}
+    if status == "failed" and error_code == "tag_filter_too_broad":
+        metadata["query_error_code"] = error_code
     if status == "running":
         metadata["query_refreshing"] = True
         metadata["query_refresh_failed"] = False
@@ -1408,13 +1412,20 @@ def finish_exact_refresh(
     token: str,
     *,
     succeeded: bool,
+    error_code: str | None = None,
 ) -> None:
-    """Release a refresh claim and record only sanitized terminal state."""
+    """Release a refresh claim and record only sanitized terminal state.
+
+    Only an allowlisted public request error may cross the worker boundary;
+    exception messages, SQL and tenant diagnostics never enter the cache.
+    """
 
     try:
         lock_key = _refresh_lock_key(namespace, identity)
         state_key = _refresh_state_key(namespace, identity)
         failed_state = {"status": "failed", "token": token}
+        if error_code == "tag_filter_too_broad":
+            failed_state["error_code"] = error_code
         redis_client = _redis_cache_client()
         if redis_client is None:
             with _CACHE_FENCE_FALLBACK_LOCK:
@@ -1875,6 +1886,14 @@ def read_or_schedule_exact_snapshot(
             return None
         return snapshot
 
+    def decorate(payload: Any, status: str | None) -> Any:
+        error_code = None
+        if status == "failed":
+            record = _exact_refresh_state_record(namespace, normalized_identity)
+            if record is not None and record.get("status") == "failed":
+                error_code = record.get("error_code")
+        return _decorate_refresh_state(payload, status, error_code=error_code)
+
     previous = read_servable(normalized_identity)
     if previous is None and stale_identity is not None:
         previous = read_servable(stale_identity)
@@ -1896,17 +1915,17 @@ def read_or_schedule_exact_snapshot(
             read_servable,
         )
     if previous is not None and not refresh:
-        return _decorate_refresh_state(
+        return decorate(
             previous, _served_refresh_state(namespace, normalized_identity, state)
         )
     if previous is None and state == "failed" and not refresh:
-        return _decorate_refresh_state(pending_payload, state)
+        return decorate(pending_payload, state)
     if not schedule_on_miss:
         # Interactive readers use this cache-only probe before attempting the
         # direct ClickHouse path.  A running refresh must suppress duplicate
         # foreground work, while a true cold miss must remain free to run
         # synchronously instead of being queued pre-emptively.
-        return _decorate_refresh_state(
+        return decorate(
             previous if previous is not None else pending_payload,
             state,
         )
@@ -1917,8 +1936,8 @@ def read_or_schedule_exact_snapshot(
         # worker. Preserve an existing exact snapshot, otherwise expose only
         # the existing sanitized failed-refresh envelope.
         if previous is not None:
-            return _decorate_refresh_state(previous, "failed")
-        return _decorate_refresh_state(pending_payload, "failed")
+            return decorate(previous, "failed")
+        return decorate(pending_payload, "failed")
 
     admission_deferred = False
     token = begin_exact_refresh(namespace, normalized_identity)
@@ -1969,12 +1988,12 @@ def read_or_schedule_exact_snapshot(
     current = read_servable(normalized_identity)
     current_state = exact_refresh_state(namespace, normalized_identity)
     if current is not None:
-        return _decorate_refresh_state(current, current_state)
+        return decorate(current, current_state)
     if previous is not None:
         fallback_state = current_state
         if fallback_state is None and (refresh_enqueued or admission_deferred):
             fallback_state = "running"
-        return _decorate_refresh_state(previous, fallback_state)
+        return decorate(previous, fallback_state)
     # ``token is None`` is ambiguous: another request may own a healthy claim,
     # or the cache itself may be unavailable.  Trust a persisted running state,
     # and trust the request that successfully enqueued this refresh.  With
@@ -1985,7 +2004,7 @@ def read_or_schedule_exact_snapshot(
         terminal_state = (
             "running" if refresh_enqueued or admission_deferred else "failed"
         )
-    return _decorate_refresh_state(pending_payload, terminal_state)
+    return decorate(pending_payload, terminal_state)
 
 
 __all__ = [

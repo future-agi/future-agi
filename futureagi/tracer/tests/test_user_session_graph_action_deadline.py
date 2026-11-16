@@ -536,6 +536,13 @@ def _call_project_user_action(
         "validate_property_graph_namespace",
         lambda *_args, **_kwargs: None,
     )
+    # Keep canonical request validation real while stubbing query execution.
+    monkeypatch.setattr(
+        _UserMetricsBuilder,
+        "parse_time_range",
+        staticmethod(project_view.UserListQueryBuilderV2.parse_time_range),
+        raising=False,
+    )
     monkeypatch.setattr(project_view, "UserListQueryBuilderV2", _UserMetricsBuilder)
     monkeypatch.setattr(
         project_view,

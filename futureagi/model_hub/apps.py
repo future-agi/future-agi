@@ -59,6 +59,9 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "register_temporal_schedules",
         "seed_system_evals",
         "purge_sql_results",
+        # One-time upgrade step of the editable trace tags (TH-7275): copies
+        # legacy PG trace tags into curated ClickHouse (deploy/README.md).
+        "reconcile_legacy_trace_tags",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:

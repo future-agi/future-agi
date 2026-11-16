@@ -17,6 +17,7 @@ from unittest import mock
 import pytest
 
 from tracer.selectors.trace_filter_reads import BoundedFilterPage
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.tests.test_trace_root_physical_replay import (
     complete_root_row,
     content_identity_row,
@@ -127,7 +128,11 @@ class TestTracesOfSessionPagination:
 
         # The bounded V2 reader consumes its sentinel internally and exposes it
         # as ``has_more``; the view receives exactly one public page.
-        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(page_size)]
+        project_id = str(uuid.uuid4())
+        trace_rows = [
+            {"project_id": project_id, "trace_id": str(uuid.uuid4())}
+            for _ in range(page_size)
+        ]
         total = 40
         analytics = self._routing_analytics(trace_rows=trace_rows)
 
@@ -152,7 +157,7 @@ class TestTracesOfSessionPagination:
             mock_cfg.objects.filter.return_value.select_related.return_value = []
             status, payload = view._list_traces_of_session_clickhouse(
                 request,
-                project_id=str(uuid.uuid4()),
+                project_id=project_id,
                 # Pagination now comes from the serializer-validated query data
                 # (request.validated_query_data), not request.query_params.
                 validated_data={
@@ -507,7 +512,10 @@ class TestTracesOfSessionPagination:
         so the span->trace map query must not run at all."""
         view = self._make_view()
         request = self._make_request(page_size=5)
-        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(3)]
+        project_id = str(uuid.uuid4())
+        trace_rows = [
+            {"project_id": project_id, "trace_id": str(uuid.uuid4())} for _ in range(3)
+        ]
         analytics = self._routing_analytics(trace_rows=trace_rows)
 
         with (
@@ -528,7 +536,7 @@ class TestTracesOfSessionPagination:
             mock_cfg.objects.filter.return_value.select_related.return_value = []
             status, _ = view._list_traces_of_session_clickhouse(
                 request,
-                project_id=str(uuid.uuid4()),
+                project_id=project_id,
                 validated_data={
                     "filters": [],
                     "page_number": 0,
@@ -547,14 +555,16 @@ class TestTracesOfSessionPagination:
         """Scored spans map through CH with project, window, and score-id scope."""
         view = self._make_view()
         request = self._make_request(page_size=5)
-        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(3)]
+        project_id = str(uuid.uuid4())
+        trace_rows = [
+            {"project_id": project_id, "trace_id": str(uuid.uuid4())} for _ in range(3)
+        ]
         analytics = self._routing_analytics(trace_rows=trace_rows)
         label = mock.Mock()
         label.id = uuid.uuid4()
         label.type = "text"
         label.name = "Quality"
         label.settings = {}
-        project_id = str(uuid.uuid4())
 
         with (
             mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,

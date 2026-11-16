@@ -81,6 +81,7 @@ import {
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
+import applySavedEntityTags from "./applySavedEntityTags";
 import useCursorGridPagination from "./useCursorGridPagination";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
@@ -334,6 +335,18 @@ const SpanGrid = React.forwardRef(
         );
       },
       [enabled, gridRef, resetPagination],
+    );
+    // A tag save in the detail drawer updates only that entity's loaded rows.
+    // refreshGrid would send the user back to page 1.
+    const applyDrawerTagSave = useCallback(
+      (result, saved) =>
+        applySavedEntityTags(gridRef?.current?.api, {
+          result,
+          entity: saved?.entity,
+          type: saved?.type,
+          gridKind: "span",
+        }),
+      [gridRef],
     );
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -1071,7 +1084,10 @@ const SpanGrid = React.forwardRef(
           onPageSizeChange={changePageSize}
         />
         {!hideDetailDrawer && (
-          <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+          <LLMTracingSpanDetailDrawer
+            refreshGrid={refreshGrid}
+            onTagsSaved={applyDrawerTagSave}
+          />
         )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}

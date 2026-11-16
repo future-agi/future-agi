@@ -507,11 +507,89 @@ git fetch --tags && git checkout vX.Y.Z
 #  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION);
 # AGENTCC_GATEWAY_VERSION first, then FUTURE_AGI_VERSION (see "2. Pin a release")
 $COMPOSE pull
-# run the release's initialization jobs: the commands of "Performing that
-# initialization" above that its release notes call for (every release with
-# database migrations needs step 1); `run --rm` starts nothing else
+```
+
+**Tag-editor transition: owner-approved maintenance outage required.** Follow the
+[writer barrier, fresh-client and recovery requirements](helm/futureagi/UPGRADING.md#legacy-tag-cutover-barrier).
+Pause updates/restarts, close all external/internal application admission and
+drain in-flight requests. Stop **all legacy and new editor/request writers**,
+not just `frontend` or one backend replica. Distributed writers include `backend`,
+`worker`, `worker-default`, `worker-tasks-s`, `worker-tasks-l`, `worker-tasks-xl`,
+`worker-trace-ingestion`, `worker-agent-compass`, `worker-simulation-runner`,
+`worker-sql-workbench`, `worker-exact-aggregation`, `fi-collector` and
+`agentcc-gateway`. Stop old PeerDB flow/mirror workers and external writers too.
+Use the exact Compose file/profile set of the running install; include replicas
+and custom services. This conservative command stops every service except the
+named datastores, including frontend and any custom writers:
+
+```bash
+set -o pipefail
+WRITERS=$($COMPOSE --profile '*' config --services | grep -Ev '^(postgres|clickhouse|redis|minio|temporal|peerdb-catalog|peerdb-temporal|peerdb-minio|property-catalog-kafka)$')
+$COMPOSE --profile '*' stop $WRITERS
+$COMPOSE --profile '*' ps --status running --services
+```
+
+**STOP and verify** only datastores remain running, no other Compose projects or
+external clients can write, and in-flight work has drained. Keep this barrier
+closed through initialization and final reconciliation. Run the release's
+initialization jobs from "Performing that initialization" above on the new images
+(every release with migrations needs step 1); do not start serving processes.
+Then compare legacy PG tags with CH, using operator authorization even for dry-run:
+
+```bash
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+```
+
+**STOP for human review** of scanned/differing/missing/changed counts and scope.
+Record approval before the separate mutating action:
+
+```bash
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+```
+
+Retain every segment's logs. Resume only the same pass/scope with `--after-id`.
+If any segment reports `changed during scan`, investigate the writer barrier and
+repeat the whole pass from the beginning (without `--after-id`). Missing CH rows
+are not created: repair them or keep the affected projects inaccessible pending
+owner-approved recovery. Exit zero is not authorization to expose the editor.
+Verify from the beginning while writers are still stopped:
+
+```bash
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+```
+
+Require `would mirror 0`, `changed during scan 0`, and review missing rows before
+starting new application processes. Only after final reconciliation is complete
+and reviewed:
+
+```bash
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
+
+Keep external admission closed during startup; verify fresh tag display/filtering,
+invalidate cached reads, require old tabs to close/reload and API clients to
+refetch, and discard queued pre-maintenance tag saves before owner sign-off and
+reopening. No new editor may be exposed between a rehearsal and the final scan.
+
+The new trace/span tag PATCH stores manual assignments, **not**
+`tracer_trace.tags`. Langfuse ingestion (`tracer/utils/langfuse_upsert.py`)
+still writes that PG column from incoming trace tags, then best-effort mirrors
+its trace into ClickHouse; OTLP ingestion also mirrors PG traces on root writes.
+The final stopped-writer pass covers the last legacy state before editor
+exposure; it does not replace ongoing ingestion mirroring or protect later
+collector writes. Two online passes are unsafe: an acknowledged legacy edit
+between passes can be hidden by a first new assignment, even if both scans
+succeed. A stale pre-cutover grid save after the scan has the same problem.
+Reconciliation never repairs assignments already created from stale state.
+
+**Known limits:** the collector's root-span writes carry `tags DEFAULT '[]'` and
+can reset `traces.tags` to `[]` on co-owned traces after reconciliation. Recheck
+those traces after collector writes; this one-time command does not prevent later
+collector resets. This is an operator-run upgrade step, not an automatic hook or
+migration.
 
 Do not run `up` (or `deploy/setup.sh`) between the pin and the initialization:
 it would start the new images on the old schema, and the check-only bootstrap
@@ -521,6 +599,11 @@ Only use a separately rehearsed, compatible predecessor for rollback; restore it
 exact image/configuration receipt after approval. Changing tags alone does not
 undo schema/mirror changes or establish a healthy recovery. Preserve old data,
 topics, volumes and obsolete workloads until their explicit retirement is approved.
+For tags, preserve/export primary `tracer_entity_tag_assignment` and related project
+records before downgrade. The old app ignores new assignments; reverse migration
+drops them, and no reverse reconciliation is provided. See the linked recovery
+limits; restoring a backup may lose edits after its recovery point. Do not promise
+a lossless image-only rollback.
 
 ### Signed updates with bin/update
 

@@ -633,6 +633,7 @@ def test_legacy_session_search_stays_raw_and_keeps_sample_metadata(monkeypatch):
         analytics,
         project_ids=[project_id],
         metric_name="session",
+        effective_tags=True,
         search="abc123",
         limit=20,
         lookback_days=dashboard_view.DashboardViewSet.FILTER_VALUES_DEFAULT_LOOKBACK_DAYS,

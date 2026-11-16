@@ -1650,11 +1650,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         )
                     )
                     for placeholder_name in sorted(placeholder_names):
+                        relation_name = None
                         if placeholder_name not in branch_sources:
-                            raise AssertionError(
-                                "unbound organization span residual parameter "
-                                f"{placeholder_name!r}"
+                            from tracer.services.clickhouse.v2.effective_tags import (
+                                relation_parameter_owner,
                             )
+
+                            # Effective tag leaves reference their scope, which
+                            # is bound only when the statement is prepared.
+                            relation_name = relation_parameter_owner(
+                                placeholder_name, branch_sources
+                            )
+                            if relation_name is None:
+                                raise AssertionError(
+                                    "unbound organization span residual parameter "
+                                    f"{placeholder_name!r}"
+                                )
                         namespaced_name = (
                             f"org_span_residual_{branch_index}_{placeholder_name}"
                         )
@@ -1662,6 +1673,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                             f"%({placeholder_name})s",
                             f"%({namespaced_name})s",
                         )
+                        if relation_name is not None:
+                            params[
+                                f"org_span_residual_{branch_index}_{relation_name}"
+                            ] = branch_sources[relation_name]
+                            continue
                         params[namespaced_name] = branch_sources[placeholder_name]
                     branch_project_param = (
                         f"org_span_residual_{branch_index}_outer_project_id"

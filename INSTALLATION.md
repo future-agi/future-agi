@@ -1004,6 +1004,46 @@ release this way; one whose version keys are set, by you or by `./bin/update`,
 keeps running those versions until you change the keys (or use
 `./bin/update`, below).
 
+**One-time trace/span tag-editor upgrade: owner-approved downtime required.**
+Before applying this release, follow the [cold writer barrier](deploy/helm/futureagi/UPGRADING.md#legacy-tag-cutover-barrier)
+and the [Standalone handoff](deploy/helm/futureagi/UPGRADING.md#standalone) or
+[Distributed handoff](deploy/README.md#upgrading-a-production-install).
+Stop **all legacy and new editor/request writers** and ingestion/worker writers,
+not just the frontend. Keep PostgreSQL/ClickHouse up for one-off commands with
+the verified new app/backend image and operator authorization. Complete schema
+prerequisites, run `reconcile_legacy_trace_tags --dry-run`, **stop for human count
+review**, then apply separately. Complete and review final reconciliation after
+the last legacy write **before any new editor exposure**. Two online passes do
+not preserve acknowledged edits. Keep admission closed through startup and fresh
+read/display/filter verification; discard old tabs, cached tag state and queued
+saves, and require reload/refetch before editing.
+
+Neither `./bin/install` nor `./bin/update apply` performs this handoff. Pause
+automatic updates **before** this release and complete the
+[manual-operations handoff](deploy/update/README.md#safe-handoff-to-manual-operations).
+Retain logs of every resumed segment; if any reports `changed during scan`,
+investigate the writer barrier and repeat from the start without `--after-id`.
+Verify a fresh full dry-run reports zero differences/changes. Missing CH rows
+are not created: repair or keep affected projects inaccessible with owner-approved
+recovery tracking. A successful command exit alone does not complete cutover.
+
+For **non-production Distributed** (`./bin/install --distributed`), the installer
+records `COMPOSE_FILE=docker-compose.distributed.yml` in `.env`, plus
+`docker-compose.override.yml` when one exists. From the repository root with no
+conflicting shell `COMPOSE_FILE`, stage with `./bin/update apply --stage`, then
+use the Distributed handoff's stop/initialize/dry-run/review/apply/verify steps
+with `COMPOSE="docker compose"` instead of its production overlay command. This
+uses `backend`, not Standalone's `app`; stop all profiles' workers as that recipe
+specifies. Complete with `./bin/update apply` only after final reconciliation is
+reviewed (instead of that recipe's manual `up`). Staging is not a writer barrier.
+
+**Downgrade limits:** preserve/export primary `tracer_entity_tag_assignment` and
+related project records before downgrade. The old app ignores new assignments;
+reversing the migration drops them. There is no reverse reconciliation here or
+lossless image-only rollback. Agree preservation for re-upgrade, reviewed
+conversion, or coordinated backup recovery (and its post-backup write loss)
+before accepting new edits; see the linked barrier/recovery plan.
+
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the

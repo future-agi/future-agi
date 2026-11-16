@@ -73,6 +73,31 @@ _SEED_WITNESS_ENVELOPE_INDENT = " " * 22
 # asks the rendered statement whether it is referenced at all. One name, so
 # the binder, the predicate and the tests cannot drift apart.
 CANDIDATE_ROOT_SCAN_FLOOR_PARAM = "candidate_root_scan_start_us"
+# The degraded-shape code of an effective tag leaf on the session list.
+SESSION_TAG_FILTER_UNSUPPORTED = "unsupported_session_tag_filter"
+
+
+class SessionTagFilterUnsupportedError(ValueError):
+    """The session list has no exact tag membership; a request error, not 503.
+
+    Effective tags (SDK, UI assignments and curated trace tags) are matched by
+    the trace and span lists, which bind the UI overlay for a finite candidate
+    batch. The session classifier's trace ids exist only inside its SQL, so it
+    cannot bind that overlay and refuses the leaf instead of guessing.
+    """
+
+
+def _is_effective_tag_leaf(item: dict[str, Any]) -> bool:
+    # The routing of ClickHouseFilterBuilderV2._build_condition for tags; an
+    # explicit SPAN_ATTRIBUTE ``tags`` stays an ordinary raw attribute.
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    if not isinstance(config, dict):
+        return False
+    col_type = config.get("col_type") or config.get("colType") or ""
+    return (item.get("column_id") or item.get("columnId")) in {
+        "tag",
+        "tags",
+    } and str(col_type).strip().upper() in {"", "NORMAL", "SYSTEM_METRIC"}
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -533,6 +558,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         has_eval_filters, generic_filters = self._bounded_relational_filter_groups(
             residual_filters
         )
+        if any(_is_effective_tag_leaf(item) for item in generic_filters):
+            raise SessionTagFilterUnsupportedError(
+                "tag filters are not supported by the session list"
+            )
         self._bounded_has_eval_values(has_eval_filters)
 
         allowed_keys = {"annotator", "has_annotation", "my_annotations"}
@@ -676,27 +705,41 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     **leaf_params,
                     "project_id": branch_project_id,
                 }
+                from tracer.services.clickhouse.v2.effective_tags import (
+                    relation_parameter_owner,
+                )
+
                 for placeholder_name in sorted(
                     set(re.findall(r"%\(([A-Za-z_][A-Za-z0-9_]*)\)s", predicate))
                 ):
-                    if placeholder_name in leaf_params or (
-                        org_scope and placeholder_name == "project_id"
+                    # Effective tag leaves reference their scope, which is
+                    # bound only when the statement is prepared.
+                    relation_name = (
+                        None
+                        if placeholder_name in leaf_params
+                        else relation_parameter_owner(placeholder_name, leaf_params)
+                    )
+                    if (
+                        placeholder_name in leaf_params
+                        or relation_name is not None
+                        or (org_scope and placeholder_name == "project_id")
                     ):
                         if org_scope:
-                            namespaced_name = (
-                                f"session_relational_{branch_index}_{leaf_index}_"
-                                f"{placeholder_name}"
-                            )
+                            prefix = f"session_relational_{branch_index}_{leaf_index}_"
                         else:
-                            namespaced_name = (
-                                f"session_relational_{leaf_index}_{placeholder_name}"
-                            )
+                            prefix = f"session_relational_{leaf_index}_"
+                        namespaced_name = f"{prefix}{placeholder_name}"
                         predicate = predicate.replace(
                             f"%({placeholder_name})s", f"%({namespaced_name})s"
                         )
-                        merged_params[namespaced_name] = branch_sources[
-                            placeholder_name
-                        ]
+                        if relation_name is not None:
+                            merged_params[f"{prefix}{relation_name}"] = leaf_params[
+                                relation_name
+                            ]
+                        else:
+                            merged_params[namespaced_name] = branch_sources[
+                                placeholder_name
+                            ]
                     elif placeholder_name not in branch_sources:
                         raise AssertionError(
                             f"unbound session relational parameter {placeholder_name!r}"
@@ -880,6 +923,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         if residual:
             try:
                 self._validate_bounded_relational_filters(residual)
+            except SessionTagFilterUnsupportedError:
+                return SESSION_TAG_FILTER_UNSUPPORTED
             except ValueError as exc:
                 if (
                     "unsupported relational" in str(exc)

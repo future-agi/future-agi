@@ -261,3 +261,149 @@ def test_public_system_chart_returns_sanitized_retryable_error(
     payload = str(response.json())
     assert "temporarily unavailable" in payload
     assert "secret ClickHouse host" not in payload
+
+
+@pytest.mark.unit
+def test_eval_chart_too_broad_tag_returns_400_without_scheduling(monkeypatch):
+    from contextlib import contextmanager
+
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GraphTagFilterTooBroadError,
+    )
+    from tracer.views import charts
+
+    tag_filter = {
+        "column_id": "tag",
+        "filter_config": {
+            "col_type": "NORMAL",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "wanted",
+        },
+    }
+    calls = []
+
+    def preflight(identity):
+        assert identity["filters"] == [WINDOW_FILTER, tag_filter]
+        raise GraphTagFilterTooBroadError()
+
+    monkeypatch.setattr(graph_dispatch, "_preflight_scheduled_graph_tags", preflight)
+    monkeypatch.setattr(
+        graph_dispatch, "_read_or_refresh_exact_graph", lambda **kw: calls.append(kw)
+    )
+    monkeypatch.setattr(charts, "get_request_organization", lambda _request: object())
+
+    @contextmanager
+    def postgres_scope(_deadline):
+        yield
+
+    monkeypatch.setattr(charts, "graph_action_postgres_budget", postgres_scope)
+    monkeypatch.setattr(
+        charts.Project.objects,
+        "get",
+        lambda **kw: SimpleNamespace(id=PROJECT_ID, organization_id=PROJECT_ID),
+    )
+    config = SimpleNamespace(
+        name="Outcome",
+        eval_template=SimpleNamespace(config={"output": "SCORE"}, choices=[]),
+    )
+    request = SimpleNamespace(
+        validated_query_data={
+            "project_id": PROJECT_ID,
+            "interval": "day",
+            "property": "average",
+            "req_data_config": {"type": "EVAL", "id": EVAL_CONFIG_ID},
+            "filters": [WINDOW_FILTER, tag_filter],
+            "refresh": False,
+        },
+        workspace=SimpleNamespace(id=PROJECT_ID),
+    )
+    view = charts.ChartsView()
+    view.request = request
+    with mock.patch.object(CustomEvalConfig.objects, "select_related") as related:
+        related.return_value.get.return_value = config
+        response = inspect.unwrap(charts.ChartsView.fetch_graph)(
+            view, request, _graph_action_deadline=object()
+        )
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad", response.data
+    # Only the cache-only probe ran; nothing was scheduled.
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False]
+
+
+def _eval_series(refresh, monkeypatch, cached):
+    calls = []
+    preflights = []
+
+    def read(**kwargs):
+        calls.append(kwargs)
+        return cached if kwargs.get("schedule_on_miss") is False else ["scheduled"]
+
+    def preflight(identity):
+        preflights.append(identity)
+        raise graph_dispatch.BoundedGraphReadError(
+            "tag_source_unavailable", retryable=True
+        )
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", read)
+    monkeypatch.setattr(graph_dispatch, "_preflight_scheduled_graph_tags", preflight)
+    try:
+        result = graph_dispatch.fetch_eval_chart_series_ch(
+            analytics=None,
+            project_id=PROJECT_ID,
+            filters=[WINDOW_FILTER],
+            interval="day",
+            req_data_config={"type": "EVAL", "id": EVAL_CONFIG_ID},
+            eval_name="Outcome",
+            refresh=refresh,
+            organization_id=PROJECT_ID,
+        )
+    except graph_dispatch.BoundedGraphReadError:
+        result = "preflight-failed"
+    return result, calls, preflights
+
+
+def _series(**state):
+    return [{"query_status": "complete", "data": [{"value": 1}], **state}]
+
+
+def test_eval_chart_cached_series_is_served_without_tag_preflight(monkeypatch):
+    """A tag-source outage must not hide a complete cached series on a poll."""
+    for cached in (
+        _series(query_refreshing=False, query_refresh_failed=False),
+        [{"query_status": "pending", "query_refresh_failed": True}],
+    ):
+        result, calls, preflights = _eval_series(False, monkeypatch, cached)
+        assert result == cached
+        assert preflights == []
+        assert [call["schedule_on_miss"] for call in calls] == [False]
+
+
+def test_eval_chart_running_series_polls_the_dispatch_without_tag_preflight(
+    monkeypatch,
+):
+    """A running, incomplete snapshot is polled through the normal read.
+
+    That read re-enqueues a dispatch claim the worker left terminal; the
+    cache-only probe alone would report "running" forever. It schedules no
+    new work of its own, so it needs no tag preflight.
+    """
+    running = [{"query_status": "pending", "query_refreshing": True}]
+    result, calls, preflights = _eval_series(False, monkeypatch, running)
+    assert result == ["scheduled"]
+    assert preflights == []
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False, True]
+    assert all(call["refresh"] is False for call in calls)
+
+
+def test_eval_chart_cold_miss_and_refresh_preflight_before_scheduling(monkeypatch):
+    miss = [{"query_status": "pending", "query_refreshing": False}]
+    result, calls, preflights = _eval_series(False, monkeypatch, miss)
+    assert result == "preflight-failed"
+    assert len(preflights) == 1
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False]
+    # An explicit refresh always schedules, so it always preflights first.
+    result, calls, preflights = _eval_series(True, monkeypatch, _series())
+    assert result == "preflight-failed"
+    assert len(preflights) == 1
+    assert calls == []

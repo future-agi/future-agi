@@ -181,10 +181,15 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         raw_replica_shard_count: int = 1,
         raw_trace_candidate_predicate: str = "",
         raw_trace_candidate_params: dict[str, Any] | None = None,
+        project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
+        self.project_version_id = project_version_id
+        self._selected_root_predicates: tuple[int, ...] = ()
+        self._filter_requires_span_versions = False
+        self._root_order_expression = ""
         self.interval = interval
         self.system_metric_filters = system_metric_filters or {}
         self.exact_snapshot = bool(exact_snapshot)
@@ -246,7 +251,15 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 project_id=str(self.project_id),
                 observe_type=self.observe_type,
                 annotation_label_ids=self.annotation_label_ids,
+                window_start=self.start_date,
+                window_end=self.end_date,
+                project_version_id=self.project_version_id,
             )
+            self._selected_root_predicates = exact_filter_plan.selected_root_predicates
+            self._filter_requires_span_versions = (
+                exact_filter_plan.requires_span_version_resolution
+            )
+            self._root_order_expression = exact_filter_plan.root_order_expression
             extra_params = exact_filter_plan.params
         else:
             filter_builder = ClickHouseFilterBuilder(
@@ -613,6 +626,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scalar_aliases.extend(
             ("id", "parent_span_id", "name", "observation_type", "graph_cost_flags")
         )
+        if self._root_order_expression:
+            scalar_expressions.append(self._root_order_expression)
+            scalar_aliases.append("graph_root_order")
         if with_version:
             scalar_expressions.append("_version")
             scalar_aliases.append("_version")
@@ -808,7 +824,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_end_param: str,
         with_version: bool = False,
     ) -> str:
-        if self.resolve_span_versions:
+        if self.resolve_span_versions or self._filter_requires_span_versions:
+            # Direct non-cost graph callers normally request append-only
+            # scalars. Effective tag leaves still need the physical winner:
+            # an old live poll must not witness a corrected/deleted SDK tag. Reuse
+            # the bounded latest-state source rather than another spans scan.
             # Replay the complete replacement-key hours before applying mutable
             # output timestamps. Cost and coverage must not select an old poll.
             for source, target, upper in (
@@ -902,6 +922,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             project_id=str(self.project_id),
             observe_type=self.observe_type,
             annotation_label_ids=self.annotation_label_ids,
+            window_start=self.start_date,
+            window_end=self.end_date,
         )
         self.params.update(exact_filter_plan.params)
         output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
@@ -998,6 +1020,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 project_id=str(self.project_id),
                 observe_type=self.observe_type,
                 annotation_label_ids=self.annotation_label_ids,
+                window_start=self.start_date,
+                window_end=self.end_date,
             )
         self.params.update(exact_filter_plan.params)
         self.params.update(
@@ -1161,20 +1185,34 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         )
 
         if self.observe_type == "trace" and row_predicates:
+            from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+                selected_root_match_sql,
+            )
+
+            # Merge the selected-root state across buckets, not the matching
+            # bit: an older tagged root must lose even across hour boundaries.
             local_match_columns = ",\n".join(
-                "                max(toUInt8(ifNull(("
-                + f"graph_row_match_{index} = 1"
-                + (
-                    f") AND ({output_window}), 0))) "
-                    if output_window_only[index]
-                    else "), 0))) "
+                (
+                    f"max(tuple(graph_root_order, graph_row_match_{index}))"
+                    if index in self._selected_root_predicates
+                    else "max(toUInt8(ifNull(("
+                    + f"graph_row_match_{index} = 1"
+                    + (
+                        f") AND ({output_window}), 0)))"
+                        if output_window_only[index]
+                        else "), 0)))"
+                    )
                 )
-                + f"AS graph_bucket_match_{index}"
+                + f" AS graph_bucket_match_{index}"
                 for index in range(len(row_predicates))
             )
             trace_match_columns = ",\n".join(
-                f"                max(graph_bucket_match_{index}) "
-                f"AS graph_match_{index}"
+                (
+                    selected_root_match_sql(f"max(graph_bucket_match_{index})")
+                    if index in self._selected_root_predicates
+                    else f"max(graph_bucket_match_{index})"
+                )
+                + f" AS graph_match_{index}"
                 for index in range(len(row_predicates))
             )
             match_having = "\n              AND ".join(

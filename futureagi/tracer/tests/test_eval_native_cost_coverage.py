@@ -547,7 +547,7 @@ def eval_cost_client():
                 "prompt_version_id": "Nullable(UUID)",
                 "prompt_label_id": "Nullable(UUID)",
                 "custom_eval_config_id": "Nullable(UUID)",
-                "tags": "String",
+                # tags is already part of the shared spans DDL.
                 "span_events": "String",
                 "resource_attrs": "JSON",
                 "llm_request_model": "String",

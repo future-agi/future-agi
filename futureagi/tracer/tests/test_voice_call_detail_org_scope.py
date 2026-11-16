@@ -15,6 +15,7 @@ upstream in authentication and covered by ``accounts.tests.test_multi_org_auth``
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from rest_framework import status
@@ -102,7 +103,15 @@ def test_detail_allows_project_in_active_org_not_user_home_org(
     assert project.organization_id != user.organization_id
     auth_client.set_workspace(active_workspace)
     trace_id = str(uuid.uuid4())
-    direct_write_analytics = object()
+    curated_lookups = []
+
+    def no_curated_trace_tags(sql, params=None, **_kwargs):
+        # The drawer root's curated traces.tags lookup reuses the same client.
+        assert "FROM traces" in sql, sql
+        curated_lookups.append(params)
+        return SimpleNamespace(data=[])
+
+    direct_write_analytics = SimpleNamespace(execute_ch_query=no_curated_trace_tags)
     monkeypatch.setattr(
         "tracer.views.trace.V2AnalyticsQueryService",
         lambda: direct_write_analytics,
@@ -138,6 +147,9 @@ def test_detail_allows_project_in_active_org_not_user_home_org(
     assert response.data["status"] is True
     assert response.data["result"]["project_id"] == str(project.id)
     assert response.data["result"]["trace_id"] == trace_id
+    assert curated_lookups == [
+        {"legacy_projects": (str(project.id),), "legacy_traces": (trace_id,)}
+    ]
     assert response.data["result"]["recording_url"] == ""
     assert response.data["result"]["call_summary"] == ""
 

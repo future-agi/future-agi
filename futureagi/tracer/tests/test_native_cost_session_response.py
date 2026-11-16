@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.views import trace_session
 
 pytestmark = pytest.mark.unit

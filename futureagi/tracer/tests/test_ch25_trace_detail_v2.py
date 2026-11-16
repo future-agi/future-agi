@@ -38,6 +38,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     read_span_detail,
     read_trace_detail,
 )
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 
 try:
     from model_hub.models.score import Score as ScoreModel
@@ -152,6 +153,8 @@ class _SequenceAnalytics:
 def _root_span_row(**overrides):
     row = {
         "id": "S1",
+        "project_id": "P1",
+        "service_name": "svc",
         "trace_id": "T1",
         "parent_span_id": None,
         "name": "root-span",

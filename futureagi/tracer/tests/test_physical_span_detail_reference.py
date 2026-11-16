@@ -25,6 +25,7 @@ from tracer.services.clickhouse.application_read_policy import (
     UNLIMITED_STATEMENT_SETTINGS,
 )
 from tracer.services.clickhouse.v2 import physical_span_detail_reads as reads
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.tests.test_span_physical_identity_latest import (
     OTHER_PROJECT,
     PROJECT,
@@ -71,6 +72,7 @@ def winner(**changes):
     return {
         "project_id": PROJECT,
         "trace_id": "trace",
+        "parent_span_id": "",
         "id": "span",
         "start_hour": HOUR,
         "start_time": WINNER,
@@ -245,6 +247,27 @@ def test_read_failures_never_fall_back_or_publish_partial(data, complete, code):
     reader.execute_ch_query.assert_called_once()
 
 
+class LegacyTraceTags:
+    """Answers the detail root's curated ``traces.tags`` lookup with no rows.
+
+    The span read itself still goes to ``reader``, so its call count and SQL
+    remain the test's own; the lookup is recorded separately.
+    """
+
+    def __init__(self, reader):
+        self.reader = reader
+        self.legacy_reads = []
+
+    def execute_ch_query(self, sql, params=None, **kwargs):
+        if "FROM traces" in sql and "legacy_traces" in (params or {}):
+            self.legacy_reads.append(params)
+            return SimpleNamespace(data=[])
+        return self.reader.execute_ch_query(sql, params, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.reader, name)
+
+
 def public_get(monkeypatch, query, reader, *, allowed=True):
     manager = MagicMock()
     manager.filter.return_value.exists.return_value = allowed
@@ -252,7 +275,7 @@ def public_get(monkeypatch, query, reader, *, allowed=True):
         PROJECT
     ]
     monkeypatch.setattr(views.Project, "no_workspace_objects", manager)
-    service = MagicMock(return_value=reader)
+    service = MagicMock(return_value=LegacyTraceTags(reader))
     monkeypatch.setattr(views, "V2AnalyticsQueryService", service)
     monkeypatch.setattr(
         views.CustomEvalConfig.no_workspace_objects,
@@ -272,7 +295,7 @@ def public_get(monkeypatch, query, reader, *, allowed=True):
 def test_public_reference_envelope_authority_and_explicit_unverified_evals(monkeypatch):
     reader = MagicMock()
     reader.execute_ch_query.return_value = SimpleNamespace(data=[winner()])
-    response, manager, _ = public_get(monkeypatch, selector(), reader)
+    response, manager, service = public_get(monkeypatch, selector(), reader)
     assert response.status_code == 200, response.data
     body = json.loads(JSONRenderer().render(response.data))
     result = body["result"]
@@ -308,6 +331,10 @@ def test_public_reference_envelope_authority_and_explicit_unverified_evals(monke
     assert "organization" in kwargs
     assert {key for key, _ in args[0].children} == {"organization", "workspace"}
     reader.execute_ch_query.assert_called_once()
+    # The root's curated trace tags are looked up for exactly its trace.
+    assert service.return_value.legacy_reads == [
+        {"legacy_projects": (PROJECT,), "legacy_traces": ("trace",)}
+    ]
 
 
 def test_unauthorized_project_cannot_construct_ch_service(monkeypatch):
@@ -665,7 +692,6 @@ def detail_engine(request):
     run, insert = request.getfixturevalue("engine")
     for definition in (
         "status_message String DEFAULT ''",
-        "tags Array(String)",
         "span_events String DEFAULT '[]'",
         "custom_eval_config_id Nullable(UUID)",
         "trace_session_id Nullable(UUID)",
@@ -757,7 +783,7 @@ def test_public_rmt_empty_and_null_payloads_belong_to_one_latest_winner(
         attrs_number={"zero": 99},
         attrs_bool={"flag": 1},
         attributes_extra='{"stale":true}',
-        tags=["old"],
+        tags='["old"]',
         status="error",
         cost=99,
     )
@@ -769,7 +795,7 @@ def test_public_rmt_empty_and_null_payloads_belong_to_one_latest_winner(
         attrs_number={"zero": 0},
         attrs_bool={"flag": 0},
         attributes_extra="{}",
-        tags=[],
+        tags="[]",
         status=None,
         cost=0,
     )

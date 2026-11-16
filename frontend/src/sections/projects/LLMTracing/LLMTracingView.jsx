@@ -165,6 +165,7 @@ import {
   applySavedColumns,
   restampColumns,
   columnStateToHideMap,
+  columnStateToOrder,
   reorderColumns,
   isColumnVisibilityDirty,
   isColumnOrderDirty,
@@ -248,10 +249,12 @@ import {
   tabTypeForSelectedTab,
 } from "src/api/project/saved-views";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { nonRetryableQueryErrorMessage } from "src/utils/queryReadState";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import applySavedEntityTags from "./applySavedEntityTags";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 const getLiveGridRefApi = (gridRef) => {
@@ -301,7 +304,7 @@ const AgentVisualizationProjectScopePrompt = () => (
  */
 export const CompareAgentGraph = ({ projectId, filters, onNodeClick }) => {
   const hasProjectScope = Boolean(projectId);
-  const { data, isLoading, isError, pollingPaused } = useAgentGraph(
+  const { data, isLoading, isError, error, pollingPaused } = useAgentGraph(
     projectId,
     filters,
     {
@@ -323,6 +326,7 @@ export const CompareAgentGraph = ({ projectId, filters, onNodeClick }) => {
         data={data}
         isLoading={isLoading}
         isError={isError}
+        errorMessage={nonRetryableQueryErrorMessage(error)}
         pollingPaused={pollingPaused}
         onNodeClick={onNodeClick}
       />
@@ -1462,6 +1466,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     data: agentGraphData,
     isLoading: isAgentGraphLoading,
     isError: isAgentGraphError,
+    error: agentGraphError,
     pollingPaused: isAgentGraphPollingPaused,
   } = useAgentGraph(primaryAgentGraphProjectId, primaryAgentGraphFilters, {
     enabled:
@@ -1475,6 +1480,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     data: compareAgentPathData,
     isLoading: isCompareAgentPathLoading,
     isError: isCompareAgentPathError,
+    error: compareAgentPathError,
   } = useAgentGraph(compareAgentGraphProjectId, compareAgentGraphFilters, {
     enabled:
       Boolean(compareAgentGraphProjectId) &&
@@ -2434,31 +2440,37 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         // Once hydrated the user owns the order — only restamp visibility, so a
         // manual drag isn't reverted when the id-set changes (add/remove a
         // custom column). userToggledColsRef guards visibility; this guards order.
-        const next = isHydratingView
-          ? applySavedColumns(
-              columns,
-              pendingSavedColsRef.current,
-              userToggledColsRef.current,
-            )
-          : restampColumns(
-              columns,
-              columnStateToHideMap(pendingSavedColsRef.current),
-              userToggledColsRef.current,
-            );
-        if (next !== columns) setColumns(next);
+        const savedColumnState = pendingSavedColsRef.current;
+        const userToggled = userToggledColsRef.current;
+        // The saved-view load effect may already have queued custom hydration
+        // and ordering in this render. Reconcile the latest state rather than
+        // replacing those updates with this render's pre-hydration columns.
+        setColumns((prev) =>
+          isHydratingView
+            ? applySavedColumns(prev, savedColumnState, userToggled)
+            : restampColumns(
+                prev,
+                columnStateToHideMap(savedColumnState),
+                userToggled,
+              ),
+        );
       }
-      // Hydration done once all the view's custom columns have merged in.
+      // Fallbacks can contain all customs but still lack saved API columns.
+      // Keep hydration active until those ids can receive their saved positions
+      // too (the existing timeout handles definitions that no longer exist).
       const savedCustomIds = Array.isArray(
         activeViewConfig?.display?.customColumns,
       )
         ? activeViewConfig.display.customColumns.map((c) => c?.id)
         : [];
-      const curCustomIds = new Set(
-        (columns[slotKey] || [])
-          .filter((c) => c?.groupBy === "Custom Columns")
-          .map((c) => c?.id),
+      const savedIds = [
+        ...columnStateToOrder(pendingSavedColsRef.current),
+        ...savedCustomIds,
+      ];
+      const currentIds = new Set(
+        (columns[slotKey] || []).map((c) => c?.id),
       );
-      if (savedCustomIds.every((id) => curCustomIds.has(id))) {
+      if (savedIds.every((id) => currentIds.has(id))) {
         setIsHydratingView(false);
       }
     }
@@ -2482,16 +2494,21 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Fallback: release the gate even if a saved custom col never loads, so the
   // Save-view button can't get stuck hidden (the merge check above clears sooner).
-  // Armed only once the view's slot has columns and re-armed on every columns
-  // change — on a cold load the first fetch can outlast the timer, and releasing
-  // before columns exist skips the order-applying branch above for good.
+  // Arm only after authoritative definitions arrive, not on fallback columns:
+  // a slow first fetch must still position saved ids missing from the fallback.
+  // Re-arm on column changes; truly removed definitions then release the gate.
   useEffect(() => {
     if (!isHydratingView) return undefined;
     const slotKey = slotKeyFromColumnState(
       pendingSavedColsRef.current,
       selectedTab === "trace" ? "primary-trace" : "primary-spans",
     );
-    if ((columns[slotKey] || []).length === 0) return undefined;
+    const canonicalOrder =
+      slotKey === "primary-trace"
+        ? canonicalTraceOrderRef.current
+        : canonicalSpanOrderRef.current;
+    if (!canonicalOrder || (columns[slotKey] || []).length === 0)
+      return undefined;
     const t = setTimeout(() => setIsHydratingView(false), 2500);
     return () => clearTimeout(t);
   }, [isHydratingView, columns, selectedTab]);
@@ -3951,6 +3968,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     data={agentGraphData}
                     isLoading={isAgentGraphLoading}
                     isError={isAgentGraphError}
+                    errorMessage={nonRetryableQueryErrorMessage(
+                      agentGraphError,
+                    )}
                     pollingPaused={isAgentGraphPollingPaused}
                     onNodeClick={handleAgentNodeClick}
                   />
@@ -4030,6 +4050,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   data={agentGraphData}
                   isLoading={isAgentGraphLoading}
                   isError={isAgentGraphError}
+                  errorMessage={nonRetryableQueryErrorMessage(agentGraphError)}
                   onNodeClick={handleAgentNodeClick}
                 />
               </Box>
@@ -4066,6 +4087,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     data={compareAgentPathData}
                     isLoading={isCompareAgentPathLoading}
                     isError={isCompareAgentPathError}
+                    errorMessage={nonRetryableQueryErrorMessage(
+                      compareAgentPathError,
+                    )}
                     onNodeClick={handleAgentNodeClick}
                   />
                 </Box>
@@ -4382,12 +4406,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           .then((res) => ({
                             id,
                             type: "trace",
-                            currentTags: res?.data?.result?.tags || [],
-                          }))
-                          .catch(() => ({
-                            id,
-                            type: "trace",
-                            currentTags: [],
+                            entity: res?.data?.result?.trace,
+                            currentTags: res?.data?.result?.trace?.tags || [],
                           })),
                       ),
                     )
@@ -4395,6 +4415,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         setTagsBulkItems(items);
                         setTagsAnchorEl(anchor);
                       })
+                      .catch(() =>
+                        enqueueSnackbar(
+                          "Could not load tag editing details. Refresh and try again.",
+                          { variant: "error" },
+                        ),
+                      )
                       .finally(() => setTagsFetching(false));
                   }
                   return;
@@ -4473,6 +4499,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               : n.data?.span_id,
                           type: selectedTab === "trace" ? "trace" : "span",
                           currentTags: n.data?.tags || [],
+                          entity: n.data,
                         }))
                         .filter((i) => i.id),
                     );
@@ -4803,25 +4830,36 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 open={Boolean(tagsAnchorEl)}
                 anchorEl={tagsAnchorEl}
                 onClose={() => {
-                  // onClose (not onSuccess) does the deselect/refresh —
-                  // the popover stays open across multiple tag adds; we
-                  // only want to flush selection state when the user is
-                  // done and closes the popover.
+                  // Keep selection until the user finishes editing tags.
                   if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                     primaryCallLogsGridRef.current?.deselectAll?.();
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    refreshGridRef(primaryTraceGridRef, { purge: true });
                     deselectGridRef(primaryTraceGridRef);
                   } else {
-                    refreshGridRef(primarySpanGridRef, { purge: true });
                     deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);
                   setTagsBulkItems([]);
                 }}
                 bulkItems={tagsBulkItems}
+                onTagsSaved={(savedList) => {
+                  if (projectSource === PROJECT_SOURCE.SIMULATOR) return;
+                  for (const saved of savedList) {
+                    for (const [gridKind, refs] of [
+                      ["trace", [primaryTraceGridRef, compareTraceGridRef]],
+                      ["span", [primarySpanGridRef, compareSpanGridRef]],
+                    ]) {
+                      for (const ref of refs) {
+                        applySavedEntityTags(ref.current?.api, {
+                          ...saved,
+                          gridKind,
+                        });
+                      }
+                    }
+                  }
+                }}
               />
             </Suspense>
             <Suspense fallback={null}>

@@ -80,6 +80,11 @@ from tracer.selectors.trace_filter_reads import (
     bounded_numbered_page_depth_exceeded,
     numbered_page_depth_exceeded,
 )
+from tracer.serializers.entity_tags import (
+    TAG_UPDATE_RESPONSES,
+    SpanTagsUpdateSerializer,
+    tag_validation_error_response,
+)
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataRequestSerializer,
@@ -148,6 +153,9 @@ from tracer.services.clickhouse.list_cursor import (
 from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
@@ -172,6 +180,13 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_export_row,
+    tag_fields,
+)
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.recalculate import (
     HANDED_TO_TASK,
     KEPT,
@@ -221,6 +236,7 @@ from tracer.utils.otel import (
 )
 from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.sql_queries import SQL_query_handler
+from tracer.views.entity_tags import tag_read_error_response, tag_update_response
 
 logger = structlog.get_logger(__name__)
 
@@ -1071,7 +1087,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(error_status, message, code=exc.code)
         except TraceDetailNotFound:
             return self._gm.bad_request(get_error_message("OBSERVATION_SPAN_NOT_FOUND"))
-        except TraceDetailReadUnavailable as exc:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as exc:
             logger.warning(
                 "span_detail_bounded_read_incomplete",
                 span_id=str(kwargs.get("pk") or ""),
@@ -1158,6 +1174,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 raise TraceDetailReadUnavailable("ambiguous_span_identity")
             row = matching_rows[0]
+        attach_legacy_trace_tags(analytics.execute_ch_query, [row])
+        enrich_entity_tags([row], kind="span")
         provider = row.get("provider")
 
         # Parse JSON string fields from CH (stored as String columns)
@@ -1235,7 +1253,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
-            "tags": _parse_json(row.get("tags"), default=[]),
+            **tag_fields(row),
             "metadata": metadata,
             "span_events": _parse_json(row.get("span_events"), default=[]),
             "provider": provider,
@@ -1805,6 +1823,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         except ProjectVersion.DoesNotExist:
             return self._gm.bad_request("Project version not found")
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
         except FilterPrincipalContextError as exc:
@@ -1918,31 +1942,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback: {get_error_message('FAILED_TO_CREATE_FEEDBACK')}"
             )
 
+    @validated_request(
+        request_serializer=SpanTagsUpdateSerializer,
+        responses=TAG_UPDATE_RESPONSES,
+        validation_error_response=tag_validation_error_response,
+    )
     @action(detail=False, methods=["post"], url_path="update-tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for an observation span."""
-        try:
-            span_id = request.data.get("span_id")
-            if not span_id:
-                return self._gm.bad_request("span_id is required")
-            span = ObservationSpan.objects.using("default").get(
-                _project_workspace_scope_q(request),
-                id=span_id,
-                project__organization=_get_request_organization(request),
-            )
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
-            span.tags = tags
-            span.save(update_fields=["tags"])
-            return self._gm.success_response({"id": str(span.id), "tags": span.tags})
-        except ObservationSpan.DoesNotExist:
-            return self._gm.bad_request("Observation span not found")
-        except Exception as e:
-            logger.exception(f"Error updating span tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        """Assign tags to an exact CH span; verified roots alias trace assignments."""
+        return tag_update_response(request)
 
     def _recalculate(
         self, request, observation_span, custom_eval_config, feedback, action_type
@@ -2233,6 +2241,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except ListCursorError as exc:
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
+            )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span data is temporarily unavailable. Please retry.",
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
@@ -2931,6 +2945,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "attrs_string",
                 "attrs_number",
                 "attrs_bool",
+                "tags",
+                "parent_span_id",
             ),
         ):
             return self._gm.custom_error_response(
@@ -2966,6 +2982,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # span resolves to the old curated row, and a missing/orphan id → all-None
         # (faithful to the old FK miss). Returns {id (str): {user_id,
         # user_id_type, user_id_hash}}.
+        attach_legacy_trace_tags(
+            analytics.execute_ch_query, result.data, deadline=read_deadline
+        )
+        enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
+
         # Format response matching PG format
         table_data = []
         for row in result.data:
@@ -2985,6 +3006,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "project_id": str(row.get("project_id", "")),
                 "span_id": span_id,
                 **_span_identity_payload(row),
+                **tag_fields(row),
+                # A root span shares its trace's tag assignment; the grid keys
+                # a drawer save to this row by it, as the backend does.
+                "parent_span_id": row["parent_span_id"],
                 "input": bound_observe_list_value(row.get("input", "")),
                 "output": bound_observe_list_value(row.get("output", "")),
                 "trace_id": str(row.get("trace_id", "")),
@@ -3370,6 +3395,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         "attrs_string",
                         "attrs_number",
                         "attrs_bool",
+                        "tags",
+                        "parent_span_id",
                     ),
                 ):
                     return self._gm.custom_error_response(
@@ -3445,6 +3472,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
+        attach_legacy_trace_tags(
+            analytics.execute_ch_query, result.data, deadline=read_deadline
+        )
+        enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
+
         # Format response matching PG format
         table_data = []
         for row in result.data:
@@ -3459,6 +3491,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "node_type": row.get("observation_type", ""),
                 "span_id": span_id,
                 **_span_identity_payload(row),
+                **tag_fields(row),
+                # A root span shares its trace's tag assignment; the grid keys
+                # a drawer save to this row by it, as the backend does.
+                "parent_span_id": row["parent_span_id"],
                 "input": row.get("input", ""),
                 "output": row.get("output", ""),
                 "trace_id": str(row.get("trace_id", "")),
@@ -3733,6 +3769,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Graph data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
+            )
+        except GraphTagFilterTooBroadError as exc:
+            # A property of the project's tags, not a transient fault: say
+            # so instead of asking the user to retry.
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Graph filter configuration is invalid")
@@ -4372,7 +4414,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return page_response
             result = page_response.data.get("result", {})
             return bounded_page_csv_response(
-                rows=result.get("table"),
+                # parent_span_id keys the grid's tag saves; not an export column.
+                rows=[
+                    tag_export_row(row, drop=("parent_span_id",))
+                    for row in result.get("table") or []
+                ],
                 metadata=result.get("metadata"),
                 filename=f"{project.name or 'project'}_spans.csv",
             )
@@ -4961,6 +5007,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span navigation is temporarily unavailable. Please retry.",
+            )
         except SpanNavigationReadUnavailable as exc:
             logger.warning(
                 "span_navigation_bounded_read_incomplete", error_code=exc.code
@@ -5302,6 +5354,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span navigation is temporarily unavailable. Please retry.",
+            )
         except SpanNavigationReadUnavailable as exc:
             logger.warning(
                 "span_navigation_bounded_read_incomplete", error_code=exc.code

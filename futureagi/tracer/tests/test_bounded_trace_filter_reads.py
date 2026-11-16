@@ -46,6 +46,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
     VoiceCallListQueryBuilderV2,
 )
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.tests.test_trace_root_physical_replay import (
     assert_coherent_classifier,
     complete_root_row,
@@ -6493,8 +6494,13 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
     class RecordingAnalytics:
         def __init__(self):
             self.calls = []
+            self.curated_tag_reads = []
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            if "FROM traces" in query and "legacy_traces" in params:
+                # The root row's curated trace tags, under the same wall.
+                self.curated_tag_reads.append((params, timeout_ms))
+                return QueryResult([], 0, "clickhouse", 0.0)
             self.calls.append((params, timeout_ms, settings))
             data = [
                 {
@@ -6572,6 +6578,13 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
     assert len(analytics.calls) == 1
     assert 0 < analytics.calls[0][1] <= SPAN_LIST_ENRICHMENT_TIMEOUT_MS
     assert analytics.calls[0][2] == SPAN_LIST_SINGLE_WORKER_READ_SETTINGS
+    assert [params for params, _ in analytics.curated_tag_reads] == [
+        {"legacy_projects": (PROJECT_ID,), "legacy_traces": ("trace-a",)}
+    ]
+    assert all(
+        0 < timeout <= SPAN_LIST_WALL_DEADLINE_MS
+        for _, timeout in analytics.curated_tag_reads
+    )
 
 
 @override_settings(

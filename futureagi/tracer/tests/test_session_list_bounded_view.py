@@ -2115,3 +2115,90 @@ def test_unfinished_session_read_is_refused_rather_than_published_as_exact():
     assert outcome[0] == "error"
     assert outcome[1] == 503
     assert outcome[3] == "service_unavailable"
+
+
+def _session_tag_filter(column_id: str, col_type: str = "SYSTEM_METRIC") -> dict:
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": col_type,
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": ["reviewed"],
+        },
+    }
+
+
+def _session_window() -> dict:
+    end = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
+    return {
+        "column_id": "created_at",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [
+                (end - timedelta(days=7)).isoformat(),
+                end.isoformat(),
+            ],
+        },
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("column_id", ["tag", "tags"])
+@pytest.mark.parametrize("col_type", ["SYSTEM_METRIC", "NORMAL", ""])
+def test_session_tag_filter_is_a_clear_request_error_not_a_retry(column_id, col_type):
+    """The session list cannot bind the UI tag overlay, so it refuses a Tag
+    leaf with a 400 that says so. A 503 "retry shortly" never succeeds."""
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    analytics = mock.MagicMock()
+    with mock.patch(
+        "tracer.views.trace_session.read_bounded_filter_page"
+    ) as bounded_read:
+        response = TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=str(uuid.uuid4()),
+            project=None,
+            analytics=analytics,
+            validated_data={
+                "filters": [
+                    _session_window(),
+                    _session_tag_filter(column_id, col_type),
+                ],
+                "sort_params": [],
+                "page_number": 0,
+                "page_size": 30,
+            },
+        )
+
+    assert response == (
+        "bad_request",
+        "Sessions cannot be filtered by tag. Filter the Traces tab by tag instead.",
+    )
+    bounded_read.assert_not_called()
+    analytics.execute_ch_query.assert_not_called()
+
+
+@pytest.mark.unit
+def test_session_raw_tags_attribute_is_not_the_refused_tag_leaf():
+    """An explicit SPAN_ATTRIBUTE ``tags`` stays an ordinary raw attribute."""
+    from tracer.services.clickhouse.v2.query_builders.session_list import (
+        SessionListQueryBuilderV2,
+    )
+
+    tag_builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[_session_window(), _session_tag_filter("tag")],
+    )
+    raw_builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[_session_window(), _session_tag_filter("tags", "SPAN_ATTRIBUTE")],
+    )
+
+    assert tag_builder.bounded_filter_degraded_error_code() == (
+        "unsupported_session_tag_filter"
+    )
+    assert raw_builder.bounded_filter_degraded_error_code() is None

@@ -145,6 +145,26 @@ describe("TagsCell", () => {
     expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
   });
 
+  it("stays read-only when the row has no editable tag target", async () => {
+    // The backend sends tag_target: null for a row whose source tags are too
+    // large to decode in full: it shows what it can, and a save could only
+    // fail with tag_scope_required.
+    const user = userEvent.setup();
+    const { container } = render(
+      <TagsCell
+        value={["sdk"]}
+        spanId="span-1"
+        entityType="span"
+        entity={{ span_id: "span-1", tags: ["sdk"], tag_target: null }}
+      />,
+    );
+
+    expect(screen.getByText("sdk")).toBeInTheDocument();
+    expect(container.firstChild).not.toHaveAttribute("role", "button");
+    await user.click(container.firstChild);
+    expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
+  });
+
   it("tags the trace (not its root span) on the trace grid even when the row carries a span_id", async () => {
     const user = userEvent.setup();
     const { container } = render(

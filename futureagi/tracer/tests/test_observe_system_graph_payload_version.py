@@ -105,6 +105,72 @@ def test_trace_graph_background_schedule_identity_is_versioned(monkeypatch):
     assert call["identity"]["payload_version"] == OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION
 
 
+@pytest.mark.parametrize("too_broad", [True, False])
+@pytest.mark.parametrize("refresh", [True, False])
+def test_unaffordable_tag_graph_compiles_before_schedule(
+    monkeypatch, too_broad, refresh
+):
+    from tracer.services.clickhouse.query_builders import exact_graph_predicates
+    from tracer.services.clickhouse.v2 import effective_tags
+
+    calls = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_read_or_refresh_exact_graph",
+        lambda **kw: (
+            calls.append(kw)
+            or (None if kw.get("schedule_on_miss") is False else _pending())
+        ),
+    )
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_affordable_raw_graph_seed",
+        lambda **_: graph_dispatch._GraphReadUnaffordable(estimated_rows=None),
+    )
+
+    def compile_leaf(*_args, **_kwargs):
+        if too_broad:
+            raise exact_graph_predicates.GraphTagFilterTooBroadError()
+        return ({}, 0)
+
+    monkeypatch.setattr(effective_tags, "graph_tag_overlay_params", compile_leaf)
+    tag_filter = {
+        "column_id": "tag",
+        "filter_config": {
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "wanted",
+            "col_type": "NORMAL",
+        },
+    }
+    if too_broad:
+        with pytest.raises(exact_graph_predicates.GraphTagFilterTooBroadError):
+            graph_dispatch.fetch_system_metric_graph_ch(
+                analytics=_Analytics(),
+                project_id=PROJECT,
+                filters=[_WINDOW_FILTER, tag_filter],
+                interval="day",
+                metric_id="latency",
+                organization_id=ORG,
+                refresh=refresh,
+            )
+        assert not [call for call in calls if call.get("schedule_on_miss") is not False]
+    else:
+        graph_dispatch.fetch_system_metric_graph_ch(
+            analytics=_Analytics(),
+            project_id=PROJECT,
+            filters=[_WINDOW_FILTER, tag_filter],
+            interval="day",
+            metric_id="latency",
+            organization_id=ORG,
+            refresh=refresh,
+        )
+        assert (
+            len([call for call in calls if call.get("schedule_on_miss") is not False])
+            == 1
+        )
+
+
 def test_users_graph_identity_is_versioned(monkeypatch):
     calls = []
 

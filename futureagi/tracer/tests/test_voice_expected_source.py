@@ -22,10 +22,29 @@ def span(span_id, parent=None, kind="llm"):
     }
 
 
+def untagged(rows, **_kwargs):
+    """What enrich_entity_tags attaches to a span with no tags at all."""
+    for row in rows:
+        row.update(
+            tags=[],
+            source_tag_names=[],
+            manual_tags=[],
+            tag_assignment_exists=False,
+            tag_revision=0,
+            tag_target=None,
+        )
+
+
 def render_call(monkeypatch, rows, expected=CHILD):
     monkeypatch.setattr(
         "tracer.views.trace._simulation_context_for_voice_call", lambda **_: {}
     )
+    # Source membership only: the drawer's tag reads (ClickHouse curated tags,
+    # PostgreSQL assignments) have their own coverage in the tag suites.
+    monkeypatch.setattr(
+        "tracer.views.trace.attach_legacy_trace_tags", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr("tracer.views.trace.enrich_entity_tags", untagged)
     request = SimpleNamespace(
         validated_query_data={
             "project_id": PROJECT,
@@ -72,3 +91,6 @@ def test_ordinary_voice_callers_keep_existing_behavior(monkeypatch):
         monkeypatch, [span(ROOT, kind="conversation")], expected=None
     )
     assert response.status_code == 200
+    observation_spans = response.data["result"]["observation_span"]
+    assert [row["id"] for row in observation_spans] == [ROOT]
+    assert observation_spans[0]["tag_assignment_exists"] is False

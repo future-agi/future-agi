@@ -314,7 +314,7 @@ def _trace_any_span_filter_descriptors(
     """Return ``(column_id, col_type)`` in classifier witness order."""
 
     from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
-        compile_trace_filter_plans,
+        partition_trace_filter_plans,
     )
 
     descriptors: list[tuple[str, str]] = []
@@ -325,7 +325,9 @@ def _trace_any_span_filter_descriptors(
         if column_id in {"created_at", "start_time"}:
             continue
         try:
-            plans = compile_trace_filter_plans([item])
+            # Match the classifier's partition: residuals (including native
+            # tags) prove membership without projecting child witnesses.
+            plans, _ = partition_trace_filter_plans([item])
         except (TypeError, ValueError):
             continue
         for plan in plans:

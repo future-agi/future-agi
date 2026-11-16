@@ -34,7 +34,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -64,6 +64,11 @@ from tracer.selectors.trace_filter_reads import (
     bounded_numbered_page_depth_exceeded,
     long_filtered_read_requires_cursor,
     numbered_page_depth_exceeded,
+)
+from tracer.serializers.entity_tags import (
+    TAG_UPDATE_RESPONSES,
+    TraceTagsUpdateSerializer,
+    tag_validation_error_response,
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
@@ -129,6 +134,9 @@ from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
@@ -145,6 +153,7 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_clickhouse_api_read_unavailable_error,
     is_clickhouse_query_error,
+    is_clickhouse_query_size_error,
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.query_builders.agent_graph import (
@@ -162,6 +171,13 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_export_row,
+    tag_fields,
+)
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
@@ -201,6 +217,7 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 from tracer.utils.property_registry import validate_property_graph_namespace
+from tracer.views.entity_tags import tag_read_error_response, tag_update_response
 from tracer.views.observation_span import get_observation_spans
 
 logger = structlog.get_logger(__name__)
@@ -469,10 +486,6 @@ class TraceNavigationReadUnavailable(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
-
-
-class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
 
 
 def _sanitize_nonfinite_floats(value):
@@ -2166,7 +2179,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(
                 f"error retrieving trace {get_error_message('ERROR_GETTING_TRACE')}"
             )
-        except TraceDetailReadUnavailable as exc:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as exc:
             logger.warning(
                 "trace_detail_bounded_read_incomplete",
                 trace_id=str(kwargs.get("pk") or ""),
@@ -2618,22 +2631,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         return eval_configs, base_query
 
-    @validated_request(request_serializer=TraceTagsUpdateSerializer)
+    @validated_request(
+        request_serializer=TraceTagsUpdateSerializer,
+        responses=TAG_UPDATE_RESPONSES,
+        validation_error_response=tag_validation_error_response,
+    )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for a trace."""
-        try:
-            trace_id = kwargs.get("pk")
-            trace = self.get_queryset().using("default").get(id=trace_id)
-            tags = request.validated_data["tags"]
-            trace.tags = tags
-            trace.save(update_fields=["tags", "updated_at"])
-            return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
-        except Trace.DoesNotExist:
-            return self._gm.bad_request("Trace not found")
-        except Exception as e:
-            logger.exception(f"Error updating trace tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        """Assign manual tags to a verified ClickHouse root, without PG telemetry."""
+        return tag_update_response(request, trace_id=kwargs["pk"])
 
     @validated_request(responses={200: TracePropertiesResponseSerializer})
     @action(detail=False, methods=["get"], pagination_class=None)
@@ -2814,10 +2820,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 read_deadline=kwargs.get("read_deadline"),
             )
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Trace filter configuration is invalid")
         except Exception as exc:
-            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+            if (
+                is_read_budget_error(exc)
+                or is_clickhouse_query_error(exc)
+                or is_clickhouse_query_size_error(exc)
+            ):
                 logger.warning(
                     "trace_list_query_unavailable",
                     project_version_id=str(
@@ -3050,6 +3066,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Graph data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
+            )
+        except GraphTagFilterTooBroadError as exc:
+            # A property of the project's tags, not a transient fault: say
+            # so instead of asking the user to retry.
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Graph filter configuration is invalid")
@@ -3781,12 +3803,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Trace filter configuration is invalid")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if is_clickhouse_api_read_unavailable_error(
+                exc
+            ) or is_clickhouse_query_size_error(exc):
                 logger.warning(
                     "observe_trace_list_query_unavailable",
                     project_id=str(
@@ -3913,6 +3943,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Project not found")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Voice call data is temporarily unavailable. Please retry.",
+            )
         except Exception as exc:
             if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
                 logger.warning(
@@ -4041,8 +4077,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_configs_by_project[str(selected_project_id)] = eval_configs
                 return eval_config_ids
 
+            analytics = V2AnalyticsQueryService()
             detail = read_trace_detail(
-                analytics=V2AnalyticsQueryService(),
+                analytics=analytics,
                 project_ids=project_ids,
                 trace_id=str(trace_id),
                 eval_config_ids_resolver=resolve_eval_config_ids,
@@ -4059,10 +4096,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id,
                 detail,
                 eval_configs,
+                analytics=analytics,
             )
         except TraceDetailNotFound:
             return self._gm.not_found("trace_id not found")
-        except TraceDetailReadUnavailable as e:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as e:
             logger.warning(
                 "voice_call_detail_bounded_read_incomplete",
                 trace_id=trace_id,
@@ -4084,7 +4122,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
-    def _voice_call_detail_clickhouse(self, request, trace_id, detail, eval_configs):
+    def _voice_call_detail_clickhouse(
+        self, request, trace_id, detail, eval_configs, *, analytics=None
+    ):
         """Return heavy voice-call detail fields from ClickHouse."""
         # Eval navigation must prove its evaluated span in the exact snapshot
         # rendered below, on every load/retry. An earlier readiness read cannot
@@ -4104,6 +4144,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "The evaluated source changed. Revalidate before opening it.",
                     code="source_reference_changed",
                 )
+        # The drawer's root carries the curated trace tags the trace list
+        # shows, so a save from the drawer keeps them.
+        attach_legacy_trace_tags(
+            (analytics or V2AnalyticsQueryService()).execute_ch_query,
+            list(detail.spans),
+        )
+        enrich_entity_tags(list(detail.spans), kind="span")
         project_id = detail.project_id
         root_rows = [
             span
@@ -4196,6 +4243,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "trace_id": str(trace_id),
                 "name": "conversation",
                 "observation_type": "conversation",
+                **tag_fields(row),
                 "status": row.get("status"),
                 "start_time": (
                     str(row.get("start_time", "")) if row.get("start_time") else None
@@ -4265,7 +4313,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     ),
                     "span_attributes": child_span_attrs,
                     "metadata": _safe_parse_metadata(child.get("metadata_json")),
-                    "tags": child.get("tags") or [],
+                    **tag_fields(child),
                 }
             )
 
@@ -4412,6 +4460,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "id": str(trace_id),
             "trace_id": str(trace_id),
             "project_id": str(project_id),
+            **tag_fields(row),
             "provider_call_id": processed_log.get("call_id"),
             "recording": recording,
             "recording_available": self._recording_available(recording),
@@ -4530,6 +4579,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 request, trace_id, project_id, filters, analytics
             )
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace navigation is temporarily unavailable. Please retry.",
+            )
         except TraceNavigationReadUnavailable as exc:
             # A completed bounded read that does not contain the requested
             # trace is an exact not-found result, not an availability failure.
@@ -4625,7 +4680,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if page_response.status_code != status.HTTP_200_OK:
                 return page_response
             result = page_response.data.get("result", {})
-            table = result.get("table") or []
+            table = [tag_export_row(row) for row in result.get("table") or []]
             fieldnames = list(dict.fromkeys(key for row in table for key in row))
             fieldnames.extend(
                 key
@@ -5456,6 +5511,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "attrs_bool",
                 "attributes_extra",
                 "trace_tags",
+                "tags",
             ),
         )
 
@@ -5656,6 +5712,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Format response matching PG format. Keep the typed sidecar separate
         # from arbitrary attributes/eval columns, which may use the same names.
+        enrich_entity_tags(result.data, kind="trace", deadline=read_deadline)
         trace_capture_coverage = {}
         table_data = []
         for row in result.data:
@@ -5690,7 +5747,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "model": row.get("model"),
                 "provider": row.get("provider"),
-                "tags": row.get("trace_tags") or [],
+                **tag_fields(row),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
@@ -5746,6 +5803,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 vals = sorted(values, key=_trace_attribute_value_token)
                 entry[key] = vals[0] if len(vals) == 1 else vals
 
+            entry.update(tag_fields(row))
             table_data.append(entry)
 
         try:
@@ -7129,6 +7187,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "input",
                 "output",
                 "trace_tags",
+                "tags",
                 "attrs_string",
                 "attrs_number",
                 "attrs_bool",
@@ -7189,6 +7248,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
+        enrich_entity_tags(result.data, kind="trace", deadline=read_deadline)
         # Format response to match existing PG format
         table_data = []
         for row in result.data:
@@ -7213,7 +7273,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if str(row.get("trace_session_id", "")) == NIL_UUID
                     else row.get("trace_session_id")
                 ),
-                "tags": row.get("trace_tags") or [],
+                **tag_fields(row),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id), trace_id)
                 ),
@@ -7329,10 +7389,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.success_response(result)
 
+        except GraphTagFilterTooBroadError as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
+            )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Agent graph data is temporarily unavailable. Please retry.",
+            )
         except (UnsupportedFilterShapeError, FilterPrincipalContextError):
             return self._gm.bad_request("Agent graph filter configuration is invalid")
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if (
+                isinstance(exc, BoundedGraphReadError) and exc.retryable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "agent_graph_query_unavailable",
                     project_id=str(project_id or ""),
@@ -7539,6 +7611,14 @@ class UsersView(APIView):
                 "This user sort is not available for the selected filters. Clear the sort and retry.",
                 code="user_sort_unsupported",
             )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="User data is temporarily unavailable. Please retry.",
+            )
+        except UnsupportedFilterShapeError:
+            return self._gm.bad_request("User filter configuration is invalid")
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(

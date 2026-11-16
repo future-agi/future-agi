@@ -92,6 +92,7 @@ CREATE TABLE spans
     metadata String DEFAULT '{}',
     input String DEFAULT '',
     output String DEFAULT '',
+    tags String DEFAULT '[]',
     input_length UInt32 MATERIALIZED lengthUTF8(input),
     output_length UInt32 MATERIALIZED lengthUTF8(output),
     is_deleted UInt8 DEFAULT 0,

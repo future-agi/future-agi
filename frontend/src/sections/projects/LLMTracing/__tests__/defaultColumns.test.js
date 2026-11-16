@@ -36,6 +36,54 @@ const expectUsableColumnList = (columns, expectedIds) => {
 };
 
 describe("tracing built-in column fallbacks", () => {
+  it("preserves interleaved custom positions through authoritative updates", () => {
+    const custom = {
+      id: "custom.visible",
+      name: "custom.visible",
+      groupBy: "Custom Columns",
+      isVisible: true,
+    };
+    const hidden = { ...custom, id: "custom.hidden", isVisible: false };
+    const current = [
+      { id: "cost", isVisible: true },
+      custom,
+      { id: "span_name", isVisible: false },
+      hidden,
+    ];
+    const authoritative = [
+      { id: "span_name", name: "Span Name", isVisible: true },
+      { id: "cost", name: "Total Cost", isVisible: true },
+      { id: "tags", name: "Tags", isVisible: false },
+    ];
+    const merged = mergeColumnsWithAuthoritativeConfig(current, authoritative, [
+      custom,
+      hidden,
+    ]);
+    expect(merged.map((c) => c.id)).toEqual([
+      "cost",
+      "custom.visible",
+      "span_name",
+      "custom.hidden",
+      "tags",
+    ]);
+    expect(merged.map((c) => c.isVisible)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(merged[0].name).toBe("Total Cost");
+    expect(mergeColumnsWithAuthoritativeConfig(merged, authoritative)).toEqual(
+      merged,
+    );
+    expect(
+      mergeColumnsWithAuthoritativeConfig(current, authoritative, [], {
+        preserveCurrentOrder: false,
+      }).map((c) => c.id),
+    ).toEqual(["span_name", "cost", "tags", "custom.visible", "custom.hidden"]);
+  });
+
   it("provides complete named trace and span lists for Display > View columns", () => {
     expectUsableColumnList(TRACE_BUILT_IN_COLUMNS, [
       "trace_name",

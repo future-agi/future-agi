@@ -168,6 +168,7 @@ from tracer.services.dataset_filter_values import (
     read_column_values,
     read_dataset_metadata_values,
 )
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
@@ -3900,6 +3901,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             seen_value_contains=seen_state.contains,
                             seen_value_count=seen_state.seen_count,
                             deadline=filter_value_deadline,
+                            # Workspace-scoped pickers feed dashboard widgets,
+                            # whose compiler matches raw spans.tags. Offering
+                            # effective (manual/SDK-attribute) names there
+                            # would pick values that chart as empty.
+                            effective_tags=False,
                         )
                         appended_digests = (
                             page_read.appended_value_digests
@@ -4209,7 +4215,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             for row in result.data
                         ]
                     except Exception as exc:
-                        if is_clickhouse_api_read_unavailable_error(exc):
+                        if isinstance(
+                            exc, TagReadUnavailable
+                        ) or is_clickhouse_api_read_unavailable_error(exc):
                             logger.warning(
                                 "filter_values_ch_query_unavailable",
                                 metric_name=metric_name,
@@ -4245,6 +4253,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         analytics,
                         project_ids=project_ids,
                         metric_name=metric_name,
+                        # Workspace-scoped (dashboard widget) tag pickers list
+                        # the raw spans.tags vocabulary the widget matches.
+                        effective_tags=not (
+                            project_scope.batched and metric_name in {"tag", "tags"}
+                        ),
                         # The legacy response has no continuation contract, so
                         # it cannot exhaustively walk raw ids and then search
                         # hydrated Project/Session labels. Preserve its bounded
@@ -4268,7 +4281,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                     values = list(value_read.values)
                 except Exception as exc:
-                    if is_clickhouse_api_read_unavailable_error(exc):
+                    if isinstance(
+                        exc, TagReadUnavailable
+                    ) or is_clickhouse_api_read_unavailable_error(exc):
                         logger.warning(
                             "filter_values_ch_query_unavailable",
                             metric_name=metric_name,
@@ -5330,7 +5345,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code=exc.code,
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_filter_values_unavailable",
                     error_type=type(exc).__name__,
@@ -5530,7 +5547,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_dataset_filter_values_unavailable",
                     error_type=type(exc).__name__,
@@ -5894,7 +5913,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_simulation_filter_values_unavailable",
                     error_type=type(exc).__name__,

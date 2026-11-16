@@ -133,6 +133,46 @@ backup. Stage right before the restart you plan: the database migrations run
 at that restart, and the backup they would be restored from is the one taken
 when you staged.
 
+**One-time trace/span tag-editor transition: owner-approved downtime required.**
+Neither `./bin/update check` nor `./bin/update apply` runs
+`reconcile_legacy_trace_tags`. Follow the [cold writer barrier](../helm/futureagi/UPGRADING.md#legacy-tag-cutover-barrier)
+and [Standalone operator handoff](../helm/futureagi/UPGRADING.md#standalone).
+Stage with `./bin/update apply --stage` to verify/pull the new image, then close
+admission, drain and stop **all legacy and new editor/request writers** before
+final reconciliation. For Standalone this means `docker compose stop app`
+(including its API, collector, gateway and workers), plus external writers.
+Staging alone does not stop writes. Use only one-off commands on the staged image
+for schema prerequisites and reconciliation; do not start the serving app.
+
+Run dry-run, **stop for human count review**, then apply as a separate action.
+Review all resumed segments; any `changed during scan` requires investigation
+and a full repeat without `--after-id`. Verify a new full dry-run with zero
+differences/changes; investigate missing CH rows (not created by this command).
+Only after final reconciliation is complete and reviewed may `./bin/update apply`
+restart the new app. Keep external admission closed during validation, discard
+stale tabs/cached reads and queued saves, and require reload/refetch before editor
+exposure. Two online passes cannot preserve legacy edits hidden by new assignments.
+
+Stage immediately before this handoff. If the old app wrote after the staged
+backup, follow the staged-backup guidance before proceeding; a stale backup is
+not a lossless recovery point. Pause automatic updates **before** this release
+and complete the [safe handoff to manual operations](#safe-handoff-to-manual-operations).
+Notify/download modes do not apply releases, and apply mode does not perform
+this manual transition. Before accepting edits, agree downgrade/export/recovery:
+preserve primary `tracer_entity_tag_assignment` and project records; the old app
+ignores assignments, reverse migration drops them, and no reverse reconciliation
+is provided. Coordinated backup restore can lose post-backup writes.
+
+For **non-production Distributed** (`./bin/install --distributed`), use `backend`,
+not `app`. The installer records the distributed file and any installer override
+in `.env`'s `COMPOSE_FILE`. From the repository root, without a conflicting shell
+`COMPOSE_FILE`, use the [Distributed stop/initialize/reconcile/verify recipe](../README.md#upgrading-a-production-install)
+with `COMPOSE="docker compose"` (not the production overlay). Its all-profile
+stop includes every worker, collector, gateway and mirror writer. After staging,
+complete that recipe through final human review, then use `./bin/update apply`
+instead of its manual `up`. Do not expose either editor or API before the barrier
+requirements, fresh reads and owner sign-off are complete.
+
 `check` changes nothing. It prints the next command to run, or why the update
 is blocked: each reason names what fixes it. Step 3 is for a `.env` that
 `./bin/install` wrote; if yours uses `export`, indentation or spaces around
@@ -150,10 +190,27 @@ update has two steps around your initialization jobs:
 git fetch --tags && git checkout v1.53.0
 ./bin/update --production check
 ./bin/update --production apply --stage   # back up, pin, pull, verify; restarts nothing
-# the release's initialization jobs (deploy/README.md › Upgrading a production
-# install): they run on the staged, verified images
-./bin/update --production apply           # restart onto the release and verify it
 ```
+
+For the one-time tag-editor upgrade, **stop here** and complete the
+[production handoff](../README.md#upgrading-a-production-install): close admission,
+stop all writer services, run initialization jobs on the staged verified images,
+dry-run, pause for human review, apply, and verify from the beginning. Use the
+exact Compose command printed by `check`/`apply --stage` (including custom
+`--env-file` and all running profiles); do not substitute a default layout.
+The outage is mandatory for this tag transition, even if schema migration alone
+would have permitted rolling deployment. Do not restart until final
+reconciliation is complete and reviewed. Then, instead of the handoff's manual
+`up`, run:
+
+```bash
+./bin/update --production apply           # restart only after reconciliation review
+```
+
+Keep external admission closed until fresh display/filter checks and client
+reload requirements are complete, then obtain owner sign-off to expose the editor.
+`--production apply` does not reconcile tags on your behalf. On failure, keep the
+barrier closed and use the coordinated recovery plan, not another online pass.
 
 A plain `apply` with nothing staged is refused before the backup. Between the
 two steps the old release keeps running; do not run `docker compose up` or

@@ -34,6 +34,9 @@ from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import ObservationSpan
 from tracer.services.clickhouse.graph_metric_statistic import with_metric_statistic
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_api_read_unavailable_error,
 )
@@ -181,6 +184,8 @@ def get_eval_graph_data(
             refresh=refresh,
             **tenant_scope,
         )
+    except GraphTagFilterTooBroadError:
+        raise
     except Exception as exc:
         logger.exception(
             "ch_eval_graph_read_failed",

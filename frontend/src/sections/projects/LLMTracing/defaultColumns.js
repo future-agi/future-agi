@@ -1,3 +1,5 @@
+import { reorderColumns } from "./savedViewColumns";
+
 const makeColumn = (id, name, isVisible = true) => ({
   id,
   name,
@@ -277,7 +279,13 @@ export const mergeColumnsWithAuthoritativeConfig = (
     }
     custom.push({ ...column });
   });
-  return [...base, ...custom];
+  const merged = [...base, ...custom];
+  // Base/custom splitting above resolves metadata and collisions, not display
+  // order. Retain the full current sequence, including interleaved customs;
+  // genuinely new ids trail it. Canonical resets still use base-first order.
+  return preserveCurrentOrder
+    ? reorderColumns(merged, currentColumns.map((column) => column.id))
+    : merged;
 };
 
 // Config callbacks provide the pristine API/default state before a saved view

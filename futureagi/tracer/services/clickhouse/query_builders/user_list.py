@@ -15,16 +15,23 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     EvalFilterMetadata,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
+)
 from tracer.services.clickhouse.query_builders.trace_usage import (
     SUMMARY_NAME,
     usage_aggregate_sql,
     usage_coverage_sql,
 )
+from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
     resolved_id_expr,
     survivor_map_subquery,
+)
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
 )
 from tracer.services.users_walk_witness import canonical_picked_text_values
 
@@ -615,6 +622,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
             limit=limit,
             offset=0,
             filters=[
+                *[
+                    item
+                    for item in self.datetime_filters(self.filters)
+                    if BaseQueryBuilder.is_datetime_complement_filter(item)
+                ],
                 {
                     "column_id": "created_at",
                     "filter_config": {
@@ -625,7 +637,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                             window_end.isoformat(),
                         ],
                     },
-                }
+                },
             ],
         )
         witness, witness_params = self._positive_scalar_user_witness()
@@ -796,6 +808,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 # it as one acquires only users carrying a same-named raw
                 # attribute, which is nobody.
                 or self.native_span_dimension(item)
+                or self.is_native_tag_filter(item)
                 or (
                     item.get("column_id") == "eval_score"
                     and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
@@ -1527,6 +1540,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
           )
         """
         )
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        self.params.update(datetime_params)
+        datetime_having = f"\n        HAVING {datetime_sql}" if datetime_sql else ""
         usage_ctes = f"""
     {identity_acquisition_cte}
     latest_candidate_spans AS (
@@ -1548,7 +1566,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             service_name,
             identity_hour,
             trace_id,
-            id
+            id{datetime_having}
     ),
     user_trace_usage AS (
         SELECT project_id, trace_id, end_user_id, last_active,
@@ -1908,6 +1926,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 required=True,
             )
 
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        params.update(datetime_params)
+        datetime_having = f"\n            HAVING {datetime_sql}" if datetime_sql else ""
         requirement_select_sql = ",\n                ".join(requirement_selects)
         requirement_where_sql = "\n          AND ".join(requirement_checks)
 
@@ -1969,7 +1992,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 service_name,
                 identity_hour,
                 trace_id,
-                id
+                id{datetime_having}
         ),
         relation_candidate_spans AS (
             SELECT
@@ -2129,6 +2152,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
         flags, condition, params, terms = compile_user_membership_leaf(
             item, project_id=str(project_id), namespace=f"native_leaf_{index}"
         )
+        # The graph compiler accepts one project, whereas an organization Users
+        # page may span several. Tag membership compares the full physical key;
+        # bind its relation to the same authorized projects as the finite replay.
+        project_ids = tuple(str(value) for value in (self.project_ids or [project_id]))
+        params = {
+            name: EffectiveTagRelation(project_ids, value.values)
+            if isinstance(value, EffectiveTagRelation)
+            else value
+            for name, value in params.items()
+        }
         return flags, condition, params, self._native_witness_flag(terms)
 
     @staticmethod
@@ -2190,7 +2223,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         newest_alias: str | None = None
         for index, item in leaves:
             column = self.native_span_dimension(item)
-            if column is None:
+            is_tag = self.is_native_tag_filter(item)
+            if column is None and not is_tag:
                 continue
             flags, condition, leaf_params, existence = (
                 self.native_span_dimension_membership(item, index=index)
@@ -2204,14 +2238,41 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     flags = (*flags, f"({flag}) AS {newest_alias}")
             compiled.append((index, flags, condition))
             params.update(leaf_params)
-            columns[column] = None
+            if column is not None:
+                columns[column] = None
+            if is_tag:
+                # The relation owns source/UI/legacy evaluation; the page only
+                # supplies its latest physical identity, never a raw tag value.
+                columns.update(
+                    dict.fromkeys(
+                        (
+                            "project_id",
+                            "trace_id",
+                            "id",
+                            "observation_type",
+                            "service_name",
+                            "start_time",
+                        )
+                    )
+                )
         if newest is not None and newest_alias is None:
             raise ValueError(f"native leaf {newest} is not among the leaves")
         if not end_user_ids or not compiled:
             return "", {}
-        # ``observation_type`` is part of the replay identity (grouped, so it
-        # is already its latest value); every other column is replayed.
-        replayed = [column for column in columns if column != "observation_type"]
+        # Identity columns are already grouped; the shared replay already
+        # resolves latest_start_time. Only other native dimensions need state.
+        identity_columns = {
+            "project_id",
+            "trace_id",
+            "id",
+            "observation_type",
+            "service_name",
+        }
+        replayed = [
+            column
+            for column in columns
+            if column not in identity_columns and column != "start_time"
+        ]
         prefix, replay_params = self._finite_user_activity_ctes(
             end_user_ids,
             [f"argMax({column}, _version) AS latest_{column}" for column in replayed],
@@ -2219,7 +2280,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         params.update(replay_params)
         resolved_eu = resolved_id_expr("latest_end_user_id", "dimension_eu_remap")
         projected = ",\n                    ".join(
-            column if column == "observation_type" else f"latest_{column} AS {column}"
+            column if column in identity_columns else f"latest_{column} AS {column}"
             for column in columns
         )
         flags_sql = ",\n                ".join(
@@ -2292,6 +2353,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
             candidate_param="candidate_end_user_ids"
         )
         base_params.update(finite_map_params)
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        base_params.update(datetime_params)
+        datetime_having = f"\n            HAVING {datetime_sql}" if datetime_sql else ""
 
         def common_prefix(
             state_selects: list[str],
@@ -2411,7 +2477,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 service_name,
                 identity_hour,
                 trace_id,
-                id
+                id{datetime_having}
         )
         {session_remap_ctes}
             """
@@ -3129,12 +3195,46 @@ class UserListQueryBuilder(BaseQueryBuilder):
             else "ORDER BY last_active DESC NULLS LAST, end_user_id DESC"
         )
 
-    @staticmethod
-    def _is_date_filter(item: dict[str, Any]) -> bool:
-        config = item.get("filter_config") or {}
-        return item.get("column_id") in ("created_at", "start_time") and config.get(
-            "filter_type"
-        ) in ("datetime", "date")
+    @classmethod
+    def _is_date_filter(cls, item: dict[str, Any]) -> bool:
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        return (
+            (not property_id or property_id.startswith("system_attribute:"))
+            and cls._filter_col_type(item)
+            not in {"SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION"}
+            and BaseQueryBuilder.is_datetime_filter(item)
+        )
+
+    @classmethod
+    def datetime_filters(cls, filters: list[dict]) -> list[dict]:
+        """Select native time leaves without consuming explicit property namesakes."""
+        return [item for item in filters if cls._is_date_filter(item)]
+
+    @classmethod
+    def parse_time_range(cls, filters: list[dict], *, strict: bool = True):
+        try:
+            return BaseQueryBuilder.parse_time_range(
+                cls.datetime_filters(filters), strict=strict
+            )
+        except ValueError as exc:
+            # Preserve the Users route's sanitized invalid-filter 400 boundary.
+            raise UnsupportedFilterShapeError(str(exc)) from exc
+
+    @classmethod
+    def bounded_datetime_exclusion_sql(
+        cls, filters: list[dict], *, column: str = "latest_start_time"
+    ) -> tuple[str, dict[str, Any]]:
+        return BaseQueryBuilder.bounded_datetime_exclusion_sql(
+            cls.datetime_filters(filters), column=column, param_prefix="users_datetime"
+        )
+
+    @classmethod
+    def is_native_tag_filter(cls, item: dict[str, Any]) -> bool:
+        """Keep explicit Users property namespaces ahead of native Tag aliases."""
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        if property_id and not property_id.startswith("system_attribute:"):
+            return False
+        return ClickHouseFilterBuilderV2.is_effective_tag_filter(item)
 
     @classmethod
     def native_span_dimension(cls, item: dict[str, Any]) -> str | None:
