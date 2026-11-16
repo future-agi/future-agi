@@ -67,6 +67,11 @@ class CaseNeeds:
 ACTING = "*acting_actor*"
 
 
+def _triggered_on_tool(actor: Mapping[str, Any]) -> bool:
+    trigger = actor.get("trigger")
+    return isinstance(trigger, Mapping) and trigger.get("kind") == "on_tool"
+
+
 def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
     """The world actions a scenario's faults are set on, and `ACTING` when one of its actors acts in the world."""
     if not isinstance(document, Mapping):
@@ -78,15 +83,7 @@ def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
     }
     if any(
         isinstance(actor, Mapping)
-        and (
-            actor.get("actions")
-            or (
-                actor.get("trigger")
-                if isinstance(actor.get("trigger"), Mapping)
-                else {}
-            ).get("kind")
-            == "on_tool"
-        )
+        and (actor.get("actions") or _triggered_on_tool(actor))
         for actor in document.get("actors") or []
     ):
         needs.add(ACTING)
