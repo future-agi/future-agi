@@ -18,7 +18,7 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        def _p(v):
+        def parse_items(v):
             if v is None: return []
             if isinstance(v, list): return v
             if isinstance(v, str):
@@ -27,11 +27,12 @@ config:
                     if isinstance(p, list): return p
                 except: pass
             return [v]
-        ret = _p(kwargs.get("hypothesis", output))
-        ref = _p(kwargs.get("reference", expected))
+        ret = parse_items(kwargs.get("hypothesis", output))
+        ref = parse_items(kwargs.get("reference", expected))
         if not ref: return {"score": 0.0, "reason": "Empty reference"}
         gt = set(str(x) for x in ref)
-        hits, sp = 0, 0.0
+        hits = 0
+        sp = 0.0
         seen = set()
         for rank, item in enumerate(ret, 1):
             # Binary relevance credits each relevant item at most once. The
