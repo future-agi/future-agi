@@ -207,16 +207,39 @@ def door_reach(contract: Any) -> dict[str, bool]:
     return reach
 
 
-# Engines that are an API someone else runs, never a store the environment stands up a copy of.
-_REMOTE_API_ENGINES = frozenset(
+# Engines that are an API, not a store: the environment stands one up only when it runs beside the agent (a local
+# host or a port of its own), never an API someone else runs.
+_API_ENGINES = frozenset(
     {"http", "https", "rest", "grpc", "graphql", "websocket", "soap"}
 )
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})
+_SEAMS = ("dsn_env", "config_key", "host", "port", "database", "loader_module")
+
+
+def _stood_up(dependency: dict[str, Any], served_tools: set[str]) -> bool:
+    """Whether the environment stands up its own copy of this dependency, by the rule the build uses: a store it
+    seeds, or an API that runs beside the agent (a local or internal host, a port of its own, or behind the tools
+    service the environment serves)."""
+    reached = dependency.get("reached") or {}
+    engine = str(dependency.get("engine") or "").strip().lower()
+    if not engine or not any(reached.get(name) for name in _SEAMS):
+        return False
+    if engine not in _API_ENGINES:
+        return True
+    host = str(reached.get("host") or "").strip().lower()
+    used_by = {str(tool) for tool in dependency.get("used_by") or []}
+    return (
+        host in _LOCAL_HOSTS
+        or (bool(host) and "." not in host)
+        or (not host and bool(reached.get("port")))
+        or (bool(used_by) and used_by <= served_tools)
+    )
 
 
 def production_only(contract: Any) -> list[str]:
-    """The contract tools that reach a system the environment cannot stand up a copy of: a dependency with no store
-    engine and seam the build recognises (a remote API is never one), other than the agent's own tools service. A test
-    never calls those; they read Unsupported for this controlled test."""
+    """The contract tools that reach a system the environment cannot stand up a copy of: an API someone else runs, or
+    a dependency with no engine and seam the build recognises, other than the agent's own tools service. A test never
+    calls those; they read Unsupported for this controlled test."""
     contract = contract if isinstance(contract, dict) else {}
     served = {
         str(entry.get("service"))
@@ -225,18 +248,19 @@ def production_only(contract: Any) -> list[str]:
         and entry.get("mode") == "service"
         and entry.get("service")
     }
-    seams = ("dsn_env", "config_key", "host", "port", "database", "loader_module")
+    served_tools = {
+        str(entry.get("tool"))
+        for entry in contract.get("tool_entrypoints") or []
+        if isinstance(entry, dict)
+        and entry.get("mode") == "service"
+        and entry.get("tool")
+    }
     return sorted(
         {
             str(tool)
             for dependency in contract.get("dependencies") or []
             if isinstance(dependency, dict)
-            and not (
-                dependency.get("engine")
-                and str(dependency.get("engine")).strip().lower()
-                not in _REMOTE_API_ENGINES
-                and any((dependency.get("reached") or {}).get(name) for name in seams)
-            )
+            and not _stood_up(dependency, served_tools)
             and str(dependency.get("name") or "") not in served
             for tool in dependency.get("used_by") or []
         }

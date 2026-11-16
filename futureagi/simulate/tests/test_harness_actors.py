@@ -2398,10 +2398,43 @@ def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupport
                 "reached": {"url": "https://pay.example.com"},
                 "used_by": ["charge_card"],
             },
+            # A payments API whose address comes from configuration: still someone else's API, never stood up.
+            {
+                "name": "payments_provider",
+                "engine": "http",
+                "reached": {"dsn_env": "PAYMENTS_API_URL"},
+                "used_by": ["issue_card_refund"],
+            },
+            # An API the environment runs beside the agent, on its own port or on localhost: stood up, not production.
+            {
+                "name": "ledger",
+                "engine": "http",
+                "reached": {"port": 8090, "dsn_env": "RETURNS_API_URL"},
+                "used_by": ["get_ledger"],
+            },
+            {
+                "name": "local_ledger",
+                "engine": "http",
+                "reached": {"host": "127.0.0.1", "port": 8090},
+                "used_by": ["get_local_ledger"],
+            },
+            # One on an internal host name, and one behind the tools service the environment serves.
+            {
+                "name": "tools-api",
+                "engine": "http",
+                "reached": {"host": "tools-api", "dsn_env": "RETURNS_API_URL"},
+                "used_by": ["get_internal"],
+            },
+            {
+                "name": "returns_ledger",
+                "engine": "http",
+                "reached": {"dsn_env": "RETURNS_API_URL"},
+                "used_by": ["issue_refund"],
+            },
         ],
     }
 
-    assert production_only(contract) == ["charge_card"]
+    assert production_only(contract) == ["charge_card", "issue_card_refund"]
     assert production_only({}) == [] and production_only(None) == []
 
 
