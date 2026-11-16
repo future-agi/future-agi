@@ -136770,7 +136770,11 @@
         },
         "HarnessEnvironmentWorker": {
             "required": [
-                "id"
+                "id",
+                "tools",
+                "allowed_tools",
+                "tools_shown",
+                "binding"
             ],
             "type": "object",
             "properties": {
@@ -136797,12 +136801,20 @@
                         "minLength": 1
                     }
                 },
+                "tools_shown": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
                 "binding": {
                     "title": "Binding",
                     "type": "string",
                     "enum": [
                         "separate",
-                        "shared"
+                        "shared",
+                        "not_declared"
                     ]
                 },
                 "address_env": {
@@ -160878,7 +160890,12 @@
                 },
                 "code": {
                     "title": "Code",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "not_permitted",
+                        "deadline_passed",
+                        "approval_missing"
+                    ]
                 },
                 "reason": {
                     "title": "Reason",
@@ -161661,6 +161678,11 @@
                 "truncated": {
                     "title": "Truncated",
                     "type": "boolean"
+                },
+                "actions_truncated": {
+                    "title": "Actions truncated",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -161803,6 +161825,11 @@
                     "items": {
                         "$ref": "#/definitions/SharedRecord"
                     }
+                },
+                "shared_records_truncated": {
+                    "title": "Shared records truncated",
+                    "description": "More records were touched by more than one participant than the trial kept.",
+                    "type": "boolean"
                 },
                 "stopped_workers": {
                     "description": "Workers whose own process the harness ended when their deadline passed.",
@@ -162477,6 +162504,7 @@
                 "undeclared",
                 "instance_ids",
                 "cut_short",
+                "past_deadline",
                 "checks"
             ],
             "type": "object",
@@ -162538,12 +162566,9 @@
                     "title": "Cut short",
                     "type": "boolean"
                 },
-                "seen": {
-                    "title": "Seen",
-                    "type": "string",
-                    "enum": [
-                        "tool_calls_only"
-                    ]
+                "past_deadline": {
+                    "title": "Past deadline",
+                    "type": "boolean"
                 },
                 "stopped_at": {
                     "title": "Stopped at",
@@ -163158,7 +163183,9 @@
                     "title": "Untied",
                     "type": "string",
                     "enum": [
-                        "no_moment"
+                        "no_moment",
+                        "several_hand_offs",
+                        "no_hand_off"
                     ],
                     "x-nullable": true
                 }

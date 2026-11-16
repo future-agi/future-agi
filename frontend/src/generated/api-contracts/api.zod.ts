@@ -34107,9 +34107,10 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
       zod.object({
         id: zod.string().min(1),
         name: zod.string().optional(),
-        tools: zod.array(zod.string().min(1)).optional(),
-        allowed_tools: zod.array(zod.string().min(1)).optional(),
-        binding: zod.enum(["separate", "shared"]).optional(),
+        tools: zod.array(zod.string().min(1)),
+        allowed_tools: zod.array(zod.string().min(1)),
+        tools_shown: zod.array(zod.string().min(1)),
+        binding: zod.enum(["separate", "shared", "not_declared"]),
         address_env: zod.string().optional(),
         process: zod.string().optional(),
       }),
@@ -39003,9 +39004,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           name: zod.string().optional(),
-          tools: zod.array(zod.string().min(1)).optional(),
-          allowed_tools: zod.array(zod.string().min(1)).optional(),
-          binding: zod.enum(["separate", "shared"]).optional(),
+          tools: zod.array(zod.string().min(1)),
+          allowed_tools: zod.array(zod.string().min(1)),
+          tools_shown: zod.array(zod.string().min(1)),
+          binding: zod.enum(["separate", "shared", "not_declared"]),
           address_env: zod.string().optional(),
           process: zod.string().optional(),
         }),
@@ -39572,9 +39574,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           name: zod.string().optional(),
-          tools: zod.array(zod.string().min(1)).optional(),
-          allowed_tools: zod.array(zod.string().min(1)).optional(),
-          binding: zod.enum(["separate", "shared"]).optional(),
+          tools: zod.array(zod.string().min(1)),
+          allowed_tools: zod.array(zod.string().min(1)),
+          tools_shown: zod.array(zod.string().min(1)),
+          binding: zod.enum(["separate", "shared", "not_declared"]),
           address_env: zod.string().optional(),
           process: zod.string().optional(),
         }),
@@ -45249,9 +45252,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           zod.object({
             id: zod.string().min(1),
             name: zod.string().optional(),
-            tools: zod.array(zod.string().min(1)).optional(),
-            allowed_tools: zod.array(zod.string().min(1)).optional(),
-            binding: zod.enum(["separate", "shared"]).optional(),
+            tools: zod.array(zod.string().min(1)),
+            allowed_tools: zod.array(zod.string().min(1)),
+            tools_shown: zod.array(zod.string().min(1)),
+            binding: zod.enum(["separate", "shared", "not_declared"]),
             address_env: zod.string().optional(),
             process: zod.string().optional(),
           }),
@@ -60571,9 +60575,15 @@ export const simulateV3CallExecutionDetailResponseTrialStateLimitsActorSecondsPe
 
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsModelMax = 200;
 
+export const simulateV3CallExecutionDetailResponseTrialStateSharedRecordsItemActionsTruncatedDefault =
+  false;
+
 export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin = 0;
 
 export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax = 200;
+
+export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateSharedRecordsItemActionsTruncatedDefault =
+  false;
 
 export const SimulateV3CallExecutionDetailResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -60991,7 +61001,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .array(
             zod.object({
               action: zod.string().min(1),
-              code: zod.string(),
+              code: zod.enum([
+                "not_permitted",
+                "deadline_passed",
+                "approval_missing",
+              ]),
               reason: zod.string(),
             }),
           )
@@ -61455,6 +61469,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             ),
             committed_writes: zod.number(),
             truncated: zod.boolean(),
+            actions_truncated: zod
+              .boolean()
+              .default(
+                simulateV3CallExecutionDetailResponseTrialStateSharedRecordsItemActionsTruncatedDefault,
+              ),
           })
           .describe(
             "Records two or more participants named in this trial, and what the world made of each call.",
@@ -61463,6 +61482,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .optional()
       .describe(
         "Records two or more participants named in this trial, and what the world made of each call.",
+      ),
+    shared_records_truncated: zod
+      .boolean()
+      .optional()
+      .describe(
+        "More records were touched by more than one participant than the trial kept.",
       ),
     stopped_workers: zod
       .array(
@@ -61552,7 +61577,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .array(
                 zod.object({
                   action: zod.string().min(1),
-                  code: zod.string(),
+                  code: zod.enum([
+                    "not_permitted",
+                    "deadline_passed",
+                    "approval_missing",
+                  ]),
                   reason: zod.string(),
                 }),
               )
@@ -62023,6 +62052,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                 ),
                 committed_writes: zod.number(),
                 truncated: zod.boolean(),
+                actions_truncated: zod
+                  .boolean()
+                  .default(
+                    simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateSharedRecordsItemActionsTruncatedDefault,
+                  ),
               })
               .describe(
                 "Records two or more participants named in this trial, and what the world made of each call.",
@@ -62031,6 +62065,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .optional()
           .describe(
             "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+        shared_records_truncated: zod
+          .boolean()
+          .optional()
+          .describe(
+            "More records were touched by more than one participant than the trial kept.",
           ),
         stopped_workers: zod
           .array(
@@ -62121,7 +62161,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         ])
         .optional(),
       cut_short: zod.boolean(),
-      seen: zod.enum(["tool_calls_only"]).optional(),
+      past_deadline: zod.boolean(),
       stopped_at: zod.number().optional(),
       cleanup: zod
         .object({
@@ -62425,7 +62465,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       status: zod.enum(["failed", "inconclusive"]),
       step: zod.number(),
       worker_id: zod.string().min(1),
-      untied: zod.enum(["no_moment"]),
+      untied: zod.enum(["no_moment", "several_hand_offs", "no_hand_off"]),
     }),
   ),
   stopped_by_user: zod.boolean(),

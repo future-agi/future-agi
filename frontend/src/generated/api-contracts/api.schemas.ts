@@ -17374,15 +17374,17 @@ export type HarnessEnvironmentWorkerApiBinding =
 export const HarnessEnvironmentWorkerApiBinding = {
   separate: "separate",
   shared: "shared",
+  not_declared: "not_declared",
 } as const;
 
 export interface HarnessEnvironmentWorkerApi {
   /** @minLength 1 */
   id: string;
   name?: string;
-  tools?: string[];
-  allowed_tools?: string[];
-  binding?: HarnessEnvironmentWorkerApiBinding;
+  tools: string[];
+  allowed_tools: string[];
+  tools_shown: string[];
+  binding: HarnessEnvironmentWorkerApiBinding;
   address_env?: string;
   process?: string;
 }
@@ -27663,10 +27665,19 @@ export interface BlockedCallApi {
   count?: number;
 }
 
+export type TrialRefusedActionApiCode =
+  (typeof TrialRefusedActionApiCode)[keyof typeof TrialRefusedActionApiCode];
+
+export const TrialRefusedActionApiCode = {
+  not_permitted: "not_permitted",
+  deadline_passed: "deadline_passed",
+  approval_missing: "approval_missing",
+} as const;
+
 export interface TrialRefusedActionApi {
   /** @minLength 1 */
   action: string;
-  code: string;
+  code: TrialRefusedActionApiCode;
   reason: string;
 }
 
@@ -28069,6 +28080,7 @@ export interface SharedRecordApi {
   actions: SharedRecordActionApi[];
   committed_writes: number;
   truncated: boolean;
+  actions_truncated?: boolean;
 }
 
 /**
@@ -28116,6 +28128,8 @@ export interface TrialStateApi {
   notices: TrialNoticeApi[];
   /** Records two or more participants named in this trial, and what the world made of each call. */
   shared_records?: SharedRecordApi[];
+  /** More records were touched by more than one participant than the trial kept. */
+  shared_records_truncated?: boolean;
   /** Workers whose own process the harness ended when their deadline passed. */
   stopped_workers?: StoppedWorkerApi[];
 }
@@ -28332,13 +28346,6 @@ export const CallWorkerApiState = {
   not_observed: "not_observed",
 } as const;
 
-export type CallWorkerApiSeen =
-  (typeof CallWorkerApiSeen)[keyof typeof CallWorkerApiSeen];
-
-export const CallWorkerApiSeen = {
-  tool_calls_only: "tool_calls_only",
-} as const;
-
 export type CleanupApiStatus =
   (typeof CleanupApiStatus)[keyof typeof CleanupApiStatus];
 
@@ -28386,7 +28393,7 @@ export interface CallWorkerApi {
   tokens?: number;
   state?: CallWorkerApiState;
   cut_short: boolean;
-  seen?: CallWorkerApiSeen;
+  past_deadline: boolean;
   stopped_at?: number;
   cleanup?: CleanupApi;
   checks: WorkerCheckApi[];
@@ -28710,6 +28717,8 @@ export type FailurePlacementApiUntied =
 
 export const FailurePlacementApiUntied = {
   no_moment: "no_moment",
+  several_hand_offs: "several_hand_offs",
+  no_hand_off: "no_hand_off",
 } as const;
 
 export interface FailurePlacementApi {

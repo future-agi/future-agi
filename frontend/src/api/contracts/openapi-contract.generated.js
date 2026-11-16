@@ -97178,7 +97178,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentWorker: {
-      required: ["id"],
+      required: ["id", "tools", "allowed_tools", "tools_shown", "binding"],
       type: "object",
       properties: {
         id: {
@@ -97204,10 +97204,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        tools_shown: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
         binding: {
           title: "Binding",
           type: "string",
-          enum: ["separate", "shared"],
+          enum: ["separate", "shared", "not_declared"],
         },
         address_env: {
           title: "Address env",
@@ -98947,6 +98954,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SharedRecord",
           },
         },
+        shared_records_truncated: {
+          title: "Shared records truncated",
+          description:
+            "More records were touched by more than one participant than the trial kept.",
+          type: "boolean",
+        },
         stopped_workers: {
           description:
             "Workers whose own process the harness ended when their deadline passed.",
@@ -99046,6 +99059,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "undeclared",
         "instance_ids",
         "cut_short",
+        "past_deadline",
         "checks",
       ],
       type: "object",
@@ -99107,10 +99121,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Cut short",
           type: "boolean",
         },
-        seen: {
-          title: "Seen",
-          type: "string",
-          enum: ["tool_calls_only"],
+        past_deadline: {
+          title: "Past deadline",
+          type: "boolean",
         },
         stopped_at: {
           title: "Stopped at",
@@ -99445,7 +99458,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         untied: {
           title: "Untied",
           type: "string",
-          enum: ["no_moment"],
+          enum: ["no_moment", "several_hand_offs", "no_hand_off"],
           "x-nullable": true,
         },
       },
@@ -124506,6 +124519,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Truncated",
           type: "boolean",
         },
+        actions_truncated: {
+          title: "Actions truncated",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     StoppedWorker: {
@@ -139147,6 +139165,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         code: {
           title: "Code",
           type: "string",
+          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         reason: {
           title: "Reason",
