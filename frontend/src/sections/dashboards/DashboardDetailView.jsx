@@ -777,7 +777,10 @@ export default function DashboardDetailView() {
   const selectDatePreset = (preset) => {
     setDatePreset(preset);
     clearTimeout(presetTimerRef.current);
-    presetTimerRef.current = setTimeout(() => setAppliedDatePreset(preset), 500);
+    presetTimerRef.current = setTimeout(
+      () => setAppliedDatePreset(preset),
+      500,
+    );
   };
 
   const applyCustomDatePreset = () => {
