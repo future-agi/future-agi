@@ -98553,8 +98553,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["agent_call", "world_actor_action"],
         },
-        label: {
-          title: "Label",
+        tool_label: {
+          title: "Tool label",
           description:
             "How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.",
           type: "string",

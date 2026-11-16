@@ -27484,7 +27484,7 @@ export interface SimulateRunV3FunctionCallApi {
    * How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.
    * @minLength 1
    */
-  label?: string;
+  tool_label?: string;
 }
 
 /**

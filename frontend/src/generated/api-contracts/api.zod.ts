@@ -60778,7 +60778,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
         ),
-      label: zod
+      tool_label: zod
         .string()
         .min(1)
         .optional()
