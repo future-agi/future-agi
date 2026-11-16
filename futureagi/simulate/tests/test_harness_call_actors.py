@@ -752,7 +752,7 @@ def test_stored_call_actor_shapes_keep_only_well_formed_entries():
 
 
 def test_the_call_detail_serves_who_each_call_actor_is_and_an_older_call_what_it_kept():
-    from simulate.views.run_results_v3 import _call_call_actors
+    from simulate.selectors.call_detail import call_actors as _call_call_actors
 
     resolved = [
         {

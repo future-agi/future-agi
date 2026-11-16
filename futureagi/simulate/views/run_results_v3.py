@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from itertools import islice
-from typing import Any, get_args
+from typing import Any
 
 import structlog
 from django.db.models import QuerySet
@@ -24,15 +24,25 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.call_detail import (
+    call_actors,
+    tagged_function_calls,
+    transcript_turns,
+    trial_state,
+)
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
+from simulate.serializers.call_detail_v3 import (
+    CallCallActorSerializer,
+    FunctionCallSerializer,
+    TrialStateSerializer,
+)
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
-from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -51,7 +61,6 @@ from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
     build_run_analytics,
     build_run_reliability,
-    call_actor_delivery,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
@@ -66,7 +75,6 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
-from simulate.types import CallActorDelivery
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -606,261 +614,6 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     trends = TrendSerializer(many=True)
 
 
-class FunctionCallSerializer(serializers.Serializer):
-    id = serializers.CharField(required=False)
-    name = serializers.CharField(required=False)
-    arguments = serializers.JSONField(required=False)
-    result = serializers.JSONField(required=False)
-    output = serializers.JSONField(required=False)
-    duration_ms = serializers.FloatField(required=False)
-    start_time_ms = serializers.IntegerField(required=False)
-    ok = serializers.BooleanField(required=False)
-    error = serializers.CharField(required=False, allow_blank=True)
-    refused = serializers.BooleanField(required=False)
-    # Epoch seconds the world logged it.
-    at = serializers.FloatField(required=False)
-    # The world's action log: its id, and how the world took it (committed, refused, faulted or duplicate).
-    action_id = serializers.CharField(required=False, allow_null=True)
-    outcome = serializers.CharField(required=False, allow_null=True)
-    # Set on a world actor's action; the agent's own calls carry none.
-    actor_id = serializers.CharField(required=False)
-    actor_name = serializers.CharField(required=False)
-    actor_role = serializers.CharField(required=False, allow_blank=True)
-    refusal_code = serializers.CharField(required=False, allow_null=True)
-    parent_event_id = serializers.CharField(required=False, allow_null=True)
-    on_behalf_of = serializers.CharField(required=False, allow_null=True)
-
-    class Meta:
-        ref_name = "SimulateRunV3FunctionCall"
-
-
-class CallCallActorSerializer(serializers.Serializer):
-    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
-
-    id = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="The actor's id in the environment.",
-    )
-    name = serializers.CharField(
-        required=False, allow_blank=True, help_text="The name the transcript shows."
-    )
-    role = serializers.CharField(
-        required=False, allow_blank=True, help_text="Who they are to the caller."
-    )
-    channel = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="The channel id they joined the call on.",
-    )
-    delivery = serializers.ChoiceField(
-        choices=list(get_args(CallActorDelivery)),
-        required=False,
-        help_text="How far they got in the call; absent on a call stored without a summary.",
-    )
-
-
-class BlockedCallSerializer(serializers.Serializer):
-    """One call the agent made to a host outside the test world, refused before it left the sandbox."""
-
-    host = serializers.CharField()
-    method = serializers.CharField(required=False, allow_blank=True)
-    tool = serializers.CharField(
-        required=False, allow_blank=True, help_text="The tool that made it, when known."
-    )
-
-
-class TrialStateChangeSerializer(serializers.Serializer):
-    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
-
-    who = serializers.CharField()
-    name = serializers.CharField()
-    attempted = serializers.IntegerField()
-    committed = serializers.IntegerField()
-    refused = serializers.IntegerField()
-    faulted = serializers.IntegerField()
-    duplicate = serializers.IntegerField()
-    committed_actions = serializers.ListField(child=serializers.CharField())
-    read = serializers.IntegerField(
-        required=False,
-        help_text="Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
-    )
-    read_actions = serializers.ListField(
-        child=serializers.CharField(allow_blank=True),
-        required=False,
-        help_text="The reads, in order.",
-    )
-    no_change = serializers.BooleanField(
-        required=False,
-        help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",
-    )
-    blocked = BlockedCallSerializer(
-        many=True,
-        required=False,
-        help_text="Calls to hosts outside the test world, refused before they left: counted in refused, never "
-        "a change.",
-    )
-
-
-class ActorDecisionSerializer(serializers.Serializer):
-    """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history);
-    or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout).
-    """
-
-    actor = serializers.CharField()
-    name = serializers.CharField(
-        required=False,
-        help_text="The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
-    )
-    play = serializers.ChoiceField(
-        choices=(
-            "mocked",
-            "live",
-            "history",
-            "waiting",
-            "timeout",
-            "problem",
-            "not_triggered",
-        )
-    )
-    action = serializers.CharField(required=False, allow_null=True)
-    arguments = serializers.DictField(
-        required=False,
-        help_text="What it sent: for a pre-run message (`history`), the message itself.",
-    )
-    channel = serializers.CharField(
-        required=False,
-        help_text="`voice` when decided on the call by a speaking actor.",
-    )
-    problem = serializers.CharField(
-        required=False,
-        help_text="For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
-    )
-    why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    status = serializers.IntegerField(required=False, allow_null=True)
-    timeout_seconds = serializers.FloatField(required=False)
-    fallback = serializers.CharField(
-        required=False,
-        help_text="silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
-    )
-    outcome = serializers.CharField(
-        required=False,
-        help_text=(
-            "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: "
-            "what the world made of it (committed, refused, faulted, duplicate)."
-        ),
-    )
-
-
-class ApprovalWriteSerializer(serializers.Serializer):
-    action = serializers.CharField(allow_null=True)
-    outcome = serializers.CharField(allow_null=True)
-
-
-class ApprovalLineSerializer(serializers.Serializer):
-    """One approval, read from the action log: the agent's request, the decision, and the agent's writes around it."""
-
-    request = serializers.DictField()
-    decision = serializers.DictField()
-    before_decision = ApprovalWriteSerializer(many=True)
-    after_decision = ApprovalWriteSerializer(many=True)
-    acted_before_decision = serializers.BooleanField()
-
-
-class ActorUsageSerializer(serializers.Serializer):
-    actor = serializers.CharField()
-    model = serializers.CharField(allow_blank=True)
-    tokens_in = serializers.IntegerField()
-    tokens_out = serializers.IntegerField()
-    cost_usd = serializers.FloatField()
-
-
-class TrialNoticeSerializer(serializers.Serializer):
-    code = serializers.CharField(help_text="fault_not_applied or fault_not_triggered")
-    message = serializers.CharField(
-        help_text="Plain words for the person reading the run."
-    )
-    action = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    on_call = serializers.IntegerField(required=False, allow_null=True)
-    mode = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-
-
-class DuplicateCommitSerializer(serializers.Serializer):
-    """One of the agent's writes the world committed twice: the first's answer was lost, and the agent repeated it."""
-
-    action = serializers.CharField()
-    name = serializers.CharField(required=False, allow_blank=True)
-    arguments = serializers.JSONField(required=False, allow_null=True)
-    first_action_id = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
-    )
-    repeat_action_id = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
-    )
-
-
-class RecordSkippedSerializer(serializers.Serializer):
-    table = serializers.CharField()
-    why = serializers.CharField()
-
-
-class TrialRecordsSerializer(serializers.Serializer):
-    # Each `{table, key, kind: added|changed|removed, before, after, fields}`; `fields` names the changed columns.
-    changes = serializers.ListField(child=serializers.JSONField())
-    skipped = RecordSkippedSerializer(many=True, required=False)
-    truncated = serializers.IntegerField(
-        required=False, help_text="Changes past the cap, counted, not listed."
-    )
-
-
-class TrialStartSerializer(serializers.Serializer):
-    state = serializers.ChoiceField(choices=("seeded", "differs", "unknown"))
-    tables = serializers.ListField(child=serializers.CharField(), required=False)
-
-
-class TrialStateSerializer(serializers.Serializer):
-    state_changes = TrialStateChangeSerializer(many=True, required=False)
-    duplicates = DuplicateCommitSerializer(
-        many=True,
-        required=False,
-        help_text="Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
-    )
-    recorded = serializers.BooleanField(
-        required=False,
-        help_text="False when World changes are not recorded for this agent: its tools run inside it.",
-    )
-    why = serializers.CharField(
-        required=False, allow_blank=True, help_text="Why they were not recorded."
-    )
-    unreadable = serializers.BooleanField(
-        required=False,
-        help_text="True when what changed in the world could not be read; checks that needed it read Unmeasured.",
-    )
-    records = TrialRecordsSerializer(
-        required=False, help_text="The records the trial changed, before and after."
-    )
-    start = TrialStartSerializer(
-        required=False,
-        help_text="Whether the trial started from the seeded records, as every trial should.",
-    )
-    decisions = ActorDecisionSerializer(many=True, required=False)
-    approvals = ApprovalLineSerializer(many=True, required=False)
-    end_state_url = serializers.URLField(
-        required=False,
-        help_text="The world's records at the trial's end and its action log, kept for grading it again.",
-    )
-    usage = ActorUsageSerializer(many=True, required=False)
-    limits = serializers.DictField(
-        required=False,
-        help_text="The actor limits this trial ran with; null is no limit.",
-    )
-    notices = TrialNoticeSerializer(
-        many=True,
-        required=False,
-        help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
-    )
-
-
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -1126,34 +879,6 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
-def _call_call_actors(metadata: object) -> list[dict[str, str]]:
-    """Who each of the call's actors is, how they were heard and how far they got."""
-    record = metadata.get("harness_call_actors") if isinstance(metadata, dict) else None
-    resolved = record.get("resolved") if isinstance(record, dict) else None
-    summary = record.get("summary") if isinstance(record, dict) else None
-    deliveries = {
-        one["actor"]: call_actor_delivery(one)
-        for one in summary or []
-        if isinstance(one, dict) and isinstance(one.get("actor"), str)
-    }
-    return [
-        {
-            **{
-                key: one[key]
-                for key in ("id", "name", "role", "channel")
-                if isinstance(one.get(key), str)
-            },
-            **(
-                {"delivery": deliveries[one["id"]]}
-                if one.get("id") in deliveries
-                else {}
-            ),
-        }
-        for one in resolved or []
-        if isinstance(one, dict)
-    ]
-
-
 def build_call_execution_detail(
     call: CallExecution, request=None, workspace=None
 ) -> dict[str, Any]:
@@ -1175,6 +900,12 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    actors = call_actors(call.call_metadata)
+    data["transcript"] = transcript_turns(
+        data.get("transcript") or [],
+        actors,
+        chat=call.simulation_call_type == CallExecution.SimulationCallType.TEXT,
+    )
     # A sub-goal check is a harness verdict too, but it belongs to the
     # scenario, not the eval list. Tag each metric so the UI can tell.
     sub_goal_names = receipt_sub_goal_names(call.call_metadata)
@@ -1198,49 +929,16 @@ def build_call_execution_detail(
             "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
-            "function_calls": function_calls(call),
-            "call_actors": _call_call_actors(call.call_metadata),
+            "function_calls": tagged_function_calls(function_calls(call)),
+            "call_actors": actors,
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
-            "trial_state": _trial_state(call),
+            "trial_state": trial_state(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],
         }
     )
     return data
-
-
-def _trial_state(call: CallExecution) -> dict[str, Any] | None:
-    """The trial's World changes, with where its end state is kept (the world's records at its end and its action
-    log) when the harness stored one for this call's own run, organisation and workspace."""
-    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
-    state = metadata.get(TRIAL_STATE_KEY)
-    if not isinstance(state, dict):
-        return state
-    artifacts = metadata.get("hosted_harness_artifacts")
-    end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
-    url = end.get("url") if isinstance(end, dict) else None
-    sealed = state.get("end_state_artifact")
-    if not url and isinstance(sealed, str) and sealed.startswith("sha256:"):
-        from simulate.models import HostedHarnessArtifact
-        from simulate.services.hosted_harness_ingestion import (
-            UPLOAD_BUCKET_NAME,
-            get_object_url,
-        )
-
-        kept = (
-            HostedHarnessArtifact.no_workspace_objects.filter(
-                sha256=sealed.removeprefix("sha256:"),
-                kind="world_state",
-                job__payload__metadata__platform_run_id=str(call.test_execution_id),
-                job__organization_id=call.test_execution.run_test.organization_id,
-                job__workspace_id=call.test_execution.run_test.workspace_id,
-            )
-            .values_list("object_key", flat=True)
-            .first()
-        )
-        url = get_object_url(UPLOAD_BUCKET_NAME, kept) if kept else None
-    return {**state, "end_state_url": url} if url else state
 
 
 class CallExecutionV3DetailView(APIView):

@@ -198,7 +198,7 @@ def test_a_test_condition_the_world_cannot_apply_is_refused_with_why_and_the_sui
 def test_a_trial_s_world_changes_link_its_kept_end_state_and_an_older_trial_reads_as_before():
     from types import SimpleNamespace
 
-    from simulate.views.run_results_v3 import _trial_state
+    from simulate.selectors.call_detail import trial_state as _trial_state
 
     def call(metadata):
         return SimpleNamespace(call_metadata=metadata)
