@@ -1220,6 +1220,22 @@ def _trial_state(call_metadata: Any) -> dict[str, Any] | None:
     artifacts = metadata.get("hosted_harness_artifacts")
     end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
     url = end.get("url") if isinstance(end, dict) else None
+    sealed = state.get("end_state_artifact")
+    if not url and isinstance(sealed, str) and sealed.startswith("sha256:"):
+        from simulate.models import HostedHarnessArtifact
+        from simulate.services.hosted_harness_ingestion import (
+            UPLOAD_BUCKET_NAME,
+            get_object_url,
+        )
+
+        kept = (
+            HostedHarnessArtifact.no_workspace_objects.filter(
+                sha256=sealed.removeprefix("sha256:"), kind="world_state"
+            )
+            .values_list("object_key", flat=True)
+            .first()
+        )
+        url = get_object_url(UPLOAD_BUCKET_NAME, kept) if kept else None
     return {**state, "end_state_url": url} if url else state
 
 

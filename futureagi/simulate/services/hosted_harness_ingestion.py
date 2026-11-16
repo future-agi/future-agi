@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import tempfile
 from datetime import datetime, timedelta
 from typing import Any, BinaryIO, cast
@@ -1584,6 +1585,9 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
             "skipped": _entries(records.get("skipped")),
             "truncated": truncated + max(len(changes) - MAX_RECORDED_ENTRIES, 0),
         }
+    end_state = world.get("end_state_artifact")
+    if isinstance(end_state, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", end_state):
+        kept["end_state_artifact"] = end_state
     start = world.get("start")
     if isinstance(start, dict) and start.get("state") in _START_STATES:
         kept["start"] = {

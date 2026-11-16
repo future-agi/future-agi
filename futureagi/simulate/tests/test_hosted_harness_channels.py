@@ -1934,6 +1934,23 @@ def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
         )
     assert response.status_code == 201, response.content
 
+    # The trial's World changes name it by digest, so the result links the end state of that trial, not another's.
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+    from simulate.views.run_results_v3 import _trial_state
+
+    sealed = _world_change_fields(
+        {"end_state_artifact": f"sha256:{digest}", "start": {"state": "seeded"}}
+    )
+    assert sealed["end_state_artifact"] == f"sha256:{digest}"
+    assert (
+        _world_change_fields({"end_state_artifact": "not-a-digest"}).get(
+            "end_state_artifact"
+        )
+        is None
+    )
+    linked = _trial_state({"harness_trial_state": {"state_changes": [], **sealed}})
+    assert linked["end_state_url"] and digest in linked["end_state_url"]
+
 
 @pytest.mark.django_db
 def test_artifact_budget_is_rechecked_after_concurrent_upload(organization, settings):
