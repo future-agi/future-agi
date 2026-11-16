@@ -38892,6 +38892,8 @@ export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedC
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedOfMin = 0;
 
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseBlockersMin = 0;
+
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin = 0;
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin = 0;
@@ -39100,6 +39102,80 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         ),
     }),
   ),
+  workers: zod
+    .array(
+      zod
+        .object({
+          worker_id: zod.string().min(1),
+          name: zod.string().min(1),
+          binding: zod.enum(["separate", "shared"]),
+          status: zod.enum([
+            "supported",
+            "partial",
+            "blocked",
+            "unavailable",
+            "untested",
+            "stale",
+          ]),
+          reason_code: zod.string().min(1),
+          reason: zod.string().min(1),
+          tools: zod.array(
+            zod.object({
+              tool: zod.string().min(1),
+              action: zod
+                .string()
+                .min(1)
+                .describe(
+                  "The sealed world action; null when the tool has no route.",
+                ),
+              boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
+            }),
+          ),
+          bypassed: zod
+            .array(
+              zod
+                .object({
+                  run_id: zod.string().min(1),
+                  call_execution_id: zod.string().min(1),
+                  tool: zod.string().min(1),
+                })
+                .describe(
+                  "Recent calls where the worker reached the world without its own channel.",
+                ),
+            )
+            .describe(
+              "Recent calls where the worker reached the world without its own channel.",
+            ),
+          fix: zod.object({
+            type: zod.string().min(1),
+            category: zod
+              .enum(["startup", "message_mapping", "tool_routing", "evidence"])
+              .describe(
+                "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+              ),
+            target: zod.string().min(1),
+            action: zod.string().min(1),
+            would: zod.string().min(1),
+            recheck: zod
+              .object({
+                scope: zod.enum(["agent", "pair"]),
+                method: zod.enum(["POST"]),
+                path: zod.string().min(1),
+              })
+              .describe(
+                "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+              ),
+          }),
+          checked_at: zod.string().min(1),
+        })
+        .describe(
+          "One row per declared worker; empty when the contract declares none.",
+        ),
+    )
+    .optional()
+    .describe(
+      "One row per declared worker; empty when the contract declares none.",
+    ),
   counts: zod.object({
     supported: zod.number(),
     partial: zod.number(),
@@ -39108,6 +39184,12 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
     untested: zod.number(),
     stale: zod.number(),
   }),
+  blockers: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsCapabilitiesResponseBlockersMin)
+    .describe(
+      "Blocked rows plus blocked workers: what the run plan counts as blockers.",
+    ),
   catalog_version: zod.string().min(1),
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
@@ -39195,6 +39277,26 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         truncated: zod.boolean().describe("More than 200 cases; page them."),
       }),
     }),
+    held_by: zod
+      .array(
+        zod
+          .object({
+            id: zod
+              .string()
+              .min(1)
+              .describe("The row id, or worker:<id> for a declared worker."),
+            name: zod.string().min(1),
+            area: zod.string().min(1),
+            count: zod.number().min(1),
+            reason: zod.string().min(1),
+          })
+          .describe(
+            "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+          ),
+      )
+      .describe(
+        "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+      ),
     dropped: zod.array(
       zod.object({
         key: zod.string().min(1),
@@ -39278,6 +39380,8 @@ export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemNee
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedOfMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseBlockersMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin = 0;
 
@@ -39488,6 +39592,85 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           ),
       }),
     ),
+    workers: zod
+      .array(
+        zod
+          .object({
+            worker_id: zod.string().min(1),
+            name: zod.string().min(1),
+            binding: zod.enum(["separate", "shared"]),
+            status: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            reason_code: zod.string().min(1),
+            reason: zod.string().min(1),
+            tools: zod.array(
+              zod.object({
+                tool: zod.string().min(1),
+                action: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The sealed world action; null when the tool has no route.",
+                  ),
+                boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
+              }),
+            ),
+            bypassed: zod
+              .array(
+                zod
+                  .object({
+                    run_id: zod.string().min(1),
+                    call_execution_id: zod.string().min(1),
+                    tool: zod.string().min(1),
+                  })
+                  .describe(
+                    "Recent calls where the worker reached the world without its own channel.",
+                  ),
+              )
+              .describe(
+                "Recent calls where the worker reached the world without its own channel.",
+              ),
+            fix: zod.object({
+              type: zod.string().min(1),
+              category: zod
+                .enum([
+                  "startup",
+                  "message_mapping",
+                  "tool_routing",
+                  "evidence",
+                ])
+                .describe(
+                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                ),
+              target: zod.string().min(1),
+              action: zod.string().min(1),
+              would: zod.string().min(1),
+              recheck: zod
+                .object({
+                  scope: zod.enum(["agent", "pair"]),
+                  method: zod.enum(["POST"]),
+                  path: zod.string().min(1),
+                })
+                .describe(
+                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                ),
+            }),
+            checked_at: zod.string().min(1),
+          })
+          .describe(
+            "One row per declared worker; empty when the contract declares none.",
+          ),
+      )
+      .optional()
+      .describe(
+        "One row per declared worker; empty when the contract declares none.",
+      ),
     counts: zod.object({
       supported: zod.number(),
       partial: zod.number(),
@@ -39496,6 +39679,12 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
       untested: zod.number(),
       stale: zod.number(),
     }),
+    blockers: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsSelectCapabilitiesResponseBlockersMin)
+      .describe(
+        "Blocked rows plus blocked workers: what the run plan counts as blockers.",
+      ),
     catalog_version: zod.string().min(1),
     rules_version: zod.string().min(1),
     computed_at: zod.string().min(1),
@@ -39585,6 +39774,26 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           truncated: zod.boolean().describe("More than 200 cases; page them."),
         }),
       }),
+      held_by: zod
+        .array(
+          zod
+            .object({
+              id: zod
+                .string()
+                .min(1)
+                .describe("The row id, or worker:<id> for a declared worker."),
+              name: zod.string().min(1),
+              area: zod.string().min(1),
+              count: zod.number().min(1),
+              reason: zod.string().min(1),
+            })
+            .describe(
+              "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+            ),
+        )
+        .describe(
+          "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+        ),
       dropped: zod.array(
         zod.object({
           key: zod.string().min(1),
@@ -54930,6 +55139,8 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
 
+export const simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotBlockersMin = 0;
+
 export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin = 0;
 
 export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin = 0;
@@ -55169,6 +55380,85 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               ),
           }),
         ),
+        workers: zod
+          .array(
+            zod
+              .object({
+                worker_id: zod.string().min(1),
+                name: zod.string().min(1),
+                binding: zod.enum(["separate", "shared"]),
+                status: zod.enum([
+                  "supported",
+                  "partial",
+                  "blocked",
+                  "unavailable",
+                  "untested",
+                  "stale",
+                ]),
+                reason_code: zod.string().min(1),
+                reason: zod.string().min(1),
+                tools: zod.array(
+                  zod.object({
+                    tool: zod.string().min(1),
+                    action: zod
+                      .string()
+                      .min(1)
+                      .describe(
+                        "The sealed world action; null when the tool has no route.",
+                      ),
+                    boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
+                  }),
+                ),
+                bypassed: zod
+                  .array(
+                    zod
+                      .object({
+                        run_id: zod.string().min(1),
+                        call_execution_id: zod.string().min(1),
+                        tool: zod.string().min(1),
+                      })
+                      .describe(
+                        "Recent calls where the worker reached the world without its own channel.",
+                      ),
+                  )
+                  .describe(
+                    "Recent calls where the worker reached the world without its own channel.",
+                  ),
+                fix: zod.object({
+                  type: zod.string().min(1),
+                  category: zod
+                    .enum([
+                      "startup",
+                      "message_mapping",
+                      "tool_routing",
+                      "evidence",
+                    ])
+                    .describe(
+                      "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                    ),
+                  target: zod.string().min(1),
+                  action: zod.string().min(1),
+                  would: zod.string().min(1),
+                  recheck: zod
+                    .object({
+                      scope: zod.enum(["agent", "pair"]),
+                      method: zod.enum(["POST"]),
+                      path: zod.string().min(1),
+                    })
+                    .describe(
+                      "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                    ),
+                }),
+                checked_at: zod.string().min(1),
+              })
+              .describe(
+                "One row per declared worker; empty when the contract declares none.",
+              ),
+          )
+          .optional()
+          .describe(
+            "One row per declared worker; empty when the contract declares none.",
+          ),
         counts: zod.object({
           supported: zod.number(),
           partial: zod.number(),
@@ -55177,6 +55467,14 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           untested: zod.number(),
           stale: zod.number(),
         }),
+        blockers: zod
+          .number()
+          .min(
+            simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotBlockersMin,
+          )
+          .describe(
+            "Blocked rows plus blocked workers: what the run plan counts as blockers.",
+          ),
         catalog_version: zod.string().min(1),
         rules_version: zod.string().min(1),
         computed_at: zod.string().min(1),

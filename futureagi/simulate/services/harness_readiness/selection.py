@@ -32,6 +32,7 @@ from simulate.services.harness_readiness.catalogue import (
     RowView,
     Status,
     VersionRef,
+    WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
     certified,
@@ -120,6 +121,16 @@ class Scope(TypedDict):
     changed: Changes
 
 
+class HeldBy(TypedDict):
+    """A blocked row or declared worker holding selected cases back, named for the run dialog."""
+
+    id: str
+    name: str
+    area: str | None
+    count: int
+    reason: str | None
+
+
 class SelectionView(Scope):
     requested: int
     eligible: int
@@ -127,6 +138,7 @@ class SelectionView(Scope):
     stale: int
     untested: int
     lists: dict[Bucket, CaseList]
+    held_by: list[HeldBy]
     dropped: list[DroppedCase]
     grading: Grading
     requirements_recorded: bool
@@ -151,6 +163,7 @@ class SelectionReport(TypedDict):
     areas: list[AreaView]
     rows: list[SelectionRowView]
     counts: dict[Status, int]
+    blockers: int
     catalog_version: str
     rules_version: str
     computed_at: str
@@ -209,7 +222,7 @@ def selection_report(
         report["rows"],
         keys=keys,
         trials=trials,
-        workers=report.get("workers") or [],
+        workers=report["workers"],
     )
     placed = placement.placed
     requested = len(placed)
@@ -229,7 +242,12 @@ def selection_report(
         )
     return {
         **report,
-        "answer": _selected_answer(report["answer"], rows, placed),
+        "answer": _selected_answer(
+            report["answer"],
+            rows,
+            placed,
+            blocked_workers=report["blockers"] - report["counts"]["blocked"],
+        ),
         "rows": rows,
         "selection": {
             **_scope(pairing, placement, keys),
@@ -239,16 +257,7 @@ def selection_report(
             "stale": len(by_bucket["stale"]),
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
-            # How many held cases each blocked worker holds back, so the run dialog names the worker.
-            "held_by_workers": dict(
-                Counter(
-                    reason[len("worker:") :]
-                    for one in placed
-                    if one.bucket == "blocked"
-                    for reason in one.by
-                    if reason.startswith("worker:")
-                )
-            ),
+            "held_by": _held_by(rows, report["workers"], placed),
             "dropped": placement.dropped,
             "grading": {
                 "gradable": requested - len(not_gradable),
@@ -260,8 +269,50 @@ def selection_report(
     }
 
 
+def _held_by(
+    rows: list[SelectionRowView],
+    workers: list[WorkerBoundaryView],
+    placed: list[Placed],
+) -> list[HeldBy]:
+    """Each blocked row, then each blocked worker, that holds selected cases back, with how many."""
+    by_worker = Counter(
+        reason.removeprefix("worker:")
+        for one in placed
+        if one.bucket == "blocked"
+        for reason in one.by
+        if reason.startswith("worker:")
+    )
+    held: list[HeldBy] = [
+        {
+            "id": row["id"],
+            "name": row["label"],
+            "area": row["area"],
+            "count": row["affected"]["count"],
+            "reason": row["reason"],
+        }
+        for row in rows
+        if row["status"] == "blocked" and row["affected"]["count"] > 0
+    ]
+    held += [
+        {
+            "id": f"worker:{one['worker_id']}",
+            "name": one["name"],
+            "area": "workers",
+            "count": by_worker[one["worker_id"]],
+            "reason": one["reason"],
+        }
+        for one in workers
+        if by_worker[one["worker_id"]] > 0
+    ]
+    return held
+
+
 def _selected_answer(
-    found: AnswerView, rows: list[SelectionRowView], placed: list[Placed]
+    found: AnswerView,
+    rows: list[SelectionRowView],
+    placed: list[Placed],
+    *,
+    blocked_workers: int,
 ) -> AnswerView:
     """The answer for the selected cases: a world tool the agent version lacks can only
     be missed by the cases that use it, so when no selected case does, it does not
@@ -286,6 +337,7 @@ def _selected_answer(
         validating=False,
         failed=False,
         named=False,
+        blocked_workers=blocked_workers,
     )
 
 
@@ -341,7 +393,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         report["rows"],
         keys=keys,
         trials=trials,
-        workers=report.get("workers") or [],
+        workers=report["workers"],
     )
     dropped = [
         one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
@@ -360,7 +412,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     reasons.update(
         {
             f"worker:{one['worker_id']}": one["reason"]
-            for one in report.get("workers") or []
+            for one in report["workers"]
             if f"worker:{one['worker_id']}" in by
         }
     )
@@ -403,7 +455,7 @@ def case_page(
         report["rows"],
         keys=keys,
         trials=trials,
-        workers=report.get("workers") or [],
+        workers=report["workers"],
     ).placed
     matching = [
         one

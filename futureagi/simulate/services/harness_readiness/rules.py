@@ -806,10 +806,15 @@ def worst(statuses: Iterable[Status]) -> Status:
 
 
 def answer(
-    rows: list[RowView], *, validating: bool, failed: bool, named: bool
+    rows: list[RowView],
+    *,
+    validating: bool,
+    failed: bool,
+    named: bool,
+    blocked_workers: int = 0,
 ) -> AnswerView:
-    """Read from the measured rows: unmeasured ones hold no case back. A failed pair
-    whose failure names no action blocks the answer without blocking a row."""
+    """Read from the measured rows and the blocked workers: unmeasured rows hold no case back. A failed pair whose
+    failure names no action blocks the answer without blocking a row."""
     lowest = worst(
         row["status"]
         for row in rows
@@ -821,7 +826,7 @@ def answer(
     kind: Literal["ready", "blocked", "stale", "unchecked", "validating"]
     if validating:
         kind = "validating"
-    elif lowest == "blocked" or pair_failed:
+    elif lowest == "blocked" or pair_failed or blocked_workers:
         kind = "blocked"
     elif lowest == "stale":
         kind = "stale"

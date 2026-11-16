@@ -67191,6 +67191,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "areas",
         "rows",
         "counts",
+        "blockers",
         "catalog_version",
         "rules_version",
         "computed_at",
@@ -67219,8 +67220,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessCapabilitySelectionRow",
           },
         },
+        workers: {
+          description:
+            "One row per declared worker; empty when the contract declares none.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBoundary",
+          },
+        },
         counts: {
           $ref: "#/definitions/HarnessCapabilityCounts",
+        },
+        blockers: {
+          title: "Blockers",
+          description:
+            "Blocked rows plus blocked workers: what the run plan counts as blockers.",
+          type: "integer",
+          minimum: 0,
         },
         catalog_version: {
           title: "Catalog version",
@@ -103797,6 +103813,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "stale",
         "untested",
         "lists",
+        "held_by",
         "dropped",
         "grading",
         "requirements_recorded",
@@ -103842,6 +103859,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         lists: {
           $ref: "#/definitions/HarnessCapabilityCaseLists",
+        },
+        held_by: {
+          description:
+            "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCapabilityHeldBy",
+          },
         },
         dropped: {
           type: "array",
@@ -103994,6 +104019,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         affected: {
           $ref: "#/definitions/HarnessCapabilityAffected",
+        },
+      },
+    },
+    WorkerBoundary: {
+      description:
+        "One row per declared worker; empty when the contract declares none.",
+      required: [
+        "worker_id",
+        "name",
+        "binding",
+        "status",
+        "reason_code",
+        "reason",
+        "tools",
+        "bypassed",
+        "fix",
+        "checked_at",
+      ],
+      type: "object",
+      properties: {
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["separate", "shared"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "supported",
+            "partial",
+            "blocked",
+            "unavailable",
+            "untested",
+            "stale",
+          ],
+        },
+        reason_code: {
+          title: "Reason code",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerTool",
+          },
+        },
+        bypassed: {
+          description:
+            "Recent calls where the worker reached the world without its own channel.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBypass",
+          },
+        },
+        fix: {
+          $ref: "#/definitions/HarnessCapabilityFix",
+        },
+        checked_at: {
+          title: "Checked at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -125046,6 +125150,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityHeldBy: {
+      description:
+        "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
+      required: ["id", "name", "area", "count", "reason"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "The row id, or worker:<id> for a declared worker.",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        area: {
+          title: "Area",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessCapabilityAffected: {
       description:
         "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
@@ -125151,6 +125291,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    WorkerBypass: {
+      description:
+        "Recent calls where the worker reached the world without its own channel.",
+      required: ["run_id", "call_execution_id", "tool"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          minLength: 1,
+        },
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    WorkerTool: {
+      required: ["tool", "action", "boundary"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          description:
+            "The sealed world action; null when the tool has no route.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        boundary: {
+          title: "Boundary",
+          type: "string",
+          enum: ["allowed", "blocked", "not_enforced"],
         },
       },
     },
@@ -129848,6 +130036,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "areas",
         "rows",
         "counts",
+        "blockers",
         "catalog_version",
         "rules_version",
         "computed_at",
@@ -129875,8 +130064,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessCapabilityRow",
           },
         },
+        workers: {
+          description:
+            "One row per declared worker; empty when the contract declares none.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBoundary",
+          },
+        },
         counts: {
           $ref: "#/definitions/HarnessCapabilityCounts",
+        },
+        blockers: {
+          title: "Blockers",
+          description:
+            "Blocked rows plus blocked workers: what the run plan counts as blockers.",
+          type: "integer",
+          minimum: 0,
         },
         catalog_version: {
           title: "Catalog version",
