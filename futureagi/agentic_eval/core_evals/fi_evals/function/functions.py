@@ -2203,7 +2203,8 @@ def calculate_jaro_winkler_similarity(output, expected, case_insensitive=True, p
             transpositions += 1
         k += 1
 
-    jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3
+    transpositions //= 2
+    jaro = (matches / len1 + matches / len2 + (matches - transpositions) / matches) / 3
 
     # Winkler modification: boost for common prefix
     prefix = 0
@@ -3271,10 +3272,23 @@ def calculate_matthews_correlation(output, expected, **kwargs):
         else:
             mcc = (tp * tn - fp * fn) / denom
     else:
-        # Multiclass MCC (using confusion matrix)
-        n = len(labels)
-        correct = sum(1 for p, l in zip(preds, labels) if p == l)
-        mcc = (correct / n - 1 / len(categories)) / (1 - 1 / len(categories)) if len(categories) > 1 else 0.0
+        # Multiclass MCC using Gorodkin's R_K formula, derived from the full
+        # confusion matrix rather than accuracy with a uniform class prior.
+        #
+        # R_K = (c·s − Σ_k p_k·t_k) / sqrt((s²−Σ_k p_k²)·(s²−Σ_k t_k²))
+        # where s = number of samples, c = correctly predicted, and
+        # t_k / p_k = the true / predicted count of class k.
+        s = len(labels)
+        c = sum(pred == label for pred, label in zip(preds, labels, strict=True))
+        pk = {cat: sum(1 for pred in preds if pred == cat) for cat in categories}
+        tk = {cat: sum(1 for label in labels if label == cat) for cat in categories}
+        sum_pk2 = sum(v**2 for v in pk.values())
+        sum_tk2 = sum(v**2 for v in tk.values())
+        sum_pktk = sum(pk[cat] * tk[cat] for cat in categories)
+        denom = ((s**2 - sum_pk2) * (s**2 - sum_tk2)) ** 0.5
+        # Either constant predictions or constant truth makes this zero.
+        # Raw MCC zero remains a normalized score of 0.5 below.
+        mcc = (c * s - sum_pktk) / denom if denom != 0 else 0.0
 
     # Normalize from [-1, 1] to [0, 1]
     score = (mcc + 1) / 2
@@ -3797,11 +3811,8 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
             gt_set = set(str(x) for x in gt)
             hits = 0
             sum_prec = 0.0
-            seen = set()
             for rank, item in enumerate(ret, 1):
-                # Credit each relevant item once, as the system eval does.
-                if str(item) in gt_set and str(item) not in seen:
-                    seen.add(str(item))
+                if str(item) in gt_set:
                     hits += 1
                     sum_prec += hits / rank
             ap = sum_prec / len(gt_set) if gt_set else 0.0
@@ -3814,11 +3825,8 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
         return {"result": 0.0, "reason": "Empty ground truth"}
     hits = 0
     sum_prec = 0.0
-    seen = set()
     for rank, item in enumerate(retrieved, 1):
-        # A repeated retrieval used to count again, so ["a", "a"] against ["a"] scored 2.0.
-        if str(item) in gt_set and str(item) not in seen:
-            seen.add(str(item))
+        if str(item) in gt_set:
             hits += 1
             sum_prec += hits / rank
     ap = sum_prec / len(gt_set)

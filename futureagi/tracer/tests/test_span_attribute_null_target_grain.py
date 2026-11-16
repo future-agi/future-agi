@@ -328,11 +328,18 @@ def test_trace_attribute_nullness_replays_versions_and_tombstones():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("surface,operation,expected", [
-    ("sessions", "is_null", 1), ("sessions", "is_not_null", 1),
-    ("traces", "is_null", 2), ("traces", "is_not_null", 1),
-])
-def test_independent_null_oracle_groups_at_displayed_entity(surface, operation, expected):
+@pytest.mark.parametrize(
+    "surface,operation,expected",
+    [
+        ("sessions", "is_null", 1),
+        ("sessions", "is_not_null", 1),
+        ("traces", "is_null", 2),
+        ("traces", "is_not_null", 1),
+    ],
+)
+def test_independent_null_oracle_groups_at_displayed_entity(
+    surface, operation, expected
+):
     from types import SimpleNamespace
 
     from tracer.tests.integration.test_list_endpoints_filter_count import (
@@ -345,8 +352,13 @@ def test_independent_null_oracle_groups_at_displayed_entity(surface, operation, 
         SimpleNamespace(trace_id="c", session_id="two", has_key=False),
     ]
     case = SimpleNamespace(
-        meta_kind=None, aggregate_predicate=None, col_type="SPAN_ATTRIBUTE",
-        filter_op=operation, target_type=surface,
-        expected_predicate=lambda row: row.has_key if operation == "is_not_null" else not row.has_key,
+        meta_kind=None,
+        aggregate_predicate=None,
+        col_type="SPAN_ATTRIBUTE",
+        filter_op=operation,
+        target_type=surface,
+        expected_predicate=lambda row: (
+            row.has_key if operation == "is_not_null" else not row.has_key
+        ),
     )
     assert _expected_count(case, rows) == expected

@@ -6,6 +6,7 @@ The server only returns synthetic identities and public test signing keys.
 
 import base64
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -16,20 +17,20 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils.http import urlsafe_base64_decode
-from jose import jwt
 from rest_framework.test import APIClient
 
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization import Organization
 from accounts.models.user import User
-from saml2_auth import views
+from saml2_auth import google_oauth, views
 
 CLIENT_ID = "synthetic-google-client"
 CODE = "synthetic-authorization-code-marker"
@@ -37,6 +38,10 @@ ACCESS_TOKEN = "synthetic-access-token-marker"
 PROFILE = "synthetic-userinfo-marker"
 EMAIL = "google-oauth@example.test"
 CLAIM_MARKER = "synthetic-signed-subject-marker"
+
+
+def _b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
 def _base64_number(number):
@@ -76,9 +81,10 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
         "profile_status": 200,
         "jwks_status": 200,
         "provider": "google",
+        "exchange_access_token": True,
     }
 
-    def issue(*, claims=None, key=0, kid=None, name=True, omit=()):
+    def signed_claims(*, claims=None, name=True, omit=()):
         payload = {
             "iss": "https://accounts.google.com",
             "aud": CLIENT_ID,
@@ -98,6 +104,10 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
         payload.update(claims or {})
         for claim in omit:
             payload.pop(claim, None)
+        return payload
+
+    def issue(*, claims=None, key=0, kid=None, name=True, omit=()):
+        payload = signed_claims(claims=claims, name=name, omit=omit)
         state["id_token"] = jwt.encode(
             payload,
             signing_keys[key][0],
@@ -129,14 +139,10 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
             assert self.path in ("/token", "/access_token")
             assert body["code"] == CODE
             assert body["client_id"] == CLIENT_ID
-            self.send_json(
-                state["status"],
-                {
-                    "id_token": state["id_token"],
-                    "access_token": ACCESS_TOKEN,
-                    "error_description": PROFILE,
-                },
-            )
+            tokens = {"id_token": state["id_token"], "error_description": PROFILE}
+            if state["exchange_access_token"]:
+                tokens["access_token"] = ACCESS_TOKEN
+            self.send_json(state["status"], tokens)
 
         def do_GET(self):
             state["requests"].append(("GET", self.path, dict(self.headers)))
@@ -206,6 +212,7 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
     cache.clear()
     issue()
     state["issue"] = issue
+    state["signed_claims"] = signed_claims
     yield state
     server.shutdown()
     server.server_close()
@@ -415,6 +422,174 @@ def test_google_retains_access_token_hash_validation(identity_server, google_use
     before = AuthToken.objects.count()
     client, response = _callback()
     _assert_denied(client, response, before)
+
+
+def _assert_signed_in(response, user, before):
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response["Location"]).query)
+    assert query["sso_token"]
+    assert "denied" not in query
+    assert AuthToken.objects.filter(user=user, is_active=True).count() == before + 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("access_token_returned", [True, False])
+def test_google_callback_accepts_token_without_access_token_hash(
+    identity_server, google_user, access_token_returned
+):
+    identity_server["exchange_access_token"] = access_token_returned
+    identity_server["issue"](omit=("at_hash",))
+    before = AuthToken.objects.filter(user=google_user).count()
+    _, response = _callback()
+    _assert_signed_in(response, google_user, before)
+
+
+@pytest.mark.django_db
+def test_google_callback_requires_access_token_for_access_token_hash(
+    identity_server, google_user
+):
+    # The ID token carries at_hash, but the token exchange returns no access
+    # token to compare it with.
+    identity_server["exchange_access_token"] = False
+    identity_server["issue"]()
+    before = AuthToken.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("at_hash", ["", "wrong-\u00e9", 12345, None, ["list"]])
+def test_google_callback_refuses_malformed_access_token_hash(
+    identity_server, google_user, at_hash
+):
+    identity_server["issue"](claims={"at_hash": at_hash})
+    before = AuthToken.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+
+
+@pytest.mark.django_db
+def test_google_callback_accepts_issued_at_within_clock_skew(
+    identity_server, google_user
+):
+    identity_server["issue"](claims={"iat": int(time.time()) + 5})
+    before = AuthToken.objects.filter(user=google_user).count()
+    _, response = _callback()
+    _assert_signed_in(response, google_user, before)
+
+
+@pytest.mark.django_db
+def test_google_callback_refuses_issued_at_beyond_clock_skew(
+    identity_server, google_user
+):
+    identity_server["issue"](claims={"iat": int(time.time()) + 120})
+    before = AuthToken.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+
+
+def _compact_token(header, payload, sign):
+    signing_input = ".".join(
+        _b64url(json.dumps(part, separators=(",", ":")).encode())
+        for part in (header, payload)
+    )
+    return signing_input + "." + _b64url(sign(signing_input.encode()))
+
+
+def _other_algorithm_token(private_pem, payload, algorithm):
+    """Build a token by hand whose header names ``algorithm`` and kid
+    "current", so no JWT library decides what may be produced."""
+    private = serialization.load_pem_private_key(private_pem, password=None)
+    if algorithm == "HS256":
+        # HMAC keyed with the published RSA public key, as SubjectPublicKeyInfo
+        # PEM.
+        secret = private.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        def sign(data):
+            return hmac.new(secret, data, hashlib.sha256).digest()
+
+    elif algorithm == "none":
+
+        def sign(_data):
+            return b""
+
+    else:
+
+        def sign(data):
+            return private.sign(data, padding.PKCS1v15(), hashes.SHA512())
+
+    header = {"alg": algorithm, "typ": "JWT", "kid": "current"}
+    return _compact_token(header, payload, sign)
+
+
+OTHER_ALGORITHMS = ["HS256", "none", "RS512"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("algorithm", OTHER_ALGORITHMS)
+def test_google_callback_refuses_other_signing_algorithms(
+    identity_server, signing_keys, google_user, algorithm
+):
+    identity_server["id_token"] = _other_algorithm_token(
+        signing_keys[0][0], identity_server["signed_claims"](), algorithm
+    )
+    before = AuthToken.objects.count()
+    users = User.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+    assert User.objects.count() == users
+
+
+def _unit_claims():
+    now = int(time.time())
+    return {
+        "iss": "https://accounts.google.com",
+        "aud": CLIENT_ID,
+        "sub": CLAIM_MARKER,
+        "iat": now,
+        "exp": now + 300,
+    }
+
+
+@pytest.mark.parametrize("algorithm", OTHER_ALGORITHMS)
+def test_google_decode_accepts_only_rs256_whatever_the_header_says(
+    signing_keys, algorithm
+):
+    # The decode step alone, without the callback's header pre-check: the
+    # algorithm comes from the verifier, never from the token.
+    private, public = signing_keys[0]
+    token = _other_algorithm_token(private, _unit_claims(), algorithm)
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, public, CLIENT_ID)
+
+
+def test_google_decode_verifies_rs256_with_the_published_key(signing_keys):
+    private, public = signing_keys[0]
+    claims = _unit_claims()
+    token = jwt.encode(claims, private, algorithm="RS256", headers={"kid": "current"})
+    assert google_oauth._decode_claims(token, public, CLIENT_ID) == claims
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, signing_keys[1][1], CLIENT_ID)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"kty": "RSA", "kid": "current"},
+        {"kty": "oct", "kid": "current", "k": "c3ludGhldGlj"},
+    ],
+    ids=["rsa-without-modulus", "symmetric"],
+)
+def test_google_decode_refuses_unusable_signing_key(signing_keys, key):
+    private, _ = signing_keys[0]
+    token = jwt.encode(
+        _unit_claims(), private, algorithm="RS256", headers={"kid": "current"}
+    )
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, key, CLIENT_ID)
 
 
 @pytest.mark.django_db
