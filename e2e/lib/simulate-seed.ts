@@ -247,6 +247,10 @@ export function seedHarnessEnvironment(opts: {
   actors?: boolean;
   /** One finished trial whose World changes hold a committed write and a read. */
   trial?: boolean;
+  // Two separately wired workers, with the world door's worker limits sealed or, as an old seal, without.
+  workers?: 'sealed' | 'old_seal';
+  // Each refund case gives the refund worker a budget, so the case relies on that worker.
+  refundWorkerBudget?: boolean;
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -265,6 +269,8 @@ export function seedHarnessEnvironment(opts: {
         failed_check: opts.failedCheck ?? null,
         actors: opts.actors ?? false,
         trial: opts.trial ?? false,
+        workers: opts.workers ?? null,
+        refund_worker_budget: opts.refundWorkerBudget ?? false,
       }),
     },
   ) as HarnessEnvironmentSeed;

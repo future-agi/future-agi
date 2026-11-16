@@ -1249,3 +1249,156 @@ def test_a_case_beside_a_tool_row_s_targets_keeps_what_its_evidence_says(
     )
 
     assert selection._status_for(row, lookup) == expected
+
+
+def _worker_case(key, workers):
+    from simulate.services.harness_scenario_needs import CaseNeeds
+
+    return CaseNeeds(
+        key=key,
+        number=1,
+        name=key,
+        persona="",
+        rows=frozenset({"start", "message"}),
+        tools=frozenset(),
+        unknown=False,
+        recorded=True,
+        grading_gap=None,
+        workers=frozenset(workers),
+    )
+
+
+def test_a_case_relying_on_a_blocked_worker_is_held_back():
+    def place(case):
+        return selection._place(
+            case,
+            {},
+            proved=True,
+            voice=False,
+            many=False,
+            pair_validating=False,
+            pair_failed=False,
+            blocked_workers=frozenset({"refund"}),
+        )
+
+    held = place(_worker_case("refund-check", {"refund"}))
+    task_only = place(_worker_case("task-only", set()))
+
+    assert (held.bucket, held.by) == ("blocked", ["worker:refund"])
+    assert task_only.bucket == "eligible"
+
+
+def test_the_selection_counts_the_cases_each_blocked_worker_holds_back(monkeypatch):
+    from types import SimpleNamespace
+
+    def place(case):
+        return selection._place(
+            case,
+            {},
+            proved=True,
+            voice=False,
+            many=False,
+            pair_validating=False,
+            pair_failed=False,
+            blocked_workers=frozenset({"refund"}),
+        )
+
+    placed = [
+        place(_worker_case("refund-check", {"refund"})),
+        place(_worker_case("refund-order", {"refund", "lookup"})),
+        place(_worker_case("task-only", set())),
+    ]
+    monkeypatch.setattr(
+        selection,
+        "readiness_report",
+        lambda pairing: {"rows": [], "answer": {}, "workers": []},
+    )
+    monkeypatch.setattr(
+        selection,
+        "_place_all",
+        lambda *args, **kwargs: SimpleNamespace(
+            placed=placed, dropped=[], recorded=True
+        ),
+    )
+    monkeypatch.setattr(selection, "_scope", lambda *args: {})
+    monkeypatch.setattr(selection, "_selected_answer", lambda *args: {})
+
+    view = selection.selection_report(None, keys=None, trials=1)["selection"]
+
+    # The run dialog names the worker: two cases wait on the refund worker, the task-only case runs.
+    assert view["held_by_workers"] == {"refund": 2}
+    assert (view["blocked"], view["eligible"]) == (2, 1)
+
+
+def test_a_run_held_back_by_a_worker_names_the_worker_and_its_reason(monkeypatch):
+    from types import SimpleNamespace
+
+    from simulate.services import hosted_harness
+
+    held = selection._place(
+        _worker_case("refund-check", {"refund"}),
+        {},
+        proved=True,
+        voice=False,
+        many=False,
+        pair_validating=False,
+        pair_failed=False,
+        blocked_workers=frozenset({"refund"}),
+    )
+    door = "This build has no world door, so nothing holds the refund worker's limits."
+    report = {
+        "rows": [],
+        "answer": {},
+        "workers": [
+            {
+                "worker_id": "refund",
+                "name": "Refund worker",
+                "status": "blocked",
+                "reason": door,
+            },
+            {
+                "worker_id": "lookup",
+                "name": "Lookup worker",
+                "status": "partial",
+                "reason": "Held.",
+            },
+        ],
+    }
+    monkeypatch.setattr(selection, "pair_bundle", lambda pairing: None)
+    monkeypatch.setattr(selection, "evidence_revision", lambda pairing, bundle: "rev")
+    monkeypatch.setattr(
+        selection,
+        "read_evidence",
+        lambda pairing, bundle: SimpleNamespace(unreadable=False),
+    )
+    monkeypatch.setattr(
+        selection, "readiness_report", lambda pairing, bundle=None: report
+    )
+    monkeypatch.setattr(
+        selection,
+        "_place_all",
+        lambda *args, **kwargs: SimpleNamespace(
+            placed=[held], dropped=[], recorded=True
+        ),
+    )
+    monkeypatch.setattr(selection, "_scope", lambda *args: {})
+
+    plan = selection.select_for_run(None, keys=["refund-check"], trials=1)
+
+    # The run dialog's refusal names the worker that holds the case back, with its reason.
+    assert plan.view["held_back"]["by"] == {"worker:refund": 1}
+    assert plan.view["reasons"] == {"worker:refund": door}
+    resolved = SimpleNamespace()
+    monkeypatch.setattr(hosted_harness, "_pin_tuple", lambda value: ("a", "e", "s"))
+    monkeypatch.setattr(
+        hosted_harness, "_evidence_revision", lambda environment, value: "rev"
+    )
+    with pytest.raises(HostedHarnessError) as refused:
+        hosted_harness._held_back_checked(
+            None,
+            hosted_harness._ReadinessPlan(pins=("a", "e", "s"), plan=plan),
+            resolved,
+            ["refund-check"],
+        )
+    assert refused.value.code == "all_cases_blocked"
+    assert f"(Refund worker: {door})" in refused.value.message

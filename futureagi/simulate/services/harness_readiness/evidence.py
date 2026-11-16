@@ -89,6 +89,9 @@ class Evidence:
     unreadable: bool = False
     # The certificate itself: what made it (harness and framework versions) included.
     certificate: Mapping[str, Any] = field(default_factory=dict)
+    # The world door's sealed `door.json` and `permissions.json`; None when absent or not read.
+    door: Mapping[str, Any] | None = None
+    worker_permissions: Mapping[str, Any] | None = None
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -112,6 +115,14 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
 
 
 _FILES = ("tools", "actions", "routed", "unobserved")
+# Read by key, never through `_items`: each is a mapping or None.
+_DOOR_FILES = ("door", "worker_permissions")
+# Kept rows and cached reads from before the door files were read lack them, so they are read once more.
+_FILES_VERSION = assembly.CERTIFICATION_FILES_VERSION
+
+
+def _mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _certification_files(
@@ -122,8 +133,15 @@ def _certification_files(
     already; an older row has its archive read once, and keeps what was read. An
     archive that cannot be read is marked ``unreadable``."""
     kept = row.certification_files
-    if isinstance(kept, Mapping) and kept.get("object_key") == object_key:
-        return {name: _items(kept, name) for name in _FILES}
+    if (
+        isinstance(kept, Mapping)
+        and kept.get("object_key") == object_key
+        and kept.get("files_version") == _FILES_VERSION
+    ):
+        return {
+            **{name: _items(kept, name) for name in _FILES},
+            **{name: _mapping(kept.get(name)) for name in _DOOR_FILES},
+        }
     files, readable = _read_once(object_key)
     if not readable:
         return {**files, "unreadable": True}
@@ -133,7 +151,11 @@ def _certification_files(
         else "archive_object_key"
     )
     type(row)._base_manager.filter(id=row.id, **{key_field: object_key}).update(
-        certification_files={"object_key": object_key, **files}
+        certification_files={
+            "object_key": object_key,
+            "files_version": _FILES_VERSION,
+            **files,
+        }
     )
     return files
 
@@ -145,7 +167,7 @@ def _read_once(object_key: str) -> _Read:
     when it does not come in time. An archive that cannot be read reads as holding
     neither, for a few minutes."""
     cache_key = (
-        "harness-readiness-certification:"
+        f"harness-readiness-certification:v{_FILES_VERSION}:"
         + hashlib.sha256(object_key.encode()).hexdigest()
     )
     cached = _cached_read(cache_key)
@@ -190,7 +212,13 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
             object_key,
-            {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
+            {
+                TOOL_CERTIFICATION,
+                ACTION_CERTIFICATION,
+                TOOL_ROUTING,
+                assembly.DOOR_FILE_PATH,
+                assembly.PERMISSIONS_FILE_PATH,
+            },
             _MAX_CERTIFICATION_BYTES,
         )
     except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
@@ -199,11 +227,23 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: _Read = ({name: [] for name in _FILES}, False)
+        unreadable: _Read = (
+            {
+                **{name: [] for name in _FILES},
+                **dict.fromkeys(_DOOR_FILES),
+            },
+            False,
+        )
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     kept = assembly.certification_files(found, object_key)
-    read = ({name: kept[name] for name in _FILES}, True)
+    read = (
+        {
+            **{name: kept[name] for name in _FILES},
+            **{name: kept.get(name) for name in _DOOR_FILES},
+        },
+        True,
+    )
     cache.set(cache_key, read, timeout=_FILES_TTL_SECONDS)
     return read
 
@@ -252,6 +292,8 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
             unreadable=bool(files.get("unreadable")),
             certificate=bundle.certificate or {},
+            door=_mapping(files.get("door")),
+            worker_permissions=_mapping(files.get("worker_permissions")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -278,6 +320,8 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         covers_suite=_covers_suite(version, pairing.suite_version),
         unreadable=bool(files.get("unreadable")),
         certificate=certificate if isinstance(certificate, Mapping) else {},
+        door=_mapping(files.get("door")),
+        worker_permissions=_mapping(files.get("worker_permissions")),
     )
 
 
@@ -903,6 +947,193 @@ def _cost(runs: list[Any]) -> Reading:
     )
 
 
+_CHILD_CALLS_READ = 20
+# The call metadata key the workers record is stored under (`harness_workers.WORKERS_KEY`); named here so readiness
+# does not need that module to read it.
+WORKERS_KEY = "harness_workers"
+_CUT_SHORT = frozenset(
+    {"deadline_passed", "no_return", "cancel_requested", "cancelled"}
+)
+
+
+def _children(pairing: Pairing, runs: list[Any]) -> Reading:
+    """Sub-agent evidence from this agent's own runs: one evidence line per checklist item, seen or not. Absence is
+    unmeasured, never a failure."""
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    declared = [
+        one
+        for one in _contract(pairing).get("workers") or []
+        if isinstance(one, Mapping)
+    ]
+    calls = (
+        list(
+            CallExecution.objects.filter(
+                test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(
+                    id__in=runs
+                ).values("test_execution_id"),
+                call_metadata__has_key=WORKERS_KEY,
+            ).order_by("-created_at")[:_CHILD_CALLS_READ]
+        )
+        if runs
+        else []
+    )
+    if not declared and not calls:
+        return Reading(
+            "not_applicable",
+            "single_agent",
+            "This agent declares no workers and its runs recorded none.",
+        )
+    if not calls:
+        return Reading(
+            "not_run", "no_run", "No run of this agent has shown its workers yet."
+        )
+    records = [(call.call_metadata or {}).get(WORKERS_KEY) or {} for call in calls]
+    trials = [(call.call_metadata or {}).get(TRIAL_STATE_KEY) or {} for call in calls]
+    receipts = [
+        (call.call_metadata or {}).get("hosted_harness_receipt") or {} for call in calls
+    ]
+    declared_ids = {str(one.get("id")) for one in declared if one.get("id")}
+
+    def hand_offs_whole(record: Mapping[str, Any]) -> bool:
+        events = record.get("events") or []
+        out = {
+            one.get("delegation_id") for one in events if one.get("type") == "delegated"
+        }
+        back = {
+            one.get("delegation_id") for one in events if one.get("type") == "returned"
+        }
+        ended = {
+            one.get("worker_id")
+            for one in record.get("workers") or []
+            if one.get("state") in _CUT_SHORT
+        }
+        stuck = [
+            one
+            for one in events
+            if one.get("type") == "delegated"
+            and one.get("delegation_id") not in back
+            and one.get("worker_id") not in ended
+        ]
+        return bool(out) and not stuck
+
+    def seen_all(record: Mapping[str, Any]) -> bool:
+        observed_ids = {
+            str(one.get("id"))
+            for one in record.get("workers") or []
+            if one.get("observed")
+        }
+        return declared_ids <= observed_ids
+
+    any_hand_off = any(
+        one.get("type") == "delegated"
+        for record in records
+        for one in record.get("events") or []
+    )
+    ids_by_call = [
+        {
+            str(one.get("worker_id"))
+            for one in record.get("workers") or []
+            if one.get("observed")
+        }
+        for record in records
+    ]
+    sub_goals = [
+        one
+        for receipt in receipts
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping)
+    ]
+    worker_goals = [
+        one for one in sub_goals if str(one.get("subject") or "").startswith("worker:")
+    ]
+
+    def result(found: bool, applicable: bool = True) -> str:
+        return "not_applicable" if not applicable else "seen" if found else "not_seen"
+
+    checks: list[EvidenceCheck] = [
+        {
+            "check": "stable_ids",
+            "result": result(
+                any(
+                    a & b
+                    for i, a in enumerate(ids_by_call)
+                    for b in ids_by_call[i + 1 :]
+                ),
+                len(calls) > 1,
+            ),
+        },
+        {
+            "check": "delegation_and_return",
+            "result": result(any(hand_offs_whole(one) for one in records)),
+        },
+        {
+            "check": "tool_attribution",
+            "result": result(
+                all(
+                    one.get("attribution") != "unattributed"
+                    for record in records
+                    for one in record.get("events") or []
+                    if one.get("type") == "tool_call"
+                )
+            ),
+        },
+        {
+            "check": "permissions_exercised",
+            "result": result(
+                any(
+                    str(entry.get("who") or "").startswith("worker:")
+                    and (entry.get("refused_actions") or entry.get("committed_actions"))
+                    for trial in trials
+                    for entry in trial.get("state_changes") or []
+                    if isinstance(entry, Mapping)
+                )
+            ),
+        },
+        {"check": "worker_verdicts", "result": result(bool(worker_goals))},
+        {
+            "check": "timeout_or_cancel",
+            "result": result(
+                any(
+                    one.get("state") in _CUT_SHORT
+                    for record in records
+                    for one in record.get("workers") or []
+                )
+            ),
+        },
+        {
+            "check": "unmeasured_without_evidence",
+            "result": result(any(one.get("held") is None for one in worker_goals)),
+        },
+    ]
+    at = calls[0].created_at.isoformat()
+    if any(seen_all(record) and hand_offs_whole(record) for record in records):
+        return Reading("passed", evidence=checks, checked_at=at)
+    if not any_hand_off:
+        return Reading(
+            "limited",
+            "no_hand_offs",
+            "Workers were seen only through their tool calls; the app records no hand-offs.",
+            evidence=checks,
+            checked_at=at,
+        )
+    seen_ids = {
+        str(one.get("id"))
+        for record in records
+        for one in record.get("workers") or []
+        if one.get("observed")
+    }
+    return Reading(
+        "limited",
+        "workers_partly_observed",
+        f"{len(declared_ids & seen_ids)} of {len(declared_ids)} declared workers were seen in runs; the rest read Not"
+        " observed.",
+        evidence=checks,
+        checked_at=at,
+    )
+
+
 def observed(pairing: Pairing) -> dict[str, Reading]:
     """What this agent's runs on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""
@@ -919,4 +1150,5 @@ def observed(pairing: Pairing) -> dict[str, Reading]:
         ),
         "resume": _resume(runs),
         "cost": _cost(runs),
+        "children": _children(pairing, runs),
     }
