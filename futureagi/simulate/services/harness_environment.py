@@ -837,10 +837,11 @@ def _contract_section(
     )
     section["end_conditions"] = _end_conditions(job, contract, scenario_docs)
     section["provenance"] = _provenance(job, environment)
-    from simulate.services.harness_actors import door_reach
+    from simulate.services.harness_actors import door_reach, production_only
 
     # Which tools the world's door stands in front of: actors act and faults apply only on those.
     section["door_reach"] = door_reach(contract)
+    section["production_only"] = production_only(contract)
     return section
 
 

@@ -68941,8 +68941,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
+          minLength: 1,
           pattern: "^[0-9]+$",
           maxLength: 19,
         },
@@ -104720,6 +104720,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "boolean",
+          },
+        },
+        production_only: {
+          description:
+            "Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
           },
         },
         end_conditions: {

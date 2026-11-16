@@ -38530,6 +38530,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       .describe(
         "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
       ),
+    production_only: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
+      ),
     end_conditions: zod.object({
       max_turns: zod.number(),
       max_duration_seconds: zod.number(),
@@ -38820,6 +38826,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       .optional()
       .describe(
         "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+      ),
+    production_only: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
       ),
     end_conditions: zod.object({
       max_turns: zod.number(),
@@ -40412,6 +40424,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
         .optional()
         .describe(
           "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+        ),
+      production_only: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
         ),
       end_conditions: zod.object({
         max_turns: zod.number(),

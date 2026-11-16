@@ -19377,6 +19377,8 @@ export interface HarnessEnvironmentContractApi {
   call_actors: HarnessEnvironmentCallActorApi[];
   /** Per tool: whether the world's door stands in front of it, so actors can take it and faults apply. */
   door_reach?: HarnessEnvironmentContractApiDoorReach;
+  /** Tools that reach a system the environment has no copy of: Unsupported for this controlled test. */
+  production_only?: string[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];

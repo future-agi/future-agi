@@ -161,6 +161,8 @@ export function harnessDetailToEnvironment(detail) {
     toolEntrypoints: contract?.tool_entrypoints || null,
     // Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.
     doorReach: contract?.door_reach || null,
+    // Tools that reach a system the environment has no copy of: Unsupported for this controlled test.
+    productionOnly: contract?.production_only || [],
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

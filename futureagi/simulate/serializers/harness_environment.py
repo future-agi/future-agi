@@ -439,6 +439,11 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         required=False,
         help_text="Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
     )
+    production_only = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
+    )
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     chosen_evals = serializers.ListField(

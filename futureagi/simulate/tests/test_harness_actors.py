@@ -2352,6 +2352,36 @@ def test_unavailable_is_a_valid_fault_mode(fault):
     require_valid_faults([{"name": "stock-out", "faults": [fault]}])
 
 
+def test_a_tool_reaching_a_system_the_environment_has_no_copy_of_reads_unsupported():
+    from simulate.services.harness_actors import production_only
+
+    contract = {
+        "tool_entrypoints": [
+            {"tool": "issue_refund", "mode": "service", "service": "tools-api"}
+        ],
+        "dependencies": [
+            # The agent's own tools service: the build stands it up.
+            {"name": "tools-api", "used_by": ["issue_refund"]},
+            # A database the build seeds a copy of.
+            {
+                "name": "orders-db",
+                "engine": "postgres",
+                "reached": {"dsn_env": "DATABASE_URL"},
+                "used_by": ["get_order"],
+            },
+            # A payment API with no seam the build knows: only production answers it.
+            {
+                "name": "payments",
+                "reached": {"url": "https://pay.example.com"},
+                "used_by": ["charge_card"],
+            },
+        ],
+    }
+
+    assert production_only(contract) == ["charge_card"]
+    assert production_only({}) == [] and production_only(None) == []
+
+
 def test_door_reach_reads_service_tools_only():
     from simulate.services.harness_actors import door_reach
 

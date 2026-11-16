@@ -40,9 +40,7 @@ describe("WorldInternalsSection tools", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("order_id: string")).toBeInTheDocument();
     expect(screen.getByText("refund_id: string")).toBeInTheDocument();
-    expect(
-      screen.getByText("amount: integer, cents, USD"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("amount: integer, cents, USD")).toBeInTheDocument();
     expect(screen.getByText("Can change records")).toBeInTheDocument();
     expect(
       screen.getByText("adds a refund row and marks the order refunded"),
@@ -66,9 +64,24 @@ describe("WorldInternalsSection tools", () => {
     expect(screen.getByText("Not reset by the test world")).toBeInTheDocument();
     // A contract written before returned fields were recorded says so rather than showing nothing.
     expect(
-      screen.getByText("Not recorded for this environment version"),
-    ).toBeInTheDocument();
+      screen.getAllByText("Not recorded for this environment version").length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("Not declared")).toBeInTheDocument();
+    expect(screen.getAllByText("Simulated")).toHaveLength(1);
+  });
+
+  it("marks a tool that reaches production Unsupported, never Simulated or in-process", () => {
+    const tools = [
+      ...env.tools,
+      { name: "charge_card", desc: "Charges the card.", args: ["amount"] },
+    ];
+    render(
+      <WorldInternalsSection
+        env={{ ...env, tools, productionOnly: ["charge_card"] }}
+      />,
+    );
+    expect(screen.getAllByText("Unsupported")).toHaveLength(1);
+    expect(screen.getAllByText("Runs inside the agent")).toHaveLength(1);
     expect(screen.getAllByText("Simulated")).toHaveLength(1);
   });
 });

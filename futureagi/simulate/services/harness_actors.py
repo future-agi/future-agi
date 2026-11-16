@@ -204,6 +204,34 @@ def door_reach(contract: Any) -> dict[str, bool]:
     return reach
 
 
+def production_only(contract: Any) -> list[str]:
+    """The contract tools that reach a system the environment cannot stand up a copy of: a dependency with no engine
+    and no seam the build recognises, other than the agent's own tools service. A test never calls those; they read
+    Unsupported for this controlled test."""
+    contract = contract if isinstance(contract, dict) else {}
+    served = {
+        str(entry.get("service"))
+        for entry in contract.get("tool_entrypoints") or []
+        if isinstance(entry, dict)
+        and entry.get("mode") == "service"
+        and entry.get("service")
+    }
+    seams = ("dsn_env", "config_key", "host", "port", "database", "loader_module")
+    return sorted(
+        {
+            str(tool)
+            for dependency in contract.get("dependencies") or []
+            if isinstance(dependency, dict)
+            and not (
+                dependency.get("engine")
+                and any((dependency.get("reached") or {}).get(name) for name in seams)
+            )
+            and str(dependency.get("name") or "") not in served
+            for tool in dependency.get("used_by") or []
+        }
+    )
+
+
 NO_WORLD_DOOR = (
     "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
     "tools service to test this."

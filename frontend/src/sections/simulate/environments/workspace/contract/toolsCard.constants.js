@@ -20,7 +20,10 @@ export const TOOLS_CARD_COPY = {
   labels: {
     simulated: "Simulated",
     inProcess: "Runs inside the agent",
+    unsupported: "Unsupported",
   },
+  unsupportedWhy:
+    "This tool reaches a system the test world has no copy of, so a test never calls it: unsupported for this controlled test.",
   expand: (name) => `Show the contract of ${name}`,
 };
 

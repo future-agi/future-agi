@@ -36,6 +36,7 @@ export default function WorldInternalsSection({ env }) {
           tools={tools}
           entrypoints={entrypoints}
           reach={env?.doorReach || {}}
+          productionOnly={env?.productionOnly || []}
         />
       )}
     </Stack>
@@ -233,7 +234,7 @@ SchemaCard.propTypes = { schema: PropTypes.array, totalRows: PropTypes.number };
 
 /* ── tools ──────────────────────────────────────────────────────────── */
 
-function ToolsCard({ tools, entrypoints, reach }) {
+function ToolsCard({ tools, entrypoints, reach, productionOnly }) {
   const [openTool, setOpenTool] = useState(null);
   return (
     <SectionCard
@@ -265,7 +266,8 @@ function ToolsCard({ tools, entrypoints, reach }) {
               : null;
           const open = openTool === tool.name;
           // Behind the world's door it acts on the seeded test world; otherwise it runs inside the agent.
-          const known = tool.name in reach;
+          const unsupported = productionOnly.includes(tool.name);
+          const known = !unsupported && tool.name in reach;
           const behindDoor = Boolean(reach[tool.name]);
           return (
             <Box key={tool.name}>
@@ -330,6 +332,26 @@ function ToolsCard({ tools, entrypoints, reach }) {
                   >
                     {behindDoor ? T.labels.simulated : T.labels.inProcess}
                   </Box>
+                )}
+                {unsupported && (
+                  <Tooltip arrow title={T.unsupportedWhy}>
+                    <Box
+                      component="span"
+                      sx={{
+                        px: 0.75,
+                        height: 18,
+                        borderRadius: "4px",
+                        typography: "s3",
+                        fontWeight: 500,
+                        lineHeight: "18px",
+                        flexShrink: 0,
+                        color: "error.dark",
+                        bgcolor: "error.lighter",
+                      }}
+                    >
+                      {T.labels.unsupported}
+                    </Box>
+                  </Tooltip>
                 )}
                 {runsAt && (
                   <Tooltip arrow title={runsAt}>
@@ -467,4 +489,5 @@ ToolsCard.propTypes = {
   tools: PropTypes.array,
   entrypoints: PropTypes.object,
   reach: PropTypes.object,
+  productionOnly: PropTypes.arrayOf(PropTypes.string),
 };
