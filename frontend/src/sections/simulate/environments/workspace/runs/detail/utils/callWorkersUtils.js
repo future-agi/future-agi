@@ -3,15 +3,10 @@ import { CALL_WORKERS_COPY as C } from "../callTraces.constants";
 // About six lines of text; a longer answer opens on request.
 const CLAMP_LINES = 6;
 const CLAMP_CHARS = 480;
-const HAS_ZONE = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i;
-// A printed dict opens on a key; a printed list on a quoted, nested or literal item. `…` ends a cut-off one.
-const PRINTED_DICT = /^\{\s*(?:(['"]).*?\1|\w+)\s*:/;
-const PRINTED_LIST =
-  /^\[\s*(?:['"{[]|(?:-?\d[\d.]*|True|False|None)\s*(?:,|\]$)|\]$)/;
 
-/** Epoch seconds of a stored timestamp, read as UTC when it carries no zone; null when it is not one. */
+/** Epoch seconds of an API timestamp; null when it is not one. */
 export const seconds = (iso) => {
-  const value = iso ? Date.parse(HAS_ZONE.test(iso) ? iso : `${iso}Z`) : NaN;
+  const value = iso ? Date.parse(iso) : NaN;
   return Number.isNaN(value) ? null : value / 1000;
 };
 
@@ -19,160 +14,69 @@ export const seconds = (iso) => {
 export const isLong = (text) =>
   text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
 
-const looksPrinted = (body) =>
-  /[}\]…]$/.test(body) && (PRINTED_DICT.test(body) || PRINTED_LIST.test(body));
+/** A text the API marked as data or prose, as the markdown that shows it. */
+export const asMarkdown = (shown) =>
+  shown.format === "code" ? `\`\`\`\n${shown.text}\n\`\`\`` : shown.text;
 
-/** An answer returned as data (JSON, or a printed dict or list) as a code block; other text as it came. */
-export const asShown = (text) => {
-  const body = text.trim();
-  if (!/^[[{]/.test(body)) return text;
-  let code;
-  try {
-    code = JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    // Prose that opens with a bracket stays text; a printed or cut-off object stays as it came.
-    if (!looksPrinted(body)) return text;
-    code = body;
-  }
-  return `\`\`\`\n${code}\n\`\`\``;
-};
+/** The API's steps by key, so a hand-off's or a turn's `children` name their rows. */
+export const stepsByKey = (data) =>
+  Object.fromEntries(data.steps.map((step) => [step.key, step]));
 
-/**
- * The API's steps (reading order, each naming the hand-off it sits under) as the nested rows the panel draws, and
- * each turn with the top-level rows that happened in it. Grouping only: which hand-off owns what, which turn it
- * happened in, spans, depth and parallel runs all come from the API.
- */
-export const nest = (data) => {
-  const byKey = {};
-  const items = [];
-  const rounds = (data.turns || []).map((round) => ({ ...round, items: [] }));
-  const roundOf = Object.fromEntries(
-    rounds.map((round) => [round.turn, round]),
-  );
-  for (const step of data.steps || []) {
-    const row =
-      step.kind === "handoff"
-        ? {
-            kind: "handoff",
-            key: step.key,
-            worker_id: step.worker_id,
-            depth: step.depth,
-            transfer: step.transfer,
-            delegated: step.handoff,
-            returned: step.returned,
-            parallel: step.parallel,
-            relationship: step.relationship,
-            items: [],
-          }
-        : {
-            kind: "call",
-            key: step.key,
-            event: step.call,
-            relationship: step.relationship,
-          };
-    if (row.kind === "handoff") byKey[step.key] = row;
-    if (step.parent === null) {
-      items.push(row);
-      roundOf[step.turn].items.push(row);
-    } else (byKey[step.parent]?.items || items).push(row);
-  }
-  return { items, rounds };
-};
+/** A turn's hand-offs, each followed by the ones it made: the API sends steps in that order. */
+export const handOffsOf = (data, turn) =>
+  data.steps.filter((step) => step.kind === "handoff" && step.turn === turn);
 
-/** Every hand-off in a nested tree, each followed by the ones it made. */
-export const handOffRows = (items) =>
-  items.flatMap((item) =>
-    item.kind === "handoff" ? [item, ...handOffRows(item.items)] : [],
-  );
-
-const hasFailedCall = (block) =>
-  block.items.some(
-    (item) => item.kind === "call" && item.event.status === "error",
-  );
-
-/**
- * How a hand-off ended. A return decides it, even after a tool failed, since the worker may have recovered.
- * A control pass never returns, so only a failed tool marks it. A record cut at its limit, or read only in part,
- * can't say.
- */
-export const handOffEnd = (block, cutOff) => {
-  if (block.returned)
-    return block.returned.status === "error" ? "failed" : "finished";
-  if (block.transfer) return hasFailedCall(block) ? "failed" : "passed";
-  return cutOff ? "cut_off" : "no_return";
-};
-
-/** How many hand-offs ended each way, and how many workers they went to. */
-export const handOffCounts = (rows, cutOff) => {
-  const ends = rows.map((row) => handOffEnd(row, cutOff));
-  const count = (...kinds) => ends.filter((end) => kinds.includes(end)).length;
-  return {
-    handOffs: rows.length,
-    workers: new Set(rows.map((row) => row.worker_id)).size,
-    finished: count("finished"),
-    didNotFinish: count("failed", "no_return"),
-    passed: count("passed"),
-    cutOff: count("cut_off"),
-  };
-};
-
-const toolEvent = (event, depth, names, relationship) => ({
-  key: `call-${event.seq}`,
-  unknown: relationship === "unknown",
-  traceId: event.trace_id,
-  spanId: event.span_id,
-  at: event.at,
+const toolEvent = (step, depth, names) => ({
+  key: `call-${step.key}`,
+  unknown: step.relationship === "unknown",
+  traceId: step.call.trace_id,
+  spanId: step.call.span_id,
+  at: step.call.at,
   actor:
-    event.attribution === "unattributed"
+    step.call.attribution === "unattributed"
       ? C.unknown
-      : names.ofWorker(event.worker_id),
+      : names.ofWorker(step.call.worker_id),
   type: C.toolCallStep,
   depth,
-  call: event,
+  call: step.call,
 });
 
-const handOffEvent = (block, names) => ({
-  key: `handoff-${block.key}`,
-  at: block.delegated.at,
-  actor: block.delegated.by
-    ? names.ofWorker(block.delegated.by)
-    : names.coordinator,
-  type: block.transfer ? C.controlPassStep : C.handOffStep,
-  unknown: block.relationship === "unknown",
-  traceId: block.delegated.trace_id,
-  spanId: block.delegated.span_id,
-  depth: block.depth - 1,
-  to: names.ofBlock(block),
-  parallel: block.parallel,
-  text: block.delegated.task,
+const handOffEvent = (step, names) => ({
+  key: `handoff-${step.key}`,
+  at: step.handoff.at,
+  actor: step.handoff.by ? names.ofWorker(step.handoff.by) : names.coordinator,
+  type: step.transfer ? C.controlPassStep : C.handOffStep,
+  unknown: step.relationship === "unknown",
+  traceId: step.handoff.trace_id,
+  spanId: step.handoff.span_id,
+  depth: step.depth - 1,
+  to: names.ofStep(step),
+  parallel: step.parallel,
+  shown: step.handoff.task_shown,
 });
 
 // How a hand-off ended, as a step. A control pass never returns, so it has none.
-const endEvents = (block, names, cutOff) => {
-  if (block.transfer) return [];
+const endEvents = (step, names) => {
+  if (step.transfer) return [];
   const base = {
-    key: `end-${block.key}`,
-    actor: names.ofBlock(block),
-    depth: block.depth,
+    key: `end-${step.key}`,
+    actor: names.ofStep(step),
+    depth: step.depth,
   };
-  if (block.returned)
+  if (step.returned)
     return [
       {
         ...base,
-        at: block.returned.at,
+        at: step.returned.at,
         type: C.answerStep,
-        bad: block.returned.status === "error",
-        text: block.returned.result,
+        bad: step.end === "failed",
+        shown: step.returned.result_shown,
         empty: C.noResult,
       },
     ];
   return [
-    cutOff
-      ? {
-          ...base,
-          type: C.notShownStep,
-          note: C.returnCutOff(base.actor),
-        }
+    step.end === "cut_off"
+      ? { ...base, type: C.notShownStep, note: C.returnCutOff(base.actor) }
       : {
           ...base,
           type: C.noReturnStep,
@@ -182,26 +86,28 @@ const endEvents = (block, names, cutOff) => {
   ];
 };
 
-const stepsOf = (block, names, cutOff, nested) => [
-  ...(block.delegated ? [handOffEvent(block, names)] : []),
-  ...block.items.flatMap((item) => {
-    if (item.kind === "call")
-      return [toolEvent(item.event, block.depth, names, item.relationship)];
-    return nested ? stepsOf(item, names, cutOff, true) : [];
+const stepsOf = (step, byKey, names, nested) => [
+  ...(step.handoff ? [handOffEvent(step, names)] : []),
+  ...step.children.flatMap((key) => {
+    const child = byKey[key];
+    if (child.kind === "tool_call")
+      return [toolEvent(child, step.depth, names)];
+    return nested ? stepsOf(child, byKey, names, true) : [];
   }),
-  ...endEvents(block, names, cutOff),
+  ...endEvents(step, names),
 ];
 
 /** One hand-off's own steps, leaving out the hand-offs it made, which have their own table rows. */
-export const handOffEvents = (block, names, cutOff) =>
-  stepsOf(block, names, cutOff, false);
+export const handOffEvents = (step, byKey, names) =>
+  stepsOf(step, byKey, names, false);
 
-const stepsOfItems = (items, names, cutOff) =>
-  items.flatMap((item) =>
-    item.kind === "call"
-      ? [toolEvent(item.event, 0, names, item.relationship)]
-      : stepsOf(item, names, cutOff, true),
-  );
+const stepsOfKeys = (keys, byKey, names) =>
+  keys.flatMap((key) => {
+    const step = byKey[key];
+    return step.kind === "tool_call"
+      ? [toolEvent(step, 0, names)]
+      : stepsOf(step, byKey, names, true);
+  });
 
 /** How a turn is named beside its request and reply: only when the call has more than one. */
 export const turnLabel = (round, rounds) =>
@@ -215,34 +121,39 @@ export const noMessages = (round, rounds) =>
   round.turn === null || (round.turn === 0 && rounds.length > 1);
 
 /** Every step of a call in reading order: each turn's request, its steps, then its reply. */
-export const callEvents = (data, tree, names, cutOff, hasHandOffs) => {
-  if (!hasHandOffs) return stepsOfItems(tree.items, names, cutOff);
-  return tree.rounds.flatMap((round) => [
+export const callEvents = (data, byKey, names) => {
+  if (!data.counts.hand_offs)
+    return stepsOfKeys(
+      data.steps.filter((step) => step.parent === null).map((step) => step.key),
+      byKey,
+      names,
+    );
+  return data.turns.flatMap((round) => [
     // Work before the caller spoke, or in no recorded turn, has no request to show.
-    ...(noMessages(round, tree.rounds) && !round.request
+    ...(noMessages(round, data.turns) && !round.request
       ? []
       : [
           {
             key: `request-${round.turn}`,
             at: round.request?.at,
             actor: C.caller,
-            type: `${turnLabel(round, tree.rounds)}${C.messageStep}`,
+            type: `${turnLabel(round, data.turns)}${C.messageStep}`,
             depth: 0,
-            text: round.request?.text,
+            shown: round.request?.shown,
             empty: C.noRequest,
           },
         ]),
-    ...stepsOfItems(round.items, names, cutOff),
-    ...(noMessages(round, tree.rounds) && !round.response
+    ...stepsOfKeys(round.children, byKey, names),
+    ...(noMessages(round, data.turns) && !round.response
       ? []
       : [
           {
             key: `reply-${round.turn}`,
             at: round.response?.at,
             actor: names.coordinator,
-            type: `${turnLabel(round, tree.rounds)}${C.replyStep}`,
+            type: `${turnLabel(round, data.turns)}${C.replyStep}`,
             depth: 0,
-            text: round.response?.text,
+            shown: round.response?.shown,
             empty: C.noReply,
           },
         ]),

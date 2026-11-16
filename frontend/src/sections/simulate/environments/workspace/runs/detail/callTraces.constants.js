@@ -79,13 +79,14 @@ export const CALL_WORKERS_COPY = {
   resultColumn: "Result",
   showRow: (name) => `Show raw data for ${name}`,
   hideRow: (name) => `Hide raw data for ${name}`,
+  // The API's counts of how the call's hand-offs ended.
   handOffSummary: ({
-    handOffs,
+    hand_offs: handOffs,
     workers,
     finished,
-    didNotFinish,
+    did_not_finish: didNotFinish,
     passed,
-    cutOff,
+    cut_off: cutOff,
   }) => {
     const ends = [
       finished && `${finished} finished`,

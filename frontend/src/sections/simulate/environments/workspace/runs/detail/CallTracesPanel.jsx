@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
@@ -23,8 +23,7 @@ export default function CallTracesPanel({
   testExecutionId,
   isError = false,
   onMountedChange,
-  openTraceId = null,
-  openSpanId = null,
+  openTrace = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -50,35 +49,18 @@ export default function CallTracesPanel({
     };
   }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
 
-  // Opened from another tab (a Participants step): show that trace once it is listed, once per request, so closing
-  // it is not undone when the list refreshes.
-  const opened = useRef(null);
+  // A trace asked for from another tab (a Participants step) opens with the panel, which mounts per request.
+  const [opening] = useState(openTrace);
   useEffect(() => {
-    if (!openTraceId) {
-      opened.current = null;
-      return;
-    }
-    if (
-      opened.current !== openTraceId &&
-      traces.some((trace) => trace.traceId === openTraceId)
-    ) {
-      opened.current = openTraceId;
-      setTraceDetailDrawerOpen({
-        traceId: openTraceId,
-        projectId,
-        testExecutionId,
-        // The step's own span, so the trace opens on it rather than at its root.
-        ...(openSpanId ? { spanId: openSpanId } : {}),
-      });
-    }
-  }, [
-    openTraceId,
-    openSpanId,
-    traces,
-    projectId,
-    testExecutionId,
-    setTraceDetailDrawerOpen,
-  ]);
+    if (!opening) return;
+    setTraceDetailDrawerOpen({
+      traceId: opening.traceId,
+      projectId,
+      testExecutionId,
+      // The step's own span, so the trace opens on it rather than at its root.
+      ...(opening.spanId ? { spanId: opening.spanId } : {}),
+    });
+  }, [opening, projectId, testExecutionId, setTraceDetailDrawerOpen]);
 
   if (isError && traces.length === 0) {
     return (
@@ -135,8 +117,10 @@ CallTracesPanel.propTypes = {
   testExecutionId: PropTypes.string,
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
-  openTraceId: PropTypes.string,
-  openSpanId: PropTypes.string,
+  openTrace: PropTypes.shape({
+    traceId: PropTypes.string.isRequired,
+    spanId: PropTypes.string,
+  }),
 };
 
 function TraceRow({ trace, onOpen }) {
