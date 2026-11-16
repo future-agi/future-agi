@@ -347,3 +347,34 @@ def test_active_call_ignores_previous_harness_verdict(execution_status):
     )
     expected = "queued" if execution_status in {"pending", "queued"} else "in_progress"
     assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.parametrize("harness_status", ["passed", None])
+def test_a_worker_s_own_failed_check_never_fails_the_call(harness_status):
+    checks = {
+        "task": {
+            "kind": "checkpoint",
+            "name": "task",
+            "output": "Passed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+        },
+        "worker": {
+            "kind": "checkpoint",
+            "name": "worker check",
+            "output": "Failed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+            "subject": "worker:order_lookup",
+        },
+    }
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": harness_status}
+        if harness_status
+        else {},
+        status=CallExecution.CallStatus.COMPLETED,
+        eval_outputs=checks,
+    )
+    assert call_outcome(call, {}) == "passed"

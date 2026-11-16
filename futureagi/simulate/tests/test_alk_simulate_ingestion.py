@@ -1220,6 +1220,89 @@ class TestResultIngest:
         call = CallExecution.objects.get(id=call_ids[0])
         assert call.call_metadata["eval_completed"] is True
 
+    def test_a_worker_s_own_check_is_stored_as_that_worker_s(
+        self, auth_client, run_test
+    ):
+        """A worker's check keeps its subject on the stored result and says whose it is in the reason."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": True},
+                            {
+                                "name": "lookup_read_only",
+                                "passed": False,
+                                "reason": "it wrote an order",
+                                "subject": "worker:order_lookup",
+                            },
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
+        by_name = {one["name"]: one for one in outputs.values()}
+        assert by_name["lookup_read_only"]["subject"] == "worker:order_lookup"
+        assert (
+            by_name["lookup_read_only"]["reason"]
+            == "Worker order_lookup's own check. it wrote an order"
+        )
+        assert "subject" not in by_name["ride_booked"]
+
+    def test_a_worker_s_check_named_like_the_task_s_is_its_own_result_and_never_localized(
+        self, auth_client, run_test
+    ):
+        """A worker check sharing a task sub-goal's name and template is stored apart, and no localizer task is made."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        template = SimpleNamespace(id=uuid.uuid4())
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._resolve_harness_eval_template",
+                return_value=template,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._get_or_create_harness_eval_config",
+                return_value=SimpleNamespace(id=uuid.uuid4(), error_localizer=True),
+            ),
+            patch(
+                "model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate"
+            ) as localize,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "read_only", "passed": True},
+                            {
+                                "name": "read_only",
+                                "passed": False,
+                                "subject": "worker:order_lookup",
+                            },
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
+        assert len([one for one in outputs.values() if one["name"] == "read_only"]) == 2
+        # Only the task's check makes a localizer task.
+        assert localize.call_count == 1
+
     def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
         self, auth_client, run_test
     ):

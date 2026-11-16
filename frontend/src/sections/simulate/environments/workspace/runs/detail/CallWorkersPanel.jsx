@@ -637,6 +637,17 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
             {block.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
+            {/* Only a hand-off that did not come back takes the worker's end; one that returned ended by its return. */}
+            {!block.returned && !block.transfer && C.cutShort[worker?.state] ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                color="warning"
+                label={C.cutShort[worker.state]}
+                data-testid="worker-cut-short"
+                sx={{ mt: 0.5, ml: 2.25 }}
+              />
+            ) : null}
           </Box>
         </TableCell>
         <TableCell>
@@ -793,6 +804,12 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
+  // Workers the trial's end stopped before they returned; their steps so far are kept above.
+  const pastDeadline = named((one) => one.state === "deadline_passed");
+  const cutShort = data.workers
+    .filter((one) => one.state !== "deadline_passed" && C.cutShort[one.state])
+    .map((one) => `${one.name} (${C.cutShort[one.state]})`)
+    .join(", ");
   const notDeclared = named((one) => one.undeclared);
 
   return (
@@ -829,6 +846,17 @@ export default function CallWorkersPanel({
       ) : data.spans_received === false ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.sandboxOnly}
+        </Typography>
+      ) : null}
+      {data.workers.length ? (
+        <Typography
+          data-testid="supported-boundary"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.supportedBoundary}
+          {data.depth > 1 || data.parallel > 0 ? (
+            <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
+          ) : null}
         </Typography>
       ) : null}
       {showSteps ? (
@@ -888,6 +916,16 @@ export default function CallWorkersPanel({
       {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
+        </Typography>
+      ) : null}
+      {cutShort ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.workersCutShort(cutShort)}
+        </Typography>
+      ) : null}
+      {pastDeadline ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.workersPastDeadline(pastDeadline)}
         </Typography>
       ) : null}
       {notDeclared ? (

@@ -354,6 +354,8 @@ class SubGoalResultSerializer(serializers.Serializer):
         required=False,
         help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
     )
+    # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
+    subject = serializers.CharField(required=False)
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -640,6 +642,20 @@ class CallWorkerSerializer(serializers.Serializer):
     # The model the worker's own model calls used, and the tokens they spent, when the app sent traces.
     model = serializers.CharField(required=False)
     tokens = serializers.IntegerField(required=False)
+    # How it ended; absent on a timeline read before end states were recorded.
+    state = serializers.ChoiceField(
+        choices=[
+            "completed",
+            "failed",
+            "no_return",
+            "deadline_passed",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+        ],
+        required=False,
+    )
 
 
 class CallWorkerEventSerializer(serializers.Serializer):
@@ -663,6 +679,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     # True when the record's size limit was reached before this step, so that part was not kept.
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
+    # Why the world refused this call (`not_permitted`, `deadline_passed`), as its action log coded it.
+    refusal_code = serializers.CharField(required=False)
     # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
     relationship = serializers.ChoiceField(
         choices=("observed", "unknown"), required=False

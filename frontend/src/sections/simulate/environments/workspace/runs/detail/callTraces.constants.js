@@ -51,6 +51,12 @@ export const CALL_WORKERS_COPY = {
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
+  // What multi-agent testing covers, said on every multi-agent call, so nothing reads as more than it is.
+  supportedBoundary:
+    "Multi-agent testing covers a coordinator handing work to its workers one at a time, one level deep.",
+  // Added where a call went past it.
+  beyondBoundary:
+    "This call also had nested or parallel hand-offs: they are shown as recorded, outside that support.",
   noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
   returnCutOff: (name) =>
@@ -98,5 +104,16 @@ export const CALL_WORKERS_COPY = {
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
   workersNotObserved: (names) => `Not observed: ${names}`,
+  // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
+  cutShort: {
+    no_return: "no return before the call ended",
+    deadline_passed: "past its action deadline",
+    cancel_requested: "cancel requested",
+    cancelled: "cancelled",
+    infrastructure: "infrastructure fault",
+  },
+  workersCutShort: (list) => `Cut short: ${list}`,
+  // Past its action deadline: the world refused its later calls; its execution was not stopped.
+  workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
 };

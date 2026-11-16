@@ -535,3 +535,93 @@ def test_a_run_its_own_task_started_is_served_with_the_task_s_turn_and_no_custom
     assert "task" in json.dumps(body) and "Nightly reconciliation" in json.dumps(body)
     # The stored chat row keeps the task's own role on its message, which the web app reads.
     assert '"role": "task"' in json.dumps(body.get("transcript"))
+
+
+def test_a_worker_s_failed_check_never_turns_a_task_with_no_verdict_into_a_scored_call_at_the_real_endpoint(
+    organization,
+):
+    """A worker's own check is reported beside the task's, never in the call's outcome: a task whose only check is not
+    applicable reads no score, whatever its workers' checks say."""
+    from rest_framework.test import APIClient
+
+    from simulate.services.hosted_harness import (
+        canonical_digest,
+        create_hosted_job,
+        register_attempt,
+    )
+    from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="worker-outcome"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Worker outcome",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "returns",
+                    "name": "Rep",
+                    "situation": "Asks",
+                    "outcome": "Policy",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["returns"],
+        },
+        format="json",
+        **headers,
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "returns",
+        "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": 0,
+        "status": "passed",
+        "sub_goals": [
+            {
+                "name": "refund_issued",
+                "held": None,
+                "reason": "no refund was asked for",
+                "judged": False,
+                "verdict": "not_applicable",
+                "subject": "task",
+            },
+            {
+                "name": "lookup_stays_read_only",
+                "held": False,
+                "reason": "the lookup worker tried to write",
+                "judged": False,
+                "verdict": "fail",
+                "subject": "worker:order_lookup",
+            },
+        ],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    result = client.post(
+        f"{BASE}/{capability.attempt.id}/results/", receipt, format="json", **headers
+    )
+    assert result.status_code == 200, result.content
+    call = (
+        job.scenario_registrations.select_related("call_execution").get().call_execution
+    )
+    assert call.call_metadata["harness_outcome_status"] == "no_score"

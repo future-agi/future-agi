@@ -586,6 +586,28 @@ describe("CallDrawer — chat evals that have no verdict", () => {
 });
 
 describe("CallDrawer — voice branch", () => {
+  it("says why a held voice trial was not graded above the voice drawer", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-held", transcript: [], evaluations: [] },
+      isPending: false,
+    });
+    const reason =
+      "Inconclusive, a problem of the scenario, not the agent: Rebuild the environment to enforce them.";
+    render(
+      <CallDrawer
+        task={{
+          id: "voice-held",
+          simulationCallType: "voice",
+          outcomeReason: reason,
+        }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByTestId("voice-drawer")).toBeInTheDocument();
+  });
+
   it("hands the voice drawer each unscored eval's status", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: {

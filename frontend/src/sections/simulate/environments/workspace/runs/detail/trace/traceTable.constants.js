@@ -268,3 +268,9 @@ export function runOutcome(status) {
     color: `status.${role}.fg`,
   };
 }
+
+/** A sub-goal's name, with the worker it checks when it is one worker's own check. */
+export const subGoalLabel = (goal) =>
+  goal.subject?.startsWith("worker:")
+    ? `${goal.name} (${goal.subject.slice("worker:".length)})`
+    : goal.name;

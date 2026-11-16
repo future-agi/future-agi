@@ -21,7 +21,7 @@ from simulate.types import (
 )
 
 if TYPE_CHECKING:
-    from simulate.models import HostedHarnessJob
+    from simulate.models import CallExecution, HostedHarnessJob
 
 logger = structlog.get_logger(__name__)
 
@@ -912,6 +912,9 @@ def worker_timeline(
             "attribution": "reported",
             "row": index,
         }
+        if call.get("refusal_code"):
+            # Why the world refused it, as its action log coded it.
+            event["refusal_code"] = str(call["refusal_code"])
         place = placed_in(call)
         if "parent_delegation_id" in place:
             event["delegation_id"] = place["parent_delegation_id"]
@@ -1008,6 +1011,122 @@ def _span_dict(span: Any) -> WorkerSpan:
         "model": span.model or "",
         "tokens": int(span.total_tokens or 0),
     }
+
+
+# How a trial ended, for the workers still out when it did, as the call recorded it: it ended with no return from them,
+# it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it).
+_SCENARIO_DOMAINS = frozenset({"simulator", "environment"})
+
+_STILL_OUT = {
+    "ended": "no_return",
+    "infrastructure": "infrastructure",
+    "cancel_requested": "cancel_requested",
+    "cancelled": "cancelled",
+}
+
+
+def worker_states(
+    timeline: WorkerTimeline, *, trial: str, past_deadline: Iterable[str] = ()
+) -> WorkerTimeline:
+    """The timeline with each worker's end state. Each hand-off is matched to its own return by delegation id: a
+    worker every hand-off of which came back is `completed`, or `failed` when a return was an error. One the world
+    refused past its worker-action deadline (`past_deadline`, by worker id, or a refused call of its own) and that did
+    not come back is `deadline_passed`: a refusal is the world seeing it, and says only that its later world calls
+    were refused, never that its execution was stopped. A worker with no event at all is `not_observed`; one with a
+    hand-off still out takes the trial's own ending. Every partial event stays; no return is invented."""
+    events = timeline["events"]
+    handed: dict[str, list[str]] = {}
+    for event in events:
+        if event["type"] == "delegated":
+            handed.setdefault(event["worker_id"], []).append(
+                str(event.get("delegation_id") or "")
+            )
+    returns = {
+        str(event.get("delegation_id") or ""): event
+        for event in events
+        if event["type"] == "returned" and event.get("delegation_id")
+    }
+    # A record that kept no delegation ids pairs a worker's hand-offs with its returns in order instead.
+    unkeyed: dict[str, list[WorkerEvent]] = {}
+    for event in events:
+        if event["type"] == "returned" and not event.get("delegation_id"):
+            unkeyed.setdefault(event["worker_id"], []).append(event)
+    # Refused past its deadline: by the trial's world changes, or by the refusal code on its own recorded calls.
+    late = set(past_deadline) | {
+        str(event["worker_id"]).rsplit("/", 1)[-1]
+        for event in events
+        if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
+    }
+    workers = []
+    for worker in timeline["workers"]:
+        delegations = handed.get(worker["worker_id"], [])
+        spare = list(unkeyed.get(worker["worker_id"], []))
+        back = [
+            returns.get(one) if one else (spare.pop(0) if spare else None)
+            for one in delegations
+        ]
+        # A hand-off with no return of its own is still out, whatever another hand-off to the same worker returned.
+        out = any(one is None for one in back)
+        if delegations and not out:
+            state = (
+                "failed"
+                if any(one.get("status") == "error" for one in back if one)
+                else "completed"
+            )
+        elif worker["id"] in late:
+            # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
+            workers.append({**worker, "observed": True, "state": "deadline_passed"})
+            continue
+        elif not worker["observed"]:
+            state = "not_observed"
+        elif out:
+            state = _STILL_OUT.get(trial, "no_return")
+        else:
+            # Seen only through its tool calls: no recorded end, so no end state rather than an invented one.
+            workers.append(dict(worker))
+            continue
+        workers.append({**worker, "state": state})
+    return {**timeline, "workers": workers}
+
+
+def deadline_refused(call: CallExecution) -> set[str]:
+    """The workers the world refused past their deadline in this call's trial, by id, from its world changes."""
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    trial = (call.call_metadata or {}).get(TRIAL_STATE_KEY) or {}
+    return {
+        str(entry["who"])[len("worker:") :]
+        for entry in trial.get("state_changes") or []
+        if isinstance(entry, dict)
+        and str(entry.get("who") or "").startswith("worker:")
+        and any(
+            isinstance(one, dict) and one.get("code") == "deadline_passed"
+            for one in entry.get("refused_actions") or []
+        )
+    }
+
+
+def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
+    """How one call's trial ended, from the call row, its receipt and the job."""
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.hosted_harness_ingestion import SCENARIO_FAILURE_CODES
+
+    if call.status == CallExecution.CallStatus.CANCELLED:
+        # Confirmed only once the platform has stopped the run; stopping our observation is not a confirmed cancel.
+        confirmed = job is not None and job.state == HostedHarnessJob.State.CANCELED
+        return "cancelled" if confirmed else "cancel_requested"
+    receipt = (call.call_metadata or {}).get("hosted_harness_receipt")
+    # A call the job closed without a receipt ended the way the job did.
+    failure = (
+        receipt.get("failure") if receipt else (getattr(job, "failure", None) or {})
+    ) or {}
+    # A scenario's own problem (simulator or environment side, or a scenario hold) is not an infrastructure fault.
+    if (
+        failure.get("code") in SCENARIO_FAILURE_CODES
+        or failure.get("domain") in _SCENARIO_DOMAINS
+    ):
+        return "ended"
+    return "infrastructure" if failure.get("domain") not in (None, "agent") else "ended"
 
 
 def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
@@ -1317,29 +1436,37 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
             spans = _begun_after(spans, since)
         if len(spans) > MAX_SPANS:
             spans, partial = spans[:MAX_SPANS], True
-    timeline = worker_timeline(
-        [_span_dict(one) for one in spans],
-        declared,
-        run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
-        traced_calls=traced_calls,
-        turns=_call_turns(call, sealed),
-        started_at=_call_start(call, sealed),
-    )
-    timeline["collected_at"] = timezone.now().isoformat()
-    # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
-    # bound: such a read is ranked below a whole one and gets the later read.
-    timeline["tree_complete"] = not partial and _has_roots(spans)
-    # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
-    # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
-    timeline["collection"] = (
-        "unavailable"
-        if unavailable
-        else "partial"
-        if partial
-        else "complete"
-        if (spans or traced_calls)
-        else "no_evidence"
-    )
+    timeline: WorkerTimeline = {
+        **worker_states(
+            worker_timeline(
+                [_span_dict(one) for one in spans],
+                declared,
+                run_key=(
+                    str(job.run_id) if job is not None else str(call.test_execution_id)
+                ),
+                traced_calls=traced_calls,
+                turns=_call_turns(call, sealed),
+                started_at=_call_start(call, sealed),
+            ),
+            trial=trial_ending(call, job),
+            past_deadline=deadline_refused(call),
+        ),
+        "collected_at": timezone.now().isoformat(),
+        # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
+        # bound: such a read is ranked below a whole one and gets the later read.
+        "tree_complete": not partial and _has_roots(spans),
+        # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
+        # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
+        "collection": (
+            "unavailable"
+            if unavailable
+            else "partial"
+            if partial
+            else "complete"
+            if (spans or traced_calls)
+            else "no_evidence"
+        ),
+    }
     if not timeline["workers"] and not any(
         one["type"] in _HAND_OFF_TYPES for one in timeline["events"]
     ):

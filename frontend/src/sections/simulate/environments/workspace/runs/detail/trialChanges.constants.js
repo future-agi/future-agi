@@ -23,6 +23,10 @@ export const TRIAL_CHANGES_COPY = {
   blocked: (one) =>
     `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count}`,
   noChange: "No change: it committed nothing",
+  // A worker the world told apart from the rest of the agent.
+  worker: (name) => `Worker · ${name}`,
+  refusedHeading: "Refused attempts",
+  refused: (one) => [one.action, one.reason].filter(Boolean).join(": "),
   decisionsHeading: "What the actors chose",
   preRunHeading: "Before the run",
   preRunAbout:

@@ -154,6 +154,20 @@ describe("CallWorkersPanel", () => {
   const steps = () =>
     screen.getAllByTestId("raw-event").map((one) => one.dataset.type);
 
+  it.each([
+    [{ depth: 1, parallel: 0 }, false],
+    [{ depth: 2, parallel: 0 }, true],
+    [{ depth: 1, parallel: 1 }, true],
+  ])(
+    "says what multi-agent testing covers on every multi-agent call, and adds when a call went past it (%o)",
+    (shape, shown) => {
+      result = { data: timeline(shape), isLoading: false, isError: false };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("supported-boundary")).toBeTruthy();
+      expect(screen.queryByTestId("beyond-boundary") !== null).toBe(shown);
+    },
+  );
+
   it("lists every step in order, from the request through each hand-off and its calls to the reply", () => {
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(steps()).toEqual([
@@ -748,6 +762,33 @@ describe("CallWorkersPanel", () => {
       expect(
         screen.queryByRole("button", { name: "Open in Traces" }),
       ).toBeNull();
+    });
+
+    it("marks only the hand-off a worker never came back from, keeping its steps so far", () => {
+      result = {
+        data: {
+          // The first hand-off returned; the second never did, so only the second takes the worker's end.
+          ...twoTurns({ returned: null }),
+          workers: TIMELINE.workers.map((one) =>
+            one.worker_id === handoff.worker_id
+              ? { ...one, state: "deadline_passed" }
+              : { ...one, state: "not_observed" },
+          ),
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const [chip] = screen.getAllByTestId("worker-cut-short");
+      expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(1);
+      expect(screen.getAllByTestId("turn")[1]).toContainElement(chip);
+      expect(chip).toHaveTextContent("past its action deadline");
+      // Past its deadline is not "cut short": its execution was never stopped.
+      expect(
+        screen.getByText("Past their action deadline: Order-lookup worker"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/^Cut short:/)).toBeNull();
+      expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });
 
     it("says when nothing was recorded for the participants", () => {

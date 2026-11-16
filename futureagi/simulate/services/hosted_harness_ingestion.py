@@ -84,6 +84,9 @@ _EVENT_TYPES = {
     "log",
     "terminal",
 }
+# Failure codes of a trial the harness held as the scenario's problem, not the agent's: its checks were never graded,
+# so no platform evaluation grades it either.
+SCENARIO_FAILURE_CODES = frozenset({"actor_missing", "worker_limits_not_enforced"})
 # Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
 # ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
 # (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
@@ -1138,13 +1141,15 @@ def _apply_receipt_to_call(
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
+    # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
+    finished_id = call.id
+    transaction.on_commit(lambda: _dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
         transaction.on_commit(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
-        transaction.on_commit(lambda: _dispatch_worker_read(call_id), robust=True)
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         lookup_failed = False
         try:
@@ -1158,6 +1163,8 @@ def _apply_receipt_to_call(
                 # version's and the winner's runs once it has a winner.
                 if is_fix_check_run(call.test_execution_id):
                     selected, tool_on = [], False
+            if (body.get("failure") or {}).get("code") in SCENARIO_FAILURE_CODES:
+                selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
@@ -1264,10 +1271,12 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score when no sub-goal or evaluation passed or failed; an error stays an error."""
+    # A worker's own check is reported beside the task's, never in the call's outcome.
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
         if isinstance(one, dict)
+        and not str(one.get("subject") or "").startswith("worker:")
     }
     decided = any(
         isinstance(one, dict)
@@ -1316,6 +1325,12 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
+                # A worker's own check, reported beside the task's: kept apart wherever results are listed.
+                **(
+                    {"subject": str(goal["subject"])}
+                    if str(goal.get("subject") or "").startswith("worker:")
+                    else {}
+                ),
             }
         )
     for evaluation in body.get("evaluations") or []:

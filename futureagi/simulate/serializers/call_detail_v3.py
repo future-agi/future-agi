@@ -107,8 +107,15 @@ class BlockedCallSerializer(serializers.Serializer):
     )
 
 
+class TrialRefusedActionSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    code = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
 class TrialStateChangeSerializer(serializers.Serializer):
-    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
+    """What one participant (the agent, an actor, or a `worker:<id>`) attempted in the trial and what the world
+    made of it."""
 
     who = serializers.CharField()
     name = serializers.CharField()
@@ -137,6 +144,8 @@ class TrialStateChangeSerializer(serializers.Serializer):
         help_text="Calls to hosts outside the test world, refused before they left: counted in refused, never "
         "a change.",
     )
+    # What the world refused, with its code and why; a worker's attempt outside its permissions is one.
+    refused_actions = TrialRefusedActionSerializer(many=True, required=False)
 
 
 class ActorDecisionSerializer(serializers.Serializer):

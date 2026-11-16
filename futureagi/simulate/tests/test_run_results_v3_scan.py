@@ -1188,3 +1188,45 @@ def test_soft_deleted_calls_are_left_out_like_the_sql_read_model(
         )
         status_facet = _facets(scanned["execution_rows"], execution)["status"]
         assert sum(facet["count"] for facet in status_facet) == len(live_ids)
+
+
+@pytest.mark.django_db
+def test_a_worker_s_own_failed_check_never_fails_the_call_on_either_read(run):
+    execution, scenario = run
+    checks = {
+        "task": {
+            "kind": "checkpoint",
+            "name": "task",
+            "output": "Passed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+        },
+        "worker": {
+            "kind": "checkpoint",
+            "name": "worker check",
+            "output": "Failed",
+            "status": "completed",
+            "source": "harness",
+            "output_type": "Pass/Fail",
+            "subject": "worker:order_lookup",
+        },
+    }
+    for harness_status in ("passed", None):
+        CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+            status="completed",
+            started_at=timezone.now(),
+            call_metadata={"harness_outcome_status": harness_status}
+            if harness_status
+            else {},
+            eval_outputs=checks,
+        )
+    columns: list[dict[str, str]] = []
+    scanned = scan_call_values(execution, columns, "-started_at")
+    assert [row["result_outcome"] for row in scanned] == ["passed", "passed"]
+    assert sorted(
+        row["result_outcome"] for row in _orm_rows(execution, columns, None)
+    ) == ["passed", "passed"]
+    _assert_parity(execution, columns)
