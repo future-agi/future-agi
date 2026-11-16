@@ -237,14 +237,15 @@ def selection_report(
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
     bundle = pair_bundle(pairing)
-    report = readiness_report(pairing, bundle=bundle)
+    evidence = read_evidence(pairing, bundle)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
     placement = _place_all(
         pairing,
         report["rows"],
         keys=keys,
         trials=trials,
         bundle=bundle,
-        evidence=read_evidence(pairing, bundle),
+        evidence=evidence,
         workers=report["workers"],
     )
     placed = placement.placed
@@ -263,6 +264,7 @@ def selection_report(
                 "affected": {"count": len(held), "of": requested, **_capped(held)},
             }
         )
+    held_by = _held_by(rows, report["workers"], placed)
     return {
         **report,
         "answer": _selected_answer(
@@ -280,9 +282,14 @@ def selection_report(
             "stale": len(by_bucket["stale"]),
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
-            "held_by": _held_by(rows, report["workers"], placed),
+            "held_by": held_by,
+            # The area the dialog names: the first row holding a selected case, never a worker.
             "blocking_area": next(
-                (one["id"] for one in report["areas"] if one["status"] == "blocked"),
+                (
+                    one["area"]
+                    for one in held_by
+                    if one["area"] != "workers" and one["count"] > 0
+                ),
                 None,
             ),
             "dropped": placement.dropped,
@@ -445,7 +452,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             status_code=503,
             retryable=True,
         )
-    report = readiness_report(pairing, bundle=bundle)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
     placement = _place_all(
         pairing,
         report["rows"],
@@ -504,14 +511,15 @@ def case_page(
         HostedHarnessError: as ``selection_report``.
     """
     bundle = pair_bundle(pairing)
-    report = readiness_report(pairing, bundle=bundle)
+    evidence = read_evidence(pairing, bundle)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
     placed = _place_all(
         pairing,
         report["rows"],
         keys=keys,
         trials=trials,
         bundle=bundle,
-        evidence=read_evidence(pairing, bundle),
+        evidence=evidence,
         workers=report["workers"],
     ).placed
     matching = [

@@ -1705,7 +1705,9 @@ class HarnessCapabilityHeldBySerializer(serializers.Serializer):
     area = serializers.CharField(allow_null=True)
     count = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(allow_null=True)
-    label = serializers.CharField(help_text="What the run dialog shows for it.")
+    text = serializers.CharField(
+        source="label", help_text="What the run dialog shows for it."
+    )
 
 
 class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):
@@ -1725,8 +1727,8 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     )
     blocking_area = serializers.CharField(
         allow_null=True,
-        help_text="The first area, in report order, that reads blocked: what the run dialog names as holding "
-        "cases back.",
+        help_text="The area of the first row in held_by that holds selected cases back, never a worker: what "
+        "the run dialog names as holding them; null when only workers hold them.",
     )
     dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
     grading = HarnessCapabilityGradingSerializer()

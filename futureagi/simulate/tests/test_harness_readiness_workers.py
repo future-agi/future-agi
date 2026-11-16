@@ -157,8 +157,11 @@ class TestWorkerRows:
             None,
         )
         # Not in the door's list: its deadline is not held either, so a limited worker reads Blocked.
-        assert (unlisted["status"], unlisted["fix"]) == ("blocked", None)
-        assert unlisted["reason_code"] != listed["reason_code"]
+        assert (unlisted["status"], unlisted["reason_code"], unlisted["fix"]) == (
+            "blocked",
+            "in_process_not_held",
+            None,
+        )
         for row in rows.values():
             assert set(_boundaries(row).values()) == {"not_enforced"}
 
@@ -198,9 +201,11 @@ class TestWorkerRows:
     def test_worker_limits_sealed_without_a_door_file_offer_no_rebuild(self):
         row = _rows(evidence=_evidence(door_outcome=None))["order_lookup"]
 
-        assert row["status"] == "untested"
-        assert row["reason_code"] != "sealed_before_worker_limits"
-        assert row["fix"] is None
+        assert (row["status"], row["reason_code"], row["fix"]) == (
+            "untested",
+            "door_decision_not_sealed",
+            None,
+        )
 
     def test_a_shared_worker_alk_limits_is_blocked_and_a_rebuild_after_rebinding_fixes_it(
         self,
