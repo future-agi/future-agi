@@ -102,6 +102,7 @@ export const WORKSPACE_COPY = {
   },
   viewer: {
     run: "You don't have permission to start runs.",
+    stop: "You don't have permission to stop runs.",
     edit: "You don't have permission to edit this environment.",
     rename: "You don't have permission to rename environments.",
     delete: "You don't have permission to delete environments.",

@@ -92546,7 +92546,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         code: {
           title: "Code",
           type: "string",
-          enum: ["viewer_read_only"],
         },
         detail: {
           title: "Detail",

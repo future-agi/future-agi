@@ -134808,10 +134808,7 @@
                 },
                 "code": {
                     "title": "Code",
-                    "type": "string",
-                    "enum": [
-                        "viewer_read_only"
-                    ]
+                    "type": "string"
                 },
                 "detail": {
                     "title": "Detail",

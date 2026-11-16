@@ -6,6 +6,24 @@ MEMBER = 3
 VIEWER = 1
 LEGACY_LEVELS = {"Owner": 15, "Admin": ADMIN, "Member": MEMBER, "Viewer": VIEWER}
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:accounts_organization_membership",
+        "postgres:accounts_workspace",
+        "postgres:accounts_workspacemembership",
+    ],
+    "mitigation": (
+        "Streams self-invited workspace_admin memberships of default workspaces "
+        "through the workspace join and lowers each one whose organization level "
+        "is below Admin to workspace_member or workspace_viewer, saving only role "
+        "and level. Organization memberships are only read. Rows already lowered "
+        "no longer match, so a re-run is a no-op; the reverse is a noop. Nothing "
+        "is written to ClickHouse."
+    ),
+}
+
 
 def lower_self_granted_admins(apps, schema_editor):
     WorkspaceMembership = apps.get_model("accounts", "WorkspaceMembership")

@@ -16615,19 +16615,12 @@ export const ViewerReadOnlyErrorApiType = {
   api_error: "api_error",
 } as const;
 
-export type ViewerReadOnlyErrorApiCode =
-  (typeof ViewerReadOnlyErrorApiCode)[keyof typeof ViewerReadOnlyErrorApiCode];
-
-export const ViewerReadOnlyErrorApiCode = {
-  viewer_read_only: "viewer_read_only",
-} as const;
-
 export type ViewerReadOnlyErrorApiDetails = { [key: string]: string[] };
 
 export interface ViewerReadOnlyErrorApi {
   status?: boolean;
   type?: ViewerReadOnlyErrorApiType;
-  code?: ViewerReadOnlyErrorApiCode;
+  code?: string;
   detail: string;
   /** @minLength 1 */
   result?: string;

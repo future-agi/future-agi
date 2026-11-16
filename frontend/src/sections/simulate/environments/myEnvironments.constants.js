@@ -65,9 +65,6 @@ export const DELETE_DIALOG_COPY = {
   confirm: "Delete",
 };
 
-// The destructive-action colour, from the theme's error palette.
-export const DELETE_TONE = { main: "status.danger.fg", hover: "status.danger.solid" };
-
 export const EMPTY_MESSAGE = "No environments yet";
 export { ROW_HEIGHT } from "src/theme/sizes";
 export const DEFAULT_PAGE_SIZE = 25;
