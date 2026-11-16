@@ -9,7 +9,6 @@ import {
   refreshFollowers,
   versionPickFields,
 } from "./versions";
-import * as fixDummy from "./readinessFix.dummy"; // dummy:
 
 /**
  * The builder chat's fix run for an environment: Fix all starts it, the
@@ -18,9 +17,10 @@ import * as fixDummy from "./readinessFix.dummy"; // dummy:
 
 const POLL_MS = 5000;
 
-// shortcut: the fix route isn't in the API contract yet; switch to apiPath once the backend ships it and the contract is regenerated.
 const fixPath = (envId) =>
-  `${apiPath("/simulate/api/harness-environments/{id}/capabilities/", { id: envId })}fix/`;
+  apiPath("/simulate/api/harness-environments/{id}/capabilities/fix/", {
+    id: envId,
+  });
 
 export const FIX_ACTIVE_STATES = new Set([
   "queued",
@@ -39,12 +39,10 @@ const retryServerFailures = (failureCount, error) => {
 };
 
 export const getFixRun = async (envId) => {
-  if (fixDummy.dummyOn()) return fixDummy.dummyFixRun(envId); // dummy:
   return (await axios.get(fixPath(envId))).data?.fix ?? null;
 };
 
 export const startGroupFix = async (envId, vars) => {
-  if (fixDummy.dummyOn()) return fixDummy.dummyStartFix(envId, vars); // dummy:
   const { group, rows, picks, idempotencyKey } = vars;
   return (
     await axios.post(fixPath(envId), {
@@ -79,7 +77,6 @@ export function useStartGroupFix(envId) {
       startGroupFix(envId, {
         ...vars,
         idempotencyKey: harnessIdempotencyKey(),
-        ...(fixDummy.dummyOn() && fixDummy.dummyContext(queryClient, envId)), // dummy:
       }),
     onSuccess: (data) => {
       queryClient.setQueryData(fixRunKey(envId), data.fix);

@@ -142,9 +142,7 @@ const groupedReport = (progress = null) => {
     fix: { type: "preflight", action: "Add the key", recheck: null },
     fix_group: "needs_you",
   });
-  grouped.fix_groups = {
-    builder: { message: "Point issue_refund at the test world", rows: [] },
-  };
+  grouped.fix_groups = { builder: { rows: [] } };
   return grouped;
 };
 
@@ -464,7 +462,7 @@ describe("ReadyToRunSection", () => {
 
   it("groups the fixes and sends the ticked builder lines to the chat", async () => {
     report = groupedReport();
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<ReadyToRunSection envId="env-1" picks={{}} />);
     expect(screen.getByText("Needs you")).toBeVisible();
     expect(screen.getByText("Builder chat can fix")).toBeVisible();
     expect(screen.queryByTestId("fix-chat")).toBeNull();
@@ -472,14 +470,14 @@ describe("ReadyToRunSection", () => {
       screen.getByRole("button", { name: "Fix 1 with builder chat" }),
     );
     expect(startFix).toHaveBeenCalledWith(
-      { group: "builder", rows: ["tool_routing"], picks },
+      { group: "builder", rows: ["tool_routing"], picks: {} },
       expect.anything(),
     );
   });
 
   it("sends nothing once every builder line is unticked", async () => {
     report = groupedReport();
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    render(<ReadyToRunSection envId="env-1" picks={{}} />);
     await userEvent.click(
       screen.getByRole("checkbox", {
         name: "Fix tools wired to the test world with the builder chat",
@@ -490,10 +488,11 @@ describe("ReadyToRunSection", () => {
     ).toBeDisabled();
   });
 
-  it("adds ticked lines to a running fix instead of holding them", async () => {
+  it("adds ticked lines to a running fix, despite the fix's own unsaved changes", async () => {
     report = groupedReport();
     fixRun = { state: "fixing", rows: [] };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    drafts = { any: true };
+    render(<ReadyToRunSection envId="env-1" picks={{}} />);
     expect(screen.getByRole("button", { name: "Fixing…" })).toBeDisabled();
     await userEvent.click(
       screen.getByRole("checkbox", {
@@ -504,7 +503,7 @@ describe("ReadyToRunSection", () => {
       screen.getByRole("button", { name: "Add 1 to this fix" }),
     );
     expect(startFix).toHaveBeenCalledWith(
-      { group: "builder", rows: ["tool_routing"], picks },
+      { group: "builder", rows: ["tool_routing"], picks: {} },
       expect.anything(),
     );
   });
@@ -554,17 +553,28 @@ describe("ReadyToRunSection", () => {
     expect(screen.queryByTestId("fix-chat-note")).toBeNull();
   });
 
-  it("holds sending fixes while there are unsaved changes, and says why", () => {
+  it.each([
+    [
+      "unsaved changes",
+      { any: true },
+      {},
+      "Save or discard the unsaved changes first, then send fixes to the chat.",
+    ],
+    [
+      "non-default picks",
+      undefined,
+      picks,
+      "Fix works on the default versions. Pick the defaults to fix.",
+    ],
+  ])("holds sending fixes with %s, and says why", (_, open, picked, why) => {
     report = groupedReport();
-    drafts = { any: true };
-    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    drafts = open;
+    render(<ReadyToRunSection envId="env-1" picks={picked} />);
     const send = screen.getByRole("button", {
       name: "Fix 1 with builder chat",
     });
     expect(send).toBeDisabled();
-    expect(send).toHaveAccessibleDescription(
-      "Save or discard the unsaved changes first, then send fixes to the chat.",
-    );
+    expect(send).toHaveAccessibleDescription(why);
   });
 
   it.each([

@@ -119,7 +119,6 @@ export function readinessView(report) {
     open,
     // The server sends fix_groups only once it supports fixes.
     grouped: Boolean(report?.fix_groups),
-    fixMessage: report?.fix_groups?.builder?.message ?? null,
     groups,
     limits: lines
       .filter((line) => LIMIT.has(line.status))
@@ -135,34 +134,60 @@ export function readinessView(report) {
 }
 
 /**
- * What the builder chat says when a fix ends, and its button: how it ended
- * and, once saved, what the run plan still has open in `report`. Null while
- * that report loads.
+ * What the builder chat says when a fix ends, and its button: how it ended,
+ * line by line, and once saved, what the run plan still has open in `report`.
+ * Null while that report loads. `draftsGone`: the drafts list has none left.
  */
-export function fixEndCard(fix, report) {
+export function fixEndCard(fix, report, draftsGone = false) {
   const copy = RUN_PLAN_COPY.fixEnd;
-  if (fix.state === "done" && !fix.draft) {
-    // A report from before the fix ended still shows what it fixed.
-    const before =
-      fix.finished_at &&
-      report?.computed_at &&
-      new Date(report.computed_at) < new Date(fix.finished_at);
-    if (!report || before) return null;
-    // Blockers only, as the plan's header counts them.
-    const open = readinessView(report).open.filter(
-      (line) => line.status === "blocked",
-    );
-    if (!open.length) return { text: copy.clear, action: copy.review };
-    const labels = open.map(
-      (line) => READY_TO_RUN_COPY.areas[line.area] || line.area,
-    );
-    return { text: copy.open(labels), action: copy.openPlan };
+  const lines = fix.lines || [];
+  const failed = lines.filter((line) => line.state === "could_not_fix");
+  const couldNotFix = (reason) => ({
+    text: [READY_TO_RUN_COPY.progress.could_not_fix, reason]
+      .filter(Boolean)
+      .join(". "),
+    action: copy.openPlan,
+  });
+  if (lines.length && failed.length === lines.length) {
+    return couldNotFix(failed[0].reason?.message ?? fix.error?.message);
   }
-  const text =
-    fix.state === "done"
-      ? RUN_PLAN_PROMPTS_COPY.draftFix
-      : [READY_TO_RUN_COPY.progress.could_not_fix, fix.error?.message]
-          .filter(Boolean)
-          .join(". ");
-  return { text, action: copy.openPlan };
+  if (fix.state === "done" && fix.draft) {
+    // The draft holding the fix's changes was saved or discarded since.
+    if (draftsGone) return { text: copy.draftGone, action: copy.openPlan };
+    // A stale draft can't be saved, so it never asks to save it.
+    if (fix.error?.code === "draft_stale") {
+      return { text: RUN_PLAN_PROMPTS_COPY.draftStale, action: copy.openPlan };
+    }
+    return {
+      text: [RUN_PLAN_PROMPTS_COPY.draftFix, fix.error?.message]
+        .filter(Boolean)
+        .join(" "),
+      action: copy.openPlan,
+    };
+  }
+  if (fix.state !== "done") return couldNotFix(fix.error?.message);
+  // A report from before the fix ended still shows what it fixed.
+  const before =
+    fix.finished_at &&
+    report?.computed_at &&
+    new Date(report.computed_at) < new Date(fix.finished_at);
+  if (!report || before) return null;
+  const fixed = copy.fixed(
+    lines.filter((line) => line.state === "fixed").length,
+    lines.length,
+  );
+  // Blockers only, as the plan's header counts them.
+  const open = readinessView(report).open.filter(
+    (line) => line.status === "blocked",
+  );
+  if (!open.length) {
+    return {
+      text: failed.length ? `${fixed} ${copy.passed}` : copy.clear,
+      action: copy.review,
+    };
+  }
+  const labels = open.map(
+    (line) => READY_TO_RUN_COPY.areas[line.area] || line.area,
+  );
+  return { text: `${fixed} ${copy.open(labels)}`, action: copy.openPlan };
 }

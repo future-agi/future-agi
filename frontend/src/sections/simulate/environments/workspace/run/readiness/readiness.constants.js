@@ -1,4 +1,5 @@
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const LINES_CHANGED = "These lines changed. Re-check, then try again.";
 
 export const READY_TO_RUN_COPY = {
   title: "Ready to run",
@@ -97,6 +98,8 @@ export const READY_TO_RUN_COPY = {
   addSelected: (count) => (count ? `Add ${count} to this fix` : "Fixing…"),
   fixOne: "Fix just this one",
   addOne: "Add just this one to the fix",
+  fixFinishing:
+    "The fix is saving and checking its changes. Add more lines when it finishes.",
   fixesUnsaved:
     "Save or discard the unsaved changes first, then send fixes to the chat.",
   fixRefused: {
@@ -105,6 +108,15 @@ export const READY_TO_RUN_COPY = {
     chat_unavailable: "The builder chat isn't available for this environment.",
     nothing_to_fix:
       "Nothing left for the chat to fix here. Re-check to see the latest.",
+    fix_needs_defaults:
+      "Fix works on the default versions. Pick the defaults to fix.",
+    rebuild_running:
+      "A rebuild is running for this environment. Fix when it finishes.",
+    fix_waiting:
+      "The builder is waiting on your answer in the chat. Answer it, then try again.",
+    fix_disabled: "Fixing from the run plan isn't switched on here.",
+    fix_rows_unknown: LINES_CHANGED,
+    fix_group_unsupported: LINES_CHANGED,
     default: "Couldn't start the fix. Try again in a moment.",
   },
   sendsToChat: "Sends this to the builder chat",
@@ -149,9 +161,12 @@ export const RUN_PLAN_COPY = {
   runOf: (will, requested) => `Run ${will} of ${requested}`,
   // The builder chat's card when a fix ends.
   fixEnd: {
+    fixed: (n, total) => (n < total ? `Fixed ${n} of ${total}.` : "Fixed."),
     open: (labels) =>
-      `Fixed. ${labels.length} still to fix in the run plan: ${labels.join(", ")}.`,
+      `${labels.length} still to fix in the run plan: ${labels.join(", ")}.`,
     clear: "The pair passed its check. Nothing left to fix before the run.",
+    passed: "The pair passed its check.",
+    draftGone: "The fix's changes are no longer in unsaved changes.",
     openPlan: "Open run plan",
     review: "Review and start run",
   },

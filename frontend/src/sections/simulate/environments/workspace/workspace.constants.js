@@ -495,6 +495,8 @@ export const DRAFTS_COPY = {
     chat_working:
       "Chat is still saving its last changes; try again in a moment",
     rebuild_running: "An update is running; try again when it finishes",
+    fix_waiting:
+      "The builder is waiting on your answer in the chat. Answer it, then save.",
     environment_busy:
       "The environment is being built or updated; try again when it finishes",
     draft_not_found: "These changes were already saved or discarded.",

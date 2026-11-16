@@ -3,7 +3,6 @@ import { useEffect, useRef } from "react";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { VERSION_PIECES, versionPickFields } from "./versions";
-import { augmentReport, dummyOn } from "./readinessFix.dummy"; // dummy:
 
 /**
  * Run readiness for an agent version, environment version and scenario
@@ -61,7 +60,7 @@ export const getReadiness = async (
         ...fields,
       })
     : await axios.get(capabilitiesPath(envId), { params: fields });
-  return dummyOn() ? augmentReport(envId, picks, data) : data; // dummy:
+  return data;
 };
 
 export function useReadiness(

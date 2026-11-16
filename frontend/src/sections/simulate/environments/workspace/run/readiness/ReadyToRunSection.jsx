@@ -47,7 +47,6 @@ import { AGENT_VERSIONS_COPY } from "../../workspace.constants";
 import { fToNow } from "src/utils/format-time";
 import { readinessView } from "./readinessView";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
-import * as fixDummy from "src/api/simulate-environments/readinessFix.dummy"; // dummy:
 
 const lineSx = {
   borderTop: "1px solid",
@@ -585,8 +584,7 @@ export default function ReadyToRunSection({
   const versions = useEnvironmentVersions(envId);
   // The agent version new credential values were saved as.
   const [savedId, setSavedId] = useState(null);
-  const agentVersions = [...(versions.data?.agent || [])];
-  fixDummy.addMissingKeys(agentVersions); // dummy:
+  const agentVersions = versions.data?.agent || [];
   const agentId = readiness.data?.pairing?.agent_version?.id;
   const agentVersion = agentVersions.find((one) => one.id === agentId);
   // New values are saved over the default version only, so the form is offered
@@ -730,7 +728,7 @@ export default function ReadyToRunSection({
       waitingOnLabel={COPY.areas[line.waitingOnArea]}
       grouped={view.grouped}
       onFixOne={
-        line.group === "builder" && fixable(line) && !unsaved
+        line.group === "builder" && fixable(line) && !fixHeld
           ? () => sendRows([line.rowId])
           : undefined
       }
@@ -781,7 +779,20 @@ export default function ReadyToRunSection({
       />
     );
   };
-  const unsaved = Boolean(drafts?.any);
+  // Fix works on the default versions only (picks hold just the others). The
+  // unsaved changes a running fix makes don't stop adding lines to it.
+  let fixHeld = null;
+  if (Object.values(picks || {}).some(Boolean)) {
+    fixHeld = COPY.fixRefused.fix_needs_defaults;
+  } else if (drafts?.any && !chatShown) {
+    fixHeld = COPY.fixesUnsaved;
+  } else if (
+    chatShown &&
+    !["queued", "fixing", "waiting_on_you"].includes(fixRun.state)
+  ) {
+    // Saving or re-checking: the server takes no more lines until it ends.
+    fixHeld = COPY.fixFinishing;
+  }
   const fixRefusal =
     start.isError &&
     (COPY.fixRefused[start.error?.error] ??
@@ -853,11 +864,14 @@ export default function ReadyToRunSection({
                     size="small"
                     variant="contained"
                     disabled={
-                      !chosen.length || checking || start.isPending || unsaved
+                      !chosen.length ||
+                      checking ||
+                      start.isPending ||
+                      Boolean(fixHeld)
                     }
                     aria-describedby={
-                      takeable.length > 0 && unsaved
-                        ? "fix-chat-unsaved"
+                      takeable.length > 0 && fixHeld
+                        ? "fix-chat-held"
                         : undefined
                     }
                     onClick={sendChosen}
@@ -871,12 +885,12 @@ export default function ReadyToRunSection({
               }
               note={
                 <>
-                  {takeable.length > 0 && unsaved && (
+                  {takeable.length > 0 && fixHeld && (
                     <Typography
-                      id="fix-chat-unsaved"
+                      id="fix-chat-held"
                       sx={{ typography: "s3", color: "text.secondary" }}
                     >
-                      {COPY.fixesUnsaved}
+                      {fixHeld}
                     </Typography>
                   )}
                   {fixRefusal && (

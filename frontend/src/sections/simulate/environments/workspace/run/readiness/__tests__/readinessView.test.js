@@ -178,10 +178,9 @@ describe("readinessView", () => {
         ...one,
         fix_group: ["needs_you", "builder", "recheck"][at],
       })),
-      fix_groups: { builder: { message: "Fix it", rows: ["tool_routing"] } },
+      fix_groups: { builder: { rows: ["tool_routing"] } },
     });
     expect(grouped.grouped).toBe(true);
-    expect(grouped.fixMessage).toBe("Fix it");
     expect(areasOf(grouped)).toEqual({
       needs_you: ["start_and_message"],
       builder: ["tool_binding"],
@@ -242,5 +241,35 @@ describe("fixEndCard", () => {
       text: "The pair passed its check. Nothing left to fix before the run.",
       action: "Review and start run",
     });
+  });
+
+  it("reads the fix's own lines: none fixed, some fixed, or left unsaved", () => {
+    const failed = {
+      state: "could_not_fix",
+      reason: { code: "x", message: "The tool has no test route" },
+    };
+    const line = (state) => (state === "fixed" ? { state } : failed);
+    const run = (states, extra = {}) => ({
+      state: "done",
+      draft: false,
+      lines: states.map(line),
+      ...extra,
+    });
+    expect(fixEndCard(run(["could_not_fix"]), report()).text).toBe(
+      "Couldn't fix. The tool has no test route",
+    );
+    expect(fixEndCard(run(["fixed", "could_not_fix"]), report()).text).toBe(
+      "Fixed 1 of 2. The pair passed its check.",
+    );
+    const unsaved = run(["fixed"], {
+      draft: true,
+      error: { code: "draft_stale", message: "The environment changed" },
+    });
+    expect(fixEndCard(unsaved, null).text).toBe(
+      "These unsaved changes started from an older version. Discard them on the page, or ask chat to make them again.",
+    );
+    expect(fixEndCard(unsaved, null, true).text).toBe(
+      "The fix's changes are no longer in unsaved changes.",
+    );
   });
 });
