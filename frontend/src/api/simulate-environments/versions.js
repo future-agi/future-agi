@@ -4,6 +4,7 @@ import { camelCase } from "lodash";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
+import { useDebounce } from "src/hooks/use-debounce";
 
 /**
  * The version history of one environment: its agent, environment and scenario
@@ -82,6 +83,30 @@ const discardDraftPath = (envId, piece) =>
     piece,
   });
 
+const actorsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actors/", { id: envId });
+const actorPath = (envId, actorId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actors/{actor_id}/", {
+    id: envId,
+    actor_id: actorId,
+  });
+
+const actorLimitsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-limits/", {
+    id: envId,
+  });
+const acceptUnresolvedPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-unresolved/accept/", {
+    id: envId,
+  });
+const environmentFilesPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
+
+const actorValidationPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-validation/", {
+    id: envId,
+  });
+
 const runPlanPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/run-plan/", { id: envId });
 
@@ -138,10 +163,16 @@ export const changeCredentials = async (envId, environmentValues, files) =>
 export const createAgentVersion = async (envId, body) =>
   (await axios.post(agentVersionsPath(envId), body)).data;
 
-// What a run of these picks would use and what to warn about.
-export const getRunPlan = async (envId, picks) =>
-  (await axios.get(runPlanPath(envId), { params: versionPickFields(picks) }))
-    .data;
+// No scenarioKeys means every scenario.
+export const getRunPlan = async (envId, picks, scenarioKeys) =>
+  (
+    await axios.get(runPlanPath(envId), {
+      params: {
+        ...versionPickFields(picks),
+        ...(scenarioKeys ? { scenario_keys: scenarioKeys.join(",") } : {}),
+      },
+    })
+  ).data;
 
 export const getNudges = async (envId) =>
   (await axios.get(nudgesPath(envId))).data;
@@ -167,6 +198,86 @@ export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
 
 export const discardDraft = async (envId, piece) =>
   (await axios.delete(discardDraftPath(envId, piece))).data;
+
+/** The cast the next run uses: the draft's when there is one. */
+export const getActors = async (envId) =>
+  (await axios.get(actorsPath(envId))).data;
+/** One actor's view; 404 `actor_not_found` for an unknown id. */
+export const getActorView = async (envId, actorId) =>
+  (await axios.get(actorPath(envId, actorId))).data;
+/**
+ * Create, replace or delete one actor in the draft; resolves to the cast. A stale `revision` is `draft_changed`.
+ */
+export const editActor = async (
+  envId,
+  { op, changes, id, actorId, revision, shareActions },
+) => {
+  const extra = {
+    ...(shareActions?.length ? { share_actions: shareActions } : {}),
+    expected_revision: revision,
+  };
+  if (op === "create") {
+    return (
+      await axios.post(actorsPath(envId), {
+        changes,
+        ...(id ? { id } : {}),
+        ...extra,
+      })
+    ).data;
+  }
+  if (op === "replace") {
+    return (await axios.put(actorPath(envId, actorId), { changes, ...extra }))
+      .data;
+  }
+  return (
+    await axios.delete(actorPath(envId, actorId), {
+      params: { expected_revision: revision },
+    })
+  ).data;
+};
+
+/** Checks an actor edit without writing it; resolves to `{problems, conflicts, suggested_id, over_by}`. */
+export const checkActor = async (
+  envId,
+  { op, changes, id, actorId, shareActions },
+) =>
+  (
+    await axios.post(actorValidationPath(envId), {
+      op,
+      ...(op === "create" ? {} : { actor_id: actorId }),
+      ...(op === "delete" ? {} : { changes }),
+      ...(id ? { id } : {}),
+      ...(shareActions?.length ? { share_actions: shareActions } : {}),
+    })
+  ).data;
+
+// Each limit is a number, or null for no limit.
+export const setActorLimits = async (envId, { limits, revision }) =>
+  (
+    await axios.put(actorLimitsPath(envId), {
+      limits,
+      expected_revision: revision,
+    })
+  ).data;
+
+export const acceptUnresolved = async (envId, { policy, revision }) =>
+  (
+    await axios.post(acceptUnresolvedPath(envId), {
+      policy,
+      expected_revision: revision,
+    })
+  ).data;
+
+export const uploadEnvironmentFile = async (
+  envId,
+  { file, kind, revision },
+) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+  if (revision != null) form.append("expected_revision", String(revision));
+  return (await axios.post(environmentFilesPath(envId), form)).data;
+};
 
 export const environmentVersionsKey = (envId) => [
   "harness-env-versions",
@@ -194,11 +305,15 @@ export const draftsKey = (envId) => [
   ...environmentVersionsKey(envId),
   "drafts",
 ];
+// Under the drafts so a drafts refresh also refreshes the cast.
+export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
+export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
-export const runPlanKey = (envId, picks = {}) => [
+export const runPlanKey = (envId, picks = {}, scenarioKeys = null) => [
   ...environmentVersionsKey(envId),
   "run-plan",
   ...VERSION_PIECES.map((piece) => picks?.[piece] || null),
+  scenarioKeys,
 ];
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
@@ -353,10 +468,14 @@ export function useSuiteMembers(envId, versionId, { enabled = true } = {}) {
   });
 }
 
-export function useRunPlan(envId, picks, { enabled = true } = {}) {
+export function useRunPlan(
+  envId,
+  picks,
+  { enabled = true, scenarioKeys = null } = {},
+) {
   return useQuery({
-    queryKey: runPlanKey(envId, picks),
-    queryFn: () => getRunPlan(envId, picks),
+    queryKey: runPlanKey(envId, picks, scenarioKeys),
+    queryFn: () => getRunPlan(envId, picks, scenarioKeys),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },
@@ -706,6 +825,93 @@ export function useSaveDrafts(envId) {
     },
   });
 }
+
+export function useActors(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: actorsKey(envId),
+    queryFn: () => getActors(envId),
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+export function useActorView(envId, actorId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: actorViewKey(envId, actorId),
+    queryFn: () => getActorView(envId, actorId),
+    enabled: Boolean(envId && actorId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+export function useEditActor(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (change) => editActor(envId, change),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(actorsKey(envId), data);
+      refreshDrafts(queryClient, envId);
+    },
+    onError: (error) => {
+      if (DRAFTS_REFRESH_CODES.has(error?.error)) {
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      }
+    },
+  });
+}
+
+export const ACTOR_CHECK_DELAY_MS = 400;
+
+/**
+ * Debounced `checkActor` on `request` (null asks nothing); `verdict` is null unless it answers exactly `request`.
+ */
+export function useActorCheck(envId, request) {
+  const asked = request ? JSON.stringify(request) : null;
+  const settled = useDebounce(asked, ACTOR_CHECK_DELAY_MS);
+  const query = useQuery({
+    queryKey: [...actorsKey(envId), "check", settled],
+    queryFn: () => checkActor(envId, JSON.parse(settled)),
+    enabled: Boolean(envId && settled),
+    retry: retryServerFailures,
+    meta: { errorHandled: true },
+  });
+  const current = Boolean(asked) && settled === asked && !query.isFetching;
+  return {
+    verdict: current && query.isSuccess ? query.data : null,
+    pending: Boolean(asked) && !(current && (query.isSuccess || query.isError)),
+    isError: current && query.isError,
+    error: query.error,
+    retry: () => query.refetch(),
+  };
+}
+
+// `send` must answer with the cast.
+function useCastChange(envId, send) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (change) => send(envId, change),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(actorsKey(envId), data);
+      refreshDrafts(queryClient, envId);
+    },
+    onError: (error) => {
+      if (DRAFTS_REFRESH_CODES.has(error?.error)) {
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      }
+    },
+  });
+}
+
+export const useSetActorLimits = (envId) =>
+  useCastChange(envId, setActorLimits);
+export const useUploadEnvironmentFile = (envId) =>
+  useCastChange(envId, uploadEnvironmentFile);
+export const useAcceptUnresolved = (envId) =>
+  useCastChange(envId, acceptUnresolved);
 
 // Discard the given pieces' drafts, one request each. Whatever was discarded
 // before a refusal is gone, so the drafts and what they overlay are asked

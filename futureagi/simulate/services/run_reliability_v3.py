@@ -6,13 +6,29 @@ import math
 from collections import defaultdict
 from typing import Any
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet, TextField, Value
+from django.db.models.fields.json import KT
+from django.db.models.functions import Coalesce
+from django.db.models.lookups import Exact
 
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_results_v3 import OUTCOME_LABELS
 
 # Fewer scenarios than this give a range too wide to act on; show counts only.
 MIN_INTERVAL_SCENARIOS = 10
 _Z = 1.96
+# A trial that did not start from the seeded records says nothing about whether its scenario repeats.
+# Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would drop it as NULL.
+NOT_COMPARABLE = Q(
+    Exact(
+        Coalesce(
+            KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"),
+            Value(""),
+            output_field=TextField(),
+        ),
+        "differs",
+    )
+)
 
 
 def wilson(passed: float, n: float, z: float = _Z) -> tuple[float, float] | None:
@@ -60,8 +76,15 @@ def scenario_interval(clusters: list[tuple[int, int]]) -> dict[str, Any] | None:
     }
 
 
-def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
-    """Group trial verdicts by the scenario they repeated."""
+def comparable_trials(queryset: QuerySet) -> tuple[QuerySet, int]:
+    """The trials that started from the seeded records, and how many others were left out."""
+    return queryset.exclude(NOT_COMPARABLE), queryset.filter(NOT_COMPARABLE).count()
+
+
+def build_reliability(
+    queryset: QuerySet, trials: int, excluded_not_comparable: int = 0
+) -> dict[str, Any]:
+    """Group trial verdicts by the scenario they repeated; ``queryset`` holds comparable trials only."""
     counts: dict[str, dict[str, int]] = defaultdict(
         lambda: dict.fromkeys(OUTCOME_LABELS, 0)
     )
@@ -147,6 +170,7 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         # Pooled counts for runs too small for rates, so the header need not sum rows.
         "trials_passed": sum(row["passed"] for row in conclusive),
         "trials_evaluated": sum(row["evaluated"] for row in conclusive),
+        "excluded_not_comparable": excluded_not_comparable,
         "pass_rate_interval": scenario_interval(
             [(row["passed"], row["evaluated"]) for row in rows]
         ),

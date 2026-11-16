@@ -430,6 +430,9 @@ class TestHistoricalWorkflow:
         _patch_failing_reconcile(monkeypatch)
         # One-shot so the reconcile activity exhausts its retries fast.
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
 
         with pytest.raises(WorkflowFailureError):
             await _run_historical(
@@ -596,6 +599,9 @@ class TestContinuousWorkflow:
             _deterministic_rejection,
         )
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
         await sync_to_async(EvalTask.objects.filter(id=eval_task.id).update)(
             run_type=RunType.CONTINUOUS
         )
@@ -674,6 +680,9 @@ class TestContinuousWorkflow:
         # Exercise the workflow's post-exhaustion path without waiting for all
         # five production backoff attempts in this orchestration test.
         monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        monkeypatch.setattr(
+            wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
+        )
 
         original_cursor = eval_task.created_at
         await sync_to_async(make_pending_entries)(eval_task, 1)

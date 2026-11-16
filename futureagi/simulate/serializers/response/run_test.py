@@ -14,6 +14,7 @@ stays in RunTestSerializer in simulate.serializers.run_test.
 
 from rest_framework import serializers
 
+from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import RunTest
 from simulate.serializers.harness_job import RunVersionLabelSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
@@ -166,8 +167,27 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     pending_calls = serializers.IntegerField(read_only=True)
     completed_at = serializers.CharField(read_only=True, allow_null=True)
     outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
-    outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_failed = serializers.IntegerField(
+        read_only=True, allow_null=True, help_text="Failed plus errored receipts."
+    )
+    outcome_errored = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_no_score = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_status = serializers.ChoiceField(
+        choices=OUTCOME_STATUSES,
+        read_only=True,
+        help_text="The run's verdict: running, cancelled, passed, failed, or no_score when it completed with only "
+        "unscored calls. A run without receipts is judged by its completed calls (passed) and failed calls.",
+    )
+    pass_rate = serializers.IntegerField(
+        read_only=True,
+        allow_null=True,
+        min_value=0,
+        max_value=100,
+        help_text="Scored passes over every call that ran to a verdict (passed, failed, errored, skipped), as a "
+        "whole percent; null when there is none.",
+    )
+    scored = serializers.IntegerField(read_only=True, help_text="The pass rate's base.")
     environment_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     suite_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     # ``agent_version`` is the version's name; this is the run's agent pin.

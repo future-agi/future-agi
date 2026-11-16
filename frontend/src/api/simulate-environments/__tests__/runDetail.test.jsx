@@ -46,6 +46,8 @@ const executionsPayload = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+      outcome_status: "passed",
+      pass_rate: 74,
     },
     {
       id: "ex-old",
@@ -54,6 +56,8 @@ const executionsPayload = () => ({
       agent_version: "v1",
       total_chats: 10,
       success_rate: 60,
+      outcome_status: "failed",
+      pass_rate: 55,
     },
   ],
   count: 2,
@@ -71,15 +75,6 @@ const kpisPayload = () => ({
   avg_turn_count: 7,
   calls_connected_percentage: 90,
   task_completion: 75,
-});
-
-const perfPayload = () => ({
-  test_run_performance_metrics: {
-    pass_rate: 74,
-    total_test_runs: 12,
-    latest_fail_rate: 26,
-  },
-  top_performing_scenarios: [],
 });
 
 describe("buildRunIdentity", () => {
@@ -105,15 +100,15 @@ describe("buildRunIdentity", () => {
 });
 
 describe("buildRunStats", () => {
-  it("derives counts from kpis and the pass rate from the performance summary", () => {
+  it("derives counts from kpis and reads the pass rate from the run's row", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-new");
 
-    const stats = buildRunStats(kpisPayload(), perfPayload(), row);
+    const stats = buildRunStats(kpisPayload(), row);
     expect(stats.total).toBe(12);
     expect(stats.failed).toBe(3);
     expect(stats.passed).toBe(9);
-    // Pass rate comes from the performance summary, not the derived 75%.
+    // The server's rate, not the derived 75%.
     expect(stats.passRate).toBe(74);
     expect(stats.durationS).toBe(600);
     expect(stats.avgDurationMs).toBe(50000);
@@ -139,12 +134,14 @@ describe("buildRunStats", () => {
           outcome_passed: 2,
           outcome_failed: 1,
           outcome_skipped: 0,
+          outcome_status: "running",
+          pass_rate: 67,
+          scored: 3,
         },
       ],
     })[0];
     const stats = buildRunStats(
       { total_calls: 6, failed_calls: 0 },
-      { test_run_performance_metrics: { pass_rate: 100 } },
       row,
     );
 
@@ -154,20 +151,21 @@ describe("buildRunStats", () => {
       failed: 1,
       measured: 3,
       unmeasured: 3,
-      passRate: 33,
+      passRate: 67,
     });
   });
 
-  it("falls back to the executions row counts and derives the pass rate when kpis/perf are absent", () => {
+  it("falls back to the executions row counts and still reads the server's pass rate, never passed over total", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
 
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     // Row: total 10, success_rate 60 → passed 6, failed 4.
     expect(stats.total).toBe(10);
     expect(stats.passed).toBe(6);
     expect(stats.failed).toBe(4);
-    expect(stats.passRate).toBe(60);
+    expect(stats.passRate).toBe(55);
+    expect(buildRunStats(null, null).passRate).toBeNull();
     expect(stats.durationS).toBeNull();
     expect(stats.avgDurationMs).toBeNull();
   });
@@ -185,7 +183,6 @@ describe("buildRunStats", () => {
         connected_calls: 12,
         total_calls: 16,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);
@@ -205,7 +202,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.total).toBe(16);
@@ -214,7 +210,7 @@ describe("buildRunStats", () => {
   it("leaves `completed` null (never 0, never `total`) while kpis hasn't loaded yet", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     expect(stats.completed).toBeNull();
     expect(stats.completed).not.toBe(stats.total);
   });
@@ -224,7 +220,6 @@ describe("buildRunStats", () => {
   it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
     const stats = buildRunStats(
       { agent_type: "voice", connected_calls: 9, total_calls: 16 },
-      null,
       null,
     );
     expect(stats.completed).toBeNull();
@@ -243,7 +238,6 @@ describe("buildRunStats", () => {
         task_success: 49,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.scores).toEqual({ task_success: 49 });
@@ -258,7 +252,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
         task_success: 49,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);
@@ -368,6 +361,35 @@ describe("mapCallDetail", () => {
     expect(d.stats.words).toBe(11);
   });
 
+  it("reads a chat row whose message is the scenario's own task as the task, not the customer", () => {
+    const d = mapCallDetail({
+      id: "chat-task",
+      simulation_call_type: "text",
+      persona: null,
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "task",
+          content: [
+            { role: "task", content: "Nightly reconciliation: post deal 9." },
+          ],
+        },
+        {
+          role: "assistant",
+          speaker_role: "assistant",
+          content: [{ role: "assistant", content: "Posted." }],
+        },
+        {
+          role: "user",
+          speaker_role: "user",
+          content: [{ role: "user", content: "Thanks" }],
+        },
+      ],
+    });
+    expect(d.turns.map((t) => t.role)).toEqual(["task", "agent", "customer"]);
+    expect(d.persona).toBeNull();
+  });
+
   it("maps a real voice call-detail payload to the CallDetail view-model", () => {
     const d = mapCallDetail(callDetailPayload());
     expect(d.id).toBe("call-1");
@@ -420,10 +442,11 @@ describe("mapCallDetail", () => {
       transcript: [
         {
           role: "assistant",
+          speaker_role: "assistant",
           content: "Refund issued.",
           tool_calls: [{ function: { name: "issue_refund" } }],
         },
-        { role: "user", content: "thanks" },
+        { role: "user", speaker_role: "user", content: "thanks" },
       ],
       recordings: {},
       eval_metrics: {},
@@ -535,6 +558,50 @@ describe("mapCallDetail", () => {
       },
     );
   });
+
+  it("shows an actor's turn as theirs, with the role and channel the turn carries", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "user",
+          content: "Please apply 25% to deal 8.",
+        },
+        {
+          role: "user",
+          speaker_role: "actor",
+          speaker_name: "Alex Vance",
+          actor_id: "alex_vance",
+          actor_role: "Sales Manager",
+          channel: "chat_message",
+          content: "I approved it in the CRM.",
+        },
+      ],
+      recordings: {},
+    });
+    expect(
+      d.turns.map((t) => [
+        t.role,
+        t.speakerName,
+        t.actorId,
+        t.actorRole,
+        t.channel,
+        t.text,
+      ]),
+    ).toEqual([
+      ["customer", "", "", "", "", "Please apply 25% to deal 8."],
+      [
+        "actor",
+        "Alex Vance",
+        "alex_vance",
+        "Sales Manager",
+        "chat_message",
+        "I approved it in the CRM.",
+      ],
+    ]);
+  });
 });
 
 describe("callTranscript", () => {
@@ -637,6 +704,84 @@ describe("callTranscript", () => {
       }).every((row) => row.start_time_seconds === null),
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
+  });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          kind: "agent_call",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          kind: "world_actor_action",
+          outcome: "refused",
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "faulted",
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "refused",
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "duplicate",
+        },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "Duplicate · approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
   });
 });
 
@@ -1657,5 +1802,30 @@ describe("useCallTraces", () => {
     renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
 
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("actor turns in a call", () => {
+  it("names who spoke on a voice turn, with the role and channel the turn carries", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "actor",
+          speaker_name: "Rowan",
+          actor_id: "friend",
+          actor_role: "roommate",
+          channel: "audio_mix",
+          content: "Two",
+        },
+        { speaker_role: "user", content: "One" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.role, t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["actor", "Rowan", "roommate", "audio_mix"],
+      ["customer", "", "", ""],
+    ]);
   });
 });

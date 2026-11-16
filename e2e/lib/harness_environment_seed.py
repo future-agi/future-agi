@@ -37,6 +37,30 @@ SUB_GOALS = [
         ),
     },
 ]
+# The same tools as a build that read their fields writes them: inputs with types and units, what each returns, and
+# where each runs (the agent's own tools service, so the world's door stands in front of both).
+DETAILED_TOOLS = [
+    {
+        "name": "lookup_order",
+        "description": "Looks an order up.",
+        "args": ["order_id"],
+        "arg_types": {"order_id": "string"},
+        "returns": {"status": "string", "total": "integer, cents, USD"},
+    },
+    {
+        "name": "issue_refund",
+        "description": "Refunds an order.",
+        "args": ["order_id", "refund_amount"],
+        "arg_types": {"order_id": "string", "refund_amount": "integer"},
+        "arg_units": {"refund_amount": "cents, USD"},
+        "returns": {"refund_id": "string", "amount": "integer, cents, USD"},
+        "effects": "adds a refund row and marks the order refunded",
+    },
+]
+DETAILED_ENTRYPOINTS = [
+    {"tool": "lookup_order", "mode": "service", "service": "tools-api", "endpoint": "orders/lookup", "effect": "read"},
+    {"tool": "issue_refund", "mode": "service", "service": "tools-api", "endpoint": "orders/refund", "effect": "write"},
+]
 # The checks a build's certificate records, all passed.
 PASSED_CHECKS = {
     "static": "passed",
@@ -74,6 +98,125 @@ TRIAL_STATE = {
             "no_change": False,
         }
     ]
+}
+# The same trial when the scenario's test condition took the refund down: the read went through, the refund was faulted
+# and nothing was committed.
+FAULTED_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "records": {"changes": [], "skipped": [], "truncated": 0},
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "attempted": 2,
+            "committed": 0,
+            "refused": 0,
+            "faulted": 1,
+            "duplicate": 0,
+            "committed_actions": [],
+            "read": 1,
+            "read_actions": ["lookup_order"],
+            "no_change": True,
+        }
+    ],
+}
+# The same trial when the world actor acted during the call: the agent asked for an approval and Dana Brooks put it.
+ACTOR_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "decisions": [
+        {
+            "play": "live",
+            "actor": WORLD_ACTOR["id"],
+            "action": "approvals.put",
+            "parent": None,
+            "status": 200,
+            "outcome": "committed",
+            "arguments": {"kind": "refund", "status": "approved"},
+        }
+    ],
+    "state_changes": [
+        TRIAL_STATE["state_changes"][0],
+        {
+            "who": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["approvals.put"],
+        },
+    ],
+}
+# The same trial when the refund's answer was lost to a timeout and the agent issued it again: the world committed it
+# twice, and the trial fails on it.
+DUPLICATE_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "duplicates": [
+        {
+            "action": "issue_refund",
+            "name": "issue_refund",
+            "arguments": {"order_id": "A-100", "amount_cents": 2500},
+            "first_action_id": "act-1",
+            "repeat_action_id": "act-2",
+        }
+    ],
+    "state_changes": [
+        {
+            **TRIAL_STATE["state_changes"][0],
+            "attempted": 3,
+            "committed": 2,
+            "duplicate": 1,
+            "committed_actions": ["issue_refund", "issue_refund"],
+        }
+    ],
+}
+# The same trial when the agent asked Dana Brooks to approve the refund, she refused, and the agent issued it anyway.
+REFUSED_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "approvals": [
+        {
+            "request": {"action": "approvals.request", "by": "agent"},
+            "decision": {"action": "approvals.put", "by": WORLD_ACTOR["id"]},
+            "before_decision": [],
+            "after_decision": [{"action": "issue_refund", "outcome": "committed"}],
+            "acted_before_decision": False,
+        }
+    ],
+    "decisions": [
+        {
+            "play": "live",
+            "actor": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "action": "approvals.put",
+            "status": 200,
+            "outcome": "committed",
+            "arguments": {"kind": "refund", "status": "refused"},
+            "verdict": "refused",
+            "committed_after_refusal": True,
+        }
+    ],
+    "state_changes": [
+        TRIAL_STATE["state_changes"][0],
+        {
+            "who": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["approvals.put"],
+        },
+    ],
+}
+TRIAL_STATES = {
+    True: TRIAL_STATE,
+    "read_write": TRIAL_STATE,
+    "fault": FAULTED_TRIAL_STATE,
+    "actor": ACTOR_TRIAL_STATE,
+    "duplicate": DUPLICATE_TRIAL_STATE,
+    "refused": REFUSED_TRIAL_STATE,
 }
 
 
@@ -189,8 +332,10 @@ DOOR_FILES = {
 }
 
 
-def _authoring(documents, *, certified, production_only, actors=False, workers=None):
-    contract = {"agent": "support", "tools": list(TOOLS)}
+def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
+    contract = {"agent": "support", "tools": list(DETAILED_TOOLS if tool_detail else TOOLS)}
+    if tool_detail:
+        contract["tool_entrypoints"] = list(DETAILED_ENTRYPOINTS)
     if workers:
         # Reached on the agent's tool service, which the world's door fronts as tools-api.
         contract["tool_entrypoints"] = [
@@ -199,7 +344,10 @@ def _authoring(documents, *, certified, production_only, actors=False, workers=N
         ]
         contract["workers"] = WORKERS
     if production_only:
-        contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
+        contract["tool_entrypoints"] = [
+            *(one for one in contract.get("tool_entrypoints", []) if one["tool"] != production_only),
+            {"tool": production_only, "mode": "in_process"},
+        ]
         contract["dependencies"] = [
             {
                 "name": "payments",
@@ -280,12 +428,12 @@ def seed_environment(
     failed_check=None,
     actors=False,
     trial=False,
+    tool_detail=False,
     workers=None,
     refund_worker_budget=False,
 ):
-    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; with ``actors`` its refunds
-    include a world actor with no channel, with ``trial`` one finished trial whose World changes hold a committed
-    write and a read."""
+    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
+    ``TRIAL_STATES`` variant for its finished trial."""
     from simulate.models import (
         AgentDefinition,
         AgentVersion,
@@ -349,6 +497,7 @@ def seed_environment(
             certified=certified,
             production_only=production_only,
             actors=actors,
+            tool_detail=tool_detail,
             workers=workers,
         )
     )
@@ -401,7 +550,11 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
-    trial_ids = _finished_trial(environment, definition, documents[0], world_changes=actors) if trial else {}
+    trial_ids = (
+        _finished_trial(environment, definition, documents[0], TRIAL_STATES[trial])
+        if trial
+        else {}
+    )
     return {
         **trial_ids,
         "environmentId": str(environment.id),
@@ -414,11 +567,12 @@ def seed_environment(
     }
 
 
-def _finished_trial(environment, definition, document, *, world_changes):
-    """One finished run of the Environment with one completed trial of its first scenario and, for an actors seed, its
-    World changes as the harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+def _finished_trial(environment, definition, document, trial_state):
+    """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
+    harness seals them (ingestion keeps them under ``harness_trial_state``)."""
     from simulate.models import HostedHarnessScenario
     from simulate.models.test_execution import CallExecution, TestExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
     # A call belongs to the scenario its trial ran, as a real run's calls do.
     provisioned = HostedHarnessScenario.no_workspace_objects.get(
@@ -440,13 +594,9 @@ def _finished_trial(environment, definition, document, *, world_changes):
         call_metadata={
             "harness_scenario_key": document["scenario_key"],
             "harness_trial_index": 0,
+            TRIAL_STATE_KEY: trial_state,
         },
     )
-    if world_changes:
-        from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
-
-        call.call_metadata[TRIAL_STATE_KEY] = TRIAL_STATE
-        call.save(update_fields=["call_metadata"])
     return {
         "runTestId": str(environment.run_test_id),
         "testExecutionId": str(execution.id),
