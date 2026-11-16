@@ -22,13 +22,7 @@ func EstimateTokens(messages []models.Message) int {
 
 		// Content tokens.
 		if msg.Content != nil {
-			var s string
-			if err := json.Unmarshal(msg.Content, &s); err == nil {
-				total += estimateStringTokens(s)
-			} else {
-				// Content may be an array (multimodal). Estimate from raw JSON length.
-				total += estimateStringTokens(string(msg.Content))
-			}
+			total += estimateContentTokens(msg.Content)
 		}
 
 		// Name field.
@@ -49,6 +43,37 @@ func EstimateTokens(messages []models.Message) int {
 	// Reply primer: every reply is primed with <|im_start|>assistant<|im_sep|> = 3 tokens.
 	total += 3
 
+	return total
+}
+
+// MediaPartTokens is what an image, audio or file part counts as: OpenAI's
+// count for a 1024x1024 image at high detail. Its inline bytes, often base64,
+// say nothing about its tokens, and counting them as text overstates a prompt
+// a hundredfold.
+const MediaPartTokens = 765
+
+// estimateContentTokens estimates message content: a string, or an array of
+// parts, whose text parts count as text and other parts as MediaPartTokens.
+func estimateContentTokens(raw json.RawMessage) int {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return estimateStringTokens(s)
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return estimateStringTokens(string(raw))
+	}
+	total := 0
+	for _, part := range parts {
+		if part.Type == "text" || part.Text != "" {
+			total += estimateStringTokens(part.Text)
+		} else {
+			total += MediaPartTokens
+		}
+	}
 	return total
 }
 

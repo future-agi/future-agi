@@ -54,6 +54,9 @@ const MessageEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
   // Falcon AI: the parent renders the AI bar node (shown at the top of
   // the box when open) and passes the trigger handler for the bottom-bar
   // icon. aiOpen hides the trigger while the bar is open, matching agent.
@@ -229,18 +232,14 @@ const MessageEditor = ({
                   variant="standard"
                   disableUnderline
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 600,
                     "& .MuiSelect-select": { py: 0, pr: "28px !important" },
                     "& .MuiSelect-icon": { right: 0 },
                   }}
                 >
                   {ROLES.map((r) => (
-                    <MenuItem
-                      key={r.value}
-                      value={r.value}
-                      sx={{ fontSize: "13px" }}
-                    >
+                    <MenuItem key={r.value} value={r.value}>
                       {r.label}
                     </MenuItem>
                   ))}
@@ -252,9 +251,9 @@ const MessageEditor = ({
                       size="small"
                       onClick={() => handleRemoveMessage(i)}
                       disabled={disabled}
-                      sx={{ p: 0.25, opacity: 0.5, "&:hover": { opacity: 1 } }}
+                      sx={{ opacity: 0.5, "&:hover": { opacity: 1 } }}
                     >
-                      <Iconify icon="mdi:close" width={14} />
+                      <Iconify icon="solar:close-linear" width={14} />
                     </IconButton>
                   )}
                 </Box>
@@ -306,6 +305,9 @@ const MessageEditor = ({
                 showMode={false}
                 showPlus={false}
                 disabled={modelSelectorDisabled ?? disabled}
+                openModelMenuSignal={openModelMenuSignal}
+                outputType={outputType}
+                choiceCount={choiceCount}
               />
             </Box>
           ) : (
@@ -313,14 +315,12 @@ const MessageEditor = ({
           )}
 
           <ShowComponent condition={onFalconClick && !aiOpen}>
-            <Tooltip title="Generate with Falcon AI" arrow placement="top">
+            <Tooltip title="Generate with AI" arrow placement="top">
               <IconButton
                 size="small"
                 onClick={onFalconClick}
                 disabled={disabled}
                 sx={{
-                  width: 32,
-                  height: 32,
                   flexShrink: 0,
                   "&:hover": { backgroundColor: "background.aiHover" },
                 }}
@@ -340,12 +340,10 @@ const MessageEditor = ({
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:plus" width={14} />}
+          startIcon={<Iconify icon="solar:add-linear" width={14} />}
           onClick={handleAddMessage}
           disabled={disabled}
           sx={{
-            textTransform: "none",
-            fontSize: "13px",
             borderColor: "divider",
             color: "text.secondary",
             "&:hover": { borderColor: "text.secondary" },
@@ -373,6 +371,9 @@ MessageEditor.propTypes = {
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
+  outputType: PropTypes.string,
+  choiceCount: PropTypes.number,
   aiBar: PropTypes.node,
   onFalconClick: PropTypes.func,
   aiOpen: PropTypes.bool,

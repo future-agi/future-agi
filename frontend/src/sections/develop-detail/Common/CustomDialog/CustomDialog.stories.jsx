@@ -57,7 +57,7 @@ export const WithLoadingButton = Template.bind({});
 
 WithLoadingButton.args = {
   title: "Custom Dialog with Loading Button",
-  preTitleIcon: "mingcute:info-line",
+  preTitleIcon: "solar:info-circle-linear",
   actionButton: "Loading Button",
   loading: true,
   children: <p>This is a custom dialog component with a loading button.</p>,
@@ -68,7 +68,7 @@ export const WithTitleIcon = Template.bind({});
 
 WithTitleIcon.args = {
   title: "Custom Dialog with Icon",
-  preTitleIcon: "ant-design:info-circle-outlined",
+  preTitleIcon: "solar:info-circle-linear",
   actionButton: "Submit",
   children: <p>This is a custom dialog component with an icon.</p>,
   color: "error",
@@ -78,7 +78,7 @@ export const WithDisabledButton = Template.bind({});
 
 WithDisabledButton.args = {
   title: "Custom Dialog with Disabled Button",
-  preTitleIcon: "mingcute:info-line",
+  preTitleIcon: "solar:info-circle-linear",
   actionButton: "Disabled Button",
   isData: false,
   children: <p>This is a custom dialog component with a disabled button.</p>,

@@ -5,9 +5,9 @@ import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
 
 const colorMap = (val) => {
-  if (val < 40) return "red.500";
-  if (val < 70) return "orange.500";
-  return "green.500";
+  if (val < 40) return "status.danger.fg";
+  if (val < 70) return "status.warning.fg";
+  return "status.success.fg";
 };
 
 const TestRunInsightCard = ({

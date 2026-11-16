@@ -222,17 +222,14 @@ export default function EditFile({ params, onClose, onCellValueChanged }) {
             sx={{
               backgroundColor: "primary.main",
               "&:hover": { backgroundColor: "primary.main" },
-              borderRadius: "10px",
-              fontSize: "14px",
-              fontWeight: 600,
               width: "205px",
             }}
           >
             <SvgColor
               src={`/assets/icons/components/ic_save.svg`}
               sx={{
-                width: 20,
-                height: 20,
+                width: 16,
+                height: 16,
                 mr: 1,
                 color: "divider",
               }}

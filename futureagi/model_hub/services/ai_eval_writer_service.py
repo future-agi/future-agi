@@ -23,6 +23,7 @@ class MalformedModelOutput(RuntimeError):
     A model failure (not the caller's fault), so the view maps it to a 5xx.
     """
 
+
 SYSTEM_PROMPT = """You are an expert AI evaluation engineer. Given a user's brief description of what they want to evaluate, generate a comprehensive evaluation instruction prompt.
 
 Rules:

@@ -7,16 +7,27 @@ import uuid
 from datetime import datetime
 
 from django.db import connection, models
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
+from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.utils.persona_filtering import (
     UnsupportedPersonaFilter,
     apply_persona_filter,
     is_persona_filter_column,
 )
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+
+
+def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
+    """Where a call's evals are logged from: a fix's check runs have a source of their own."""
+    is_check_run = HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id=test_execution_id, fix_run__isnull=False
+    ).exists()
+    return FIX_CHECK_RUN_EVAL_SOURCE if is_check_run else default
 
 
 class TestExecutionUtils:
@@ -779,37 +790,37 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 avg_latency_ms=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__avg_latency_ms"),
                         models.IntegerField(),
                     )
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
                 csat_score=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__csat_score"),
                         models.FloatField(),
                     )
@@ -1070,6 +1081,8 @@ class TestExecutionUtils:
         select_clause = ", ".join(select_fields)
         group_by_clause = ", ".join(group_by_fields)
 
+        # TODO: the call_executions queryset is ignored, so this groups every
+        # non-deleted CallExecution in the table, not just the ones passed in.
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:
@@ -1389,9 +1402,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id)
-                .select_related("dataset")
-                .first()
+                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
                 for col_obj in Column.all_objects.filter(
@@ -1404,10 +1415,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     non_scenario_columns = [
         col
         for col in column_order
-        if not (
-            isinstance(col, dict)
-            and col.get("type") == "scenario_dataset_column"
-        )
+        if not (isinstance(col, dict) and col.get("type") == "scenario_dataset_column")
     ]
     if first_scenario_idx is None:
         # No scenario columns yet: place them before the first evaluation
@@ -1426,8 +1434,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
             1
             for col in column_order[:first_scenario_idx]
             if not (
-                isinstance(col, dict)
-                and col.get("type") == "scenario_dataset_column"
+                isinstance(col, dict) and col.get("type") == "scenario_dataset_column"
             )
         )
 
@@ -1451,11 +1458,21 @@ def build_eval_column(eval_config):
     }
 
 
-def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_ids):
-    """Drop removed evals, refresh surviving names + configs, and append
-    a newly-active eval only when its id is in ``evaluated_eval_ids``
-    (i.e. attempted on at least one call of this execution)."""
+def reconcile_eval_column_order(
+    *, column_order, eval_configs, evaluated_eval_ids, harness_eval_outputs=None
+):
+    """Keep the evaluation columns backed by ``eval_configs``, refresh their
+    names + configs, and append a config's own column only when its id is in
+    ``evaluated_eval_ids`` (i.e. attempted on at least one call of this
+    execution). Which configs count is the caller's choice: pass a live-only
+    collection to prune a removed eval's column, or one that also holds
+    soft-deleted rows to keep it."""
     current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
+    harness_eval_outputs = {
+        str(eval_id): value
+        for eval_id, value in (harness_eval_outputs or {}).items()
+        if isinstance(value, dict) and value.get("source") == "harness"
+    }
     changed = False
     reconciled = []
     for col in column_order:
@@ -1464,6 +1481,14 @@ def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_id
             continue
         ec = current_eval_by_id.get(str(col.get("id")))
         if ec is None:
+            harness_output = harness_eval_outputs.get(str(col.get("id")))
+            if harness_output is not None:
+                expected_name = harness_output.get("name") or col.get("column_name")
+                if expected_name and col.get("column_name") != expected_name:
+                    col["column_name"] = expected_name
+                    changed = True
+                reconciled.append(col)
+                continue
             changed = True
             continue
         if col.get("column_name") != ec.name:
@@ -1483,5 +1508,22 @@ def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_id
         if ec_id in preserved or ec_id not in evaluated_eval_ids:
             continue
         reconciled.append(build_eval_column(eval_config))
+        changed = True
+    for eval_id, eval_output in harness_eval_outputs.items():
+        if eval_id in preserved:
+            continue
+        reconciled.append(
+            {
+                "column_name": eval_output.get("name") or eval_id,
+                "id": eval_id,
+                "eval_config": {
+                    "output_type": eval_output.get("output_type", "Pass/Fail")
+                },
+                "visible": True,
+                "type": "evaluation",
+                "source": "harness",
+            }
+        )
+        preserved.add(eval_id)
         changed = True
     return reconciled, changed

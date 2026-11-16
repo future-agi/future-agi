@@ -14,11 +14,14 @@ type Registry struct {
 	startTime  time.Time
 	counters   sync.Map // name → *CounterVec
 	histograms sync.Map // name → *Histogram
+	gauges     sync.Map // name -> *gauge
 }
 
 // NewRegistry creates a new metrics registry.
 func NewRegistry() *Registry {
-	return &Registry{startTime: time.Now()}
+	r := &Registry{startTime: time.Now()}
+	r.registerVideo()
+	return r
 }
 
 // CounterInc increments a counter by 1.
@@ -95,6 +98,7 @@ func (r *Registry) Render() string {
 		h.render(&b, name)
 	}
 
+	r.renderGauges(&b)
 	return b.String()
 }
 
@@ -238,6 +242,9 @@ func labelsKey(labels map[string]string) string {
 	return b.String()
 }
 
+// labelValueEscaper escapes label values per the Prometheus text format.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
 // formatLabels formats labels for Prometheus output (key="value").
 func formatLabels(labels map[string]string) string {
 	if len(labels) == 0 {
@@ -253,7 +260,7 @@ func formatLabels(labels map[string]string) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%s=\"%s\"", k, labels[k])
+		fmt.Fprintf(&b, "%s=\"%s\"", k, labelValueEscaper.Replace(labels[k]))
 	}
 	return b.String()
 }

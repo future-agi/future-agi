@@ -19,13 +19,22 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import { apiPath } from "src/api/contracts/api-surface";
+import axios from "src/utils/axios";
 
 import {
   useDevelopDatasetList,
@@ -45,32 +54,47 @@ import {
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  createEmptyGroundTruthDatasetRead,
+  readNextGroundTruthDatasetPage,
+} from "./ground_truth_dataset_pagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
+import { LoadingScreen } from "src/components/loading-screen";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
 // ═══════════════════════════════════════════════════════════════
 const StatusBadge = ({ status }) => {
   const map = {
-    pending: { label: "Pending", color: "default", icon: "mdi:clock-outline" },
+    pending: {
+      label: "Pending",
+      role: "neutral",
+      icon: "solar:clock-circle-linear",
+    },
     processing: {
       label: "Embedding...",
-      color: "warning",
+      role: "info",
       icon: "mdi:loading",
     },
     completed: {
       label: "Ready",
-      color: "success",
-      icon: "mdi:check-circle-outline",
+      role: "success",
+      icon: "solar:check-circle-linear",
     },
     failed: {
       label: "Failed",
-      color: "error",
-      icon: "mdi:alert-circle-outline",
+      role: "danger",
+      icon: "solar:danger-circle-linear",
     },
   };
   const info = map[status] || map.pending;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
+      label={info.label}
+      role={info.role}
       icon={
         <Iconify
           icon={info.icon}
@@ -87,19 +111,6 @@ const StatusBadge = ({ status }) => {
           }
         />
       }
-      label={info.label}
-      size="small"
-      color={info.color}
-      variant="outlined"
-      sx={{
-        fontSize: "11px",
-        height: 22,
-        ...(status === "processing" && {
-          borderColor: "warning.dark",
-          color: "warning.dark",
-          "& .MuiChip-icon": { color: "warning.dark" },
-        }),
-      }}
     />
   );
 };
@@ -177,9 +188,7 @@ const parseCsvText = (text) => {
     row.push(field);
     records.push(row);
   }
-  const nonEmpty = records.filter(
-    (r) => !(r.length === 1 && r[0] === ""),
-  );
+  const nonEmpty = records.filter((r) => !(r.length === 1 && r[0] === ""));
   if (nonEmpty.length === 0) return { columns: [], rows: [] };
   const [header, ...body] = nonEmpty;
   const columns = header.map((c) => c.trim());
@@ -193,7 +202,7 @@ const parseCsvText = (text) => {
   return { columns, rows };
 };
 
-const UploadDrawer = ({
+export const UploadDrawer = ({
   open,
   onClose,
   templateId,
@@ -214,6 +223,12 @@ const UploadDrawer = ({
   const [datasetSearch, setDatasetSearch] = useState("");
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [loadingDatasetData, setLoadingDatasetData] = useState(false);
+  const [datasetRead, setDatasetRead] = useState(() =>
+    createEmptyGroundTruthDatasetRead(),
+  );
+  const [datasetReadError, setDatasetReadError] = useState("");
+  const [datasetReadBlocked, setDatasetReadBlocked] = useState(false);
+  const datasetReadGeneration = useRef(0);
 
   // Fetch datasets list
   const { data: datasets = [], isLoading: datasetsLoading } =
@@ -226,6 +241,7 @@ const UploadDrawer = ({
   });
 
   const reset = useCallback(() => {
+    datasetReadGeneration.current += 1;
     setStep(0);
     setFile(null);
     setName("");
@@ -234,6 +250,9 @@ const UploadDrawer = ({
     setDatasetSearch("");
     setSelectedDataset(null);
     setLoadingDatasetData(false);
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -328,46 +347,152 @@ const UploadDrawer = ({
 
   // ── Dataset selection flow ──
   const handleDatasetSelect = useCallback((ds) => {
+    datasetReadGeneration.current += 1;
     setSelectedDataset(ds);
     setName(ds.name);
+    setVariableMapping({});
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    setLoadingDatasetData(false);
     setStep(3);
   }, []);
 
   // Derive column names from dataset columns response
   const datasetColumnNames = useMemo(() => {
-    if (!datasetColumns) return [];
-    return datasetColumns.map(
-      (col) => col.name || col.label || col.id || String(col),
+    const columns = datasetRead.columns || datasetColumns;
+    if (!columns) return [];
+    return columns.map((col) => col.name || col.label || col.id || String(col));
+  }, [datasetColumns, datasetRead.columns]);
+
+  // The independent column-preview request is advisory. Once the exact
+  // snapshot returns its signed inventory, remove mappings that do not exist
+  // in that authoritative inventory so a dataset switch/race cannot retain a
+  // stale column reference.
+  useEffect(() => {
+    if (!Array.isArray(datasetRead.columns)) return;
+    const exactNames = new Set(
+      datasetRead.columns
+        .map((column) => String(column?.name || "").trim())
+        .filter(Boolean),
     );
-  }, [datasetColumns]);
+    setVariableMapping((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(
+          ([, columnName]) => !columnName || exactNames.has(columnName),
+        ),
+      ),
+    );
+  }, [datasetRead.columns]);
+
+  const handleLoadDatasetRows = useCallback(async () => {
+    if (
+      !selectedDataset ||
+      loadingDatasetData ||
+      datasetRead.complete ||
+      datasetReadBlocked
+    )
+      return;
+    const datasetId = selectedDataset.dataset_id || selectedDataset.id;
+    const readGeneration = datasetReadGeneration.current;
+    setLoadingDatasetData(true);
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    try {
+      const nextRead = await readNextGroundTruthDatasetPage({
+        previous: datasetRead,
+        requestPage: ({ pageIndex, pageSize, cursor, signal, timeout }) =>
+          axios.get(
+            apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+              dataset_id: datasetId,
+            }),
+            {
+              params: {
+                current_page_index: pageIndex,
+                page_size: pageSize,
+                exact_snapshot: true,
+                ...(cursor ? { cursor } : {}),
+              },
+              signal,
+              timeout,
+            },
+          ),
+      });
+      if (datasetReadGeneration.current !== readGeneration) return;
+      setDatasetRead(nextRead);
+      if (nextRead.complete && nextRead.totalRows === 0) {
+        enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+      }
+    } catch (err) {
+      if (datasetReadGeneration.current !== readGeneration) return;
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        "Dataset rows could not be loaded exactly. Retry.";
+      setDatasetReadError(message);
+      setDatasetReadBlocked(
+        err?.code === "dataset_exact_limit_exceeded" ||
+          err?.response?.data?.code === "dataset_exact_limit_exceeded",
+      );
+      enqueueSnackbar(message, { variant: "error" });
+    } finally {
+      if (datasetReadGeneration.current === readGeneration) {
+        setLoadingDatasetData(false);
+      }
+    }
+  }, [
+    datasetRead,
+    datasetReadBlocked,
+    enqueueSnackbar,
+    loadingDatasetData,
+    selectedDataset,
+  ]);
 
   const handleDatasetUpload = useCallback(async () => {
     if (!selectedDataset || !name) return;
+    if (!datasetRead.complete) {
+      enqueueSnackbar("Load every dataset row before importing.", {
+        variant: "warning",
+      });
+      return;
+    }
     setLoadingDatasetData(true);
     try {
-      // Fetch dataset rows
-      const datasetId = selectedDataset.dataset_id || selectedDataset.id;
-      const { data: res } = await (
-        await import("src/utils/axios")
-      ).default.get(
-        apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
-          dataset_id: datasetId,
-        }),
-        {
-          params: { current_page_index: 0, page_size: 10000 },
-        },
-      );
-      const tableData = res?.result;
-      const tableRows = tableData?.table || [];
+      const tableRows = datasetRead.rows;
 
-      // Build column ID → name map from already-fetched datasetColumns
+      // Build the map from the exact paginated response rather than the
+      // independently cached column query. Every page is required to carry
+      // the same ordered column identity before it can be accumulated.
       const colMap = {};
-      (datasetColumns || []).forEach((col) => {
+      (datasetRead.columns || []).forEach((col) => {
         const colId = String(col.id || col.column_id);
         colMap[colId] = col.name || col.label || colId;
       });
 
       const colNames = Object.values(colMap);
+      if (
+        colNames.some((columnName) => !String(columnName).trim()) ||
+        new Set(colNames).size !== colNames.length
+      ) {
+        enqueueSnackbar(
+          "Dataset column names must be non-empty and unique before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
+
+      const invalidMappings = Object.entries(variableMapping).filter(
+        ([, columnName]) => columnName && !colNames.includes(columnName),
+      );
+      if (invalidMappings.length > 0) {
+        enqueueSnackbar(
+          "Variable mappings no longer match the exact dataset columns. Review them before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
       let flatRows = [];
 
       // table rows are: {column_uuid: {cell_value, ...}, row_id: "..."}
@@ -422,25 +547,28 @@ const UploadDrawer = ({
   }, [
     selectedDataset,
     name,
+    datasetRead,
     variableMapping,
-    upload,
     enqueueSnackbar,
     handleClose,
+    upload,
   ]);
 
   // Columns for the mapping step (from file or from dataset)
   const activeColumns = step === 1 ? parsedColumns : datasetColumnNames;
   const isConfigStep = step === 1 || step === 3;
   const isSubmitting = upload.isPending || loadingDatasetData;
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
-          width: 520,
+          width: 480,
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
@@ -477,7 +605,7 @@ const UploadDrawer = ({
                 : "Configure Dataset"}
           </Typography>
           <IconButton size="small" onClick={handleClose}>
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
 
@@ -485,7 +613,7 @@ const UploadDrawer = ({
         <Stepper
           activeStep={step === 2 ? 0 : isConfigStep ? 1 : 0}
           alternativeLabel
-          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "11px" } }}
+          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "12px" } }}
         >
           <Step>
             <StepLabel>Choose Source</StepLabel>
@@ -506,7 +634,7 @@ const UploadDrawer = ({
               sx={{
                 border: "2px dashed",
                 borderColor: isDragActive ? "primary.main" : "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 4,
                 display: "flex",
                 flexDirection: "column",
@@ -514,18 +642,10 @@ const UploadDrawer = ({
                 gap: 1.5,
                 cursor: "pointer",
                 transition: "all 0.2s",
-                bgcolor: isDragActive
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.08)"
-                        : "rgba(124,77,255,0.04)"
-                  : "transparent",
+                bgcolor: isDragActive ? "status.discovery.bg" : "transparent",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -534,18 +654,15 @@ const UploadDrawer = ({
                 sx={{
                   width: 48,
                   height: 48,
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(124,77,255,0.12)"
-                      : "rgba(124,77,255,0.08)",
+                  bgcolor: "status.discovery.bg",
                 }}
               >
                 <Iconify
-                  icon="mdi:cloud-upload-outline"
+                  icon="solar:cloud-upload-linear"
                   width={24}
                   sx={{ color: "primary.main" }}
                 />
@@ -567,8 +684,6 @@ const UploadDrawer = ({
                 size="small"
                 sx={{
                   mt: 0.5,
-                  px: 3,
-                  borderRadius: "8px",
                   borderColor: "divider",
                   color: "text.primary",
                 }}
@@ -589,7 +704,7 @@ const UploadDrawer = ({
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 2.5,
                 display: "flex",
                 alignItems: "center",
@@ -598,10 +713,7 @@ const UploadDrawer = ({
                 transition: "all 0.2s",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -613,14 +725,11 @@ const UploadDrawer = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.06)"
-                      : "background.neutral",
+                  bgcolor: "background.neutral",
                 }}
               >
                 <Iconify
-                  icon="mdi:database-outline"
+                  icon="solar:database-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
@@ -634,7 +743,7 @@ const UploadDrawer = ({
                 </Typography>
               </Box>
               <Iconify
-                icon="mdi:chevron-right"
+                icon="solar:alt-arrow-right-linear"
                 width={20}
                 sx={{ color: "text.disabled" }}
               />
@@ -661,13 +770,13 @@ const UploadDrawer = ({
               InputProps={{
                 startAdornment: (
                   <Iconify
-                    icon="mdi:magnify"
-                    width={18}
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ mr: 0.5, color: "text.disabled" }}
                   />
                 ),
               }}
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             <Box
@@ -679,11 +788,7 @@ const UploadDrawer = ({
                 gap: 1,
               }}
             >
-              {datasetsLoading && (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-                  <CircularProgress size={20} />
-                </Box>
-              )}
+              {datasetsLoading && <LoadingScreen compact />}
 
               {!datasetsLoading && datasets.length === 0 && (
                 <Typography
@@ -712,16 +817,13 @@ const UploadDrawer = ({
                     transition: "all 0.15s",
                     "&:hover": {
                       borderColor: "primary.main",
-                      bgcolor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.03)"
-                          : "rgba(0,0,0,0.015)",
+                      bgcolor: "background.neutral",
                     },
                   }}
                 >
                   <Iconify
-                    icon="mdi:table"
-                    width={18}
+                    icon="solar:table-linear"
+                    width={20}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
                   <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -735,8 +837,8 @@ const UploadDrawer = ({
                     )}
                   </Box>
                   <Iconify
-                    icon="mdi:chevron-right"
-                    width={18}
+                    icon="solar:alt-arrow-right-linear"
+                    width={20}
                     sx={{ color: "text.disabled", flexShrink: 0 }}
                   />
                 </Box>
@@ -788,7 +890,7 @@ const UploadDrawer = ({
                     file.name.endsWith(".csv")
                       ? "mdi:file-delimited-outline"
                       : file.name.endsWith(".json")
-                        ? "mdi:code-json"
+                        ? "solar:code-linear"
                         : "mdi:file-excel-outline"
                   }
                   width={20}
@@ -810,7 +912,7 @@ const UploadDrawer = ({
                     setParsedColumns([]);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
             )}
@@ -828,7 +930,7 @@ const UploadDrawer = ({
                 }}
               >
                 <Iconify
-                  icon="mdi:table"
+                  icon="solar:table-linear"
                   width={20}
                   sx={{ color: "primary.main", flexShrink: 0 }}
                 />
@@ -845,12 +947,92 @@ const UploadDrawer = ({
                 <IconButton
                   size="small"
                   onClick={() => {
+                    datasetReadGeneration.current += 1;
                     setSelectedDataset(null);
+                    setDatasetRead(createEmptyGroundTruthDatasetRead());
+                    setDatasetReadError("");
+                    setDatasetReadBlocked(false);
+                    setLoadingDatasetData(false);
                     setStep(2);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
+              </Box>
+            )}
+
+            {step === 3 && selectedDataset && (
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: "8px",
+                  border: "1px solid",
+                  borderColor: datasetReadError ? "error.main" : "divider",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 1,
+                  }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" fontWeight={600}>
+                      Dataset rows
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {datasetRead.totalRows === null
+                        ? "Load one exact page at a time before importing."
+                        : `${datasetRead.rows.length} of ${datasetRead.totalRows} rows loaded`}
+                    </Typography>
+                  </Box>
+                  {datasetRead.complete && (
+                    <RunStatusBadge
+                      status="completed"
+                      label="Complete"
+                      role="success"
+                    />
+                  )}
+                </Box>
+                {datasetRead.totalRows !== null &&
+                  datasetRead.totalRows > 0 && (
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(
+                        100,
+                        (datasetRead.rows.length / datasetRead.totalRows) * 100,
+                      )}
+                    />
+                  )}
+                {datasetReadError && (
+                  <Typography variant="caption" color="status.danger.fg">
+                    {datasetReadError}
+                  </Typography>
+                )}
+                {datasetRead.rows.length > 0 &&
+                  !datasetRead.complete &&
+                  !datasetReadBlocked && (
+                    <Button
+                      variant="text"
+                      color="inherit"
+                      size="small"
+                      disabled={loadingDatasetData}
+                      onClick={() => {
+                        datasetReadGeneration.current += 1;
+                        setDatasetRead(createEmptyGroundTruthDatasetRead());
+                        setDatasetReadError("");
+                        setDatasetReadBlocked(false);
+                      }}
+                      sx={{ alignSelf: "flex-start", px: 0 }}
+                    >
+                      Restart row loading
+                    </Button>
+                  )}
               </Box>
             )}
 
@@ -861,7 +1043,7 @@ const UploadDrawer = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             {/* Variable mapping */}
@@ -895,8 +1077,6 @@ const UploadDrawer = ({
                           size="small"
                           variant="outlined"
                           sx={{
-                            fontSize: "11px",
-                            height: 24,
                             minWidth: 100,
                             maxWidth: 200,
                             flexShrink: 0,
@@ -905,7 +1085,7 @@ const UploadDrawer = ({
                         />
                       </Tooltip>
                       <Iconify
-                        icon="mdi:arrow-right"
+                        icon="solar:arrow-right-linear"
                         width={14}
                         sx={{ color: "text.disabled", flexShrink: 0 }}
                       />
@@ -926,11 +1106,7 @@ const UploadDrawer = ({
                           <em>Skip</em>
                         </MenuItem>
                         {activeColumns.map((col) => (
-                          <MenuItem
-                            key={col}
-                            value={col}
-                            sx={{ fontSize: "12px" }}
-                          >
+                          <MenuItem key={col} value={col}>
                             {col}
                           </MenuItem>
                         ))}
@@ -959,7 +1135,6 @@ const UploadDrawer = ({
                       label={col}
                       size="small"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 20 }}
                     />
                   ))}
                 </Box>
@@ -991,11 +1166,21 @@ const UploadDrawer = ({
             <Button
               variant="contained"
               size="small"
-              onClick={step === 1 ? handleFileUpload : handleDatasetUpload}
+              onClick={
+                step === 1
+                  ? handleFileUpload
+                  : datasetRead.complete
+                    ? handleDatasetUpload
+                    : handleLoadDatasetRows
+              }
               disabled={
                 !canEdit ||
                 (step === 1 && (!file || !name)) ||
                 (step === 3 && (!selectedDataset || !name)) ||
+                (step === 3 &&
+                  datasetRead.complete &&
+                  datasetRead.totalRows === 0) ||
+                (step === 3 && datasetReadBlocked) ||
                 isSubmitting
               }
               sx={{ flex: 1 }}
@@ -1003,7 +1188,13 @@ const UploadDrawer = ({
               {isSubmitting ? (
                 <CircularProgress size={16} sx={{ color: "inherit" }} />
               ) : step === 3 ? (
-                "Import"
+                datasetRead.complete ? (
+                  "Import"
+                ) : datasetRead.rows.length > 0 ? (
+                  "Load more"
+                ) : (
+                  "Load rows"
+                )
               ) : (
                 "Upload"
               )}
@@ -1037,10 +1228,7 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
       transition: "all 0.2s",
       "&:hover": {
         borderColor: "primary.main",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       },
     }}
   >
@@ -1052,14 +1240,11 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.06)"
-            : "background.neutral",
+        bgcolor: "background.neutral",
       }}
     >
       <Iconify
-        icon="mdi:database-plus-outline"
+        icon="solar:add-folder-linear"
         width={28}
         sx={{ color: "text.disabled" }}
       />
@@ -1082,7 +1267,6 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
   </Box>
 );
 
-
 // Flat single-save form for the GT tab. Posts to
 // /ground-truth/<id>/setup/, which rejects when the mandatory `output`
 // column is missing. The output-type hint reads
@@ -1102,7 +1286,6 @@ export function shouldTriggerEmbed({
 }) {
   return Boolean(enabled && (mappingDirty || !embeddingsReady) && hasOnEmbed);
 }
-
 
 function describeReferenceOutputColumn(evalConfig) {
   if (!evalConfig) {
@@ -1161,9 +1344,7 @@ const GroundTruthSetupForm = ({
   );
 
   const initialOutputColumn =
-    persistedRoleMapping.output ||
-    persistedRoleMapping.expected_output ||
-    "";
+    persistedRoleMapping.output || persistedRoleMapping.expected_output || "";
   const initialExplanationColumn =
     persistedRoleMapping.explanation ||
     persistedRoleMapping.reasoning ||
@@ -1173,8 +1354,7 @@ const GroundTruthSetupForm = ({
   const templateConfig = template?.config || {};
   // Runtime knobs live on the GT row itself; the previous template.config
   // snapshot was removed in favour of per-tenant typed columns.
-  const persistedMaxExamples =
-    gt.max_examples ?? gt.maxExamples ?? 3;
+  const persistedMaxExamples = gt.max_examples ?? gt.maxExamples ?? 3;
   const persistedEnabled = Boolean(gt.enabled);
 
   const [varMapping, setVarMapping] = useState(persistedVarMapping);
@@ -1220,8 +1400,7 @@ const GroundTruthSetupForm = ({
     Number(maxExamples) !== Number(persistedMaxExamples) ||
     enabled !== persistedEnabled;
 
-  const hasMapping =
-    Object.keys(normalizeMapping(varMapping)).length > 0;
+  const hasMapping = Object.keys(normalizeMapping(varMapping)).length > 0;
   const canSave =
     Boolean(outputColumn) && (!enabled || hasMapping) && !save.isPending;
   const embedActive =
@@ -1229,8 +1408,7 @@ const GroundTruthSetupForm = ({
     embedPending ||
     embeddingStatus === "processing" ||
     (embeddingStatus === "pending" && embedPending);
-  const embeddingsReady =
-    embeddingStatus === "completed" && !embeddingsStale;
+  const embeddingsReady = embeddingStatus === "completed" && !embeddingsStale;
 
   const configDirty = mappingDirty || paramsDirty;
   // Embed only matters when GT is enabled; a paused GT should settle to
@@ -1260,9 +1438,14 @@ const GroundTruthSetupForm = ({
   const handleCtaClick = async () => {
     try {
       if (configDirty) await save.mutateAsync(buildPayload());
-      if (shouldTriggerEmbed({
-        enabled, mappingDirty, embeddingsReady, hasOnEmbed: !!onEmbed,
-      })) {
+      if (
+        shouldTriggerEmbed({
+          enabled,
+          mappingDirty,
+          embeddingsReady,
+          hasOnEmbed: !!onEmbed,
+        })
+      ) {
         setEmbedChainRunning(true);
         await onEmbed();
       }
@@ -1343,7 +1526,7 @@ const GroundTruthSetupForm = ({
             variant="caption"
             sx={{
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
               lineHeight: 1.3,
               wordBreak: "break-word",
             }}
@@ -1366,16 +1549,17 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Inputs</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           Map each template variable to a ground truth column.
         </Typography>
         {enabled && !hasMapping && liveVariables.length > 0 ? (
           <Typography
             variant="caption"
-            sx={{ color: "error.main", fontSize: "11px", mt: 0.25 }}
+            sx={{ color: "status.danger.fg", fontSize: "12px", mt: 0.25 }}
           >
-            Map at least one input variable before saving with ground truth enabled.
+            Map at least one input variable before saving with ground truth
+            enabled.
           </Typography>
         ) : null}
         {liveVariables.length === 0 ? (
@@ -1393,8 +1577,6 @@ const GroundTruthSetupForm = ({
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "11px",
-                  height: 24,
                   maxWidth: 160,
                   "& .MuiChip-label": {
                     overflow: "hidden",
@@ -1403,7 +1585,7 @@ const GroundTruthSetupForm = ({
                 }}
               />
               <Iconify
-                icon="mdi:arrow-right"
+                icon="solar:arrow-right-linear"
                 width={14}
                 sx={{ color: "text.disabled", flexShrink: 0 }}
               />
@@ -1424,7 +1606,7 @@ const GroundTruthSetupForm = ({
                   <em>None</em>
                 </MenuItem>
                 {columns.map((col) => (
-                  <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                  <MenuItem key={col} value={col}>
                     {col}
                   </MenuItem>
                 ))}
@@ -1439,7 +1621,7 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Reference output</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           The expected answer the evaluator should converge toward for each
           example.
@@ -1447,9 +1629,10 @@ const GroundTruthSetupForm = ({
         {referenceHint && (
           <Typography
             variant="caption"
-            sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
+            sx={{ color: "status.warning.fg", fontSize: "12px", mt: -0.25 }}
           >
-            Values in this column must match the eval&apos;s output type. {referenceHint}
+            Values in this column must match the eval&apos;s output type.{" "}
+            {referenceHint}
           </Typography>
         )}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -1457,7 +1640,7 @@ const GroundTruthSetupForm = ({
             Output column *
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1474,7 +1657,7 @@ const GroundTruthSetupForm = ({
               <em>Pick a column</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1486,7 +1669,7 @@ const GroundTruthSetupForm = ({
             Explanation (optional)
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1502,7 +1685,7 @@ const GroundTruthSetupForm = ({
               <em>None (optional)</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1515,10 +1698,10 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Retrieval</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
-          On each eval run, the rows most similar to the input are attached
-          to the judge prompt as calibration examples.
+          On each eval run, the rows most similar to the input are attached to
+          the judge prompt as calibration examples.
         </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <Tooltip
@@ -1541,11 +1724,7 @@ const GroundTruthSetupForm = ({
             valueLabelDisplay="auto"
             sx={{ flex: 1 }}
           />
-          <Chip
-            size="small"
-            label={maxExamples}
-            sx={{ minWidth: 36, height: 22, fontSize: "11px" }}
-          />
+          <Chip size="small" label={maxExamples} sx={{ minWidth: 36 }} />
         </Box>
       </Box>
 
@@ -1561,13 +1740,13 @@ const GroundTruthSetupForm = ({
           <Typography
             variant="caption"
             sx={{
-              color: "error.main",
+              color: "status.danger.fg",
               display: "flex",
               alignItems: "center",
               gap: 0.5,
             }}
           >
-            <Iconify icon="mdi:alert-circle-outline" width={14} />
+            <Iconify icon="solar:danger-circle-linear" width={14} />
             Pick the column that holds the reference output.
           </Typography>
         )}
@@ -1580,9 +1759,9 @@ const GroundTruthSetupForm = ({
               ctaPending ? (
                 <CircularProgress size={14} />
               ) : hasWork ? (
-                <Iconify icon="mdi:content-save-outline" width={16} />
+                <Iconify icon="solar:diskette-linear" width={16} />
               ) : (
-                <Iconify icon="mdi:check" width={16} />
+                <Iconify icon="solar:check-linear" width={16} />
               )
             }
             sx={{ flex: 1, minWidth: 0 }}
@@ -1602,7 +1781,7 @@ const GroundTruthSetupForm = ({
               <Button
                 variant="text"
                 onClick={onTest}
-                endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
                 disabled={!onTest}
                 sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
               >
@@ -1732,7 +1911,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
           height: "100%",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1774,19 +1953,14 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
             }}
           >
             <Iconify
-              icon="mdi:database-outline"
-              width={18}
+              icon="solar:database-linear"
+              width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography variant="body2" fontWeight={600}>
               {activeDataset.name}
             </Typography>
-            <Chip
-              label={`${totalRows} rows`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Chip label={`${totalRows} rows`} size="small" variant="outlined" />
             <StatusBadge status={embeddingStatus} />
 
             {(embeddingStatus === "processing" ||
@@ -1802,7 +1976,9 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
               >
                 <LinearProgress
                   variant={
-                    embeddingStatus === "processing" ? "determinate" : "indeterminate"
+                    embeddingStatus === "processing"
+                      ? "determinate"
+                      : "indeterminate"
                   }
                   value={
                     embeddingStatus === "processing" && totalRows > 0
@@ -1828,7 +2004,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   onClick={() => setDrawerOpen(true)}
                   disabled={!canEdit}
                 >
-                  <Iconify icon="mdi:upload" width={16} />
+                  <Iconify icon="solar:upload-minimalistic-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -1840,7 +2016,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   onClick={handleDelete}
                   disabled={deleteGt.isPending || !canEdit}
                 >
-                  <Iconify icon="mdi:delete-outline" width={16} />
+                  <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -1909,10 +2085,6 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                 sx={{
                   flex: 1,
                   minHeight: 200,
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  border: "1px solid",
-                  borderColor: "divider",
                 }}
               >
                 <AgGridReact
@@ -1921,7 +2093,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   rowData={previewData?.rows || []}
                   defaultColDef={defaultColDef}
                   headerHeight={34}
-                  rowHeight={32}
+                  rowHeight={ROW_HEIGHT.default}
                   animateRows={false}
                   suppressCellFocus
                   enableCellTextSelection
@@ -1929,8 +2101,8 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   pagination
                   paginationPageSize={50}
                   paginationPageSizeSelector={[25, 50, 100]}
-                  overlayNoRowsTemplate="<span style='font-size:13px;opacity:0.5'>No data</span>"
-                  overlayLoadingTemplate="<span style='font-size:13px;opacity:0.5'>Loading...</span>"
+                  overlayNoRowsTemplate="<span style='font-size:12px;opacity:0.5'>No data</span>"
+                  overlayLoadingTemplate="<span style='font-size:12px;opacity:0.5'>Loading...</span>"
                   loading={!previewData}
                 />
               </Box>

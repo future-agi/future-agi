@@ -1,6 +1,8 @@
 # Manual escape hatch for ad-hoc and -dev builds. Stable releases go through
 # release-images.yml (tag-triggered); this wrapper shares the same build via
-# build-image.yml so the two paths cannot drift.
+# build-image-multiarch.yml (native linux/amd64 + linux/arm64, registry layer
+# cache) so the two paths cannot drift. The size budget only reports here: an
+# ad-hoc build is never blocked by it.
 name: Release agentcc-gateway
 
 on:
@@ -22,17 +24,25 @@ permissions:
 
 jobs:
   release:
-    uses: ./.github/workflows/build-image.yml
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
+    uses: ./.github/workflows/build-image-multiarch.yml
     with:
       image: futureagi/agentcc-gateway
       context: ./agentcc-gateway
       dockerfile: ./agentcc-gateway/Dockerfile
       version: ${{ inputs.version }}
       ref: ${{ inputs.branch }}
-      platforms: 'linux/amd64,linux/arm64'
       push-latest: false
+      size-budget: report
       free-disk: false
-      cache-scope: agentcc-gateway
+      # Own cache scope, reading the release's: an ad-hoc build of another
+      # branch must not replace the cache the next release reuses.
+      cache-scope: adhoc-agentcc-gateway
+      cache-from-extra: |
+        ghcr.io/future-agi/future-agi/build-cache:agentcc-gateway-amd64
+        ghcr.io/future-agi/future-agi/build-cache:agentcc-gateway-arm64
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

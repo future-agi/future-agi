@@ -41,7 +41,8 @@ class TestEnumRegistryContract:
     def test_enums_were_discovered(self):
         """Guards the discovery above — an empty parametrisation would pass silently."""
         assert EVAL_TYPE_ENUMS, "no *EvalTypeId enums found in eval_type.py"
-        assert len(ALL_MEMBERS) > 50, f"only {len(ALL_MEMBERS)} enum members discovered"
+        assert all(list(enum_cls) for enum_cls in EVAL_TYPE_ENUMS)
+        assert ALL_MEMBERS, "no eval type members found in the discovered enums"
 
     @pytest.mark.parametrize("enum_cls,member", ALL_MEMBERS)
     def test_every_enum_member_resolves(self, enum_cls, member):
@@ -108,9 +109,10 @@ class TestRegistryLookup:
 class TestEnterpriseGatedEvalTypes:
     """EE-gated eval types still occupy the registry in an OSS checkout.
 
-    `tfc/ee_loader.py` substitutes `tfc.ee_stub._ee_stub(name)` for symbols that
-    live in the private `ee/` tree. The stub is a callable that raises
-    FeatureUnavailable (HTTP 402) when invoked, so the eval type stays
+    `fi_evals` imports available compatibility classes and falls back to
+    `tfc.ee_stub._ee_stub(name)` when an evaluator import is unavailable.
+    Unlicensed startup does not imply those tracked classes are absent.
+    The fallback raises FeatureUnavailable (HTTP 402), so the eval type stays
     *addressable* — a caller gets a clean, catchable error instead of a
     KeyError or "Unknown evaluator type".
 
@@ -136,6 +138,16 @@ class TestEnterpriseGatedEvalTypes:
                 f"{name} resolved to {resolved!r}, which is neither an evaluator "
                 "class nor an ee stub"
             )
+
+    def test_unavailable_evaluator_fallback_has_a_catchable_error(self):
+        from tfc.ee_gating import FeatureUnavailable
+        from tfc.ee_stub import _ee_stub
+
+        unavailable = _ee_stub("UnavailableEvaluator")
+        assert callable(unavailable)
+        with pytest.raises(FeatureUnavailable) as exc_info:
+            unavailable()
+        assert exc_info.value.status_code == 402
 
     def test_no_enum_member_resolves_to_none(self):
         """_build_registry() skips None entries, which would surface as

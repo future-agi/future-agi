@@ -3,11 +3,10 @@
 ``run_eval()`` is the single point every evaluation in the platform flows
 through: registry lookup -> instance creation -> param preparation ->
 preprocessing -> execution -> formatting. Each collaborator had some coverage of
-its own; the wiring between them had none, so a step dropped or reordered would
-not have been caught.
+its own; these tests protect the values passed between those stages.
 
-These tests stub the collaborators and assert the wiring: what gets called, with
-what, in what order, and how the pieces land in the returned ``EvalResult``.
+These tests stub collaborators and assert the inputs they receive and how their
+outputs land in the returned ``EvalResult``, without fixing incidental call order.
 Nothing here needs a database, a model, or a live LLM.
 """
 
@@ -31,7 +30,7 @@ class _Template:
 
 @pytest.fixture
 def instance():
-    inst = MagicMock()
+    inst = MagicMock(spec=["run", "cost", "token_usage"])
     inst.run.return_value = {"result": True}
     inst.cost = {"total": 0.01}
     inst.token_usage = {"prompt": 5, "completion": 2}
@@ -115,16 +114,30 @@ class TestErrorPaths:
 
 
 class TestHappyPathComposition:
-    def test_each_stage_is_invoked_once(self, wired):
-        run_eval(EvalRequest(eval_template=_Template(), inputs={"text": "hi"}))
+    def test_evaluator_formatter_controls_the_returned_value(self, wired):
+        class EvaluatorWithFormatter:
+            def run(self, **params):
+                return {"result": True}
 
-        assert wired["get_eval_class"].call_count == 1
-        assert wired["create_eval_instance"].call_count == 1
-        assert wired["prepare_run_params"].call_count == 1
-        assert wired["preprocess_inputs"].call_count == 1
-        assert wired["instance"].run.call_count == 1
-        assert wired["extract_raw_result"].call_count == 1
-        assert wired["format_eval_value"].call_count == 1
+            def format_result(self, response, template):
+                return {
+                    "label": template.name,
+                    "reason": response["reason"],
+                    "formatted_by": "evaluator",
+                }
+
+        wired["create_eval_instance"].return_value = (
+            EvaluatorWithFormatter(),
+            "criteria",
+        )
+        result = run_eval(EvalRequest(eval_template=_Template(), inputs={}))
+
+        assert result.value == {
+            "label": "My Eval",
+            "reason": "because",
+            "formatted_by": "evaluator",
+        }
+        wired["format_eval_value"].assert_not_called()
 
     def test_registry_is_queried_with_the_templates_eval_type_id(self, wired):
         template = _Template(config={"eval_type_id": "Regex"})

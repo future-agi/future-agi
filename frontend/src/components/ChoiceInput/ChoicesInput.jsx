@@ -124,7 +124,7 @@ const ChoicesInput = ({
           }}
         >
           <Iconify
-            icon="ic:outline-plus"
+            icon="solar:add-linear"
             sx={{ mr: theme.spacing(0.625), width: "16px", height: "16px" }}
           />
           Add Choice
@@ -149,20 +149,8 @@ const ChoicesInput = ({
                       : theme.spacing(0),
                 }}
               >
-                <ListItemText
-                  primary={
-                    <Typography sx={{ fontWeight: 400, fontSize: 14 }}>
-                      {field.value}
-                    </Typography>
-                  }
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => remove(index)}
-                  sx={{
-                    padding: theme.spacing(0),
-                  }}
-                >
+                <ListItemText primary={field.value} />
+                <IconButton size="small" onClick={() => remove(index)}>
                   <SvgColor
                     src="/assets/icons/ic_delete.svg"
                     sx={{

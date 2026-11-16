@@ -5,11 +5,11 @@ import { getRandomId } from "src/utils/utils";
 const COL_TYPE_TO_CATEGORY = {
   SPAN_ATTRIBUTE: "attribute",
   SYSTEM_METRIC: "system",
-  EVALUATION_METRIC: "eval",
+  EVAL_METRIC: "eval",
   ANNOTATION: "annotation",
 };
 
-const toFormRows = (sourceFilters = []) => {
+export const toAddEvalsFormRows = (sourceFilters = []) => {
   const out = [];
   (sourceFilters || []).forEach((f) => {
     const field = f?.column_id;
@@ -34,12 +34,17 @@ const toFormRows = (sourceFilters = []) => {
         id: getRandomId(),
         property: isAttribute ? "attributes" : field,
         propertyId: field,
+        ...(f?.property_id || f?.registryId
+          ? { registryId: f.property_id || f.registryId }
+          : {}),
         fieldCategory: category,
         fieldLabel: field,
+        ...(cfg.col_type ? { apiColType: cfg.col_type } : {}),
         filterConfig: {
           filterType: cfg.filter_type === "number" ? "number" : "text",
           filterOp: cfg.filter_op || "equals",
           filterValue: v,
+          ...(cfg.col_type ? { colType: cfg.col_type } : {}),
         },
       });
     });
@@ -55,10 +60,19 @@ export function buildAddEvalsDraft({
   dateFilter,
   returnTo,
 }) {
-  const filters = [...toFormRows(mainFilters), ...toFormRows(extraFilters)];
+  const filters = [
+    ...toAddEvalsFormRows(mainFilters),
+    ...toAddEvalsFormRows(extraFilters),
+  ];
   const startDate =
     dateFilter?.dateFilter?.[0] ?? formatDate(sub(new Date(), { months: 12 }));
   const endDate = dateFilter?.dateFilter?.[1] ?? formatDate(endOfToday());
+  // The toolbar's own label is authoritative — passing it through spares the
+  // create page a guess it can only make on calendar-day granularity. An
+  // incoming window with no label is absolute; the fallback above is ours.
+  const datePreset = dateFilter?.dateFilter
+    ? (dateFilter?.dateOption ?? "Custom")
+    : "12M";
 
   const values = {
     name: "",
@@ -70,12 +84,14 @@ export function buildAddEvalsDraft({
     evalsDetails: [],
     startDate,
     endDate,
+    datePreset,
     runType: "historical",
   };
 
   const draftId = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   try {
-    localStorage.setItem(
+    const storage = globalThis.window?.localStorage ?? globalThis.localStorage;
+    storage?.setItem(
       `task-draft-${draftId}`,
       JSON.stringify({ savedAt: Date.now(), values }),
     );
