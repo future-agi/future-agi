@@ -8,11 +8,15 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from model_hub.models.develop_dataset import Dataset
+from simulate.models import AgentDefinition, EvidenceImport, HostedHarnessJob
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
+    evidence_dataset,
     evidence_project,
     import_bundle,
+    open_evidence_imports,
 )
 from simulate.selectors.held_back import (
     coding_agent_key,
@@ -27,6 +31,7 @@ from simulate.serializers.evidence_import import (
     EvidenceImportAddSerializer,
     EvidenceImportCreateSerializer,
     EvidenceImportDraftSerializer,
+    EvidenceImportListItemSerializer,
     EvidenceImportSerializer,
 )
 from simulate.serializers.harness_environment import (
@@ -68,8 +73,12 @@ from simulate.serializers.harness_job import (
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services.evidence_import import (
+    TranscriptInput,
     add_to_suite,
+    create_dataset_import,
     create_evidence_import,
+    create_transcript_import,
+    discard_evidence_import,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -91,7 +100,10 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.utils.workspace_scope import project_queryset_for_request
+from tracer.utils.workspace_scope import (
+    project_queryset_for_request,
+    project_workspace_scope_q,
+)
 
 
 def _touch_content(job):
@@ -496,16 +508,52 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         request_serializer=EvidenceImportCreateSerializer,
         responses={201: EvidenceImportSerializer},
         reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_evidence_imports",
     )
     @action(detail=True, methods=["post"], url_path="evidence-imports")
     def evidence_imports(self, request, pk=None):
-        """Freeze Observe sessions or calls as evidence for this environment's
-        tests; returns what each holds and lacks, and what redaction would
-        replace. Nothing is drafted or run."""
+        """Freeze Observe sessions or calls or dataset rows, or store transcripts
+        a person added, as evidence for this environment's tests; returns what
+        each holds and lacks, and what redaction replaces. Nothing is drafted or
+        run."""
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
         body = request.validated_data
+        if body["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT:
+            evidence_import = create_transcript_import(
+                environment=job,
+                transcripts=[
+                    TranscriptInput(one["name"], one["format"], one["text"])
+                    for one in body["transcripts"]
+                ],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        if body["source_kind"] == EvidenceImport.SourceKind.DATASET:
+            # The datasets the caller may read, scoped as Observe's projects are.
+            datasets = Dataset.no_workspace_objects.filter(
+                project_workspace_scope_q(request, project_prefix=""), deleted=False
+            )
+            dataset = evidence_dataset(datasets, job, body["dataset_id"])
+            if dataset is None:
+                raise NotFound("Dataset not found in this environment's workspace")
+            evidence_import, evidence = create_dataset_import(
+                environment=job,
+                dataset=dataset,
+                columns=DatasetColumns(**body["columns"]),
+                row_ids=[str(row_id) for row_id in body["ids"]],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+                status=status.HTTP_201_CREATED,
+            )
         project = evidence_project(
             project_queryset_for_request(request), job, body["project_id"]
         )
@@ -523,7 +571,26 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @validated_request(responses={200: EvidenceImportSerializer})
+    @validated_request(
+        responses={200: EvidenceImportListItemSerializer(many=True)},
+        request_methods=["GET"],
+        operation_id="simulate_api_harness-environments_list_evidence_imports",
+    )
+    @evidence_imports.mapping.get
+    def list_evidence_imports(self, request, pk=None):
+        """This environment's imports a person can still finish, newest first.
+        Read from what each import stores: no source is read again."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            EvidenceImportListItemSerializer(open_evidence_imports(job), many=True).data
+        )
+
+    @validated_request(
+        responses={200: EvidenceImportSerializer},
+        operation_id="simulate_api_harness-environments_evidence_import",
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -540,6 +607,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if evidence_import is None:
             raise NotFound("Evidence import not found")
         return Response(EvidenceImportSerializer(import_bundle(evidence_import)).data)
+
+    @swagger_auto_schema(
+        responses={204: "Discarded"},
+        operation_id="simulate_api_harness-environments_discard_evidence_import",
+    )
+    @evidence_import.mapping.delete
+    def discard_import(self, request, pk=None, import_id=None):
+        """Discard an import never added, and a transcript's stored text with it.
+        Of an import with added cases, only the cases not added are discarded."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        discard_evidence_import(evidence_import)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
         request_serializer=EvidenceImportDraftSerializer,

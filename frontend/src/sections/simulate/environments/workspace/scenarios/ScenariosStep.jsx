@@ -20,6 +20,7 @@ import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
 import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
+import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
 import {
@@ -116,13 +117,19 @@ export default function ScenariosStep({
   canRun = false,
   runBlockedReason,
 }) {
-  // An evidence import opened from Observe lands here as `?import=`.
+  // An evidence import opened from Observe, or a transcript added here, lands
+  // as `?import=`.
   const [searchParams, setSearchParams] = useSearchParams();
   const importId = searchParams.get(IMPORT_PARAM);
   const closeImport = () => {
     const next = new URLSearchParams(searchParams);
     next.delete(IMPORT_PARAM);
     setSearchParams(next, { replace: true });
+  };
+  const openImport = (id) => {
+    const next = new URLSearchParams(searchParams);
+    next.set(IMPORT_PARAM, id);
+    setSearchParams(next);
   };
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
@@ -540,7 +547,12 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
-                      {!locked && <ImportEvidenceButton />}
+                      {!locked && env?.id && (
+                        <ImportEvidenceButton
+                          envId={env.id}
+                          onImported={openImport}
+                        />
+                      )}
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
@@ -600,6 +612,9 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
+              {!locked && env?.id ? (
+                <DraftImports envId={env.id} onResume={openImport} />
+              ) : null}
               <PagedScenarioViews
                 pageData={pageData}
                 selection={sel}

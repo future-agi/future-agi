@@ -28899,6 +28899,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evidence-imports/": {
+      get: {
+        operationId: "simulate_api_harness-environments_list_evidence_imports",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/EvidenceImportListItem",
+            },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       post: {
         operationId: "simulate_api_harness-environments_evidence_imports",
         runtimeRequestValidation: true,
@@ -28928,6 +28946,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/EvidenceImport",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId:
+          "simulate_api_harness-environments_discard_evidence_import",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -64120,10 +64151,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id",
         "environment_id",
         "project_id",
+        "dataset_id",
         "agent_version_id",
         "source_kind",
         "created_at",
         "simulated",
+        "production",
         "drafting",
         "cases",
         "redaction",
@@ -64148,6 +64181,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        dataset_id: {
+          title: "Dataset id",
+          description: "A dataset import's dataset; null otherwise.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
         agent_version_id: {
           title: "Agent version id",
           type: "string",
@@ -64157,7 +64197,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call"],
+          enum: ["session", "call", "transcript", "dataset"],
         },
         created_at: {
           title: "Created at",
@@ -64168,6 +64208,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Simulated",
           description:
             "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+          type: "boolean",
+        },
+        production: {
+          title: "Production",
+          description:
+            "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
           type: "boolean",
         },
         drafting: {
@@ -64227,22 +64273,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvidenceImportCreate: {
-      required: ["project_id", "source_kind", "ids"],
+      required: ["source_kind"],
       type: "object",
       properties: {
-        project_id: {
-          title: "Project id",
-          type: "string",
-          format: "uuid",
-        },
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call"],
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        project_id: {
+          title: "Project id",
+          description: "Session and call imports: the Observe project.",
+          type: "string",
+          format: "uuid",
         },
         ids: {
           description:
-            "Session ids, or the trace ids of calls, in the order picked.",
+            "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
           type: "array",
           items: {
             type: "string",
@@ -64250,6 +64297,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           maxItems: 20,
           minItems: 1,
+        },
+        dataset_id: {
+          title: "Dataset id",
+          description: "Dataset imports: the dataset.",
+          type: "string",
+          format: "uuid",
+        },
+        columns: {
+          $ref: "#/definitions/EvidenceDatasetColumns",
+        },
+        transcripts: {
+          description: "Transcript imports: one case each, in this order.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceTranscriptInput",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        production: {
+          title: "Production",
+          description:
+            "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
+          type: "boolean",
         },
       },
     },
@@ -64277,6 +64348,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
             enum: ["failure", "success", "partial"],
           },
           default: {},
+        },
+      },
+    },
+    EvidenceImportListItem: {
+      required: [
+        "id",
+        "source_kind",
+        "source_name",
+        "source_available",
+        "case_count",
+        "added_count",
+        "status",
+        "created_at",
+        "can_discard",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        source_name: {
+          title: "Source name",
+          description:
+            "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source_available: {
+          title: "Source available",
+          description: "False once the Observe project or dataset was deleted.",
+          type: "boolean",
+        },
+        case_count: {
+          title: "Case count",
+          type: "integer",
+          minimum: 0,
+        },
+        added_count: {
+          title: "Added count",
+          description: "Cases already added to the suite.",
+          type: "integer",
+          minimum: 0,
+        },
+        status: {
+          title: "Status",
+          description:
+            "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
+          type: "string",
+          enum: ["waiting", "drafting", "drafted", "partly_added", "blocked"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        can_discard: {
+          title: "Can discard",
+          description:
+            "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+          type: "boolean",
         },
       },
     },
@@ -94755,7 +94894,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixLaunchScenario: {
-      required: ["key", "name", "passed", "failing_sub_goals"],
+      required: [
+        "key",
+        "name",
+        "passed",
+        "failing_sub_goals",
+        "evidence_import_id",
+      ],
       type: "object",
       properties: {
         key: {
@@ -94779,6 +94924,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        evidence_import_id: {
+          title: "Evidence import id",
+          description:
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -101565,6 +101718,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "id",
         "source_id",
+        "name",
         "status",
         "reason",
         "source_available",
@@ -101572,6 +101726,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scenario_name",
         "new_checks",
         "changed_since_import",
+        "also_from",
+        "duplicate_of",
         "trace_ids",
         "started_at",
         "ended_at",
@@ -101581,6 +101737,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tool_outputs",
         "starting_state",
         "labels",
+        "expected_outcome",
       ],
       type: "object",
       properties: {
@@ -101594,10 +101751,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        name: {
+          title: "Name",
+          description:
+            "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+          type: "string",
+        },
         status: {
           title: "Status",
           type: "string",
-          enum: ["pending", "unavailable", "drafted", "blocked", "added"],
+          enum: [
+            "pending",
+            "unavailable",
+            "drafted",
+            "blocked",
+            "added",
+            "discarded",
+            "duplicate",
+          ],
         },
         reason: {
           title: "Reason",
@@ -101606,7 +101777,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_available: {
           title: "Source available",
           description:
-            "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+            "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
           type: "boolean",
         },
         scenario_key: {
@@ -101631,9 +101802,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         changed_since_import: {
           title: "Changed since import",
           description:
-            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
           type: "boolean",
           "x-nullable": true,
+        },
+        also_from: {
+          title: "Also from",
+          description:
+            "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+          type: "integer",
+          minimum: 0,
+        },
+        duplicate_of: {
+          $ref: "#/definitions/EvidenceDuplicateOf",
         },
         trace_ids: {
           type: "array",
@@ -101671,6 +101852,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         labels: {
           $ref: "#/definitions/EvidenceLabels",
+        },
+        expected_outcome: {
+          $ref: "#/definitions/EvidenceExpectedOutcome",
         },
       },
     },
@@ -101714,6 +101898,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         suite: {
           $ref: "#/definitions/EvidenceDraftRef",
+        },
+      },
+    },
+    EvidenceDatasetColumns: {
+      description: "Dataset imports: the columns to read.",
+      required: ["conversation"],
+      type: "object",
+      properties: {
+        conversation: {
+          title: "Conversation",
+          description:
+            'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+          type: "string",
+          format: "uuid",
+        },
+        labels: {
+          description: "Columns read as the row's labels.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 10,
+        },
+        expected: {
+          title: "Expected",
+          description: "The column that says what should happen.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    EvidenceTranscriptInput: {
+      required: ["name", "format", "text"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          description:
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          type: "string",
+          maxLength: 120,
+          minLength: 1,
+        },
+        format: {
+          title: "Format",
+          description:
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          type: "string",
+          enum: ["json", "text", "csv"],
+        },
+        text: {
+          title: "Text",
+          description: "The transcript as pasted or uploaded.",
+          type: "string",
+          maxLength: 500000,
+          minLength: 1,
         },
       },
     },
@@ -123131,6 +123374,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       additionalProperties: true,
     },
+    EvidenceDuplicateOf: {
+      description:
+        "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+      required: ["import_id", "case_id", "scenario_name"],
+      type: "object",
+      properties: {
+        import_id: {
+          title: "Import id",
+          description: "The import holding the case.",
+          type: "string",
+          format: "uuid",
+        },
+        case_id: {
+          title: "Case id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description: "Its drafted scenario's title; blank until drafted.",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    EvidenceExpectedOutcome: {
+      description:
+        "What a dataset row's expected outcome column says should happen.",
+      required: ["status", "reason", "text"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+      },
+    },
     EvidenceLabels: {
       required: ["status", "reason", "labels"],
       type: "object",
@@ -123249,7 +123538,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         part: {
           title: "Part",
           type: "string",
-          enum: ["transcript", "tool_calls", "labels"],
+          enum: ["transcript", "tool_calls", "labels", "expected_outcome"],
         },
         index: {
           title: "Index",
@@ -133741,8 +134030,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         target: {
           title: "Target",
+          description: "row: a dataset row's label column.",
           type: "string",
-          enum: ["session", "trace", "span"],
+          enum: ["session", "trace", "span", "row"],
         },
       },
     },

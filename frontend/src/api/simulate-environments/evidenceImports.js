@@ -5,11 +5,19 @@ import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { refreshDrafts, refreshFollowers } from "./versions";
 
-// Observe sessions or calls frozen as evidence for an environment's tests, and
-// the review that drafts and adds them (simulate/serializers/evidence_import.py).
+// Observe sessions or calls or dataset rows frozen as evidence for an
+// environment's tests, or transcripts a person added, and the review that
+// drafts and adds them (simulate/serializers/evidence_import.py).
 
 // The backend takes 1 to 20 sources per import.
 export const MAX_EVIDENCE_SOURCES = 20;
+// The label columns one dataset import reads.
+export const MAX_LABEL_COLUMNS = 10;
+// The longest transcript the backend reads, in characters.
+export const MAX_TRANSCRIPT_CHARS = 500_000;
+// What one import keeps of its sources, in characters (MAX_IMPORT_CHARS).
+export const MAX_IMPORT_KEPT_CHARS = 60_000;
+export const TRANSCRIPT_NAME_CHARS = 120;
 // How often the review asks again while the builder drafts.
 const DRAFTING_POLL_MS = 10_000;
 
@@ -41,21 +49,59 @@ export const evidenceImportKey = (envId, importId) => [
   envId,
   importId,
 ];
-
-export const createEvidenceImport = async (
+// The environment's imports a person can still finish.
+export const evidenceImportsKey = (envId) => [
+  "harness-evidence-imports",
   envId,
-  { projectId, sourceKind, ids },
-) =>
-  (
-    await axios.post(importsPath(envId), {
-      project_id: projectId,
+];
+const refreshImports = (queryClient, envId) =>
+  queryClient.invalidateQueries({ queryKey: evidenceImportsKey(envId) });
+// Every import review of the environment: one import's change can move another's
+// cases, as a discard that makes another import's repeat the case to draft.
+const refreshReviews = (queryClient, envId) =>
+  queryClient.invalidateQueries({
+    queryKey: evidenceImportKey(envId).slice(0, 2),
+  });
+
+// An Observe import names its project and ids. A dataset import names its
+// dataset, row ids and columns ({conversation, labels, expected}); a transcript
+// import carries its transcripts ({name, format, text}). Both say whether the
+// person says they come from production.
+const createBody = ({
+  projectId,
+  datasetId,
+  sourceKind,
+  ids,
+  columns,
+  transcripts,
+  production,
+}) => {
+  if (sourceKind === "transcript")
+    return { source_kind: sourceKind, transcripts, production };
+  if (sourceKind === "dataset")
+    return {
       source_kind: sourceKind,
+      dataset_id: datasetId,
       ids,
-    })
-  ).data;
+      columns,
+      production,
+    };
+  return { project_id: projectId, source_kind: sourceKind, ids };
+};
+
+export const createEvidenceImport = async (envId, body) =>
+  (await axios.post(importsPath(envId), createBody(body))).data;
 
 export const getEvidenceImport = async (envId, importId) =>
   (await axios.get(importPath(envId, importId))).data;
+
+export const listEvidenceImports = async (envId) =>
+  (await axios.get(importsPath(envId))).data;
+
+// Nothing of it added: the import goes, and a transcript's stored text with
+// it. Some of it added: only the cases not added go.
+export const discardEvidenceImport = async (envId, importId) =>
+  (await axios.delete(importPath(envId, importId))).data;
 
 export const draftEvidenceCases = async (envId, importId, { caseIds, shows }) =>
   (await axios.post(draftPath(envId, importId), { case_ids: caseIds, shows }))
@@ -112,6 +158,7 @@ export function useCreateEvidenceImport() {
     mutationFn: ({ envId, ...body }) => createEvidenceImport(envId, body),
     onSuccess: (data, { envId }) => {
       queryClient.setQueryData(evidenceImportKey(envId, data.id), data);
+      refreshImports(queryClient, envId);
     },
   });
 }
@@ -123,6 +170,7 @@ export function useDraftEvidenceCases(envId, importId) {
     mutationFn: (body) => draftEvidenceCases(envId, importId, body),
     onSuccess: (data) => {
       queryClient.setQueryData(evidenceImportKey(envId, importId), data);
+      refreshImports(queryClient, envId);
     },
   });
 }
@@ -154,11 +202,37 @@ export function useAddEvidenceCases(envId, importId) {
       );
       refreshDrafts(queryClient, envId);
       refreshFollowers(queryClient, envId);
+      refreshImports(queryClient, envId);
     },
     onError: (error) => {
       const status = error?.statusCode ?? error?.response?.status;
       if (status >= 400 && status < 500) pending.current = null;
       if (error?.error === "draft_changed") refreshDrafts(queryClient, envId);
+    },
+  });
+}
+
+// Read from what each import stores, so it is cheap to ask again.
+export function useEvidenceImports(envId) {
+  return useQuery({
+    queryKey: evidenceImportsKey(envId),
+    queryFn: () => listEvidenceImports(envId),
+    enabled: Boolean(envId),
+    meta: { errorHandled: true },
+  });
+}
+
+export function useDiscardEvidenceImport(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (importId) => discardEvidenceImport(envId, importId),
+    onSuccess: (_data, importId) => {
+      queryClient.removeQueries({
+        queryKey: evidenceImportKey(envId, importId),
+      });
+      refreshReviews(queryClient, envId);
+      refreshImports(queryClient, envId);
     },
   });
 }

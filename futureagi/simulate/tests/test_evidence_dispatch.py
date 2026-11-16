@@ -29,12 +29,20 @@ from simulate.models import (
 from simulate.selectors.runs import user_environment_runs
 from simulate.services import evidence_drafts
 from simulate.services.harness_versioning import drafts
-from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    create_hosted_job,
+    delete_environment,
+)
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
 )
 from simulate.services.hosted_harness_gateway import rewrite_conversation_scenarios
+from simulate.tests.test_evidence_datasets import EXPECTED
+from simulate.tests.test_evidence_datasets import columns as columns
+from simulate.tests.test_evidence_datasets import dataset as dataset
+from simulate.tests.test_evidence_datasets import rows as rows
 from simulate.tests.test_evidence_drafts import (  # noqa: F401 - fixtures
     INJECTED,
     _end_turn,
@@ -154,8 +162,9 @@ class TestStart:
 
         assert refused.value.code == "evidence_drafting_busy"
 
-    def test_only_waiting_cases_can_be_drafted(self, cases, user, scheduled):
-        EvidenceImportCase.objects.filter(id=cases[0].id).update(status="blocked")
+    @pytest.mark.parametrize("state", ["blocked", "discarded"])
+    def test_only_waiting_cases_can_be_drafted(self, cases, user, scheduled, state):
+        EvidenceImportCase.objects.filter(id=cases[0].id).update(status=state)
 
         with pytest.raises(HostedHarnessError) as refused:
             _start(cases, user)
@@ -612,8 +621,8 @@ def test_a_simulator_projects_calls_are_never_called_production(
     assert "from the simulated calls" in content
     assert "not production" in content
     assert "production evidence" not in content
-    assert evidence_drafts.SHOWN_SIMULATED["failure"] in content
-    assert evidence_drafts.SHOWN_SIMULATED["success"] in content
+    assert evidence_drafts.SHOWN_NOT_PRODUCTION["failure"] in content
+    assert evidence_drafts.SHOWN_NOT_PRODUCTION["success"] in content
     assert "regression" not in content
 
 
@@ -659,6 +668,160 @@ def _draft(environment, cases, user):
             {"case_ids": [str(case.id) for case in cases]},
             format="json",
         )
+
+
+@pytest.mark.parametrize(
+    "production, opening",
+    [
+        (
+            True,
+            "Draft one regression scenario for each case below from the transcripts",
+        ),
+        (False, "did not say they come from production"),
+    ],
+)
+def test_a_transcript_import_is_drafted_as_the_person_said(
+    environment, user, scheduled, production, opening
+):
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput(
+                "Acme escalation", "text", "User: Refund me\nAgent: Done twice."
+            )
+        ],
+        production=production,
+        user=user,
+    )
+    [case] = made.cases.all()
+    conversation = evidence_drafts.start_drafting(
+        made,
+        [str(case.id)],
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(case.id): "failure"},
+    )
+
+    content = _command(conversation).content
+    assert opening in content
+    assert "(the transcript transcript-1 in the evidence)" in content
+    asks = evidence_drafts.SHOWN if production else evidence_drafts.SHOWN_NOT_PRODUCTION
+    assert asks["failure"] in content
+    assert ("regression" in content) is production
+    # The person's name for it stays out of the turn; the sandbox reads the
+    # stored, redacted text, never Observe.
+    assert "Acme escalation" not in content
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence",
+        side_effect=AssertionError("Observe was read"),
+    ):
+        document = evidence_drafts.sandbox_evidence(conversation).decode()
+    assert "[turn 2] agent: Done twice." in document
+    assert "transcripts a person added" in document
+
+
+@pytest.mark.parametrize(
+    "production, opening",
+    [
+        (
+            True,
+            "Draft one regression scenario for each case below from the dataset rows",
+        ),
+        (False, "did not say they come from production"),
+    ],
+)
+def test_a_dataset_import_is_drafted_from_its_expected_outcome(
+    environment, user, scheduled, dataset, columns, rows, production, opening
+):
+    """The one place the expected outcome's weight against policy is pinned: the
+    builder writes the expected behaviour from the row, and policy wins a
+    conflict."""
+    from simulate.pydantic_schemas.evidence_import import DatasetColumns
+    from simulate.services.evidence_import import create_dataset_import
+
+    made, _ = create_dataset_import(
+        environment=environment,
+        dataset=dataset,
+        columns=DatasetColumns(
+            conversation=columns["chat"].id,
+            labels=[columns["intent"].id],
+            expected=columns["expected"].id,
+        ),
+        row_ids=[str(rows[0].id)],
+        production=production,
+        user=user,
+    )
+    [case] = made.cases.all()
+    conversation = evidence_drafts.start_drafting(
+        made,
+        [str(case.id)],
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(case.id): "failure"},
+    )
+
+    content = _command(conversation).content
+    assert opening in content
+    assert f"(the dataset row {rows[0].id} in the evidence)" in content
+    assert evidence_drafts.EXPECTED_OUTCOME_RULE in content
+    assert "the policy wins" in content
+    assert ("regression" in content) is production
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence",
+        side_effect=AssertionError("Observe was read"),
+    ):
+        document = evidence_drafts.sandbox_evidence(conversation).decode()
+    assert f"[expected outcome]: {EXPECTED}" in document
+    assert "rows a person picked from dataset" in document
+
+
+def test_only_a_dataset_turn_carries_the_expected_outcome_rule(cases, user, scheduled):
+    conversation = _start(cases, user)
+
+    assert evidence_drafts.EXPECTED_OUTCOME_RULE not in _command(conversation).content
+
+
+class TestDeletedWhileDrafting:
+    """The environment's imports go with it. One still drafting keeps its drafting
+    chat, sandbox and job until they are deleted too, though the import is gone."""
+
+    def test_deleting_the_environment_deletes_the_drafting_chat(
+        self, environment, cases, user, scheduled, django_capture_on_commit_callbacks
+    ):
+        conversation = _start(cases, user)
+        _lease(conversation)
+        with (
+            patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            delete_environment(environment)
+        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+
+        with patch(
+            "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
+        ) as gateway:
+            evidence_drafts.forget(str(cases[0].evidence_import_id))
+
+        gateway.return_value._delete_chat_sandbox.assert_called_once()
+        assert not any(_gone(conversation).values())
+
+    def test_the_sweep_deletes_a_deleted_imports_drafting_chat(
+        self, environment, cases, user, scheduled
+    ):
+        conversation = _start(cases, user)
+        with patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"):
+            delete_environment(environment)
+
+        with patch("simulate.services.hosted_harness_gateway.HostedHarnessGateway"):
+            swept = evidence_drafts.sweep()
+
+        assert swept["forgotten"] == 1
+        assert not any(_gone(conversation).values())
 
 
 @pytest.fixture

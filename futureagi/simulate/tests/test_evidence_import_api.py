@@ -9,9 +9,10 @@ in ``tracer/tests/test_observe_evidence.py``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -205,11 +206,13 @@ class TestCreate:
             "id",
             "environment_id",
             "project_id",
+            "dataset_id",
             "agent_version_id",
             "source_kind",
             "created_at",
             "drafting",
             "simulated",
+            "production",
             "cases",
             "redaction",
         }
@@ -220,6 +223,7 @@ class TestCreate:
             == {
                 "id",
                 "source_id",
+                "name",
                 "status",
                 "reason",
                 "source_available",
@@ -236,10 +240,19 @@ class TestCreate:
                 "tool_outputs",
                 "starting_state",
                 "labels",
+                "expected_outcome",
+                "also_from",
+                "duplicate_of",
             }
         )
         for part in ("tool_inputs", "tool_outputs", "starting_state"):
             assert set(case[part]) == set(missing[part]) == {"status", "reason"}
+        assert (
+            set(case["expected_outcome"])
+            == set(missing["expected_outcome"])
+            == {"status", "reason", "text"}
+        )
+        assert (case["also_from"], case["duplicate_of"]) == (0, None)
         assert set(case["transcript"]) == {"status", "reason", "turns"}
         assert set(case["transcript"]["turns"][0]) == {
             "role",
@@ -272,6 +285,7 @@ class TestCreate:
         assert missing["transcript"]["turns"] == []
         assert missing["tool_calls"]["calls"] == []
         assert missing["labels"]["labels"] == []
+        assert missing["expected_outcome"]["text"] == ""
         assert set(body["redaction"]) == {"method", "reason", "findings", "total"}
         assert set(body["redaction"]["findings"][0]) == {
             "case_id",
@@ -543,6 +557,25 @@ class TestBudget:
             and source.labels_truncated
             for source in evidence.values()
         )
+
+
+def test_an_observe_sources_fingerprint_is_the_one_it_was_imported_with():
+    """Dataset rows added an expected outcome to the evidence. An Observe source,
+    which has none, keeps the fingerprint its import stored before that, so an
+    unchanged session never reads as changed after the upgrade."""
+    evidence = _evidence()
+    before = {
+        field: value
+        for field, value in asdict(evidence).items()
+        if field not in ("expected", "expected_truncated")
+    }
+    stored = hashlib.sha256(
+        json.dumps(before, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+    assert evidence_digest(evidence) == stored
+    # An expected outcome is part of what a row holds: changing it is a change.
+    assert evidence_digest(replace(evidence, expected="Refuse.")) != stored
 
 
 class TestReread:
@@ -824,7 +857,11 @@ class TestEvidenceDocument:
         self, client, environment, project
     ):
         other = str(uuid.uuid4())
-        found = {SESSION: _evidence(), other: _evidence(other)}
+        # Another conversation: the same one would be proposed once, as one case.
+        found = {
+            SESSION: _evidence(),
+            other: _evidence(other, turns=_evidence().turns[:1]),
+        }
         evidence_import, made = self._import(
             client, environment, project, found, ids=(SESSION, other, MISSING)
         )
