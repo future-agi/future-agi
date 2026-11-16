@@ -3098,6 +3098,33 @@
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 
+### SIM-E2E-009 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
+
+**Goal:** A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker
+
+**Spec:** `flows/simulate/participants-table.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed chat call with a stored Participants record and trial world changes
+2. open the call from its run
+3. open the Participants tab
+4. open the first hand-off row and Open in Traces, then close the trace
+5. open the World changes tab
+
+**Backend state verified:**
+
+- the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
+
+**Browser observations:**
+
+- one table section per turn, each with its own request and only its own hand-off
+- the unplaced hand-off carries the parent unknown chip, and only that one
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
+- World changes lists the worker's refused attempt with its reason
+
 ### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
 **Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
