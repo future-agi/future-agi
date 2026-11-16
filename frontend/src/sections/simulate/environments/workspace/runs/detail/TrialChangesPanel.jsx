@@ -311,6 +311,7 @@ function WorldChanges({ trialState }) {
 
 WorldChanges.propTypes = {
   trialState: PropTypes.shape({
+    end_state_url: PropTypes.string,
     state_changes: PropTypes.arrayOf(PropTypes.object),
     decisions: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
