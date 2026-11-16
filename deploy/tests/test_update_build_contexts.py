@@ -19,11 +19,13 @@ from deploy.tests.update_e2e.build_contexts import export_probe_image  # noqa: E
 
 PRIVATE_RULE = '**/.futureagi-updates/'
 # bin/lib/build-local.{sh,ps1}, bin/e2e, Compose build contexts and release/base
-# workflows. The E2E backend overlay is the one Dockerfile outside its context.
+# workflows. The E2E backend and frontend overlays are the Dockerfiles outside
+# their context: bin/e2e and e2e-ci.yml build both from the repository root.
 CONTEXTS = ('.', 'futureagi', 'frontend', 'agentcc-gateway', 'fi-collector',
             'futureagi/model_serving', 'futureagi/code-executor', 'deploy/standalone',
             'deploy/tests/update_e2e/fakeapp')
-CONTEXT_OVERRIDES = {'e2e/stack/backend/Dockerfile': '.'}
+CONTEXT_OVERRIDES = {'e2e/stack/backend/Dockerfile': '.',
+                     'e2e/stack/frontend/Dockerfile': '.'}
 
 
 class ProbeExportTests(unittest.TestCase):

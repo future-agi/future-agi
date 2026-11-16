@@ -1,4 +1,4 @@
-"""URL context and SSRF regressions with mocked DNS and network boundaries."""
+"""URL context regressions with mocked DNS and network boundaries."""
 
 import gzip
 import io

@@ -1,6 +1,7 @@
 """Invalidate OrgApiKey snapshots without coupling model saves to API views."""
 
 import hashlib
+from typing import Any
 
 import redis
 import structlog
@@ -22,7 +23,7 @@ def publish_key_revocation(api_key: str, secret_key: str) -> None:
     """
     try:
         cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
-        limits = {
+        limits: dict[str, Any] = {
             "socket_connect_timeout": getattr(
                 settings, "REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS", 1.0
             ),
