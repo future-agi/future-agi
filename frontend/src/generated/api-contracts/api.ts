@@ -1145,6 +1145,7 @@ import type {
   SDKConfigureEvaluationsResponseApi,
   SDKErrorResponseApi,
   SDKEvalTemplateResponseApi,
+  SDKEvaluationDenialResponseApi,
   SDKGetEvalsResponseApi,
   SDKSimulationAnalyticsResponseApi,
   SDKSimulationMetricsResponseApi,
@@ -19065,7 +19066,10 @@ export const getApiHealthClickhouseListUrl = () => {
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -20065,9 +20069,14 @@ export type falconAiFilesUploadCreateResponse403 = {
   status: 403;
 };
 
+export type falconAiFilesUploadCreateResponse503 = {
+  data: FalconErrorResponseApi;
+  status: 503;
+};
+
 export type falconAiFilesUploadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 503>;
 };
 
 export type falconAiFilesUploadCreateResponseSuccess =
@@ -20077,6 +20086,7 @@ export type falconAiFilesUploadCreateResponseSuccess =
 export type falconAiFilesUploadCreateResponseError = (
   | falconAiFilesUploadCreateResponse400
   | falconAiFilesUploadCreateResponse403
+  | falconAiFilesUploadCreateResponse503
   | falconAiFilesUploadCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -38262,6 +38272,11 @@ export type modelHubEvalPlaygroundCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubEvalPlaygroundCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubEvalPlaygroundCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -38277,6 +38292,11 @@ export type modelHubEvalPlaygroundCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubEvalPlaygroundCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubEvalPlaygroundCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -38284,7 +38304,10 @@ export type modelHubEvalPlaygroundCreateResponse500 = {
 
 export type modelHubEvalPlaygroundCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubEvalPlaygroundCreateResponseSuccess =
@@ -38293,9 +38316,11 @@ export type modelHubEvalPlaygroundCreateResponseSuccess =
   };
 export type modelHubEvalPlaygroundCreateResponseError = (
   | modelHubEvalPlaygroundCreateResponse400
+  | modelHubEvalPlaygroundCreateResponse402
   | modelHubEvalPlaygroundCreateResponse403
   | modelHubEvalPlaygroundCreateResponse404
   | modelHubEvalPlaygroundCreateResponse409
+  | modelHubEvalPlaygroundCreateResponse429
   | modelHubEvalPlaygroundCreateResponse500
   | modelHubEvalPlaygroundCreateResponseDefault
 ) & {
@@ -54033,6 +54058,11 @@ export type modelHubTestEvaluationCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubTestEvaluationCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubTestEvaluationCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -54048,6 +54078,11 @@ export type modelHubTestEvaluationCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubTestEvaluationCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubTestEvaluationCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -54055,7 +54090,10 @@ export type modelHubTestEvaluationCreateResponse500 = {
 
 export type modelHubTestEvaluationCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubTestEvaluationCreateResponseSuccess =
@@ -54064,9 +54102,11 @@ export type modelHubTestEvaluationCreateResponseSuccess =
   };
 export type modelHubTestEvaluationCreateResponseError = (
   | modelHubTestEvaluationCreateResponse400
+  | modelHubTestEvaluationCreateResponse402
   | modelHubTestEvaluationCreateResponse403
   | modelHubTestEvaluationCreateResponse404
   | modelHubTestEvaluationCreateResponse409
+  | modelHubTestEvaluationCreateResponse429
   | modelHubTestEvaluationCreateResponse500
   | modelHubTestEvaluationCreateResponseDefault
 ) & {
@@ -55777,6 +55817,16 @@ export type sdkApiV1EvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1EvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1EvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1EvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -55784,7 +55834,7 @@ export type sdkApiV1EvalCreateResponse500 = {
 
 export type sdkApiV1EvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1EvalCreateResponseSuccess =
@@ -55793,6 +55843,8 @@ export type sdkApiV1EvalCreateResponseSuccess =
   };
 export type sdkApiV1EvalCreateResponseError = (
   | sdkApiV1EvalCreateResponse400
+  | sdkApiV1EvalCreateResponse402
+  | sdkApiV1EvalCreateResponse429
   | sdkApiV1EvalCreateResponse500
   | sdkApiV1EvalCreateResponseDefault
 ) & {
@@ -56121,6 +56173,16 @@ export type sdkApiV1NewEvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1NewEvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1NewEvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1NewEvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -56128,7 +56190,7 @@ export type sdkApiV1NewEvalCreateResponse500 = {
 
 export type sdkApiV1NewEvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1NewEvalCreateResponseSuccess =
@@ -56137,6 +56199,8 @@ export type sdkApiV1NewEvalCreateResponseSuccess =
   };
 export type sdkApiV1NewEvalCreateResponseError = (
   | sdkApiV1NewEvalCreateResponse400
+  | sdkApiV1NewEvalCreateResponse402
+  | sdkApiV1NewEvalCreateResponse429
   | sdkApiV1NewEvalCreateResponse500
   | sdkApiV1NewEvalCreateResponseDefault
 ) & {
