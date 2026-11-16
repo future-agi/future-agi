@@ -20,7 +20,7 @@ export default function AssistProposal({ proposal, beforeFiles, isStale, applyin
         <Typography variant="s3" color="text.secondary">Private · saved draft r{proposal.baseRevision}</Typography>
       </Stack>
       {isStale && <Alert severity="warning">The draft changed after this suggestion. Review a new preview; this proposal will not replace your later edits.</Alert>}
-      {proposal.kind === 'description' && <Alert severity="info">Suggested from these examples, not verified improvement. Test fresh requests before promoting. The {proposal.exposedCaseIds.length} selected examples are now marked as exposed to assistance.</Alert>}
+      {proposal.kind === 'description' && <Alert severity="info">Suggested from these examples, not verified improvement. Test fresh requests before promoting. The {proposal.exposedCaseIds.length} selected {proposal.exposedCaseIds.length === 1 ? 'example is' : 'examples are'} now marked as exposed to assistance.</Alert>}
       {proposal.missingInformation.length > 0 && (
         <Section title="Missing facts to resolve" description="Questions and TODOs are not verified policy.">
           <Box component="ul" sx={{ m: 0, pl: 2 }}>

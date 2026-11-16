@@ -125,6 +125,27 @@ export function useContextDraftFile(contextId, revision, path, inventory) {
   return useSkillV11Query({ parts: contextParts(contextId, 'compiled-file', revision, inventory?.digest, path, file?.sha256), enabled: Boolean(file), load: (config) => readContextText({ contextId, revision, path, expectedDigest: inventory.digest, expectedSha256: file.sha256, config }) });
 }
 
+// Names for a small release impact (three apps or fewer), from the Connected apps rows of the same
+// bindings. Display only and best effort: a failed, partial or unmatched read returns null, so the
+// summary keeps its counts. It never changes what the review covers, its fingerprint or completeness.
+const IMPACT_NAME_LIMIT = 3;
+async function loadImpactApps(contextId, impact, config) {
+  const bindings = impact?.bindings || [];
+  if (!bindings.length || bindings.length > IMPACT_NAME_LIMIT || impact.more_available) return null;
+  if (!ready('/model-hub/skills/contexts/{context_id}/consumers/')) return null;
+  try {
+    const page = skillV11Result(await axios.get(apiPath('/model-hub/skills/contexts/{context_id}/consumers/', { context_id: contextId }), { ...config, params: { page: 1, window_days: 7 } }));
+    const rows = new Map((page?.results || []).map((row) => [row?.binding?.id, row]));
+    const apps = bindings.map((binding) => {
+      const row = rows.get(binding.id);
+      return row?.binding?.name ? { id: binding.id, name: row.binding.name, selector: binding.selector, reported: row.observation_age_seconds != null } : null;
+    });
+    return apps.every(Boolean) ? apps : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadContextReview(contextId, revision, config, published = null) {
   const { snapshot, origin, head } = await loadContextComparison(contextId, revision, config, published);
   const textCache = new Map();
@@ -144,7 +165,9 @@ export async function loadContextReview(contextId, revision, config, published =
     try { dependencyChanges = await loadAcceptedDependencyComparison(contextId, snapshot.changes.from, published.target_version, snapshot.candidate.digest, config); }
     catch { dependencyError = true; }
   }
-  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, headChanges, dependencyChanges, dependencyError, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: { ...snapshot.impact, moreAvailable: snapshot.impact.more_available }, complete: !dependencyError };
+  // Only a label move names the apps it affects; a draft review keeps the counts alone.
+  const apps = published ? await loadImpactApps(contextId, snapshot.impact, config) : null;
+  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, changesFrom: snapshot.changes.from ?? null, headChanges, dependencyChanges, dependencyError, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: { ...snapshot.impact, moreAvailable: snapshot.impact.more_available, ...(apps ? { apps } : {}) }, complete: !dependencyError };
 }
 export function usePreviewContextRelease(contextId) {
   return useSkillV11Mutation({ send: (input, config) => loadContextReview(contextId, input.revision, config) });

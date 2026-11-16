@@ -21,8 +21,8 @@ const repair = {
 describe("application verification headline", () => {
   it("speaks about a repair only when the run carried a recorded failure", () => {
     expect(nativeConclusion({ candidate: 2, passed: 3, total: 3, result: { reproduction: "not_requested", repair_verified: false } })).toBe("v2 passed 3 of 3 cases.");
-    expect(nativeConclusion({ candidate: 2, reference: 1, passed: 1, total: 1, result: { reproduction: "reproduced", repair_verified: true } })).toBe("Repair verified: v2 passed 1 of 1 cases; the recorded failure reproduced on v1.");
-    expect(nativeConclusion({ candidate: 2, passed: 0, total: 1, result: { reproduction: "not_reproduced", repair_verified: false } })).toBe("Repair not verified: v2 passed 0 of 1 cases; the recorded failure did not reproduce.");
+    expect(nativeConclusion({ candidate: 2, reference: 1, passed: 1, total: 1, result: { reproduction: "reproduced", repair_verified: true } })).toBe("Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1.");
+    expect(nativeConclusion({ candidate: 2, passed: 0, total: 1, result: { reproduction: "not_reproduced", repair_verified: false } })).toBe("Repair not verified: v2 passed 0 of 1 case; the recorded failure did not reproduce.");
     expect(nativeConclusion({ decision: "hold" })).toBe("Hold this release.");
   });
   it("names failed checks per version and never calls ungraded work a pass", () => {
@@ -30,7 +30,7 @@ describe("application verification headline", () => {
     expect(nativeCaseLines([cell("candidate", 7, { answer: "unverifiable" })])[0].text).toBe("v7 not fully graded");
     expect(nativeCaseLines([cell("candidate", 7, {}, "error")])[0].text).toBe("v7 not fully graded");
     expect(nativeSummaryConclusion({ ...repair, cases: [cell("candidate", 7, { answer: "not_graded" }), repair.cases[1]], result: { ...repair.result, repair_verified: false } }))
-      .toBe("Repair not verified: v7 passed 0 of 1 cases; the recorded failure reproduced on v4.");
+      .toBe("Repair not verified: v7 passed 0 of 1 case; the recorded failure reproduced on v4.");
     expect(nativeSummaryConclusion({ ...repair, result: null })).toBeNull();
   });
 });
@@ -40,7 +40,7 @@ describe("review packet evidence", () => {
     render(<MemoryRouter><ReleaseReviewBody packet={packet} changes={changes} capabilities={capability} summaries={[repair]} /></MemoryRouter>);
     // The per-case lines are one click behind the headline.
     fireEvent.click(screen.getByRole("button", { name: "1 case" }));
-    const headline = screen.getByText("Repair verified: v7 passed 1 of 1 cases; the recorded failure reproduced on v4.");
+    const headline = screen.getByText("Repair verified: v7 passed 1 of 1 case; the recorded failure reproduced on v4.");
     expect(headline).toBeVisible();
     expect(screen.getByText("Blender refund refunded shipping: v7 passed every check · v4 failed: Business tool")).toBeVisible();
     // The row states the outcome once; exact grading counts and the evidence ID are read in Inspect.
@@ -65,7 +65,7 @@ describe("review packet evidence", () => {
 describe("application evidence row (UX iteration 5, REV3)", () => {
   const rowOf = (summary) => {
     render(<MemoryRouter><ReleaseReviewBody packet={packet} changes={changes} capabilities={capability} summaries={[summary]} /></MemoryRouter>);
-    return within(screen.getByText(/passed \d+ of \d+ cases/).closest("tr"));
+    return within(screen.getByText(/passed \d+ of \d+ cases?/).closest("tr"));
   };
   it("states a failing run as one badge and keeps the case lines collapsed until asked", () => {
     const failing = { ...repair, cases: [cell("candidate", 7, { tools: "fail" }), cell("reference", 4)], result: { state: "needs_changes", reproduction: "not_requested", repair_verified: false } };

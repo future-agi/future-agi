@@ -45,7 +45,7 @@ export async function prepareReleaseReview(input, config) {
   const current = skillV11Result(await axios.post(previewPath(), body, config));
   if (!inspected.complete || inspected.candidateDigest !== raw.packet.candidate_digest || current.fingerprint !== raw.fingerprint) throw new Error('Review changed while reading. Prepare a new packet explicitly.');
   return { raw, preview: { packet: mapReleasePacket(raw.packet), fingerprint: raw.fingerprint, current: true },
-    review: { ...inspection, complete: true, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } };
+    review: { ...inspection, complete: true, changes: inspected.originChanges, changesFrom: inspected.changesFrom, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } };
 }
 export function usePrepareReleaseReview() {
   return useSkillV11Mutation({ send: prepareReleaseReview });

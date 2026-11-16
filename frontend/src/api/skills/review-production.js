@@ -34,7 +34,7 @@ export async function loadSkillReview(skillId, packet, config) {
   }
   const label = skill.labels.find((item) => item.name === packet.transition.label);
   return {
-    complete: true, candidateDigest: candidate.digest, originChanges: changes, checks: mapChecks(candidate.checks),
+    complete: true, candidateDigest: candidate.digest, originChanges: changes, changesFrom: packet.transition.expected_version, checks: mapChecks(candidate.checks),
     // Leaf packets have no context-binding fleet inventory. Never invent zero
     // consumers from the existence of an impact fingerprint.
     impact: null,
@@ -155,7 +155,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
             // Context comparison uses the current pointer. Never present it as
             // this renewal's diff if that pointer moved during the read.
             const matchesBaseline = next.subjectKind === 'skill' || (label?.version ?? null) === next.transition.expectedVersion;
-            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { ...review, complete: false, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
+            if (inspected.candidateDigest === next.candidateDigest && matchesBaseline) review = { ...review, complete: false, changes: inspected.originChanges, changesFrom: inspected.changesFrom, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks };
           } catch { /* Read-only detail is optional. Renewal remains explicit. */ }
           return { request: { id: requestId, revision: renewal.revision, status: renewal.status, name, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, preview: { packet: renewal.packet, fingerprint: renewal.fingerprint, current: false }, review, renewalRequired: error.code || 'evidence_expired', canExecute: false };
         }
@@ -201,7 +201,7 @@ export async function loadReleaseRequest(requestId, contextId, config, rereadAft
     return {
       request: mapRequest({ ...raw, subject_kind: packet.subject_kind }),
       preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(!staleCode && inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current?.fingerprint === raw.fingerprint) },
-      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } : undefined,
+      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, changesFrom: inspected.changesFrom, dependencyChanges: inspected.dependencyChanges, dependencyError: inspected.dependencyError, checks: inspected.checks, impact: inspected.impact } : undefined,
       canExecute, staleCode,
     };
 }

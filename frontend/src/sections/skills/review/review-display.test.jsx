@@ -136,6 +136,28 @@ const impact = { following: 2, pinned: 1, unobserved: 0, moreAvailable: false };
 const emptyChecks = { items: [], summary: { errors: 0, warnings: 0 } };
 const summaryRows = () => within(screen.getByLabelText('Release summary'));
 
+it('heads the release diff with the subject\'s own versions, never a bare "Production"', () => {
+  const file = [{ path: 'AGENTS.md', status: 'modified', fromText: 'a', toText: 'b' }];
+  const view = render(<ReleaseReviewBody packet={summaryPacket} changes={file} changesFrom={1} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
+  expect(screen.getByRole('columnheader', { name: 'In production (context v1)' })).toBeVisible();
+  expect(screen.getByRole('columnheader', { name: 'This release (context v2)' })).toBeVisible();
+  expect(screen.queryByRole('columnheader', { name: 'Production' })).not.toBeInTheDocument();
+  view.unmount();
+  // A skill's own diff names the skill version; an unknown base names only the label.
+  render(<ReleaseReviewBody packet={packet} changes={file} checks={emptyChecks} capabilities={capabilities} />);
+  expect(screen.getByRole('columnheader', { name: 'In production' })).toBeVisible();
+  expect(screen.getByRole('columnheader', { name: 'This release (v2)' })).toBeVisible();
+});
+
+it('names the affected apps in the summary and keeps the per-app counts one click away', () => {
+  const apps = [{ id: 'b2', name: 'acme-support application', selector: { version: 2 }, reported: false }, { id: 'b1', name: 'acme-support production agent', selector: { label: 'production' }, reported: true }];
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={{ following: 1, pinned: 1, unobserved: 1, moreAvailable: false, apps }} />);
+  expect(summaryRows().getByText("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet.")).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /Apps affected/ }));
+  expect(screen.getByText(/1 follower · 1 intentional pin · 1 application without observations/)).toBeVisible();
+  expect(screen.getByText('impact-fp')).toBeInTheDocument();
+});
+
 it('states evidence, impact, permissions and files once in a key/value table, with the hashes inside What was compared and Technical details', () => {
   render(<ReleaseReviewBody packet={summaryPacket} changes={[{ path: 'AGENTS.md', status: 'modified', fromText: 'a', toText: 'b' }]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
   ['Evidence', 'Who is affected', 'Permissions', 'Files'].forEach((label) => expect(summaryRows().getByText(label, { selector: 'dt' })).toBeVisible());
@@ -143,7 +165,7 @@ it('states evidence, impact, permissions and files once in a key/value table, wi
   expect(summaryRows().getByText('1 file changed · 0 linked skills changed')).toBeVisible();
   // Nothing below restates a summary fact.
   expect(screen.getAllByText('No permission changes found.')).toHaveLength(1);
-  expect(screen.getAllByText(/connected apps? moves? with this release/i).length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Of 3 connected apps: 2 move v1 → v2; 1 is pinned and doesn't move.").length).toBeGreaterThan(0);
   expect(screen.queryByText('Who is affected', { selector: 'h2,h3,h4,h5,h6,p,span' })).not.toBeInTheDocument();
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
   // Engineering words and raw hashes are not primary content.

@@ -86,7 +86,7 @@ function Cohort({ cohort, numbers, asOf, active = false }) {
     <Section title="Verify consumers">
       <Stack spacing={1.5}>
         <Typography variant="s3" color="text.secondary">As of <AsOf value={asOf} />. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
-        {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} consumers still need delivery verification.</Alert>}
+        {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} {cohort.length === 1 ? 'consumer' : 'consumers'} still {missing === 1 ? 'needs' : 'need'} delivery verification.</Alert>}
         {!cohort.length && <EmptyState title="No apps connected yet" description="An app can only confirm what it received once it is connected and reports back." />}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery cohort">
@@ -810,7 +810,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
       <Stack spacing={1}>
-        <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} consumers confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? ` Roll back to v${candidate.number}?` : ' Choose an eligible version to request a rollback.'}`}</Typography>
+        <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} ${data.cohort.length === 1 ? 'consumer' : 'consumers'} confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? ` Roll back to v${candidate.number}?` : ' Choose an eligible version to request a rollback.'}`}</Typography>
         <RecoverySteps step={step} />
       </Stack>
       {data.canPromote === false && <RollbackDenied contextName={contextName} version={candidate && !candidate.isProduction ? candidate.number : undefined} />}

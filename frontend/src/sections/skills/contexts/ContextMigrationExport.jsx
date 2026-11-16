@@ -32,7 +32,7 @@ export default function ContextMigrationExport({ contextName, links }) {
     <Stack spacing={1.5}>
       <Typography variant="s3" color="text.secondary">These are the newest published versions, which may differ from the versions this context installs. One ZIP holds each of the {skillIds.length} linked skills with its source mapping receipt. Downloading does not modify the source, remove local files or revoke keys.</Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} useFlexGap>
-        <Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Download ${skillIds.length} linked skills`}</Button>
+        <Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Download ${skillIds.length} linked ${skillIds.length === 1 ? 'skill' : 'skills'}`}</Button>
       </Stack>
       {error && <Alert severity="error">{error}</Alert>}
       {items && <Stack spacing={0.5}>

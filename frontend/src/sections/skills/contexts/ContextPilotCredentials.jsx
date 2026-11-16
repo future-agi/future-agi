@@ -234,7 +234,7 @@ export default function ContextPilotCredentials({
     const ids = credential.grants.flatMap((grant) => grant.versionIds);
     return ids.length === 1 && ids[0] === snapshot.versionId
       ? `v${snapshot.version}`
-      : `${ids.length} exact versions`;
+      : `${ids.length} exact ${ids.length === 1 ? 'version' : 'versions'}`;
   };
   if (!canIssue)
     return (
