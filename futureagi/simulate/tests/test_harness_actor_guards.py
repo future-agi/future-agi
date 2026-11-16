@@ -385,6 +385,7 @@ def test_a_receipt_with_an_actor_transcript_through_the_real_endpoints_is_served
             "role": "Sales manager",
             "channel": "chat_message",
             "delivery": "delivered",
+            "delivery_label": "Wrote in the chat",
         }
     ]
     assert body["trial_state"]["decisions"][0]["actor"] == "manager"

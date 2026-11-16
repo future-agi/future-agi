@@ -9,7 +9,12 @@ from typing import Literal, TypedDict
 from django.db import models
 
 from simulate.models.persona import Persona
-from simulate.services.harness_actor_labels import FALLBACK_WORDS
+from simulate.services.harness_actor_labels import (
+    ACTOR_KINDS,
+    FALLBACK_WORDS,
+    PLAY_LABELS,
+    TIMING_LABELS,
+)
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     LIMIT_FIELDS,
@@ -68,19 +73,6 @@ class UploadView(TypedDict):
     max_label: str
 
 
-# The kinds the editor offers when the sealed schema lists none; any other kind a builder writes is kept and shown.
-ACTOR_KINDS = {
-    "person": "A person",
-    "approver": "An approver",
-    "agent": "Another agent",
-    "system": "A system",
-}
-PLAY_LABELS = {
-    "mocked": "Only the actions each scenario gives them",
-    "live": "Decide their own actions when reached",
-    "both": "Both",
-}
-TIMING_LABELS = {"immediate": "Straight away", "delayed": "After a delay"}
 # A fixed loudness is picked in steps of this share of the caller's voice.
 LOUDNESS_STEP = 0.05
 # The persona fields an actor's voice is picked from.

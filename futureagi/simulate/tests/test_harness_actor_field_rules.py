@@ -840,3 +840,37 @@ def test_an_activation_edit_keeps_working_beside_a_trigger_written_elsewhere(
     assert edited.status_code == 200, edited.content
     # What the edit writes is still checked.
     assert broken.status_code == 400
+
+
+def test_an_actor_lists_the_scenarios_that_bring_it_in_their_own_way():
+    from simulate.services.harness_actor_labels import arrival_overrides
+
+    sam = {
+        "id": "sam",
+        "channel": "chat_message",
+        "activation": {"trigger": {"kind": "mid_journey", "turn": 1}},
+    }
+    documents = [
+        {
+            "name": "Refund on day two",
+            "actors": [{"id": "sam", "trigger": {"kind": "mid_journey", "turn": 2}}],
+        },
+        # The same arrival as the actor's own, written into the scenario: nothing reads differently.
+        {
+            "name": "Plain refund",
+            "actors": [{"id": "sam", "trigger": {"kind": "mid_journey", "turn": 1}}],
+        },
+        {"name": "No trigger of its own", "actors": [{"id": "sam"}]},
+        {
+            "name": "Someone else",
+            "actors": [{"id": "priya", "trigger": {"kind": "always"}}],
+        },
+    ]
+
+    [override] = arrival_overrides(documents, sam)
+
+    assert override["scenario"] == "Refund on day two"
+    assert override["when_label"].startswith("After the agent's turn 2")
+    assert override["when_label"].endswith(
+        "or before the person closes the chat, if sooner"
+    )

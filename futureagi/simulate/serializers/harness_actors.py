@@ -9,6 +9,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ErrorDetail
 
 from model_hub.serializers.contracts import JsonObjectRequestField
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import LIMIT_FIELDS, UPLOAD_KINDS
 from simulate.services.harness_actor_validation import (
     ACTOR_RECORD_MAX_CHARS,
@@ -168,6 +169,11 @@ class HarnessActorKnowledgeEntrySerializer(serializers.Serializer):
     where = serializers.DictField(child=HarnessTriggerWhereValueField(), required=False)
 
 
+class HarnessActorArrivalOverrideSerializer(serializers.Serializer):
+    scenario = serializers.CharField()
+    when_label = serializers.CharField()
+
+
 class HarnessActorSerializer(serializers.Serializer):
     """One actor of the cast, typed, with what the server decides about it. A field a later release adds is kept in
     storage and not shown here until it is typed."""
@@ -205,6 +211,10 @@ class HarnessActorSerializer(serializers.Serializer):
     max_turns = serializers.IntegerField(allow_null=True)
     max_lines = serializers.IntegerField(allow_null=True)
     scenarios = serializers.IntegerField(help_text="Scenarios that include the actor.")
+    arrival_overrides = HarnessActorArrivalOverrideSerializer(
+        many=True,
+        help_text="Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+    )
     provenance = HarnessActorProvenanceSerializer(allow_null=True)
     removable = serializers.BooleanField()
     removal_blocked_by = serializers.ListField(child=serializers.CharField())
@@ -794,6 +804,9 @@ def _predicate(field: serializers.Field | None, error: ErrorDetail) -> str:
     if code == "max_length":
         return f"must be at most {getattr(field, 'max_length', 0)} characters"
     if code == "invalid_choice" and isinstance(field, serializers.ChoiceField):
+        labels = choice_labels(list(field.choices))
+        if labels:
+            return f"must be one of: {labels}"
         return f"must be one of: {', '.join(str(one) for one in field.choices)}"
     return ""
 

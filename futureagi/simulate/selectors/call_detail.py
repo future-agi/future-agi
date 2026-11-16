@@ -9,7 +9,11 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 import structlog
 
 from simulate.models import CallExecution, HostedHarnessArtifact
-from simulate.services.harness_actor_labels import FallbackView, fallback_of
+from simulate.services.harness_actor_labels import (
+    CHAT_CHANNEL,
+    FallbackView,
+    fallback_of,
+)
 from simulate.services.hosted_harness_ingestion import (
     TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
@@ -272,7 +276,13 @@ def call_actors(metadata: object) -> list[dict[str, str]]:
             **(
                 {
                     "delivery": deliveries[one["id"]],
-                    "delivery_label": DELIVERY_LABELS[deliveries[one["id"]]],
+                    "delivery_label": (
+                        # An actor in the chat wrote its lines rather than spoke them.
+                        "Wrote in the chat"
+                        if deliveries[one["id"]] == "delivered"
+                        and one.get("channel") == CHAT_CHANNEL
+                        else DELIVERY_LABELS[deliveries[one["id"]]]
+                    ),
                 }
                 if one.get("id") in deliveries
                 else {}

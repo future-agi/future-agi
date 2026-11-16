@@ -760,6 +760,37 @@ def test_an_actor_is_given_only_actions_the_world_has_and_is_told_which(
     )
 
 
+def test_an_unknown_choice_is_answered_in_the_form_s_labels(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-choice-labels")
+    _add(
+        auth_client,
+        environment,
+        {
+            "id": "colleague",
+            "name": "Jordan",
+            "role": "colleague",
+            "channel": "audio_mix",
+        },
+    )
+    url = f"{BASE}/{environment.id}/actors/colleague/"
+
+    play = auth_client.put(url, {"changes": {"play": "juggle"}}, format="json")
+    timing = auth_client.put(
+        url, {"changes": {"response_timing": {"kind": "soon"}}}, format="json"
+    )
+
+    assert play.status_code == timing.status_code == 400
+    assert (
+        "'juggle' is not a choice. Pick one of: Only the actions each scenario gives them; "
+        "Decide their own actions when reached; Both" in play.json()["message"]
+    )
+    assert "must be one of: Straight away; After a delay" in timing.json()["message"]
+    for code in ("mocked", "immediate, delayed"):
+        assert code not in play.json()["message"] + timing.json()["message"]
+
+
 def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is_never_stored(
     user, workspace, storage, auth_client
 ):
@@ -808,7 +839,8 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
         "actor_invalid",
     )
     assert (
-        "colleague's channel: 'smoke_signal' is not one of: audio_handoff, audio_mix, chat_message, ivr."
+        "colleague's channel: 'smoke_signal' is not a choice. Pick one of: "
+        "Takes the phone; Heard nearby; Writes in the chat; Phone menu."
         in bad_channel.json()["message"]
     )
 

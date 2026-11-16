@@ -100,6 +100,8 @@ export const ACTORS_COPY = {
     sees: "Sees",
     neverSees: "Never sees",
     comesIn: "Comes in",
+    comesInDifferently: (n) =>
+      `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
     loudnessShare: (ratio) =>
       `${Math.round(ratio * 100)}% as loud as the caller`,
     loudnessAutomatic: "Loudness automatic",

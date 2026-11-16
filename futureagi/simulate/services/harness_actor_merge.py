@@ -240,6 +240,7 @@ RESPONSE_ONLY_FIELDS = (
     "when_label",
     "timeout_label",
     "scenarios",
+    "arrival_overrides",
     "facts",
     "files",
     "records",

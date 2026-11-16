@@ -20214,6 +20214,16 @@ export interface HarnessActorActivationApi {
   fallback_arguments?: HarnessActorActivationApiFallbackArguments;
 }
 
+/**
+ * Scenarios that bring the actor in by their own trigger, with when it comes in there.
+ */
+export interface HarnessActorArrivalOverrideApi {
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  when_label: string;
+}
+
 export type HarnessActorProvenanceApiFields = { [key: string]: string };
 
 export interface HarnessActorProvenanceApi {
@@ -20292,6 +20302,8 @@ export interface HarnessActorApi {
   max_lines: number;
   /** Scenarios that include the actor. */
   scenarios: number;
+  /** Scenarios that bring the actor in by their own trigger, with when it comes in there. */
+  arrival_overrides: HarnessActorArrivalOverrideApi[];
   provenance: HarnessActorProvenanceApi;
   removable: boolean;
   removal_blocked_by: string[];
@@ -28231,7 +28243,7 @@ export interface RunDashboardMetricApi {
   measured: number;
   total: number;
   note: string;
-  /** True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rate. */
+  /** True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rates (calls and trials). */
   no_score: boolean;
 }
 

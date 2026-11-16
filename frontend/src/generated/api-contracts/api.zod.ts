@@ -40292,6 +40292,20 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -40610,6 +40624,20 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -40844,6 +40872,20 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
         max_turns: zod.number(),
         max_lines: zod.number(),
         scenarios: zod.number().describe("Scenarios that include the actor."),
+        arrival_overrides: zod
+          .array(
+            zod
+              .object({
+                scenario: zod.string().min(1),
+                when_label: zod.string().min(1),
+              })
+              .describe(
+                "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+              ),
+          )
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
         provenance: zod.object({
           origin: zod.string(),
           by: zod.string().min(1),
@@ -41164,6 +41206,20 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -41491,6 +41547,20 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -41807,6 +41877,20 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -42308,6 +42392,20 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -42626,6 +42724,20 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -43174,6 +43286,20 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -43492,6 +43618,20 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -43718,6 +43858,20 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -44036,6 +44190,20 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -46766,6 +46934,20 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -47084,6 +47266,20 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -61248,7 +61444,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         no_score: zod
           .boolean()
           .describe(
-            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rate.",
+            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rates (calls and trials).",
           ),
       }),
     ),

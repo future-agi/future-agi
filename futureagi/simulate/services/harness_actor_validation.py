@@ -8,6 +8,7 @@ from typing import Any, TypedDict
 
 import jsonschema
 
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     PLATFORM_FIELDS,
@@ -99,6 +100,9 @@ def _reason(error: jsonschema.ValidationError) -> str:
     if broken.validator == "maxLength":
         return f"use at most {broken.validator_value} characters"
     if broken.validator == "enum":
+        labels = choice_labels(broken.validator_value)
+        if labels:
+            return f"{broken.instance!r} is not a choice. Pick one of: {labels}"
         return f"{broken.instance!r} is not one of: {', '.join(map(str, broken.validator_value))}"
     if broken.validator == "minLength":
         return "it cannot be empty"

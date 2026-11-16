@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     ActorRecord,
@@ -75,7 +76,8 @@ def new_choice_problems(
                 and "enum" not in json.dumps(listed)
             ):
                 problems.append(
-                    f"{actor_id}'s channel {channel!r} is not one of: {', '.join(channels)}."
+                    f"{actor_id}'s channel {channel!r} is not one of: "
+                    f"{choice_labels(list(channels)) or ', '.join(channels)}."
                 )
             if modality and reaches is not None and modality not in reaches:
                 problems.append(

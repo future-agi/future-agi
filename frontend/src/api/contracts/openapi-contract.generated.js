@@ -105302,6 +105302,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "max_turns",
         "max_lines",
         "scenarios",
+        "arrival_overrides",
         "provenance",
         "removable",
         "removal_blocked_by",
@@ -105450,6 +105451,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenarios",
           description: "Scenarios that include the actor.",
           type: "integer",
+        },
+        arrival_overrides: {
+          description:
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorArrivalOverride",
+          },
         },
         provenance: {
           $ref: "#/definitions/HarnessActorProvenance",
@@ -128645,6 +128654,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorArrivalOverride: {
+      description:
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      required: ["scenario", "when_label"],
+      type: "object",
+      properties: {
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        when_label: {
+          title: "When label",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessActorBehaviour: {
       required: ["style", "response_timing"],
       type: "object",
@@ -134027,7 +134054,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         no_score: {
           title: "No score",
           description:
-            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rate.",
+            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rates (calls and trials).",
           type: "boolean",
         },
       },

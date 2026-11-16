@@ -51,6 +51,7 @@ export const typedActor = ({
     max_turns: null,
     max_lines: null,
     scenarios: 0,
+    arrival_overrides: [],
     removable: true,
     removal_blocked_by: [],
     locked_fields: [],

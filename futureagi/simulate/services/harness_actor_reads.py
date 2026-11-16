@@ -15,9 +15,11 @@ from simulate.services.harness_actor_fields import (
 )
 from simulate.services.harness_actor_labels import (
     TRIGGER_FIELDS,
+    ArrivalOverride,
     CapField,
     FallbackView,
     TriggerOption,
+    arrival_overrides,
     cap_field,
     channel_label,
     editable_trigger,
@@ -97,6 +99,8 @@ class ActorRow(ActorFields):
     files: list[str]
     records: list[RecordSource]
     scenarios: int
+    # The scenarios that bring the actor in by their own trigger, read differently from its own.
+    arrival_overrides: list[ArrivalOverride]
     removable: bool
     removal_blocked_by: list[str]
     locked_fields: list[LockedField]
@@ -174,6 +178,7 @@ def _actor_row(
     action_names: set[str],
     rules: ActorRules,
     defaults: RecordDefaults,
+    arrivals: list[ArrivalOverride],
 ) -> ActorRow:
     actor_id = str(actor.get("id") or "")
     name = names.get(actor_id, actor_id)
@@ -191,6 +196,7 @@ def _actor_row(
         "files": files,
         "records": records,
         "scenarios": len(using),
+        "arrival_overrides": arrivals,
         "removable": not blocked,
         "removal_blocked_by": blocked,
         # A scenario's trigger and level were written for the way the actor joins.
@@ -268,6 +274,7 @@ def cast_view(
                 action_names=action_names,
                 rules=rules,
                 defaults=defaults,
+                arrivals=arrival_overrides(documents, one),
             )
             # The caller's side first, the cast's order kept within each side.
             for one in sorted(actors, key=lambda one: side_of(one) != "caller")
@@ -309,6 +316,7 @@ def cast_view(
             action_names=action_names,
             rules=rules,
             defaults=defaults,
+            arrivals=[],
         ),
     }
 
