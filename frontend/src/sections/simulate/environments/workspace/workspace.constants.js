@@ -436,6 +436,11 @@ export const AGENT_VERSIONS_COPY = {
 export const RUN_DIALOG_COPY = {
   willRun: (running, requested) => `${running} of ${requested} cases will run.`,
   heldBack: (count, reason) => `${count} held back: ${reason}`,
+  // What the run does when every case is held back only for not being validated on these versions.
+  validateFirst:
+    "These versions are validated first: Run starts the validation, then run again once it finishes (up to 45 min).",
+  runUnvalidated: (count) =>
+    `${count} ${count === 1 ? "case runs" : "cases run"} unvalidated: the check can't run here.`,
   showCases: "Show cases",
   hideCases: "Hide cases",
   title: "Run simulation",

@@ -29,10 +29,16 @@ vi.mock("src/api/harness/scenarios", () => ({
 
 const saveDrafts = vi.hoisted(() => vi.fn());
 const discardDraft = vi.hoisted(() => vi.fn());
+const validateDrafts = vi.hoisted(() => vi.fn());
+const saveCandidates = vi.hoisted(() => vi.fn());
+const draftsData = vi.hoisted(() => ({ validation: null, candidates: null }));
 vi.mock("src/api/simulate-environments/versions", () => ({
   useDrafts: () => ({
-    data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 } },
+    data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 }, ...draftsData },
   }),
+  useDraftReview: () => ({ data: { review_digest: "digest-1" } }),
+  useValidateDrafts: () => ({ mutate: validateDrafts, isPending: false, error: null }),
+  useSaveCandidates: () => ({ mutate: saveCandidates, isPending: false }),
   useSaveDrafts: () => ({ mutate: saveDrafts, isPending: false }),
   useDiscardDraft: () => ({ mutate: discardDraft, isPending: false }),
   useActors: () => ({ data: { knowledge_sources: { records: [{ store: "db", collection: "refills" }] } } }),
@@ -173,6 +179,63 @@ describe("ScenarioDetail Activate", () => {
       rerender(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state } }} />);
       expect(screen.queryByTestId("lifecycle-activate")).toBeNull();
     }
+  });
+});
+
+describe("ScenarioDetail unsaved case", () => {
+  const lifecycle = {
+    state: "draft",
+    reason: "in_draft",
+    reason_text: "Unsaved change; validate and save to use it.",
+    sources: [],
+    proof: null,
+  };
+
+  it("validates an unsaved case with the unsaved changes, never the saved versions", async () => {
+    const user = userEvent.setup();
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
+
+    expect(screen.queryByRole("button", { name: "Validate scenario against the environment" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Validate with the unsaved changes" }));
+    expect(validateDrafts).toHaveBeenCalledWith({
+      expectedRevisions: { suite: 3 },
+      expectedReviewDigest: "digest-1",
+    });
+  });
+
+  it("says where the validation of the unsaved changes stands", () => {
+    draftsData.validation = { state: "failed", affectedScenarios: ["refund"] };
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
+    expect(screen.getByTestId("lifecycle-validate-drafts")).toHaveTextContent("Validation failed. 1 scenario needs a change");
+    draftsData.validation = null;
+  });
+});
+
+describe("ScenarioDetail Activate of validated changes", () => {
+  it("saves the validated candidates under the name given", async () => {
+    const user = userEvent.setup();
+    saveDrafts.mockClear();
+    draftsData.validation = { state: "ready", affectedScenarios: [] };
+    draftsData.candidates = { environmentVersionId: "e2", suiteVersionId: "s2" };
+    render(
+      <ScenarioDetailBody
+        jobId="env-1"
+        row={{ id: "r1", name: "Refund", lifecycle: { state: "validated", reason: null, sources: [], proof: null } }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "Name this version" }), "with refunds");
+    await user.click(screen.getByRole("button", { name: "Activate" }));
+
+    expect(saveCandidates).toHaveBeenCalledWith({
+      candidates: { environmentVersionId: "e2", suiteVersionId: "s2" },
+      expectedReviewDigest: "digest-1",
+      name: "with refunds",
+    });
+    expect(saveDrafts).not.toHaveBeenCalled();
+    draftsData.validation = null;
+    draftsData.candidates = null;
   });
 });
 

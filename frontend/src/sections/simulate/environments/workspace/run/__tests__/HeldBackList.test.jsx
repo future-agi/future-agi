@@ -27,6 +27,27 @@ describe("Run dialog held-back list", () => {
     expect(screen.getByTestId("held-back-keys")).toHaveTextContent("refund-old, draft-case");
   });
 
+  const unproved = {
+    requested: 4,
+    running: 0,
+    held_back: { count: 4, keys: ["a", "b", "c", "d"], by: { not_validated: 4 } },
+    reasons: { not_validated: "Not validated on these versions yet." },
+  };
+
+  it("says the cases run unvalidated when the check can't run here, as the run does", () => {
+    render(<HeldBackView selection={{ ...unproved, next: "run_unvalidated" }} />);
+    const line = screen.getByTestId("held-back");
+    expect(line).toHaveTextContent("4 cases run unvalidated: the check can't run here.");
+    expect(line).not.toHaveTextContent("0 of 4 cases will run.");
+  });
+
+  it("says the versions are validated first when a run starts the check", () => {
+    render(<HeldBackView selection={{ ...unproved, next: "validate_first" }} />);
+    const list = screen.getByTestId("held-back");
+    expect(list).toHaveTextContent("These versions are validated first");
+    expect(list).not.toHaveTextContent("0 of 4 cases will run.");
+  });
+
   it("hides when none", () => {
     render(<HeldBackView selection={{ ...selection, held_back: { count: 0, keys: [], by: {} } }} />);
     expect(screen.queryByTestId("held-back")).toBeNull();

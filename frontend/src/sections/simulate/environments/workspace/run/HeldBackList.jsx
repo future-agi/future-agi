@@ -11,10 +11,20 @@ export function HeldBackView({ selection }) {
   const [shown, setShown] = useState(false);
   const held = selection?.held_back;
   if (!held?.count) return null;
+  // The run route acts on the same `next` the preview reads.
+  if (selection.next === "run_unvalidated") {
+    return (
+      <Typography sx={{ typography: "s2", color: "text.primary" }} data-testid="held-back">
+        {COPY.runUnvalidated(held.count)}
+      </Typography>
+    );
+  }
   return (
     <Stack spacing={0.5} data-testid="held-back">
       <Typography sx={{ typography: "s2", color: "text.primary" }}>
-        {COPY.willRun(selection.running, selection.requested)}
+        {selection.next === "validate_first"
+          ? COPY.validateFirst
+          : COPY.willRun(selection.running, selection.requested)}
       </Typography>
       {Object.entries(held.by ?? {}).map(([row, count]) => (
         <Typography key={row} sx={{ typography: "s3", color: "text.subtitle" }}>

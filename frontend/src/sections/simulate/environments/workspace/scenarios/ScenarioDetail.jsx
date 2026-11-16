@@ -20,10 +20,15 @@ import {
 import { useAuthContext } from "src/auth/hooks";
 import {
   useDiscardDraft,
-  useDrafts,
   useSaveDrafts,
 } from "src/api/simulate-environments/versions";
 import { draftSaveRequests } from "../drafts/draftSave";
+import {
+  useDraftsValidation,
+  validationStateNote,
+} from "../drafts/useDraftsValidation";
+import { refusalText } from "../evals/refusalText";
+import { DRAFTS_COPY } from "../workspace.constants";
 import SourceCompareDialog from "./SourceCompareDialog";
 import ValidateScenariosButton from "./ValidateScenariosButton";
 
@@ -344,13 +349,19 @@ export function LifecycleSections({ row, jobId }) {
                 sources={sources}
               />
             )}
-          {jobId && row?.scenarioKey && lifecycle.state !== "archived" && (
-            <ValidateScenariosButton
-              jobId={jobId}
-              keys={[row.scenarioKey]}
-              label={SCENARIOS_COPY.validateOne}
-            />
+          {jobId && lifecycle.reason === "in_draft" && (
+            <ValidateDraftsButton jobId={jobId} />
           )}
+          {jobId &&
+            row?.scenarioKey &&
+            lifecycle.state !== "archived" &&
+            lifecycle.reason !== "in_draft" && (
+              <ValidateScenariosButton
+                jobId={jobId}
+                keys={[row.scenarioKey]}
+                label={SCENARIOS_COPY.validateOne}
+              />
+            )}
           {comparing && (
             <SourceCompareDialog
               open
@@ -510,16 +521,37 @@ RecordChoice.propTypes = {
 // Activate is the Save of the unsaved versions this Validated case was proved on: saving them makes
 // its cases Active. It starts no run.
 function ActivateButton({ jobId }) {
-  const { data: drafts } = useDrafts(jobId);
+  const { drafts, canSaveValidated, saveValidated, saveCandidates } =
+    useDraftsValidation(jobId);
   const save = useSaveDrafts(jobId);
+  // Validated candidates are saved as validated, with their proofs; that needs a version name.
+  const [versionName, setVersionName] = useState("");
   const nothing = !drafts?.any;
   return (
     <Stack spacing={0.25} alignItems="flex-start" data-testid="lifecycle-activate">
+      {canSaveValidated && (
+        <TextField
+          size="small"
+          value={versionName}
+          onChange={(event) => setVersionName(event.target.value)}
+          placeholder={DRAFTS_COPY.versionName}
+          inputProps={{ "aria-label": DRAFTS_COPY.versionName, maxLength: 80 }}
+        />
+      )}
       <Button
         size="small"
         variant="contained"
-        disabled={nothing || save.isPending}
-        onClick={() => save.mutate(draftSaveRequests(drafts))}
+        disabled={
+          nothing ||
+          save.isPending ||
+          saveValidated.isPending ||
+          (canSaveValidated && !versionName.trim())
+        }
+        onClick={() =>
+          canSaveValidated
+            ? saveCandidates(versionName)
+            : save.mutate(draftSaveRequests(drafts))
+        }
       >
         {SCENARIOS_COPY.activate}
       </Button>
@@ -531,6 +563,37 @@ function ActivateButton({ jobId }) {
 }
 
 ActivateButton.propTypes = { jobId: PropTypes.string.isRequired };
+
+// A drafted case is validated with the rest of the unsaved changes, as the draft bar validates them; Validate on
+// the saved versions would prove a suite that does not hold it.
+function ValidateDraftsButton({ jobId }) {
+  const { drafts, validate, validating, startValidation } =
+    useDraftsValidation(jobId);
+  const note = validate.error
+    ? refusalText(validate.error, DRAFTS_COPY.validateError)
+    : validationStateNote(drafts?.validation);
+  return (
+    <Stack spacing={0.25} alignItems="flex-start" data-testid="lifecycle-validate-drafts">
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        disabled={!drafts?.any || validating}
+        onClick={startValidation}
+        startIcon={<Iconify icon="solar:shield-check-linear" width={16} />}
+      >
+        {validating ? SCENARIOS_COPY.validating : SCENARIOS_COPY.validateDrafts}
+      </Button>
+      {note && (
+        <Typography role="status" sx={{ typography: "s3", color: "text.subtitle" }}>
+          {note}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
+ValidateDraftsButton.propTypes = { jobId: PropTypes.string.isRequired };
 
 // A change the builder could not apply is discarded with the unsaved scenario changes it came with.
 function DiscardChangeButton({ jobId }) {
