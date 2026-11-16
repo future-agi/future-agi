@@ -3016,34 +3016,6 @@
 - the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
 - recheck answers 202 with a new validating job, and the bundle is pending again
 
-### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World changes reads a read apart from a write
-
-**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World changes says what the agent only read apart from what it committed
-
-**Spec:** `flows/simulate/actors-world-changes.spec.ts:20`
-
-**Tags:** —
-
-**User steps:**
-
-1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
-2. read the cast (GET actors)
-3. read the scenarios (GET harness-jobs/<id>/scenarios)
-4. read the trial (GET v3/call-executions/<id>)
-5. open the Scenarios tab
-6. open the trial's World changes
-
-**Backend state verified:**
-
-- the cast lists the actor with no channel
-- the refund scenario includes it by id
-- the trial's World changes count 1 committed (issue_refund) and 1 read (lookup_order)
-
-**Browser observations:**
-
-- the Scenarios table names the actor, never its raw id
-- World changes reads "1 read" and "Committed: issue_refund"
-
 ### SIM-E2E-024 — a run started with a case held back says so in its header, and a run from before says nothing
 
 **Goal:** A developer who starts a run on a pairing that holds a case back reads, on the run itself, the readiness it started under and the cases it held back; a run started before runs kept readiness shows no tag
