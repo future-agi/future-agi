@@ -128,16 +128,22 @@ export const CALL_WORKERS_COPY = {
       ? "Passed"
       : passed === false
         ? "Failed"
-        : { not_applicable: "Not applicable", inconclusive: "Unsure" }[
-            result
-          ] || "Not measured",
+        : {
+            not_applicable: "Not applicable",
+            inconclusive: "Unsure",
+            unmeasured: "Not measured",
+          }[result],
   // Each failed or unsure check on the step its evidence points to, or why it is on none.
   placedChecks: "Failed and unsure checks",
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
-  // Nothing the harness records ties a check to a step yet, so each says so rather than being guessed onto one.
+  // A worker's check sits on its worker's one hand-off; any other says why it is on no step.
+  onHandOff: "On its hand-off",
   untied: {
     no_moment:
       "Not tied to a step: nothing recorded ties this check to a moment in the call",
+    several_hand_offs:
+      "Not tied to a step: this worker was handed work more than once",
+    no_hand_off: "Not tied to a step: this worker was never handed work",
   },
   // Past its action deadline: the world refused its later calls; its execution was not stopped.
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,

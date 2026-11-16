@@ -2991,12 +2991,18 @@ def test_a_cancelled_run_reads_each_call_it_cut_short(
     CallExecution.objects.filter(id=call.id).update(
         status=CallExecution.CallStatus.ONGOING
     )
-    # A call that never started has no workers' evidence: no read is queued for it.
+    # Still reading pending (its start arrives with its receipt), so it may have workers' evidence: it is read too.
     waiting = CallExecution.objects.get(id=call.id)
     waiting.pk = None
     waiting.id = None
     waiting.status = CallExecution.CallStatus.PENDING
     waiting.save()
+    # Only registered with the provider: no read is queued for it.
+    registered = CallExecution.objects.get(id=call.id)
+    registered.pk = None
+    registered.id = None
+    registered.status = CallExecution.CallStatus.REGISTERED
+    registered.save()
     HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
         state=HostedHarnessJob.State.CANCELED
     )
@@ -3007,7 +3013,7 @@ def test_a_cancelled_run_reads_each_call_it_cut_short(
     ):
         project_terminal_job_onto_run(run, timezone.now())
     # A call cut short keeps what its workers did before the end.
-    assert [one.args for one in read.call_args_list] == [(call.id,)]
+    assert {one.args[0] for one in read.call_args_list} == {call.id, waiting.id}
 
 
 def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():

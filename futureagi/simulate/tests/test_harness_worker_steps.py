@@ -1012,9 +1012,11 @@ class TestWorkerRecordAsServed:
             "cancelled",
         ]
         assert served["workers"][0]["cut_short"] is True
+        assert served["workers"][0]["past_deadline"] is False
         # Past its deadline the world refused its later calls; it was not stopped, so it is not cut short.
         late = served_record({**record, "workers": [worker("deadline_passed")]}, now)
         assert late["workers"][0]["cut_short"] is False
+        assert late["workers"][0]["past_deadline"] is True
         assert handoffs(late["steps"])[1]["end_state"] == "deadline_passed"
 
     def test_a_pending_record_says_when_to_read_again_and_never_a_time_already_past(
@@ -1038,7 +1040,22 @@ class TestWorkerRecordAsServed:
 
 
 class TestFailurePlacements:
-    def test_a_failed_or_unsure_check_is_never_tied_to_a_step_by_its_name(self):
+    SEARCHER = {"worker_id": "r/searcher", "id": "searcher", "name": "S"}
+
+    def steps(self, *events):
+        return worker_steps([{**one, "worker_id": "r/searcher"} for one in events])[
+            "steps"
+        ]
+
+    def own_check(self):
+        return {
+            "name": "read_only",
+            "passed": False,
+            "subject_kind": "worker",
+            "worker_id": "searcher",
+        }
+
+    def test_a_task_check_is_never_tied_to_a_step_by_its_name(self):
         # Named after a tool that failed in the call: still not tied, since nothing recorded says it is about it.
         named, judged = failure_placements(
             [
@@ -1049,9 +1066,15 @@ class TestFailurePlacements:
                     "result": "inconclusive",
                     "subject_kind": "task",
                 },
-            ]
+            ],
+            self.steps(HOTELS),
+            [self.SEARCHER],
         )
-        assert (named["step"], named["untied"]) == (None, "no_moment")
+        assert (named["step"], named["untied"], named["worker_id"]) == (
+            None,
+            "no_moment",
+            None,
+        )
         assert (judged["step"], judged["untied"], judged["status"]) == (
             None,
             "no_moment",
@@ -1068,21 +1091,27 @@ class TestFailurePlacements:
                     "result": "not_applicable",
                     "subject_kind": "task",
                 },
-            ]
+            ],
+            self.steps(HOTELS),
+            [self.SEARCHER],
         )
 
-    def test_a_worker_s_own_check_keeps_its_worker(self):
-        [placed] = failure_placements(
-            [
-                {
-                    "name": "read_only",
-                    "passed": False,
-                    "subject_kind": "worker",
-                    "worker_id": "searcher",
-                }
-            ]
+    def test_a_worker_s_failed_check_sits_on_its_one_hand_off(self):
+        steps = self.steps(HOTELS, answer(2, "A", "two"))
+        [placed] = failure_placements([self.own_check()], steps, [self.SEARCHER])
+        [hand_off] = handoffs(steps)
+        assert (placed["worker_id"], placed["step"], placed["untied"]) == (
+            "r/searcher",
+            hand_off["key"],
+            None,
         )
-        assert (placed["worker_id"], placed["step"]) == ("searcher", None)
+
+    def test_a_worker_s_check_with_several_hand_offs_or_none_is_on_no_step(self):
+        several = self.steps(HOTELS, FLIGHTS)
+        [placed] = failure_placements([self.own_check()], several, [self.SEARCHER])
+        assert (placed["step"], placed["untied"]) == (None, "several_hand_offs")
+        [unseen] = failure_placements([self.own_check()], [], [self.SEARCHER])
+        assert (unseen["step"], unseen["untied"]) == (None, "no_hand_off")
 
 
 def test_a_failed_worker_check_is_served_failed_on_its_worker_beside_a_passing_task_check():
@@ -1115,8 +1144,9 @@ def test_a_failed_worker_check_is_served_failed_on_its_worker_beside_a_passing_t
     assert lookup["checks"] == [{"name": "read_only", "passed": False}]
     assert refund["checks"] == []
     [placed] = served["placements"]
+    # Named by the record's worker id, the one its steps and workers carry.
     assert (placed["name"], placed["status"], placed["worker_id"]) == (
         "read_only",
         "failed",
-        "order_lookup",
+        "r/order_lookup",
     )

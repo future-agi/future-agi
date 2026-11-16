@@ -16,6 +16,7 @@ from django.db import connections, router
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Cell
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
@@ -31,7 +32,6 @@ from simulate.services.harness_scenarios import (
     pinned_scenarios,
 )
 from simulate.services.hosted_harness_ingestion import (
-    SCENARIO_FAILURE_CODES,
     STARTED_BY_KEY,
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,

@@ -11,7 +11,7 @@ from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 
-from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.services.run_results_v3 import OUTCOME_LABELS
 
 # Fewer scenarios than this give a range too wide to act on; show counts only.

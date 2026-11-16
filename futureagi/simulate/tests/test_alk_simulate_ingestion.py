@@ -1223,7 +1223,7 @@ class TestResultIngest:
     def test_a_worker_s_own_check_is_stored_as_that_worker_s(
         self, auth_client, run_test
     ):
-        """A worker's check keeps its subject on the stored result and says whose it is in the reason."""
+        """A worker's check keeps its subject on the stored result and its reason unchanged."""
         test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
         with patch(
             "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
@@ -1251,10 +1251,8 @@ class TestResultIngest:
         outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
         by_name = {one["name"]: one for one in outputs.values()}
         assert by_name["lookup_read_only"]["subject"] == "worker:order_lookup"
-        assert (
-            by_name["lookup_read_only"]["reason"]
-            == "Worker order_lookup's own check. it wrote an order"
-        )
+        # The reason is stored as the harness gave it; whose check it is lives in `subject` alone.
+        assert by_name["lookup_read_only"]["reason"] == "it wrote an order"
         assert "subject" not in by_name["ride_booked"]
 
     def test_a_worker_s_check_named_like_the_task_s_is_its_own_result_and_never_localized(

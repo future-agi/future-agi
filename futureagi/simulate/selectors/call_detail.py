@@ -9,17 +9,17 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import structlog
 
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.models import CallExecution, HostedHarnessArtifact
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_actor_labels import FallbackView, fallback_of
 from simulate.services.hosted_harness_ingestion import (
-    TRIAL_STATE_KEY,
     UPLOAD_BUCKET_NAME,
     get_object_url,
 )
 from simulate.services.run_results_v3 import recorded_calls
 from simulate.services.run_results_v3_queries import call_actor_delivery
-from simulate.types import worker_subject_id
+from simulate.types import RefusalCode, worker_subject_id
 from simulate.utils.stored_transcript_roles import call_actor_label
 
 logger = structlog.get_logger(__name__)
@@ -90,7 +90,7 @@ APPROVAL_MISSING = "approval_missing"
 
 class RefusedAction(TypedDict):
     action: str
-    code: str
+    code: RefusalCode
     reason: str
 
 

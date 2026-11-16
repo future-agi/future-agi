@@ -31,6 +31,13 @@ WorkerState = Literal[
 ]
 # Why the world refused a call, as its action log codes it.
 RefusalCode = Literal["not_permitted", "deadline_passed", "approval_missing"]
+# How a call's trial ended, which a worker still out when it ended takes.
+TrialEnding = Literal["ended", "infrastructure", "cancel_requested", "cancelled"]
+# Whose check a sub-goal is: the task's, or one of the agent's workers'.
+SubjectKind = Literal["task", "worker"]
+PlacementStatus = Literal["failed", "inconclusive"]
+# Why a failed check is on no step: a task check names no moment; a worker check's worker had several hand-offs or none.
+Untied = Literal["no_moment", "several_hand_offs", "no_hand_off"]
 # A worker's own check or world change is named `worker:<id>`; the task's and the agent's are not.
 WORKER_SUBJECT_PREFIX = "worker:"
 
@@ -162,7 +169,7 @@ class SubGoalEntry(TypedDict):
     reason: NotRequired[str]
     evidence: NotRequired[list[str]]
     subject: NotRequired[str]
-    subject_kind: Literal["task", "worker"]
+    subject_kind: SubjectKind
     worker_id: NotRequired[str]
 
 
@@ -187,6 +194,8 @@ class HarnessWorker(TypedDict):
     state: NotRequired[WorkerState]
     # Served only: the trial's end stopped it before it returned (past its deadline is told apart).
     cut_short: NotRequired[bool]
+    # Served only: the world refused its later calls past its action deadline; it was not stopped.
+    past_deadline: NotRequired[bool]
     # Served only: its own checks in this call.
     checks: NotRequired[list[WorkerCheck]]
 
@@ -312,16 +321,15 @@ class WorkerTimeline(TypedDict):
 
 
 class FailurePlacement(TypedDict):
-    """A failed or unsure sub-goal on the step its evidence points to; `untied` says why it is on none."""
+    """A failed or unsure sub-goal: a worker's own check on that worker's one hand-off; `untied` says why it is on none."""
 
     name: str
-    status: Literal["failed", "inconclusive"]
-    # The step's key; null when the evidence points to no step.
+    status: PlacementStatus
+    # The hand-off step's key; null when the check is on no step.
     step: int | None
-    # Null when the record does not say which worker: shown as Unknown, never guessed.
+    # The record's `worker_id` of the worker whose own check it is; null for a task check, which names no worker.
     worker_id: str | None
-    # `no_moment`: nothing recorded ties the check to a step of the call.
-    untied: Literal["no_moment"] | None
+    untied: Untied | None
 
 
 class CallWorkersRecord(WorkerTimeline, WorkerSteps):

@@ -1958,16 +1958,13 @@ def _apply_harness_evaluation_outputs(
             output = verdict
             output_type = "Pass/Fail"
 
-        reason = str(evaluation.get("reason") or "")
         outputs[output_id] = {
             "name": name,
             "output": output,
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
-            # A worker's own check says so wherever the reason is shown; the task's verdict never includes it.
-            "reason": (
-                f"Worker {worker}'s own check. {reason}".strip() if worker else reason
-            )[:10000],
+            "reason": str(evaluation.get("reason") or "")[:10000],
+            # A worker's own check names its worker by subject; the reader's label is the client's.
             **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",

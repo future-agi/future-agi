@@ -69,7 +69,7 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
-  const pastDeadline = named((one) => one.state === "deadline_passed");
+  const pastDeadline = named((one) => one.past_deadline);
   const cutShort = data.workers
     .filter((one) => one.cut_short)
     .map((one) => `${one.name} (${C.cutShort[one.state]})`)
