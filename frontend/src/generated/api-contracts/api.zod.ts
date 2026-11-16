@@ -60778,6 +60778,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
         ),
+      label: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.",
+        ),
     }),
   ),
   tool_call_count: zod
