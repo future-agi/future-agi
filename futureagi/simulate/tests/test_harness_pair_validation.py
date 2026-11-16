@@ -521,7 +521,7 @@ class TestTerminalPaths:
         job = _start(environment).job
 
         with django_capture_on_commit_callbacks(execute=True):
-            canceled = gateway.cancel(job, reason="user")
+            canceled = gateway.cancel(job, reason="user_canceled")
 
         assert canceled.state == "canceled"
         assert _job_metadata(job)["validation_outcome"] == "retry"

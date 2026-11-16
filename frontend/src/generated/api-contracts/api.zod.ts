@@ -9543,7 +9543,10 @@ export const ApiDeploymentInfoListResponse = zod.object({
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -9553,7 +9556,17 @@ No authentication required (intended for infrastructure monitoring).
 export const ApiHealthClickhouseListResponse = zod.object({
   status: zod.enum(["healthy", "degraded", "unhealthy", "disabled"]),
   clickhouse_connected: zod.boolean(),
-  cdc_lag: zod.record(zod.string(), zod.number()),
+  cdc_lag: zod
+    .record(zod.string(), zod.number())
+    .describe(
+      "Per-table lag in seconds; -1 means unverified, including empty tables.",
+    ),
+  cdc_lag_verified: zod
+    .record(zod.string(), zod.boolean())
+    .optional()
+    .describe(
+      "True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.",
+    ),
   routing: zod.record(zod.string(), zod.object({}).passthrough()),
   error: zod.string().min(1).optional(),
 });
