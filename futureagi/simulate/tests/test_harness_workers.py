@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from simulate.serializers.call_workers_v3 import CallWorkerEventSerializer
-from simulate.services import harness_workers
-from simulate.services.harness_workers import worker_timeline
+from simulate.services import harness_worker_timeline, harness_workers
+from simulate.services.harness_worker_timeline import worker_timeline
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -1533,7 +1533,7 @@ def test_a_voice_call_s_messages_come_from_its_transcript_when_it_has_no_chat_me
 
 
 def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_message():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
     returned = json.dumps(
         {
@@ -1546,12 +1546,12 @@ def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_mes
         }
     )
 
-    assert _summary(returned) == "Done: limiter.py with tests"
-    assert _summary("Refund RF-8 issued") == "Refund RF-8 issued"
+    assert summary(returned) == "Done: limiter.py with tests"
+    assert summary("Refund RF-8 issued") == "Refund RF-8 issued"
 
 
 def test_a_finished_job_is_one_hand_off_and_one_still_running_has_no_return():
-    from simulate.services.harness_workers import worker_timeline
+    from simulate.services.harness_worker_timeline import worker_timeline
 
     finished = {
         "name": "start_async_task",
@@ -1590,20 +1590,19 @@ def test_a_finished_job_is_one_hand_off_and_one_still_running_has_no_return():
 
 
 def test_a_falsy_answer_is_kept_and_only_a_missing_one_is_unknown():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
-    assert [_summary(one) for one in (0, False, None, "")] == ["0", "False", None, None]
+    assert [summary(one) for one in (0, False, None, "")] == ["0", "False", None, None]
 
 
 def test_escaped_line_breaks_in_an_answer_read_as_line_breaks():
-    from simulate.services.harness_workers import _summary
+    from simulate.services.harness_worker_text import summary
 
     assert (
-        _summary("# Plan\\n\\nStep one\\nIt\\'s done")
-        == "# Plan\n\nStep one\nIt's done"
+        summary("# Plan\\n\\nStep one\\nIt\\'s done") == "# Plan\n\nStep one\nIt's done"
     )
     assert (
-        _summary("Line one\nLine two with a literal \\n kept")
+        summary("Line one\nLine two with a literal \\n kept")
         == "Line one\nLine two with a literal \\n kept"
     )
 
@@ -2227,7 +2226,6 @@ def test_a_later_read_keeps_every_event_either_read_found():
 
 
 def test_a_merged_record_keeps_the_payload_bound_of_one_read():
-    from simulate.services import harness_workers
     from simulate.services.harness_workers import kept_record
 
     big = "y" * 1500
@@ -2245,7 +2243,7 @@ def test_a_merged_record_keeps_the_payload_bound_of_one_read():
         for one in kept["events"]
         if one["input"] is not None
     )
-    assert spent <= harness_workers._PAYLOAD_BUDGET
+    assert spent <= harness_worker_timeline.PAYLOAD_BUDGET
     assert any(one.get("input_omitted") for one in kept["events"])
 
 
