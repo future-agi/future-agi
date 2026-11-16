@@ -4,6 +4,8 @@ import math
 
 from rest_framework import serializers
 
+from simulate.types import WORKER_SUBJECT_PREFIX
+
 _SHA256 = r"^sha256:[0-9a-f]{64}$"
 
 
@@ -85,7 +87,7 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     )
     # Whose result this is: the task, or one of the agent's workers; reported beside the task verdict.
     subject = serializers.RegexField(
-        r"^(task|worker:.*\S.*)$", required=False, max_length=255
+        rf"^(task|{WORKER_SUBJECT_PREFIX}.*\S.*)$", required=False, max_length=255
     )
 
 

@@ -6,7 +6,6 @@ import logging
 import math
 import re
 import tempfile
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any, BinaryIO, cast
 from uuid import UUID
@@ -30,7 +29,6 @@ from simulate.models import (
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
-from simulate.services.harness_workers import FIRST_READ
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -42,8 +40,8 @@ from simulate.services.hosted_harness_validation import (
     receipt_call_times,
     validate_jsonb_strings,
 )
-from simulate.tasks.alk_sim import record_call_workers
-from simulate.types import CallCallActors, CallWorkersRead
+from simulate.tasks.alk_sim import dispatch_worker_read
+from simulate.types import CallCallActors, is_worker_subject
 from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -1146,7 +1144,7 @@ def _apply_receipt_to_call(
         _ensure_run_agent_is_voice(job)
     # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
     finished_id = call.id
-    transaction.on_commit(lambda: _dispatch_worker_read(finished_id), robust=True)
+    transaction.on_commit(lambda: dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -1199,14 +1197,6 @@ def _apply_receipt_to_call(
                 lambda: locked_call_metadata_update(call_id, _mark_eval_side),
                 robust=True,
             )
-
-
-def _dispatch_worker_read(call_id: UUID) -> None:
-    """Read the call's worker timeline once its spans have had time to arrive."""
-    read = CallWorkersRead(str(call_id))
-    record_call_workers.apply_async(
-        args=(asdict(read),), start_delay=timedelta(seconds=FIRST_READ)
-    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:
@@ -1274,8 +1264,7 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
-        if isinstance(one, dict)
-        and not str(one.get("subject") or "").startswith("worker:")
+        if isinstance(one, dict) and not is_worker_subject(one.get("subject"))
     }
     decided = any(
         isinstance(one, dict)
@@ -1327,7 +1316,7 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 # A worker's own check, reported beside the task's: kept apart wherever results are listed.
                 **(
                     {"subject": str(goal["subject"])}
-                    if str(goal.get("subject") or "").startswith("worker:")
+                    if is_worker_subject(goal.get("subject"))
                     else {}
                 ),
             }

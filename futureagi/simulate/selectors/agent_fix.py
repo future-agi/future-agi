@@ -105,6 +105,7 @@ from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
@@ -449,8 +450,7 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     checks = [
         one
         for one in receipt.get("sub_goals") or []
-        if isinstance(one, Mapping)
-        and not str(one.get("subject") or "").startswith("worker:")
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
     ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))

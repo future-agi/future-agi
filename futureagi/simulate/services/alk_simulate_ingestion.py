@@ -49,6 +49,7 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.types import worker_subject_id
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
@@ -1917,7 +1918,7 @@ def _apply_harness_evaluation_outputs(
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
         subject = str(evaluation.get("subject") or "")
-        worker = subject[len("worker:") :] if subject.startswith("worker:") else ""
+        worker = worker_subject_id(subject) or ""
         # A worker's own check is never the task's column: it gets its own id and no error localizer.
         template = (
             None
