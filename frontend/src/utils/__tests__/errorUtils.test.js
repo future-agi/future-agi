@@ -32,6 +32,32 @@ describe("getSafeActionErrorMessage", () => {
     ).toBe(fallback);
   });
 
+  it.each([
+    "Model 'gpt-3.5-turbo' is not available in the current model catalog. It may be deprecated or retired. Please select a supported model from the latest available models list.",
+    "Model 'gpt-3.5-turbo' is no longer available. Please select a supported model.",
+    "Select a supported decision model and connection.",
+    "select at least one call",
+  ])("shows a 400 that says select in prose: %s", (message) => {
+    expect(
+      getSafeActionErrorMessage(
+        { statusCode: 400, code: "invalid", result: message },
+        fallback,
+      ),
+    ).toBe(message);
+  });
+
+  it.each([
+    "Query failed: SELECT trace_id FROM spans WHERE project_id = 'p1'",
+    "Query failed: select * from spans where project_id = 'p1'",
+  ])("hides query text even on a 400 response: %s", (message) => {
+    expect(
+      getSafeActionErrorMessage(
+        { response: { status: 400, data: { detail: message } } },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+
   it("does not trust an internal-looking message even on a 400 response", () => {
     expect(
       getSafeActionErrorMessage(
