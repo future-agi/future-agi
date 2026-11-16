@@ -3165,6 +3165,7 @@ class TestRunResultsV3Views:
         assert not {"wpm", "stop", "talk", "turn_count"} & metrics.keys()
         assert {key: metrics[key]["label"] for key in metrics} == {
             "pass_rate": "Chats passed",
+            "trial_pass": "Trials passed",
             "total": "Total chats",
             "ran_cleanly": "Chats ran cleanly",
             "connected_rate": "Chats connected (%)",

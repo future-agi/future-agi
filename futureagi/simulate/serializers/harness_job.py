@@ -807,12 +807,8 @@ class RunSeedField(serializers.Field[int, Any, str, Any]):
         return str(value)
 
     class Meta:
-        swagger_schema_fields = {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^[0-9]+$",
-            "maxLength": _SEED_DIGITS,
-        }
+        # Only its type: the server refuses any other text with its own message, so no client gate holds a seed back.
+        swagger_schema_fields = {"type": "string", "minLength": 1}
 
 
 class HarnessRunCreateSerializer(serializers.Serializer):
