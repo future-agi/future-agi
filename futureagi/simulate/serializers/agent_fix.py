@@ -82,6 +82,12 @@ class AgentFixRequestSerializer(serializers.Serializer):
     locked_paths = serializers.ListField(child=serializers.CharField())
     budget_credits = CreditsField(source="budget_usd")
     max_minutes = serializers.IntegerField()
+    # True while the fix's first step writes variations of the run's failing cases.
+    variations_pending = serializers.BooleanField(default=False)
+    # Each variation that became a target, with the failing case it varies.
+    variation_parents = serializers.DictField(
+        child=serializers.CharField(), default=dict
+    )
 
 
 class AgentFixVerdictTierSerializer(serializers.Serializer):
@@ -492,7 +498,13 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
 class AgentFixLaunchLimitsSerializer(serializers.Serializer):
     budget_credits_max = serializers.IntegerField()
     max_minutes_max = serializers.IntegerField()
+    # The fewest failing cases a launch takes.
     scenarios_min = serializers.IntegerField()
+    # The failing cases a fix needs; with fewer it first writes variations of each.
+    cases_min = serializers.IntegerField()
+    variations_per_case = serializers.IntegerField()
+    # Fewer failing cases than this can only end with limited validation.
+    verified_cases_min = serializers.IntegerField()
     scenarios_max = serializers.IntegerField()
 
 
@@ -507,3 +519,5 @@ class AgentFixLaunchOptionsSerializer(serializers.Serializer):
     limits = AgentFixLaunchLimitsSerializer()
     # Set when Start must be disabled, with the reason launch would give.
     blocked = AgentFixFailureSerializer(allow_null=True)
+    # Set when a launch that first writes variations would be refused, with the reason.
+    variations_blocked = AgentFixFailureSerializer(allow_null=True)

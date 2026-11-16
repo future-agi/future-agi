@@ -581,7 +581,7 @@ export default function NewReport({
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: 13 }}
+            sx={{ fontSize: 12 }}
           >
             Pick what to learn and which traffic to read. A report samples it,
             summarises every item, groups them and measures each group.

@@ -61,6 +61,8 @@ class HarnessConversationAdjustmentSerializer(serializers.Serializer):
         choices=("understand", "environment", "scenarios"), required=False
     )
     scenario_delta = serializers.IntegerField(min_value=1, required=False)
+
+
 class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     adjustment_id = serializers.UUIDField()
     client_request_id = serializers.CharField(
@@ -71,7 +73,6 @@ class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     scenario_delta = serializers.IntegerField()
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
-
 
 
 class HarnessConversationMessageSerializer(serializers.Serializer):
@@ -284,7 +285,9 @@ class HarnessConversationRunStartSerializer(serializers.Serializer):
         max_length=100,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
-    operation_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    operation_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
 
 
 class HarnessConversationOverviewQuerySerializer(serializers.Serializer):

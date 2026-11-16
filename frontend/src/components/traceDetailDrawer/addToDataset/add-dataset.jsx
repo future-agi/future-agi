@@ -139,7 +139,7 @@ const AddDataset = ({
               <Typography
                 sx={{
                   fontWeight: 500,
-                  fontSize: "13px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   paddingLeft: "5px",
                 }}
@@ -156,7 +156,7 @@ const AddDataset = ({
               <Typography
                 sx={{
                   fontWeight: 500,
-                  fontSize: "13px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   paddingLeft: "5px",
                 }}

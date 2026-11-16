@@ -14,7 +14,9 @@ def test_a_drafted_attribute_never_filters_the_report(monkeypatch):
         draft,
         "load_units",
         lambda unit, project_id, ids: {
-            "s1": SimpleNamespace(content="User: cancel my plan\nAssistant: half price?")
+            "s1": SimpleNamespace(
+                content="User: cancel my plan\nAssistant: half price?"
+            )
         },
     )
     # The model asks to read only resolved sessions: on a failures report that

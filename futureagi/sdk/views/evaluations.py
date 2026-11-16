@@ -3,6 +3,7 @@ import uuid
 import structlog
 from django.core.exceptions import ValidationError
 from django.db.models import Q
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -10,6 +11,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication
+from accounts.models import User, Workspace
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from analytics.utils import (
     MixpanelEvents,
@@ -26,6 +28,7 @@ from sdk.serializers.contracts import (
     SDKConfigureEvaluationsResponseSerializer,
     SDKErrorResponseSerializer,
     SDKEvalTemplateResponseSerializer,
+    SDKEvaluationDenialResponseSerializer,
     SDKGetEvalsResponseSerializer,
     SDKStandaloneEvalRequestSerializer,
     SDKStandaloneEvalResponseSerializer,
@@ -44,6 +47,7 @@ from sdk.utils.evaluations import (
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.external_eval_config import (
     ExternalEvalConfig,
@@ -126,7 +130,40 @@ class GetEvalStructureEvalIdView(APIView):
     )
     def get(self, request, eval_id, *args, **kwargs):
         try:
-            template = EvalTemplate.no_workspace_objects.get(eval_id=eval_id)
+            # Resolve the caller's organization/workspace from the
+            # authenticated request (not the thread-local workspace context or
+            # the user's saved preference) and only look up templates there.
+            organization = getattr(request, "organization", None)
+            workspace = getattr(request, "workspace", None)
+            user = User.objects.filter(pk=request.user.pk, is_active=True).first()
+            workspace = Workspace.no_workspace_objects.filter(
+                pk=getattr(workspace, "pk", None),
+                organization_id=getattr(organization, "pk", None),
+                is_active=True,
+            ).first()
+            if (
+                user is None
+                or workspace is None
+                or not user.can_access_workspace(workspace)
+            ):
+                raise EvalTemplate.DoesNotExist
+
+            in_workspace = Q(
+                organization_id=workspace.organization_id, workspace=workspace
+            )
+            if workspace.is_default:
+                # Older org-level rows (no workspace) belong to the default one.
+                in_workspace |= Q(
+                    organization_id=workspace.organization_id,
+                    workspace__isnull=True,
+                )
+            # Built-in system templates have neither organization nor workspace.
+            builtin = Q(
+                owner="system", organization__isnull=True, workspace__isnull=True
+            )
+            template = EvalTemplate.no_workspace_objects.filter(
+                in_workspace | builtin
+            ).get(eval_id=eval_id)
             return self._gm.success_response(
                 {
                     "id": template.id,
@@ -142,7 +179,12 @@ class GetEvalStructureEvalIdView(APIView):
                     "multi_choice": template.multi_choice,
                 }
             )
-        except EvalTemplate.DoesNotExist:
+        except (
+            EvalTemplate.DoesNotExist,
+            EvalTemplate.MultipleObjectsReturned,
+            ValueError,
+            ValidationError,
+        ):
             return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
 
@@ -157,6 +199,16 @@ class StandaloneEvalView(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: openapi.Response(
+                "Billing or usage limit. For a partial batch, resume at failed_index; "
+                "completed_results have already executed and may be charged.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
+            429: openapi.Response(
+                "Evaluation rate limit. No Retry-After is returned without a known "
+                "reset time. For partial batches, retry only from failed_index.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
             500: SDKErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -222,6 +274,9 @@ class StandaloneEvalView(APIView):
             logger.info("Successfully completed all evaluations")
             return self._gm.success_response(output_entries)
 
+        except EvaluationDenied as denial:
+            logger.warning("sdk_evaluation_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -275,7 +330,11 @@ class StandaloneEvalView_v2(APIView):
                     "name": evaluation.eval_template.name,
                     "input_data": evaluation.input_data,
                     "reason": evaluation.reason,
-                    "runtime": evaluation.runtime,
+                    # Older failed/denied rows have no runtime. The shipped
+                    # Python SDK accepts zero, but cannot parse explicit null.
+                    "runtime": (
+                        evaluation.runtime if evaluation.runtime is not None else 0
+                    ),
                     "model": evaluation.model_name,
                     "output_type": evaluation.output_type,
                     "value": evaluation.value,
@@ -296,6 +355,10 @@ class StandaloneEvalView_v2(APIView):
 
             if evaluation.status == StatusChoices.FAILED:
                 response_data["result"]["error_message"] = evaluation.error_message
+                if isinstance(evaluation.metadata, dict) and evaluation.metadata.get(
+                    "denial"
+                ):
+                    response_data["result"]["denial"] = evaluation.metadata["denial"]
 
             return self._gm.success_response(response_data)
 
@@ -313,6 +376,16 @@ class StandaloneEvalView_v2(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: openapi.Response(
+                "Billing or usage limit. For a partial batch, resume at failed_index; "
+                "completed_results have already executed and may be charged.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
+            429: openapi.Response(
+                "Evaluation rate limit. No Retry-After is returned without a known "
+                "reset time. For partial batches, retry only from failed_index.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
             500: SDKErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -445,6 +518,9 @@ class StandaloneEvalView_v2(APIView):
                 return jev_error
             return self._gm.bad_request(str(e))
 
+        except EvaluationDenied as denial:
+            logger.warning("sdk_evaluation_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(

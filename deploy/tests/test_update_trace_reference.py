@@ -222,8 +222,10 @@ def schema_env():
         for declaration in node.body:
             if not isinstance(declaration,ast.Assign) or not isinstance(declaration.value,ast.Call): continue
             # This double represents v1.56.1/v1.58.0, not the target model.
-            # 0127 adds this field only after the reference has been seeded.
-            if name=='Project' and declaration.targets[0].id=='analysis_source_generation': continue
+            # 0127 and 0117_cohort_sampling add these only on the target.
+            # The exact source/target comparison below guards this projection.
+            if name=='Project' and declaration.targets[0].id in (
+                    'analysis_source_generation', 'sampling_contact_attribute'): continue
             function=declaration.value.func
             if (isinstance(function,ast.Attribute) and isinstance(function.value,ast.Name)
                     and function.value.id=='models' and (function.attr.endswith('Field') or function.attr=='ForeignKey')):
@@ -331,6 +333,54 @@ class TraceReferenceTests(unittest.TestCase):
             with self.assertRaises(LookupError): exec(t.PREPARE, {'a':ARGS})
         db.transaction.atomic.assert_not_called()
         db.connection.cursor.assert_not_called()
+
+    def test_source_schema_projection_matches_both_releases_and_exact_target_delta(self):
+        # Import here: usage's ORM double also reuses this module's Query.
+        from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
+
+        def fields(raw, cls):
+            node=next(node for node in ast.parse(raw).body
+                if isinstance(node,ast.ClassDef) and node.name==cls)
+            return {node.targets[0].id:ast.dump(node.value,include_attributes=False)
+                for node in node.body if isinstance(node,ast.Assign)
+                and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Attribute)
+                and isinstance(node.value.func.value,ast.Name) and node.value.func.value.id=='models'
+                and (node.value.func.attr.endswith('Field') or node.value.func.attr=='ForeignKey')}
+
+        target_only={
+            'analysis_source_generation': 'models.PositiveBigIntegerField(default=0, db_default=0, editable=False)',
+            'sampling_contact_attribute': 'models.CharField(max_length=200, default="", db_default="", blank=True)',
+        }
+        env,_,_=schema_env()
+        inherited={'created_at','updated_at','deleted','deleted_at'}
+        for revision in REVISIONS:
+            for name,filename,cls in [('Project','project.py','Project'),('Session','trace_session.py','TraceSession'),
+                    ('Trace','trace.py','Trace'),('Span','observation_span.py','ObservationSpan')]:
+                with self.subTest(revision=revision,model=name):
+                    path='tracer/models/'+filename
+                    released=fields(source(revision,path),cls)
+                    current=fields((ROOT/'futureagi'/path).read_text(),cls)
+                    additions={key:ast.dump(ast.parse(value,mode='eval').body,include_attributes=False)
+                        for key,value in target_only.items()} if name=='Project' else {}
+                    self.assertTrue(set(released).isdisjoint(additions))
+                    self.assertEqual(current,dict(released,**additions))
+                    self.assertEqual({field.name for field in env[name]._meta.concrete_fields},
+                        set(released)|inherited)
+
+    def test_unexpected_model_field_is_not_dropped_by_source_schema_fixture(self):
+        path=Path(__file__).resolve().parents[2]/'futureagi/tracer/models/project.py'
+        original=Path.read_text
+        def read_text(candidate,*args,**kwargs):
+            raw=original(candidate,*args,**kwargs)
+            if candidate==path:
+                raw=raw.replace('class Project(BaseModel):',
+                    'class Project(BaseModel):\n    unexpected_field = models.CharField(max_length=20)')
+            return raw
+        with mock.patch.object(Path,'read_text',read_text):
+            env,_,_=schema_env()
+        self.assertIn('unexpected_field',{field.name for field in env['Project']._meta.concrete_fields})
+        with self.assertRaisesRegex(AssertionError,'field inventory drift'):
+            exec(t.SCHEMA_CHECK,env)
 
     def test_actual_schema_checks_require_reviewed_columns_and_constraints(self):
         env,columns,constraints=schema_env()

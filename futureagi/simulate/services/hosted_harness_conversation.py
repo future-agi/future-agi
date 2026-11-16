@@ -39,6 +39,7 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
+from simulate.services.hosted_harness_validation import validate_jsonb_strings
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -822,6 +823,10 @@ def append_provider_transcript(
     subpath: str,
     entries: list[dict[str, Any]],
 ) -> dict[str, int]:
+    validate_jsonb_strings(entries, field="entries")
+    validate_jsonb_strings(
+        [project_key, provider_session_id, subpath], field="transcript key"
+    )
     with transaction.atomic():
         HostedHarnessConversation.no_workspace_objects.select_for_update().only(
             "id"
@@ -960,6 +965,8 @@ def ingest_conversation_events(
     acknowledged_through: int,
     events: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or acknowledgement writes.
+    validate_jsonb_strings(events, field="events")
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -1949,7 +1956,7 @@ def promote_conversation_checkpoint(
 
     Only a completed environment is published to; while authoring runs, its pipeline owns
     these. A checkpoint older than the published one is ignored, so a late delivery never
-    rolls the environment back.
+    rolls the environment back. A fix's request for variations lands in the fix instead.
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import drafts, rebuild
@@ -1975,6 +1982,13 @@ def promote_conversation_checkpoint(
             status_code=409,
         )
     archive = _authoring_archive(checkpoint)
+    from simulate.services import agent_fix_variations
+
+    if agent_fix_variations.is_fix_command(command):
+        # A fix's variations land in the fix's own suite version, never in the
+        # environment's drafts or defaults.
+        agent_fix_variations.land(environment, conversation, archive, command)
+        return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
     outputs = {

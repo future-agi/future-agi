@@ -169,8 +169,6 @@ const ActionMenu = (props) => {
         PaperProps={{
           sx: {
             width: 240,
-            border: "1px solid",
-            borderColor: (theme) => theme.palette.divider,
             borderRadius: "8px",
             padding: 1.5,
             mt: 0.2,
