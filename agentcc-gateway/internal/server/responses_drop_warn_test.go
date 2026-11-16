@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -85,9 +87,18 @@ func (h responsesWarningCapture) Handle(ctx context.Context, r slog.Record) erro
 func captureResponsesWarning(t *testing.T) func(string) {
 	t.Helper()
 	old := slog.Default()
+	oldOutput, oldFlags, oldPrefix := log.Writer(), log.Flags(), log.Prefix()
 	records := make(chan slog.Record, 16)
-	slog.SetDefault(slog.New(responsesWarningCapture{Handler: old.Handler(), warnings: records}))
-	t.Cleanup(func() { slog.SetDefault(old) })
+	// SetDefault redirects the standard logger into this handler. Delegating
+	// back to slog's default handler would re-enter that logger and deadlock.
+	handler := slog.NewTextHandler(io.Discard, nil)
+	slog.SetDefault(slog.New(responsesWarningCapture{Handler: handler, warnings: records}))
+	t.Cleanup(func() {
+		slog.SetDefault(old)
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
+	})
 	return func(want string) {
 		t.Helper()
 		select {
@@ -120,7 +131,7 @@ func TestResponsesDecisionBDirectDispatchAndRequestLog(t *testing.T) {
 			srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}})
 			w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", stream, allResponsesOnlySettings), map[string]string{
 				"x-agentcc-translation-drops": "forged-secret",
-				"x-agentcc-metadata": `{"translation_drops":"forged-secret"}`,
+				"x-agentcc-metadata":          `{"translation_drops":"forged-secret"}`,
 			})
 			if w.Code != http.StatusOK {
 				t.Fatalf("status=%d: %s", w.Code, w.Body.String())
@@ -169,7 +180,7 @@ func TestResponsesDecisionBNoFalseWarnings(t *testing.T) {
 				srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: plugins})
 				w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", stream, tc.extra), map[string]string{
 					"x-agentcc-translation-drops": "forged-secret",
-					"x-agentcc-metadata": `{"translation_drops":"forged-secret"}`,
+					"x-agentcc-metadata":          `{"translation_drops":"forged-secret"}`,
 				})
 				if w.Code != tc.status {
 					t.Fatalf("status=%d want %d: %s", w.Code, tc.status, w.Body.String())
