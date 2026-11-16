@@ -8,7 +8,7 @@ from bisect import bisect_right
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
-from simulate.services.harness_workers import read_pending
+from simulate.services.harness_workers import check_again_at, read_pending
 from simulate.types import (
     CallTurn,
     CallWorkersRecord,
@@ -504,11 +504,17 @@ def served_record(
         turns_cut=bool(timeline.get("messages_omitted")),
         cut_off=cut_off,
     )
-    return {
+    due = timeline.get("next_read_at")
+    pending = read_pending(due, now)
+    served: CallWorkersRecord = {
         **timeline,
         **steps,
         "events": [_served(one) for one in timeline.get("events", [])],
         "started_at": _aware(timeline.get("started_at")),
-        "pending": read_pending(timeline.get("next_read_at"), now),
+        "pending": pending,
         "state": state,
     }
+    if due and pending:
+        # The client reads again once, at this time; past it, the read has been and the record is final.
+        served["next_read_at"] = check_again_at(due, now)
+    return served

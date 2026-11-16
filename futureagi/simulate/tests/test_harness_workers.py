@@ -3099,7 +3099,7 @@ def test_a_transcript_row_of_tool_calls_says_which_of_them_hand_work_on():
     calls = tagged_function_calls(
         [*(row["tool_calls"][0] for row in rows[:3]), {"name": "x", "actor_id": "boss"}]
     )
-    assert [one.get("label") for one in calls] == [
+    assert [one.get("tool_label") for one in calls] == [
         *(one["tool_label"] for one in turns[:3]),
         None,
     ]

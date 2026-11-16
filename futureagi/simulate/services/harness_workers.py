@@ -41,6 +41,8 @@ FIRST_READ = 35
 SECOND_READ = 600
 # How long past its due time a read may still be waiting in the queue.
 READ_GRACE = 240
+# How soon a client reads again once a read is due but has not run yet.
+RECHECK = 30
 # One call's span read: at most this many spans (past it the timeline is `partial`), for at most this long.
 MAX_SPANS = 5000
 SPAN_READ_CAP_MS = 30_000
@@ -329,6 +331,13 @@ def read_pending(due: str | None, now: datetime) -> bool:
     return now < (at if at.tzinfo else at.replace(tzinfo=UTC)) + timedelta(
         seconds=READ_GRACE
     )
+
+
+def check_again_at(due: str, now: datetime) -> str:
+    """When a client should read again: when the read is due, or soon after now once it is due but still queued."""
+    at = datetime.fromisoformat(due)
+    soon = now + timedelta(seconds=RECHECK)
+    return max(at if at.tzinfo else at.replace(tzinfo=UTC), soon).isoformat()
 
 
 def first_read_due(call: CallExecution) -> str | None:
