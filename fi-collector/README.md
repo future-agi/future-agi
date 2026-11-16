@@ -37,8 +37,30 @@ From this directory, with the Go toolchain declared in `go.mod`:
 ```bash
 go build -o bin/fi-collector ./cmd/fi-collector
 go test ./...
-./bin/fi-collector --config config/collector.yaml
+./bin/fi-collector --help
 ```
+
+The relative output path works from a clean checkout: `go build` creates `bin/`
+if it does not exist. No absolute output path or prebuilt binary is required.
+
+To run against an existing local Future AGI stack, use `config/collector.yaml`.
+Set `FI_CH_URL` to the ClickHouse **HTTP** endpoint (not the native-protocol
+port), `FI_CH_DATABASE` to the database containing the v2 spans schema, and
+configure PostgreSQL authentication as described below. The YAML `clickhouse`
+and `db` hostnames belong to the container network; replace them with reachable
+endpoints when running the binary outside that network. Do not copy placeholder
+credentials from the YAML into a deployment.
+
+```bash
+# Still in fi-collector/; configure the database endpoints and auth first.
+FI_DEAD_LETTER_FILE=./dead_letter.jsonl \
+  ./bin/fi-collector --config config/collector.yaml
+```
+
+Set `FI_AUTH_REDIS_ADDR` for quota enforcement, usage metering, and cache
+invalidation. For self-hosted/local deployments without the Cloud usage-event
+consumer, set `USAGE_EVENTS_ENABLED=false` so its Redis stream does not grow
+undrained. See `config/collector.yaml` for the remaining settings.
 
 There is no Makefile or OCB install step. Configure real PostgreSQL auth and the
 ClickHouse schema/endpoint before running the production binary. It fails startup
@@ -106,7 +128,7 @@ pass the variables and mounts to the collector process/container.
 Optional path to a litellm `model_prices_and_context_window.json` file. When set, the
 collector uses the file at this path to price token-based cost; when empty or unset, the
 collector falls back to an embedded snapshot of the litellm pricing table (current at build time).
-If the file at this path can't be read or parsed, the collector logs an error and falls back to
+If the file at this path can't be read or parsed, the collector logs a warning and falls back to
 the embedded snapshot rather than disabling token-based pricing.
 
 Use this to refresh pricing without rebuilding the collector:
@@ -120,9 +142,10 @@ Refresh the embedded snapshot by re-vendoring `fi-collector/pkg/pricing/model_pr
 time (this is a compile-time `//go:embed`):
 
 ```bash
-# Inside the repo
-curl -sSL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
+# From the repository root (not fi-collector/)
+curl -fsSL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
   -o fi-collector/pkg/pricing/model_prices.json
+cd fi-collector
 go build -o bin/fi-collector ./cmd/fi-collector
 ```
 
