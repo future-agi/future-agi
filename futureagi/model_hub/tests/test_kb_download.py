@@ -14,6 +14,10 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
 from model_hub.serializers.kb import KnowledgeBaseDownloadQuerySerializer
+from model_hub.services.kb_snapshot import (
+    KnowledgeBaseSnapshotError,
+    capture_knowledge_base_selection,
+)
 from model_hub.utils.kb_download import download_knowledge_base_file
 
 
@@ -172,6 +176,52 @@ def test_viewer_has_existing_read_permission(download_case):
     response = download_knowledge_base_file(c.request, c.kb.id, c.file.id)
     assert response.status_code == 200
     response.close()
+
+
+def test_environment_snapshot_captures_authorized_completed_text(download_case):
+    c = download_case
+    c.kb.status = StatusType.COMPLETED.value
+    c.kb.save()
+    c.stored.read.return_value = b"  trusted   reference  "
+    with patch("model_hub.services.kb_snapshot.get_storage_client", c.client):
+        captured = capture_knowledge_base_selection(
+            c.request,
+            kb_id=str(c.kb.id),
+            file_ids=[str(c.file.id)],
+            whole_collection=False,
+        )
+    assert len(captured) == 1
+    assert captured[0].content == b"trusted reference"
+    assert captured[0].original_content == b"  trusted   reference  "
+    assert captured[0].origin["kb_id"] == str(c.kb.id)
+    assert captured[0].origin["file_id"] == str(c.file.id)
+    assert "uploaded_url" not in captured[0].origin
+    c.stored.close.assert_called_once()
+    c.stored.release_conn.assert_called_once()
+
+
+def test_environment_snapshot_fails_whole_collection_atomically(download_case):
+    c = download_case
+    c.kb.status = StatusType.COMPLETED.value
+    c.kb.save()
+    processing = Files.no_workspace_objects.create(
+        name="pending.txt",
+        uploaded_url="http://invalid.invalid/ignored",
+        status=StatusType.PROCESSING.value,
+    )
+    c.kb.files.add(processing)
+    c.stored.read.return_value = b"ready"
+    with (
+        patch("model_hub.services.kb_snapshot.get_storage_client", c.client),
+        pytest.raises(KnowledgeBaseSnapshotError) as caught,
+    ):
+        capture_knowledge_base_selection(
+            c.request,
+            kb_id=str(c.kb.id),
+            file_ids=None,
+            whole_collection=True,
+        )
+    assert caught.value.code == "source_not_ready"
 
 
 def test_header_filename_normalizes_paths_and_control_characters(download_case):

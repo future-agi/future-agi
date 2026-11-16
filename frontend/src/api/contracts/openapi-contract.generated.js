@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1147,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29064,6 +29064,99 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/sources/": {
+      get: {
+        operationId: "simulate_api_harness-environments_sources",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceSummary",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/capabilities/": {
+      get: {
+        operationId:
+          "simulate_api_harness-environments_sources_source_capabilities",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceCapabilities",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/imports/accept/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_imports_accept_source_import",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceAccept",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceAcceptResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/imports/prepare/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_imports_prepare_source_import",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourcePrepare",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourcePrepareResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/uploads/prepare/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_uploads_prepare_source_upload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourcePrepareResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/verify/": {
       post: {
         operationId: "simulate_api_harness-environments_verify",
@@ -68894,6 +68987,195 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessSourceAccept: {
+      required: [
+        "import_ref",
+        "expected_environment_version_id",
+        "expected_draft",
+        "expected_draft_digest",
+        "review",
+      ],
+      type: "object",
+      properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          maxLength: 16384,
+          minLength: 1,
+        },
+        expected_environment_version_id: {
+          title: "Expected environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        review: {
+          title: "Review",
+          type: "object",
+        },
+      },
+    },
+    HarnessSourceAcceptResponse: {
+      required: [
+        "draft",
+        "snapshot_digest",
+        "sources",
+        "diagnostics",
+        "validation",
+      ],
+      type: "object",
+      properties: {
+        draft: {
+          title: "Draft",
+          type: "object",
+          "x-nullable": true,
+        },
+        snapshot_digest: {
+          title: "Snapshot digest",
+          type: "string",
+          minLength: 1,
+        },
+        sources: {
+          title: "Sources",
+          type: "object",
+        },
+        diagnostics: {
+          title: "Diagnostics",
+          type: "object",
+        },
+        validation: {
+          title: "Validation",
+          type: "object",
+        },
+      },
+    },
+    HarnessSourceCapabilities: {
+      required: [
+        "upload",
+        "knowledge_base",
+        "environment_version_id",
+        "draft",
+        "participant_visibility_enabled",
+        "participant_visibility_reason",
+      ],
+      type: "object",
+      properties: {
+        upload: {
+          title: "Upload",
+          type: "object",
+        },
+        knowledge_base: {
+          title: "Knowledge base",
+          type: "object",
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        draft: {
+          title: "Draft",
+          type: "object",
+        },
+        participant_visibility_enabled: {
+          title: "Participant visibility enabled",
+          type: "boolean",
+        },
+        participant_visibility_reason: {
+          title: "Participant visibility reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessSourcePrepare: {
+      required: [
+        "expected_environment_version_id",
+        "expected_draft",
+        "selection",
+      ],
+      type: "object",
+      properties: {
+        expected_environment_version_id: {
+          title: "Expected environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        selection: {
+          $ref: "#/definitions/HarnessSourceSelection",
+        },
+      },
+    },
+    HarnessSourcePrepareResponse: {
+      required: [
+        "import_ref",
+        "draft_digest",
+        "draft",
+        "suggested_purposes",
+        "capabilities",
+      ],
+      type: "object",
+      properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          minLength: 1,
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+          minLength: 1,
+        },
+        draft: {
+          title: "Draft",
+          type: "object",
+        },
+        suggested_purposes: {
+          title: "Suggested purposes",
+          type: "object",
+        },
+        capabilities: {
+          $ref: "#/definitions/HarnessSourceCapabilities",
+        },
+      },
+    },
+    HarnessSourceSummary: {
+      required: ["draft", "snapshot_digest", "sources", "validation_status"],
+      type: "object",
+      properties: {
+        draft: {
+          title: "Draft",
+          type: "boolean",
+        },
+        snapshot_digest: {
+          title: "Snapshot digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        sources: {
+          title: "Sources",
+          type: "object",
+        },
+        validation_status: {
+          title: "Validation status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessSourceUploadResponse: {
       required: ["source_id", "name", "file_count", "total_bytes"],
       type: "object",
@@ -105935,6 +106217,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Purpose",
           type: "string",
           enum: ["target_provider", "simulator_provider", "source_checkout"],
+        },
+      },
+    },
+    HarnessSourceDraftRef: {
+      required: ["id", "revision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessSourceSelection: {
+      required: ["kind", "kb_id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["knowledge_base"],
+        },
+        kb_id: {
+          title: "Kb id",
+          type: "string",
+          format: "uuid",
+        },
+        file_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        whole_collection: {
+          title: "Whole collection",
+          type: "boolean",
+          default: false,
         },
       },
     },

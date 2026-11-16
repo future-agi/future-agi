@@ -5,6 +5,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -42,6 +43,13 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
+    HarnessSourceAcceptResponseSerializer,
+    HarnessSourceAcceptSerializer,
+    HarnessSourceCapabilitiesSerializer,
+    HarnessSourcePrepareResponseSerializer,
+    HarnessSourcePrepareSerializer,
+    HarnessSourceSummarySerializer,
+    HarnessSourceUploadPrepareSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -423,6 +431,115 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         return Response(list_drafts(job))
+
+    @validated_request(responses={200: HarnessSourceCapabilitiesSerializer})
+    @action(detail=True, methods=["get"], url_path="sources/capabilities")
+    def source_capabilities(self, request, pk=None):
+        """Formats, limits, and the draft basis for adding sources."""
+        from simulate.services.harness_sources import source_capabilities
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(source_capabilities(job))
+
+    @validated_request(responses={200: HarnessSourceSummarySerializer})
+    @action(detail=True, methods=["get"], url_path="sources")
+    def sources(self, request, pk=None):
+        """The secret-safe source summary from the current draft or version."""
+        from simulate.services.harness_sources import source_summary
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(source_summary(job))
+
+    @validated_request(
+        request_serializer=HarnessSourcePrepareSerializer,
+        responses={200: HarnessSourcePrepareResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="sources/imports/prepare")
+    def prepare_source_import(self, request, pk=None):
+        """Capture authorized KB bytes and prepare a source review."""
+        from simulate.services.harness_sources import prepare_source_import
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            prepare_source_import(
+                request,
+                job,
+                body["selection"],
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft=body["expected_draft"],
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessSourceUploadPrepareSerializer,
+        responses={200: HarnessSourcePrepareResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="sources/uploads/prepare",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def prepare_source_upload(self, request, pk=None):
+        """Capture one direct upload and prepare the same source review."""
+        from simulate.services.harness_sources import prepare_upload_import
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            prepare_upload_import(
+                job,
+                body["file"],
+                purpose=body.get("purpose"),
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft={
+                    "id": body.get("expected_draft_id"),
+                    "revision": body["expected_draft_revision"],
+                },
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessSourceAcceptSerializer,
+        responses={200: HarnessSourceAcceptResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="sources/imports/accept")
+    def accept_source_import(self, request, pk=None):
+        """Accept a prepared review into the existing Environment draft."""
+        from simulate.services.harness_sources import accept_source_import
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            accept_source_import(
+                request,
+                job,
+                import_ref=body["import_ref"],
+                review=body["review"],
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft=body["expected_draft"],
+                expected_draft_digest=body["expected_draft_digest"],
+            )
+        )
 
     @validated_request(
         request_serializer=HarnessDraftSaveSerializer,

@@ -65,8 +65,8 @@ class _StorageStreamingResponse(StreamingHttpResponse):
             yield chunk
 
 
-def download_knowledge_base_file(request, kb_id, file_id):
-    """Authorize the collection and its file before touching object storage."""
+def authorized_knowledge_base(request, kb_id):
+    """Return one authorized collection without disclosing cross-scope existence."""
     try:
         kb_id = UUID(str(kb_id))
     except (ValueError, TypeError) as exc:
@@ -123,6 +123,11 @@ def download_knowledge_base_file(request, kb_id, file_id):
         and not (kb.workspace_id is None and workspace.is_default)
     ):
         raise PermissionDenied("Access denied to this knowledge base.")
+    return kb
+
+
+def authorized_knowledge_base_file(request, kb_id, file_id):
+    kb = authorized_knowledge_base(request, kb_id)
     file = (
         kb.files.filter(id=file_id, deleted=False)
         .exclude(status=StatusType.DELETING.value)
@@ -130,18 +135,30 @@ def download_knowledge_base_file(request, kb_id, file_id):
     )
     if file is None:
         raise NotFound("Knowledge base file not found.")
+    return kb, file
+
+
+def knowledge_base_object_key(kb, file) -> str:
+    """The server-derived object key for an authorized KB file."""
+    extension = file.name.rsplit(".", 1)[-1].lower()
+    if not re.fullmatch(r"[a-z0-9]{1,10}", extension):
+        raise NotFound("Knowledge base file not found.")
+    return f"knowledge-base/{kb.id}/{file.id}.{extension}"
+
+
+def download_knowledge_base_file(request, kb_id, file_id):
+    """Authorize the collection and its file before touching object storage."""
+    kb, file = authorized_knowledge_base_file(request, kb_id, file_id)
 
     # Keys follow upload_file_to_s3: UUID/UUID.extension. Never accept an object
     # key or a storage URL from the caller, including an uploaded_url override.
     extension = file.name.rsplit(".", 1)[-1].lower()
-    if not re.fullmatch(r"[a-z0-9]{1,10}", extension):
-        raise NotFound("Knowledge base file not found.")
     filename = file.name.replace("\\", "/").rsplit("/", 1)[-1]
     filename = "".join(
         char for char in filename if ord(char) >= 32 and ord(char) != 127
     )
     filename = filename or f"download.{extension}"
-    key = f"knowledge-base/{kb.id}/{file.id}.{extension}"
+    key = knowledge_base_object_key(kb, file)
     try:
         stored = get_storage_client().get_object(settings.UPLOAD_BUCKET_NAME, key)
     except S3Error as exc:

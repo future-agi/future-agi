@@ -522,6 +522,85 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     settings = HarnessEnvironmentSettingsSerializer()
 
 
+class HarnessSourceSelectionSerializer(StrictInputSerializer):
+    kind = serializers.ChoiceField(choices=("knowledge_base",))
+    kb_id = serializers.UUIDField()
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=100
+    )
+    whole_collection = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if attrs.get("whole_collection") == ("file_ids" in attrs):
+            raise serializers.ValidationError(
+                "Choose either whole_collection or explicit file_ids."
+            )
+        if len(set(attrs.get("file_ids", []))) != len(attrs.get("file_ids", [])):
+            raise serializers.ValidationError("file_ids must be unique.")
+        return attrs
+
+
+class HarnessSourceDraftRefSerializer(StrictInputSerializer):
+    id = serializers.UUIDField(allow_null=True)
+    revision = serializers.IntegerField(min_value=0)
+
+
+class HarnessSourcePrepareSerializer(StrictInputSerializer):
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft = HarnessSourceDraftRefSerializer()
+    selection = HarnessSourceSelectionSerializer()
+
+
+class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft_id = serializers.UUIDField(required=False, allow_null=True)
+    expected_draft_revision = serializers.IntegerField(min_value=0)
+    purpose = serializers.ChoiceField(
+        choices=("policy", "reference", "seed_records"), required=False
+    )
+    file = serializers.FileField()
+
+
+class HarnessSourceAcceptSerializer(StrictInputSerializer):
+    import_ref = serializers.CharField(max_length=16384)
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft = HarnessSourceDraftRefSerializer()
+    expected_draft_digest = serializers.CharField(max_length=128)
+    review = serializers.JSONField()
+
+
+class HarnessSourceCapabilitiesSerializer(serializers.Serializer):
+    upload = serializers.JSONField()
+    knowledge_base = serializers.JSONField()
+    environment_version_id = serializers.UUIDField()
+    draft = serializers.JSONField()
+    participant_visibility_enabled = serializers.BooleanField()
+    participant_visibility_reason = serializers.CharField()
+
+
+class HarnessSourceSummarySerializer(serializers.Serializer):
+    draft = serializers.BooleanField()
+    snapshot_digest = serializers.CharField(allow_null=True)
+    sources = serializers.JSONField()
+    validation_status = serializers.CharField(allow_null=True)
+
+
+class HarnessSourcePrepareResponseSerializer(serializers.Serializer):
+    import_ref = serializers.CharField()
+    draft_digest = serializers.CharField()
+    draft = serializers.JSONField()
+    suggested_purposes = serializers.JSONField()
+    capabilities = HarnessSourceCapabilitiesSerializer()
+
+
+class HarnessSourceAcceptResponseSerializer(serializers.Serializer):
+    draft = serializers.JSONField(allow_null=True)
+    snapshot_digest = serializers.CharField()
+    sources = serializers.JSONField()
+    diagnostics = serializers.JSONField()
+    validation = serializers.JSONField()
+
+
 class HarnessVersionPersonSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField(allow_blank=True)

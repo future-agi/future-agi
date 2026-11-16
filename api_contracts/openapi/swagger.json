@@ -85605,6 +85605,236 @@
                 ]
             },
             "parameters": []
+        },
+        "/simulate/api/harness-environments/{id}/sources/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_sources",
+                "description": "The secret-safe source summary from the current draft or version.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceSummary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/sources/capabilities/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_sources_source_capabilities",
+                "description": "Formats, limits, and the draft basis for adding sources.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceCapabilities"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/sources/imports/accept/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_sources_imports_accept_source_import",
+                "description": "Accept a prepared review into the existing Environment draft.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceAccept"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceAcceptResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/sources/imports/prepare/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_sources_imports_prepare_source_import",
+                "description": "Capture authorized KB bytes and prepare a source review.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourcePrepare"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourcePrepareResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/sources/uploads/prepare/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_sources_uploads_prepare_source_upload",
+                "description": "Capture one direct upload and prepare the same source review.",
+                "parameters": [
+                    {
+                        "name": "expected_environment_version_id",
+                        "in": "formData",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "expected_draft_id",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid",
+                        "x-nullable": true
+                    },
+                    {
+                        "name": "expected_draft_revision",
+                        "in": "formData",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    {
+                        "name": "purpose",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "policy",
+                            "reference",
+                            "seed_records"
+                        ]
+                    },
+                    {
+                        "name": "file",
+                        "in": "formData",
+                        "required": true,
+                        "type": "file"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourcePrepareResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data",
+                    "application/x-www-form-urlencoded"
+                ],
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         }
     },
     "definitions": {
@@ -185505,6 +185735,254 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "HarnessSourcePrepareResponse": {
+            "required": [
+                "import_ref",
+                "draft_digest",
+                "draft",
+                "suggested_purposes",
+                "capabilities"
+            ],
+            "type": "object",
+            "properties": {
+                "import_ref": {
+                    "title": "Import ref",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "draft_digest": {
+                    "title": "Draft digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "draft": {
+                    "title": "Draft",
+                    "type": "object"
+                },
+                "suggested_purposes": {
+                    "title": "Suggested purposes",
+                    "type": "object"
+                },
+                "capabilities": {
+                    "$ref": "#/definitions/HarnessSourceCapabilities"
+                }
+            }
+        },
+        "HarnessSourceCapabilities": {
+            "required": [
+                "upload",
+                "knowledge_base",
+                "environment_version_id",
+                "draft",
+                "participant_visibility_enabled",
+                "participant_visibility_reason"
+            ],
+            "type": "object",
+            "properties": {
+                "upload": {
+                    "title": "Upload",
+                    "type": "object"
+                },
+                "knowledge_base": {
+                    "title": "Knowledge base",
+                    "type": "object"
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "draft": {
+                    "title": "Draft",
+                    "type": "object"
+                },
+                "participant_visibility_enabled": {
+                    "title": "Participant visibility enabled",
+                    "type": "boolean"
+                },
+                "participant_visibility_reason": {
+                    "title": "Participant visibility reason",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessSourcePrepare": {
+            "required": [
+                "expected_environment_version_id",
+                "expected_draft",
+                "selection"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_environment_version_id": {
+                    "title": "Expected environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expected_draft": {
+                    "$ref": "#/definitions/HarnessSourceDraftRef"
+                },
+                "selection": {
+                    "$ref": "#/definitions/HarnessSourceSelection"
+                }
+            }
+        },
+        "HarnessSourceSelection": {
+            "required": [
+                "kind",
+                "kb_id"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "knowledge_base"
+                    ]
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "file_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 100
+                },
+                "whole_collection": {
+                    "title": "Whole collection",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "HarnessSourceDraftRef": {
+            "required": [
+                "id",
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessSourceAcceptResponse": {
+            "required": [
+                "draft",
+                "snapshot_digest",
+                "sources",
+                "diagnostics",
+                "validation"
+            ],
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "title": "Draft",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "snapshot_digest": {
+                    "title": "Snapshot digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sources": {
+                    "title": "Sources",
+                    "type": "object"
+                },
+                "diagnostics": {
+                    "title": "Diagnostics",
+                    "type": "object"
+                },
+                "validation": {
+                    "title": "Validation",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessSourceAccept": {
+            "required": [
+                "import_ref",
+                "expected_environment_version_id",
+                "expected_draft",
+                "expected_draft_digest",
+                "review"
+            ],
+            "type": "object",
+            "properties": {
+                "import_ref": {
+                    "title": "Import ref",
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1
+                },
+                "expected_environment_version_id": {
+                    "title": "Expected environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expected_draft": {
+                    "$ref": "#/definitions/HarnessSourceDraftRef"
+                },
+                "expected_draft_digest": {
+                    "title": "Expected draft digest",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "review": {
+                    "title": "Review",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessSourceSummary": {
+            "required": [
+                "draft",
+                "snapshot_digest",
+                "sources",
+                "validation_status"
+            ],
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "title": "Draft",
+                    "type": "boolean"
+                },
+                "snapshot_digest": {
+                    "title": "Snapshot digest",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "sources": {
+                    "title": "Sources",
+                    "type": "object"
+                },
+                "validation_status": {
+                    "title": "Validation status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         }
