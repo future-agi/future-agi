@@ -58,6 +58,7 @@ def _sealed(door, *, held):
             "workers": ["refund"] if relies else [],
             "relies_on_worker_limits": relies,
             "held": hold,
+            "unheld_workers": ["refund"] if hold else [],
             "reason": "worker_limits_not_enforced" if hold else None,
             "cause": "tool_service_not_fronted" if hold else None,
             "limit": "all" if hold else None,

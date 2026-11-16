@@ -59,6 +59,8 @@ class CaseHold:
     workers: tuple[str, ...] = ()
     reason: str | None = None
     relies: bool = False
+    # The workers whose limits the case relies on and the build cannot hold; None on a seal from before ALK named them.
+    unheld: tuple[str, ...] | None = None
 
 
 _NOT_KNOWN = CaseHold(held=None)
@@ -112,6 +114,11 @@ def case_holds(pairing: Pairing, evidence: Evidence) -> Mapping[str, CaseHold] |
                 else None
             ),
             relies=entry.get("relies_on_worker_limits") is True,
+            unheld=(
+                tuple(str(one) for one in entry["unheld_workers"])
+                if isinstance(entry.get("unheld_workers"), list)
+                else None
+            ),
         )
     return holds
 
@@ -257,6 +264,10 @@ def worker_boundaries(
                 "would": "Its calls are held to its own tools again",
                 "recheck": None,
             }
+        elif outcome is None and evidence.worker_limits is not None:
+            # Worker limits sealed without the door decision (an older compose build): a rebuild would not add it.
+            status, code = "untested", "door_decision_not_sealed"
+            reason = "This environment's build did not seal whether its world holds worker limits, so none are held."
         elif outcome is None:
             # Sealed before ALK wrote its door decision: whether a case relies on the worker is not known.
             status, code = "untested", "sealed_before_worker_limits"
@@ -271,6 +282,12 @@ def worker_boundaries(
             # A rebuild cannot add a door to a build ALK found none could stand in front of.
             status = _unheld_status(limited)
             code, reason = _no_door(str(outcome.get("reason") or ""))
+        elif outcome.get("surface") == "in_process" and worker_id not in {
+            str(one) for one in outcome.get("workers") or []
+        }:
+            # The door inside the agent holds only the workers it lists; ALK holds this one's budgeted cases.
+            status, code = _unheld_status(limited), "in_process_not_held"
+            reason = "The world's door inside the agent does not hold this worker's deadline or its permitted tools."
         elif outcome.get("surface") == "in_process":
             status, code = "partial", "in_process_door"
             reason = (

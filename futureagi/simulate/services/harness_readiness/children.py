@@ -15,6 +15,10 @@ _CALLS_READ = 20
 WORKERS_KEY = "harness_workers"
 # A transfer passes control and never returns; a delegation is whole once it returns.
 _HAND_OFFS = frozenset({"delegated", "transferred"})
+# A worker's stored end `state` when the trial stopped it before it returned: past its deadline, cancelled, or cut off.
+_CUT_SHORT = frozenset(
+    {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
+)
 
 
 def _hand_offs_whole(record: Mapping[str, Any]) -> bool:
@@ -119,6 +123,16 @@ def children(declared: Any, runs: list[Any]) -> Reading:
                     for entry in (one.get(TRIAL_STATE_KEY) or {}).get("state_changes")
                     or []
                     if isinstance(entry, Mapping)
+                )
+            ),
+        },
+        {
+            "check": "timeout_or_cancel",
+            "result": result(
+                any(
+                    isinstance(one, Mapping) and one.get("state") in _CUT_SHORT
+                    for record in records
+                    for one in record.get("workers") or []
                 )
             ),
         },

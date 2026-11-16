@@ -57,8 +57,13 @@ PERMISSIONS = {
 }
 
 
-def _scenario(*, held, workers=(), relies=None, cause=None, deadline=None):
+def _scenario(*, held, workers=(), relies=None, cause=None, deadline=None, unheld=None):
+    # `unheld`: ALK's sealed `unheld_workers`, empty when not held; None leaves it out, as an older seal does.
+    sealed = {} if unheld is None and held else {"unheld_workers": []}
+    if unheld is not None:
+        sealed["unheld_workers"] = list(unheld)
     return {
+        **sealed,
         "workers": list(workers),
         "relies_on_worker_limits": bool(workers) if relies is None else relies,
         "held": held,
@@ -140,17 +145,21 @@ class TestWorkerRows:
         # The limit is cooperative: no worker ever reads Supported.
         assert all(one["status"] != "supported" for one in _rows().values())
 
-    def test_an_in_process_door_holds_deadlines_and_enforces_no_tool(self):
+    def test_an_in_process_door_holds_only_the_workers_it_lists(self):
         rows = _rows(
             evidence=_evidence(door_outcome=IN_PROCESS_DOOR, worker_permissions=None)
         )
 
+        listed, unlisted = rows["refund"], rows["order_lookup"]
+        assert (listed["status"], listed["reason_code"], listed["fix"]) == (
+            "partial",
+            "in_process_door",
+            None,
+        )
+        # Not in the door's list: its deadline is not held either, so a limited worker reads Blocked.
+        assert (unlisted["status"], unlisted["fix"]) == ("blocked", None)
+        assert unlisted["reason_code"] != listed["reason_code"]
         for row in rows.values():
-            assert (row["status"], row["reason_code"], row["fix"]) == (
-                "partial",
-                "in_process_door",
-                None,
-            )
             assert set(_boundaries(row).values()) == {"not_enforced"}
 
     @pytest.mark.parametrize(
@@ -185,6 +194,13 @@ class TestWorkerRows:
         )
         assert row["fix"]["type"] == "rebuild_environment"
         assert set(_boundaries(row).values()) == {"not_enforced"}
+
+    def test_worker_limits_sealed_without_a_door_file_offer_no_rebuild(self):
+        row = _rows(evidence=_evidence(door_outcome=None))["order_lookup"]
+
+        assert row["status"] == "untested"
+        assert row["reason_code"] != "sealed_before_worker_limits"
+        assert row["fix"] is None
 
     def test_a_shared_worker_alk_limits_is_blocked_and_a_rebuild_after_rebinding_fixes_it(
         self,
@@ -272,17 +288,43 @@ class TestCaseHolds:
         "sealed",
         [
             # A budget for the refund worker, on a door that cannot hold it.
-            _scenario(held=True, workers=["refund"], cause="tool_service_not_fronted"),
+            _scenario(
+                held=True,
+                workers=["refund"],
+                cause="tool_service_not_fronted",
+                unheld=["refund"],
+            ),
             # A sub-goal about a limited worker, on a worker wired as shared.
-            _scenario(held=True, workers=["refund"], cause="shared_worker"),
+            _scenario(
+                held=True, workers=["refund"], cause="shared_worker", unheld=["refund"]
+            ),
+            # A sub-goal on an unlimited worker beside it is not one it is held by.
+            _scenario(
+                held=True,
+                workers=["notes", "refund"],
+                cause="shared_worker",
+                unheld=["refund"],
+            ),
         ],
     )
-    def test_a_case_alk_seals_held_is_held_by_its_worker(self, sealed):
+    def test_a_case_alk_seals_held_is_held_by_its_unheld_worker(self, sealed):
         evidence = _evidence(worker_limits=_limits({"refund-1": sealed}))
 
         placed = _placed("refund-1", evidence=evidence)
 
         assert (placed.bucket, placed.by) == ("blocked", ["worker:refund"])
+
+    def test_a_held_case_sealed_before_alk_named_its_unheld_workers_is_held_by_worker_limits(
+        self,
+    ):
+        sealed = _scenario(held=True, workers=["notes", "refund"], cause="in_process")
+        evidence = _evidence(worker_limits=_limits({"refund-1": sealed}))
+
+        placed = _placed("refund-1", evidence=evidence)
+
+        assert (placed.bucket, placed.by) == ("blocked", [selection.WORKER_LIMITS_HELD])
+        # Filed with the sealed cause, never under a worker the seal does not say is unheld.
+        assert placed.hold.reason == workers._CAUSE_REASONS["in_process"]
 
     @pytest.mark.parametrize(
         "sealed",
@@ -494,6 +536,18 @@ class TestSubAgentEvidence:
             "workers_partly_observed",
         )
         assert _checks(reading)["delegation_and_return"] == "not_seen"
+
+    def test_a_worker_stored_as_cut_short_is_seen_timed_out_or_cancelled(
+        self, monkeypatch
+    ):
+        def record(state):
+            return {"workers": [{**_worker("r1", "refund"), "state": state}]}
+
+        cut = _children(monkeypatch, [_call("r1", record("deadline_passed"))])
+        back = _children(monkeypatch, [_call("r1", record("completed"))])
+
+        assert _checks(cut)["timeout_or_cancel"] == "seen"
+        assert _checks(back)["timeout_or_cancel"] == "not_seen"
 
     def test_ids_are_compared_across_runs_by_the_contract_id(self, monkeypatch):
         def record(run):

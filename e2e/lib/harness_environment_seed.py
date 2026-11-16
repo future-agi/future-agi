@@ -354,6 +354,7 @@ def _door_files(documents, workers):
             "workers": ["refund"] if relies else [],
             "relies_on_worker_limits": relies,
             "held": held and relies,
+            "unheld_workers": ["refund"] if held and relies else [],
             "reason": "worker_limits_not_enforced" if held and relies else None,
             "cause": "tool_service_not_fronted" if held and relies else None,
             "limit": "all" if held and relies else None,
