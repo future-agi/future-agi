@@ -80,6 +80,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def disconnect(self, close_code):
+        self._guard.stop()
         logger.info(
             f"PromptStream connection closed: session={self.session_uuid}, code={close_code}"
         )

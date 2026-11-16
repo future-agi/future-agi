@@ -273,6 +273,8 @@ function schemaToZod(schema, options = {}) {
     case "string":
       compiled = z.string();
       if (schema.format === "uuid") compiled = compiled.uuid();
+      if (typeof schema.pattern === "string")
+        compiled = compiled.regex(new RegExp(schema.pattern));
       if (Number.isInteger(schema.minLength))
         compiled = compiled.min(schema.minLength);
       if (Number.isInteger(schema.maxLength))
@@ -331,6 +333,20 @@ function objectSchemaToZod(schema, options) {
     compiled = compiled.strict();
   } else {
     compiled = compiled.passthrough();
+  }
+  // Swagger 2 cannot express conditional required/non-null fields natively.
+  for (const [trigger, rule] of Object.entries(
+    schema["x-required-when"] || {},
+  )) {
+    for (const field of rule.fields) {
+      compiled = compiled.refine(
+        (value) => value[trigger] !== rule.value || value[field] != null,
+        {
+          path: [field],
+          message: `Required when ${trigger} is ${rule.value}.`,
+        },
+      );
+    }
   }
   return compiled;
 }

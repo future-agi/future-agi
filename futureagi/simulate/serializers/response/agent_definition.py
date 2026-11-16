@@ -8,6 +8,7 @@ from simulate.serializers.harness_environment import (
     HarnessRunSummarySerializer,
     RunEnvironmentRefSerializer,
 )
+from simulate.services.agent_definition import resolve_vapi_configuration_for_version
 
 MASKED_CREDENTIAL_VALUE = "********"
 
@@ -59,6 +60,24 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             "livekit_max_concurrency",
         ]
         read_only_fields = fields
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.provider == "vapi":
+            try:
+                configuration = resolve_vapi_configuration_for_version(
+                    instance.active_version or instance.latest_version,
+                    agent_definition=instance,
+                )
+            except ValueError:
+                # Keep the existing unreadable-key display contract, without
+                # substituting another row's key or the definition's identity.
+                data["api_key"] = MASKED_CREDENTIAL_VALUE
+                data["assistant_id"] = ""
+            else:
+                data["api_key"] = mask_key(configuration.api_key or "")
+                data["assistant_id"] = configuration.assistant_id or ""
+        return data
 
     @staticmethod
     def _get_latest_creds(obj):

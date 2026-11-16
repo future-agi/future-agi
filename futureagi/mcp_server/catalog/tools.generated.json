@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "aca65a6ad4143dc6cb3ec0afdcfbf174760a70c2c99b76cdb78b30a2aa3bbfd7",
+  "source_contract_sha256": "29912d90260d61657f3610d28ac3557201bc8f688ffb466314aea41b65462674",
   "tool_count": 111,
   "tools": [
     {
@@ -8879,6 +8879,12 @@
             "maximum": 25,
             "minimum": 1
           },
+          "source_version_id": {
+            "title": "Source version id",
+            "description": "Credential source within this agent; omitted selects active/latest.",
+            "type": "string",
+            "format": "uuid"
+          },
           "commit_message": {
             "title": "Commit message",
             "type": "string",
@@ -8930,6 +8936,7 @@
             "livekit_agent_name",
             "livekit_config_json",
             "livekit_max_concurrency",
+            "source_version_id",
             "commit_message",
             "observability_enabled"
           ]

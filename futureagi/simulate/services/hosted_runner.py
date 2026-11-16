@@ -872,12 +872,66 @@ def _voice_credentials(agent_definition, agent_version):
 
 
 def _voice_provider(agent_definition, credentials, agent_version=None) -> str:
+    from simulate.services.agent_definition import provider_for_version
+    from simulate.services.agent_setup import LEGACY_TYPE
+
+    version = _resolve_agent_version(agent_definition, agent_version)
     provider = (
-        getattr(credentials, "provider_type", None)
-        or _agent_field(agent_definition, agent_version, "provider", None)
-        or "livekit"
+        provider_for_version(version)
+        if version is not None
+        else getattr(agent_definition, "provider", None)
     )
-    return str(provider).strip().lower()
+    provider = str(provider or "livekit").strip().lower()
+    # Normalize supported aliases (livekit_bridge -> livekit) for the credential
+    # family and runner profile, without coercing other providers to vapi.
+    provider = LEGACY_TYPE.get(provider, provider)
+    # The row's enum is a storage encoding (Bland rows can say vapi), not
+    # authority to change the provider authored by the selected version.
+    if credentials is not None and credentials.provider_type != provider:
+        raise HostedRunnerBuildError("voice runner credentials do not match provider")
+    return provider
+
+
+def _vapi_credential_assistant(agent_definition, credentials, agent_version):
+    """Keep the target identity bound to the exact credential ID in the job.
+
+    Unlike the native paired resolver, hosted jobs must not replace an empty
+    or unreadable row with definition secrets: Temporal resolves that ID only.
+    A migrated legacy row may belong to a different version of this agent.
+    """
+    from simulate.services.agent_definition import provider_for_version
+
+    if credentials is None:
+        return _agent_field(agent_definition, agent_version, "assistant_id")
+    if credentials.provider_type != "vapi":
+        raise HostedRunnerBuildError("voice runner credentials do not match provider")
+
+    owner = credentials.agent_version
+    if credentials.agent_definition_id not in (None, agent_definition.id):
+        raise HostedRunnerBuildError("voice runner credentials belong to another agent")
+    if owner is not None:
+        if (
+            owner.agent_definition_id != agent_definition.id
+            or owner.organization_id != agent_definition.organization_id
+            or owner.workspace_id != agent_definition.workspace_id
+        ):
+            raise HostedRunnerBuildError(
+                "voice runner credential version is outside the agent scope"
+            )
+        owner_provider = provider_for_version(owner)
+        fallback = (owner.configuration_snapshot or {}).get("assistant_id")
+    else:
+        if credentials.agent_definition_id != agent_definition.id:
+            raise HostedRunnerBuildError(
+                "voice runner credentials have no owning agent"
+            )
+        owner_provider = agent_definition.provider
+        fallback = agent_definition.assistant_id
+    if owner_provider != "vapi":
+        raise HostedRunnerBuildError(
+            "voice runner credential owner does not match provider"
+        )
+    return credentials.assistant_id or fallback
 
 
 def _resolve_agent_inbound(agent_version, agent_definition) -> bool:
@@ -968,10 +1022,17 @@ def _voice_agent_definition(
             agent_def["transport"] = {"kind": transport_kind}
         else:
             env_var = profile["api_key_env"]
+            assistant_id = (
+                _vapi_credential_assistant(agent_definition, credentials, agent_version)
+                if provider == "vapi"
+                else (
+                    getattr(credentials, "assistant_id", None) or field("assistant_id")
+                )
+            )
             agent_def["target"] = {
                 "provider": provider,
                 profile["target_id_field"]: _require(
-                    getattr(credentials, "assistant_id", None) or field("assistant_id"),
+                    assistant_id,
                     f"{provider} {profile['target_id_field']}",
                 ),
                 "api_key_env": env_var,

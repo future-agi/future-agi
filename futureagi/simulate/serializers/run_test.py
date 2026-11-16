@@ -13,6 +13,7 @@ import structlog
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import (
     AgentDefinition,
     RunTest,
@@ -24,6 +25,11 @@ from simulate.serializers.response.agent_definition import (
 )
 from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+from simulate.services.agent_definition import (
+    ProviderConfiguration,
+    provider_for_version,
+    resolve_provider_configuration_for_version,
+)
 from simulate.services.eval_config_edit import has_own_mapping
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
@@ -299,6 +305,28 @@ class RunTestSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def _agent_version_representation(self, version, agent):
+        # The evaluation page gates on this masked key and snapshot assistant.
+        # Resolve them together, for pinned versions and the latest fallback.
+        try:
+            configuration = resolve_provider_configuration_for_version(version)
+        except ValueError:
+            # An unreadable selected key is not permission to borrow another
+            # source. Keep the version shape, but leave the UI gate closed.
+            configuration = ProviderConfiguration(None, None)
+        snapshot = dict(version.configuration_snapshot or {})
+        snapshot.setdefault("agent_type", agent.agent_type)
+        if provider_for_version(version) == "vapi":
+            snapshot["assistant_id"] = configuration.assistant_id or ""
+        return {
+            "id": version.id,
+            "name": version.version_name,
+            "configuration_snapshot": snapshot_as_shown(snapshot, agent),
+            "api_key": mask_key(configuration.api_key)
+            if configuration.api_key
+            else None,
+        }
+
     def to_representation(self, instance):
         """Custom representation to handle backward compatibility"""
         data = super().to_representation(instance)
@@ -318,26 +346,9 @@ class RunTestSerializer(serializers.ModelSerializer):
                     data["agent_definition_detail"] = None
                     data["agent_version"] = None
                 elif instance.agent_version:
-                    # Use the select_related agent_version
-                    snapshot = instance.agent_version.configuration_snapshot or {}
-                    if "agent_type" not in snapshot:
-                        snapshot = {
-                            **snapshot,
-                            "agent_type": instance.agent_definition.agent_type,
-                        }
-                    agent_version_data = {
-                        "id": instance.agent_version.id,
-                        "name": instance.agent_version.version_name,
-                        "configuration_snapshot": snapshot_as_shown(
-                            snapshot, instance.agent_definition
-                        ),
-                    }
-                    try:
-                        creds = instance.agent_version.credentials
-                        agent_version_data["api_key"] = creds.get_masked_api_key()
-                    except Exception:
-                        pass
-                    data["agent_version"] = agent_version_data
+                    data["agent_version"] = self._agent_version_representation(
+                        instance.agent_version, instance.agent_definition
+                    )
                 else:
                     # Try to use prefetched versions first to avoid N+1.
                     # _prefetched_versions is set by RunTestListView.get() using:
@@ -355,25 +366,9 @@ class RunTestSerializer(serializers.ModelSerializer):
                         latest_version = instance.agent_definition.latest_version
 
                     if latest_version:
-                        snapshot = latest_version.configuration_snapshot or {}
-                        if "agent_type" not in snapshot:
-                            snapshot = {
-                                **snapshot,
-                                "agent_type": instance.agent_definition.agent_type,
-                            }
-                        agent_version_data = {
-                            "id": latest_version.id,
-                            "name": latest_version.version_name,
-                            "configuration_snapshot": snapshot_as_shown(
-                                snapshot, instance.agent_definition
-                            ),
-                        }
-                        try:
-                            creds = latest_version.credentials
-                            agent_version_data["api_key"] = creds.get_masked_api_key()
-                        except Exception:
-                            pass
-                        data["agent_version"] = agent_version_data
+                        data["agent_version"] = self._agent_version_representation(
+                            latest_version, instance.agent_definition
+                        )
         except Exception as e:
             logger.exception(
                 f"Error getting agent version: {e} for run test {instance.id}"

@@ -5,10 +5,16 @@ from django.core.validators import URLValidator
 from django.db import transaction
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
-from simulate.services.agent_definition import is_masked, sync_provider_credentials
+from simulate.services.agent_definition import (
+    is_masked,
+    provider_family,
+    resolve_vapi_configuration_for_version,
+    sync_provider_credentials,
+)
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
@@ -38,8 +44,13 @@ def _extract_credentials_input(
     """
     return ProviderCredentialsInput(
         provider=validated_data.get("provider") or fallback_provider,
+        previous_provider=fallback_provider,
         api_key=validated_data.get("api_key"),
-        assistant_id=validated_data.get("assistant_id"),
+        **(
+            {"assistant_id": validated_data["assistant_id"]}
+            if "assistant_id" in validated_data
+            else {}
+        ),
         livekit_url=validated_data.pop("livekit_url", None),
         livekit_api_key=validated_data.pop("livekit_api_key", None),
         livekit_api_secret=validated_data.pop("livekit_api_secret", None),
@@ -161,7 +172,13 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             except AgentVersion.credentials.RelatedObjectDoesNotExist:
                 pass
 
-        if creds:
+        if instance.provider == "vapi":
+            configuration = resolve_vapi_configuration_for_version(
+                version, agent_definition=instance
+            )
+            data["api_key"] = mask_key(configuration.api_key or "")
+            data["assistant_id"] = configuration.assistant_id or ""
+        elif creds:
             if creds.provider_type == "livekit":
                 data["livekit_url"] = creds.server_url
                 data["livekit_api_key"] = creds.get_masked_api_key()
@@ -439,7 +456,15 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         )
 
         new_api_key = validated_data.get("api_key")
-        if new_api_key is not None and is_masked(new_api_key):
+        if (
+            creds_input.provider_was_provided
+            and provider_family(creds_input.provider)
+            != provider_family(instance.provider)
+            and (not new_api_key or is_masked(new_api_key))
+        ):
+            # A new provider must not inherit the old definition's fallback key.
+            validated_data["api_key"] = ""
+        elif new_api_key is not None and is_masked(new_api_key):
             validated_data.pop("api_key")
 
         instance = super().update(instance, validated_data)
@@ -585,6 +610,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
                 organization=organization
             )
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         # Serialize concurrent writes on this agent (see
         # AgentDefinitionSerializer.update for the same pattern).
@@ -612,7 +638,13 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         )
         instance.inbound = validated_data.get("inbound", instance.inbound)
         instance.agent_type = validated_data.get("agent_type", instance.agent_type)
-        instance.api_key = validated_data.get("api_key", instance.api_key)
+        api_key = validated_data.get("api_key")
+        if api_key is not None and not is_masked(api_key):
+            instance.api_key = api_key
+        elif creds_input.provider_was_provided and provider_family(
+            creds_input.provider
+        ) != provider_family(creds_input.previous_provider):
+            instance.api_key = ""
         instance.model = validated_data.get("model", instance.model)
         instance.model_details = validated_data.get(
             "model_details", instance.model_details

@@ -1,7 +1,8 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
+import { z } from "zod";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const axiosMocks = vi.hoisted(() => ({
@@ -125,4 +126,75 @@ describe("useAgentSubmit — voice transport payload", () => {
   });
 });
 
-import { useAgentSubmit } from "../useAgentConfigForm";
+describe("selected-version form provenance", () => {
+  const sourceA = "00000000-0000-4000-8000-000000000001";
+  const sourceB = "00000000-0000-4000-8000-000000000002";
+  const version = (id, suffix) => ({
+    id,
+    api_key: `synt...ey-${suffix}`,
+    configuration_snapshot: {
+      agent_name: "Synthetic form",
+      agent_type: "voice",
+      provider: "vapi",
+      assistant_id: `assistant-${suffix}`,
+      authentication_method: "api_key",
+      inbound: true,
+      description: "Synthetic description",
+      commit_message: "Synthetic save",
+      contact_number: "",
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    axiosMocks.post.mockResolvedValue({ data: { version: { id: "saved" } } });
+  });
+
+  it("initializes and resets the source together with its masked pair", async () => {
+    const { result, rerender } = renderHook(
+      ({ details }) => useAgentConfigForm(z.object({}).passthrough(), details),
+      { initialProps: { details: version(sourceA, "A") } },
+    );
+    expect(result.current.getValues()).toMatchObject({
+      sourceVersionId: sourceA,
+      apiKey: "synt...ey-A",
+      assistantId: "assistant-A",
+    });
+    rerender({ details: version(sourceB, "B") });
+    expect(result.current.getValues()).toMatchObject({
+      sourceVersionId: sourceB,
+      apiKey: "synt...ey-B",
+      assistantId: "assistant-B",
+    });
+  });
+
+  it("submits the historical source even when no preflight ran", async () => {
+    const details = version(sourceA, "A");
+    const schema = z.object({}).passthrough();
+    const form = renderHook(() => useAgentConfigForm(schema, details));
+    const submit = renderSubmit();
+    await act(async () => {
+      await form.result.current.handleSubmit(submit.result.current.onSubmit)();
+    });
+    expect(axiosMocks.post).toHaveBeenCalledTimes(1);
+    const [, payload] = axiosMocks.post.mock.calls[0];
+    expect(payload).toMatchObject({
+      source_version_id: sourceA,
+      api_key: "synt...ey-A",
+      assistant_id: "assistant-A",
+      provider: "vapi",
+      contact_number: "",
+    });
+    expect(payload).not.toHaveProperty("sourceVersionId");
+  });
+
+  it("does not invent a source for callers without version details", async () => {
+    const submit = renderSubmit();
+    await submit.result.current.onSubmit({ ...voiceAgent, contactNumber: "" });
+    expect(axiosMocks.post.mock.calls[0][1]).not.toHaveProperty(
+      "source_version_id",
+    );
+  });
+});
+
+import { useAgentConfigForm, useAgentSubmit } from "../useAgentConfigForm";

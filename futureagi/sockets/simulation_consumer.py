@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from urllib.parse import parse_qs
 
 import redis.asyncio as aioredis
@@ -7,6 +8,7 @@ import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
 
+from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 
@@ -28,8 +30,11 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
         self._redis = None
         self._pubsub = None
         self.test_id = None
+        self.user = None
         self.organization_id = None
+        self.user_group_name = None
         self._guard = SamlSocketGuard(self)
+        self._membership = MembershipSocketGuard(self)
 
     async def connect(self):
         user = self.scope.get("user")
@@ -38,8 +43,10 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             return
         if not await self._guard.ensure_live(inbound=True):
             return
+        self.user = user
 
         # Verify user has an organization (prevents cross-org data leaks)
+        resolved_at = time.monotonic()
         org_id = await self._get_organization_id()
         if org_id is None:
             await self.close(code=4002)
@@ -54,6 +61,10 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4003)
             return
 
+        # The per-user group lets membership changes close this socket.
+        self.user_group_name = user_socket_group(user.id)
+        await self.channel_layer.group_add(self.user_group_name, self.channel_name)
+        self._membership.mark_validated(resolved_at)
         await self.accept()
         logger.info(
             "simulation_ws_connected",
@@ -65,23 +76,51 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
     async def _get_organization_id(self):
         return await resolve_socket_organization(self.scope, self.scope.get("user"))
 
+    async def membership_changed(self, event):
+        """Revalidate now; one of this user's memberships has changed."""
+
+        organization_id = event.get("organization_id")
+        if organization_id is not None and organization_id != self.organization_id:
+            return
+        self._guard.expire()
+        if not await self._membership.ensure_member(force=True):
+            if self._membership.closed:
+                await self._stop_subscriber()
+
     async def disconnect(self, close_code):
+        self._guard.stop()
         logger.info(
             "simulation_ws_disconnected",
             test_id=self.test_id,
             close_code=close_code,
         )
-        if self._subscriber_task:
-            self._subscriber_task.cancel()
-            try:
-                await self._subscriber_task
-            except asyncio.CancelledError:
-                pass
-        if self._pubsub:
-            await self._pubsub.unsubscribe()
-            await self._pubsub.close()
-        if self._redis:
-            await self._redis.close()
+        try:
+            if self.user_group_name:
+                await self.channel_layer.group_discard(
+                    self.user_group_name, self.channel_name
+                )
+        finally:
+            await self._stop_subscriber()
+            if self._pubsub:
+                await self._pubsub.unsubscribe()
+                await self._pubsub.close()
+            if self._redis:
+                await self._redis.close()
+
+    async def _stop_subscriber(self):
+        """Stop forwarding simulation updates to this socket."""
+
+        task = self._subscriber_task
+        if task is None:
+            return
+        self._subscriber_task = None
+        if task is asyncio.current_task():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     async def _subscribe_redis(self):
         channel = f"simulation_updates:{self.organization_id}:{self.test_id}"
@@ -99,7 +138,15 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             async for message in self._pubsub.listen():
                 if message["type"] == "message":
                     if not await self._guard.ensure_live(inbound=False):
-                        return
+                        if self._guard.revoked or self._guard.closed:
+                            return
+                        # Deliver nothing until a credential check succeeds.
+                        continue
+                    if not await self._membership.ensure_member():
+                        if self._membership.closed:
+                            return
+                        # Deliver nothing until a membership check succeeds.
+                        continue
                     try:
                         data = json.loads(message["data"])
                         await self.send_json(data)

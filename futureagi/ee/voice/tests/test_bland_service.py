@@ -212,10 +212,9 @@ class _NoopHeartbeater:
 
 
 async def test_monitor_outbound_bland_polls_bland_engine_not_vapi():
-    from simulate.temporal.types.activities import MonitorCallInput
-
     from ee.voice.services.vapi_service import VapiService
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import MonitorCallInput
 
     monitor_input = MonitorCallInput(
         call_id="exec-1",
@@ -255,10 +254,9 @@ async def test_monitor_inbound_bland_uses_vapi_engine(monkeypatch):
     lives in our VAPI account, so the monitor must poll VAPI — NOT Bland."""
     monkeypatch.setenv("VAPI_API_KEY", "test-vapi-key")
 
-    from simulate.temporal.types.activities import MonitorCallInput
-
     from ee.voice.services.vapi_service import VapiService
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import MonitorCallInput
 
     monitor_input = MonitorCallInput(
         call_id="exec-2",
@@ -576,9 +574,8 @@ async def test_metrics_populated_for_bland_outbound(call_execution):
     """With client_provider="bland" the metrics activity dispatches to the Bland
     engine, reads its transcript, and populates conversation_metrics — instead
     of reading an absent provider_call_data["vapi"] and silently bailing."""
-    from simulate.temporal.types.activities import CalculateConversationMetricsInput
-
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import CalculateConversationMetricsInput
 
     @sync_to_async
     def _seed():
@@ -624,9 +621,8 @@ async def test_metrics_skipped_when_client_provider_absent(call_execution, monke
     data through the wrong engine."""
     monkeypatch.setenv("VAPI_API_KEY", "test-vapi-key")
 
-    from simulate.temporal.types.activities import CalculateConversationMetricsInput
-
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import CalculateConversationMetricsInput
 
     @sync_to_async
     def _seed():
@@ -1048,8 +1044,10 @@ async def test_prepare_call_rejects_bland_without_web_connector(
     with (
         patch("temporalio.activity.info"),
         patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value="org_bland_key",
+            "simulate.services.agent_definition.resolve_provider_configuration_for_version",
+            return_value=SimpleNamespace(
+                api_key="org_bland_key", assistant_id="pathway-1"
+            ),
         ),
     ):
         result = await prepare_call(
@@ -1098,8 +1096,10 @@ async def test_prepare_call_rejects_unsupported_sip_provider(
     with (
         patch("temporalio.activity.info"),
         patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version",
-            return_value="org_eleven_labs_key",
+            "simulate.services.agent_definition.resolve_provider_configuration_for_version",
+            return_value=SimpleNamespace(
+                api_key="org_eleven_labs_key", assistant_id="asst-1"
+            ),
         ),
     ):
         result = await prepare_call(
@@ -1112,3 +1112,132 @@ async def test_prepare_call_rejects_unsupported_sip_provider(
     assert result.error is not None
     assert "eleven_labs" in result.error
     assert result.is_outbound is True
+
+
+@pytest.fixture
+def version_configuration_call(
+    call_execution, agent_definition, organization, workspace, provider, state
+):
+    """Real version/credential rows; no mocked scalar or paired resolver."""
+    from simulate.models import AgentVersion
+    from simulate.models.agent_definition import ProviderCredentials
+
+    agent_definition.provider = provider
+    agent_definition.api_key = "synthetic-key-B"
+    agent_definition.assistant_id = "assistant-B"
+    agent_definition.save(update_fields=["provider", "api_key", "assistant_id"])
+    version = AgentVersion.objects.create(
+        agent_definition=agent_definition,
+        organization=organization,
+        workspace=workspace,
+        version_number=1,
+        status="active",
+        configuration_snapshot={
+            "provider": provider,
+            "assistant_id": "assistant-S",
+            "contact_number": "+16505550100",
+        },
+    )
+    storage_provider = "vapi" if provider == "bland" else provider
+    legacy_version = None
+    if state == "legacy-version":
+        legacy_version = AgentVersion.objects.create(
+            agent_definition=agent_definition,
+            organization=organization,
+            workspace=workspace,
+            version_number=2,
+            status="draft",
+            configuration_snapshot={
+                "provider": provider,
+                "assistant_id": "assistant-L",
+            },
+        )
+    if state != "definition-only":
+        ProviderCredentials.objects.create(
+            agent_definition=agent_definition,
+            agent_version=legacy_version,
+            provider_type=storage_provider,
+            api_key="synthetic-key-A",
+            assistant_id="" if legacy_version else "assistant-A",
+        )
+    if state not in ("legacy", "legacy-version", "definition-only"):
+        key = "" if state in ("empty", "wrong-provider-empty") else "synthetic-key-C"
+        if state == "unreadable":
+            key = "enc::invalid"
+        elif state == "empty-plaintext":
+            from integrations.services.credentials import CredentialManager
+
+            key = "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=(
+                "retell" if state.startswith("wrong-provider") else storage_provider
+            ),
+            api_key=key,
+            assistant_id="" if state == "keyed-snapshot" else "assistant-C",
+        )
+    # A pinned historical provider wins even if the definition has since changed.
+    if provider == "bland":
+        agent_definition.provider = "vapi"
+        agent_definition.save(update_fields=["provider"])
+    call_execution.agent_version = version
+    if provider == "livekit":
+        call_execution.call_metadata = {"call_direction": "inbound"}
+    call_execution.save(update_fields=["agent_version", "call_metadata"])
+    return call_execution, version
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "provider,state,expected_key,expected_assistant",
+    [
+        ("vapi", "empty", "synthetic-key-B", "assistant-B"),
+        ("vapi", "keyed", "synthetic-key-C", "assistant-C"),
+        ("vapi", "keyed-snapshot", "synthetic-key-C", "assistant-S"),
+        ("vapi", "legacy", "synthetic-key-A", "assistant-A"),
+        ("vapi", "legacy-version", "synthetic-key-A", "assistant-L"),
+        ("vapi", "definition-only", "synthetic-key-B", "assistant-B"),
+        ("vapi", "wrong-provider", None, None),
+        ("vapi", "wrong-provider-empty", None, None),
+        ("vapi", "empty-plaintext", None, "assistant-C"),
+        ("vapi", "unreadable", None, None),
+        # Real 0071 encoding, not a nonexistent provider_type='bland'.
+        ("bland", "empty", "synthetic-key-A", "assistant-S"),
+        ("bland", "keyed", "synthetic-key-C", "assistant-S"),
+        ("retell", "empty", "synthetic-key-A", "assistant-S"),
+        ("livekit", "empty", "synthetic-key-A", "assistant-S"),
+    ],
+)
+async def test_prepare_call_uses_effective_version_pair(
+    version_configuration_call,
+    workspace,
+    provider,
+    state,
+    expected_key,
+    expected_assistant,
+):
+    from ee.voice.temporal.activities.voice_small import prepare_call
+    from simulate.temporal.types.activities import PrepareCallInput
+
+    call, version = version_configuration_call
+    original_snapshot = dict(version.configuration_snapshot)
+    # Only Temporal's activity context is stubbed. ORM loading, provider routing,
+    # decryption and the real prepare_call body all execute.
+    with patch("temporalio.activity.info"):
+        result = await prepare_call(
+            PrepareCallInput(call_id=str(call.id), workspace_id=str(workspace.id))
+        )
+    if state == "unreadable":
+        assert result.error and "decrypt" in result.error
+        assert result.client_api_key is None
+    else:
+        assert result.error is None
+        assert result.client_provider == provider
+        assert (result.client_api_key, result.client_assistant_id) == (
+            expected_key,
+            expected_assistant,
+        )
+        assert result.client_uses_own_provider is bool(expected_key)
+        assert result.client_phone_number == "+16505550100"
+    await sync_to_async(version.refresh_from_db)()
+    assert version.configuration_snapshot == original_snapshot
