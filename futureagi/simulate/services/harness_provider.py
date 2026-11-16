@@ -261,6 +261,7 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+    from simulate.services.harness_cancel import cancel_status
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
 
@@ -450,6 +451,11 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "cancel_requested_at": (
                 job.cancel_requested_at.isoformat() if job.cancel_requested_at else None
             ),
+            "cancel_confirmed_at": (
+                job.cancel_confirmed_at.isoformat() if job.cancel_confirmed_at else None
+            ),
+            "cancel_confirmed_by": job.cancel_confirmed_by or None,
+            "cancel_status": cancel_status(job),
             "failure": job.failure,
         },
         "events": events,

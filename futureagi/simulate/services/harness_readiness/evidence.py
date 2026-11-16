@@ -21,6 +21,7 @@ from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
     HostedHarnessAttempt,
+    HostedHarnessJob,
 )
 from simulate.models.harness_versioning import ArchiveLayout
 from simulate.services.harness_readiness.catalogue import (
@@ -421,6 +422,21 @@ def _cancel(pairing: Pairing) -> Reading:
     seen: list[EvidenceCheck] = [
         {"check": "stop_requested", "result": stopped.isoformat()}
     ]
+    confirmed_by = attempt.job.cancel_confirmed_by
+    if confirmed_by == HostedHarnessJob.CancelConfirmation.CLEANUP_FAILED:
+        seen.append(
+            {
+                "check": "cleanup_failed",
+                "result": attempt.job.cancel_confirmed_at.isoformat(),
+            }
+        )
+        return Reading(
+            "limited",
+            "cleanup_failed",
+            "The last Stop could not confirm that our test sandbox was removed",
+            evidence=seen,
+            checked_at=attempt.job.cancel_confirmed_at.isoformat(),
+        )
     if attempt.cleanup_verified_at is None:
         return Reading(
             "limited",
@@ -433,6 +449,10 @@ def _cancel(pairing: Pairing) -> Reading:
         {"check": "sandbox_absent", "result": attempt.cleanup_verified_at.isoformat()}
     )
     if connection(pairing.runtime) != "sandbox":
+        if confirmed_by == HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_ENDED:
+            confirmed_at = attempt.job.cancel_confirmed_at.isoformat()
+            seen.append({"check": "provider_call_ended", "result": confirmed_at})
+            return Reading("passed", evidence=seen, checked_at=confirmed_at)
         return Reading(
             "limited",
             "stop_unconfirmed",
