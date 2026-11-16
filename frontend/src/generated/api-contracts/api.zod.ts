@@ -39126,7 +39126,6 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
                   "error",
                   "approval_required",
                 ]),
-                label: zod.string().min(1),
                 hint: zod
                   .string()
                   .min(1)
@@ -39146,6 +39145,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
                   .describe(
                     "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                   ),
+                label: zod.string().min(1),
                 fields: zod
                   .array(
                     zod.enum([
@@ -39679,7 +39679,6 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
                   "error",
                   "approval_required",
                 ]),
-                label: zod.string().min(1),
                 hint: zod
                   .string()
                   .min(1)
@@ -39699,6 +39698,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
                   .describe(
                     "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                   ),
+                label: zod.string().min(1),
                 fields: zod
                   .array(
                     zod.enum([
@@ -45344,7 +45344,6 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
                     "error",
                     "approval_required",
                   ]),
-                  label: zod.string().min(1),
                   hint: zod
                     .string()
                     .min(1)
@@ -45364,6 +45363,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
                     .describe(
                       "On approval_required only: the world actions the cast's actors hold that the approval could be recorded by, each with who holds it.",
                     ),
+                  label: zod.string().min(1),
                   fields: zod
                     .array(
                       zod.enum([
@@ -47909,7 +47909,9 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
   held_back: zod
     .number()
     .min(simulateApiHarnessEnvironmentsRunPlanResponseHeldBackMin)
-    .describe("Selected scenarios that need a blocked tool."),
+    .describe(
+      "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
+    ),
 });
 
 /**
@@ -50939,7 +50941,6 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
   fields: zod.array(
     zod.object({
       value: zod.string().min(1),
-      label: zod.string().min(1),
       type: zod.enum(["string", "enum"]),
       category: zod.string().min(1),
       choices: zod.array(zod.string().min(1)).optional(),
@@ -50953,6 +50954,7 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
         .describe(
           "The name to show for each value, keyed by the value (actors only).",
         ),
+      label: zod.string().min(1),
     }),
   ),
 });
@@ -60501,6 +60503,10 @@ export const simulateV3CallExecutionDetailResponseTrialStateLimitsActorSecondsPe
 
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsModelMax = 200;
 
+export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin = 0;
+
+export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax = 200;
+
 export const SimulateV3CallExecutionDetailResponse = zod.object({
   id: zod.string().uuid().optional(),
   service_provider_call_id: zod.string().min(1).optional(),
@@ -60795,12 +60801,19 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
         ),
+      tool_label: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.",
+        ),
     }),
   ),
   tool_call_count: zod
     .number()
     .describe(
-      "The agent's tool calls in the transcript and function calls; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
+      "The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
     ),
   call_actors: zod.array(
     zod.object({
@@ -61345,6 +61358,519 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
       ),
   }),
+  earlier_attempts: zod.array(
+    zod.object({
+      attempt: zod
+        .string()
+        .uuid()
+        .describe("Its id: `/workers/?attempt=` reads its worker record."),
+      rerun_at: zod.string().datetime({ offset: true }),
+      kept: zod
+        .boolean()
+        .describe(
+          "False when it was snapshotted before attempts kept their worker record and trial state.",
+        ),
+      trial_state: zod.object({
+        state_changes: zod.array(
+          zod.object({
+            who: zod.string().min(1),
+            name: zod.string().min(1),
+            attempted: zod.number(),
+            committed: zod.number(),
+            refused: zod.number(),
+            faulted: zod.number(),
+            duplicate: zod.number(),
+            committed_actions: zod.array(zod.string().min(1)),
+            read: zod
+              .number()
+              .optional()
+              .describe(
+                "Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
+              ),
+            read_actions: zod
+              .array(zod.string())
+              .optional()
+              .describe("The reads, in order."),
+            no_change: zod
+              .boolean()
+              .optional()
+              .describe(
+                "True when this participant committed nothing: a result shown as 'no change', never left out.",
+              ),
+            blocked: zod
+              .array(
+                zod
+                  .object({
+                    host: zod.string().min(1),
+                    method: zod.string().optional(),
+                    tool: zod
+                      .string()
+                      .optional()
+                      .describe("The tool that made it, when known."),
+                    count: zod
+                      .number()
+                      .optional()
+                      .describe(
+                        "How many calls to this host were refused; absent on older trials (one).",
+                      ),
+                  })
+                  .describe(
+                    "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+                  ),
+              )
+              .optional()
+              .describe(
+                "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+              ),
+            refused_actions: zod
+              .array(
+                zod.object({
+                  action: zod.string().min(1),
+                  code: zod.string(),
+                  reason: zod.string(),
+                }),
+              )
+              .optional(),
+            worker_id: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "The worker this participant is; absent for the agent and the actors.",
+              ),
+          }),
+        ),
+        duplicates: zod
+          .array(
+            zod
+              .object({
+                action: zod.string().min(1),
+                name: zod.string().optional(),
+                arguments: zod.object({}).passthrough().optional(),
+                first_action_id: zod.string().optional(),
+                repeat_action_id: zod.string().optional(),
+              })
+              .describe(
+                "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+              ),
+          )
+          .describe(
+            "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+          ),
+        recorded: zod
+          .boolean()
+          .optional()
+          .describe(
+            "False when World changes are not recorded for this agent: its tools run inside it.",
+          ),
+        why: zod.string().optional().describe("Why they were not recorded."),
+        unreadable: zod
+          .boolean()
+          .describe(
+            "True when what changed in the world could not be read; checks that needed it read Unmeasured.",
+          ),
+        records: zod
+          .object({
+            changes: zod.array(
+              zod.object({
+                table: zod.string().min(1),
+                key: zod
+                  .object({})
+                  .passthrough()
+                  .describe(
+                    "The record's key as the table holds it: one value, or several.",
+                  ),
+                kind: zod.enum(["added", "changed", "removed"]),
+                before: zod
+                  .record(zod.string(), zod.object({}).passthrough())
+                  .describe("Its values before; null when added."),
+                after: zod
+                  .record(zod.string(), zod.object({}).passthrough())
+                  .describe("Its values after; null when removed."),
+                fields: zod
+                  .array(zod.string().min(1))
+                  .describe(
+                    "The fields a change changed; empty when added or removed.",
+                  ),
+              }),
+            ),
+            skipped: zod
+              .array(
+                zod.object({
+                  table: zod.string().min(1),
+                  why: zod.string().min(1),
+                }),
+              )
+              .optional(),
+            truncated: zod
+              .number()
+              .optional()
+              .describe("Changes past the cap, counted, not listed."),
+          })
+          .optional()
+          .describe(
+            "The records the trial changed, before and after; absent when they could not be read.",
+          ),
+        start: zod
+          .object({
+            state: zod.enum(["seeded", "differs", "unknown"]),
+            tables: zod.array(zod.string().min(1)).optional(),
+            against: zod
+              .enum(["sealed_seed", "first_trial"])
+              .optional()
+              .describe(
+                "What the start was compared with; absent on trials from before it was said.",
+              ),
+            line: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "What to say about the start; null when there is nothing to say (a start that differs has its own notice).",
+              ),
+          })
+          .optional()
+          .describe(
+            "Whether the trial started from the seeded records, as every trial should.",
+          ),
+        decisions: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string(),
+                name: zod
+                  .string()
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                play: zod.enum([
+                  "mocked",
+                  "live",
+                  "history",
+                  "waiting",
+                  "timeout",
+                  "problem",
+                  "not_triggered",
+                ]),
+                action: zod.string().min(1).optional(),
+                arguments: zod
+                  .record(zod.string(), zod.string())
+                  .optional()
+                  .describe(
+                    "What it sent: for a pre-run message (`history`), the message itself.",
+                  ),
+                channel: zod
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe(
+                    "`voice` when decided on the call by a speaking actor.",
+                  ),
+                problem: zod
+                  .enum(["no_world_door", "not_listed"])
+                  .optional()
+                  .describe(
+                    "For `problem`: the scenario's problem, never the agent's.",
+                  ),
+                why: zod.string().optional(),
+                status: zod.number().optional(),
+                timeout_seconds: zod.number().optional(),
+                fallback: zod.object({
+                  kind: zod.enum(["silent", "decline", "action", "actor"]),
+                  value: zod.string().min(1),
+                  label: zod.string().min(1),
+                }),
+                outcome: zod
+                  .enum([
+                    "timed_out",
+                    "declined",
+                    "fallback_action",
+                    "fallback_not_committed",
+                    "answered_by",
+                    "unresolved_at_end",
+                    "committed",
+                    "refused",
+                    "faulted",
+                    "duplicate",
+                  ])
+                  .optional()
+                  .describe(
+                    "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                action_outcome: zod
+                  .enum(["committed", "refused", "faulted", "duplicate"])
+                  .optional()
+                  .describe(
+                    "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                verdict: zod
+                  .enum(["approved", "refused"])
+                  .describe(
+                    "For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+                  ),
+                committed_after_refusal: zod
+                  .boolean()
+                  .describe(
+                    "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
+                  ),
+                line: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row as one sentence: who, how they played, what it came to, the verdict and why.",
+                  ),
+              })
+              .describe(
+                "What actors did or chose during the trial; messages written before it are in pre_run.",
+              ),
+          )
+          .describe(
+            "What actors did or chose during the trial; messages written before it are in pre_run.",
+          ),
+        pre_run: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string(),
+                name: zod
+                  .string()
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                play: zod.enum([
+                  "mocked",
+                  "live",
+                  "history",
+                  "waiting",
+                  "timeout",
+                  "problem",
+                  "not_triggered",
+                ]),
+                action: zod.string().min(1).optional(),
+                arguments: zod
+                  .record(zod.string(), zod.string())
+                  .optional()
+                  .describe(
+                    "What it sent: for a pre-run message (`history`), the message itself.",
+                  ),
+                channel: zod
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe(
+                    "`voice` when decided on the call by a speaking actor.",
+                  ),
+                problem: zod
+                  .enum(["no_world_door", "not_listed"])
+                  .optional()
+                  .describe(
+                    "For `problem`: the scenario's problem, never the agent's.",
+                  ),
+                why: zod.string().optional(),
+                status: zod.number().optional(),
+                timeout_seconds: zod.number().optional(),
+                fallback: zod.object({
+                  kind: zod.enum(["silent", "decline", "action", "actor"]),
+                  value: zod.string().min(1),
+                  label: zod.string().min(1),
+                }),
+                outcome: zod
+                  .enum([
+                    "timed_out",
+                    "declined",
+                    "fallback_action",
+                    "fallback_not_committed",
+                    "answered_by",
+                    "unresolved_at_end",
+                    "committed",
+                    "refused",
+                    "faulted",
+                    "duplicate",
+                  ])
+                  .optional()
+                  .describe(
+                    "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                action_outcome: zod
+                  .enum(["committed", "refused", "faulted", "duplicate"])
+                  .optional()
+                  .describe(
+                    "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                verdict: zod
+                  .enum(["approved", "refused"])
+                  .describe(
+                    "For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+                  ),
+                committed_after_refusal: zod
+                  .boolean()
+                  .describe(
+                    "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
+                  ),
+                line: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row as one sentence: who, how they played, what it came to, the verdict and why.",
+                  ),
+              })
+              .describe(
+                "What actors did or chose during the trial; messages written before it are in pre_run.",
+              ),
+          )
+          .describe(
+            "Messages actors wrote before the run: the trial's starting point, not a change made during it.",
+          ),
+        approvals: zod.array(
+          zod.object({
+            request: zod.object({
+              action: zod.string().min(1),
+              at: zod.number().describe("Epoch seconds the world logged it."),
+              action_id: zod.string().min(1),
+            }),
+            decision: zod.object({
+              by: zod.string().min(1),
+              verdict: zod
+                .enum(["approved", "refused"])
+                .describe(
+                  "Null when it decided none or the trial predates verdicts.",
+                ),
+              name: zod
+                .string()
+                .min(1)
+                .describe(
+                  "Who decided, by display name; their id when nameless; null when nobody did.",
+                ),
+              action: zod.string().min(1),
+              outcome: zod.string().min(1),
+              at: zod.number(),
+            }),
+            before_decision: zod.array(
+              zod.object({
+                action: zod.string().min(1),
+                outcome: zod.string().min(1),
+              }),
+            ),
+            after_decision: zod.array(
+              zod.object({
+                action: zod.string().min(1),
+                outcome: zod.string().min(1),
+              }),
+            ),
+            acted_before_decision: zod.boolean(),
+            verdict: zod
+              .enum(["approved", "refused"])
+              .describe("Null on a trial that predates verdicts."),
+            committed_after_refusal: zod
+              .boolean()
+              .describe(
+                "The agent committed a write after the refusal; false on a trial that predates verdicts.",
+              ),
+          }),
+        ),
+        end_state_url: zod
+          .string()
+          .url()
+          .min(1)
+          .optional()
+          .describe(
+            "The world's records at the trial's end and its action log, kept for grading it again.",
+          ),
+        usage: zod.array(
+          zod.object({
+            actor: zod.string().min(1),
+            model: zod.string(),
+            tokens_in: zod.number(),
+            tokens_out: zod.number(),
+            cost_usd: zod.number(),
+          }),
+        ),
+        usage_summary: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string().min(1),
+                name: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                model: zod.string(),
+                calls: zod.number(),
+                tokens: zod.number(),
+                cost_usd: zod.number(),
+              })
+              .describe("Actors' model use summed per actor and model."),
+          )
+          .describe("Actors' model use summed per actor and model."),
+        usage_total: zod
+          .object({
+            calls: zod.number(),
+            tokens: zod.number(),
+            cost_usd: zod.number(),
+          })
+          .optional()
+          .describe(
+            "Actors' model use in all; absent when no actor used a model.",
+          ),
+        limits: zod
+          .object({
+            max_active: zod.number().min(1).optional(),
+            caller_takes_back_after_turns: zod.number().min(1).optional(),
+            actor_seconds_per_call: zod
+              .number()
+              .min(
+                simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin,
+              )
+              .optional(),
+            max_messages: zod.number().min(1).optional(),
+            live_turns_per_actor: zod.number().min(1).optional(),
+            live_turns_per_trial: zod.number().min(1).optional(),
+            model: zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax,
+              )
+              .optional(),
+          })
+          .optional()
+          .describe(
+            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+          ),
+        notices: zod
+          .array(
+            zod
+              .object({
+                code: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
+                  ),
+                message: zod
+                  .string()
+                  .min(1)
+                  .describe("Plain words for the person reading the run."),
+                action: zod.string().optional(),
+                on_call: zod.number().optional(),
+                mode: zod.string().optional(),
+                count: zod
+                  .number()
+                  .optional()
+                  .describe("For evidence_incomplete."),
+              })
+              .describe(
+                "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+              ),
+          )
+          .describe(
+            "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+          ),
+      }),
+    }),
+  ),
   comparable: zod
     .boolean()
     .describe(
@@ -61382,7 +61908,7 @@ export const SimulateV3CallExecutionWorkersQueryParams = zod.object({
     .uuid()
     .optional()
     .describe(
-      "An earlier attempt's rerun snapshot id: its record as the rerun kept it; 204 when none was kept.",
+      "An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.",
     ),
 });
 
@@ -61594,6 +62120,8 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "not_observed",
         ])
         .optional(),
+      did_not_finish: zod.boolean().optional(),
+      first_of_worker: zod.boolean().optional(),
       children: zod.array(zod.number()).optional(),
       call: zod
         .object({
@@ -61670,6 +62198,8 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       }),
       children: zod.array(zod.number()),
       calls_outside: zod.number(),
+      handoffs: zod.array(zod.number()),
+      expects_messages: zod.boolean(),
     }),
   ),
   depth: zod.number(),
@@ -61692,12 +62222,12 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       status: zod.enum(["failed", "inconclusive"]),
       step: zod.number(),
       worker_id: zod.string().min(1),
-      untied: zod.enum(["no_moment", "never_called"]),
-      tool: zod.string().min(1).optional(),
+      untied: zod.enum(["no_moment"]),
     }),
   ),
   pending: zod.boolean(),
   next_read_at: zod.string().min(1).optional(),
+  state: zod.enum(["recorded", "not_kept", "unreadable"]),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
