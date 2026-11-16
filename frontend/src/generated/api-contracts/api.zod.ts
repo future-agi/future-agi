@@ -51255,6 +51255,10 @@ export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceItemMax = 
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax = 16;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
+  new RegExp("^(task|worker:.*\\S.*)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -51347,6 +51351,12 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
             ),
         )
         .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax)
+        .optional(),
+      subject: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax)
+        .regex(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp)
         .optional(),
     }),
   ),
@@ -60485,6 +60495,8 @@ export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
 
 export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
 
+export const simulateV3CallExecutionDetailResponseSubGoalResultsItemSubjectKindDefault = `task`;
+
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsActorSecondsPerCallMin = 0;
 
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsModelMax = 200;
@@ -60709,6 +60721,17 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "What the check was decided from: world_state, tool_calls, transcript, recording.",
         ),
+      subject: zod.string().min(1).optional(),
+      subject_kind: zod
+        .enum(["task", "worker"])
+        .default(
+          simulateV3CallExecutionDetailResponseSubGoalResultsItemSubjectKindDefault,
+        ),
+      worker_id: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("The worker whose own check this is."),
     }),
   ),
   outcome: zod.enum([
@@ -60881,6 +60904,22 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .optional()
           .describe(
             "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+          ),
+        refused_actions: zod
+          .array(
+            zod.object({
+              action: zod.string().min(1),
+              code: zod.string(),
+              reason: zod.string(),
+            }),
+          )
+          .optional(),
+        worker_id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The worker this participant is; absent for the agent and the actors.",
           ),
       }),
     ),
@@ -61358,6 +61397,19 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       instance_ids: zod.array(zod.string().min(1)),
       model: zod.string().min(1).optional(),
       tokens: zod.number().optional(),
+      state: zod
+        .enum([
+          "completed",
+          "failed",
+          "no_return",
+          "deadline_passed",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+        ])
+        .optional(),
+      cut_short: zod.boolean(),
     }),
   ),
   events: zod.array(
@@ -61397,6 +61449,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         .describe("Any valid JSON value."),
       input_omitted: zod.boolean().optional(),
       output_omitted: zod.boolean().optional(),
+      refusal_code: zod
+        .enum(["not_permitted", "deadline_passed", "approval_missing"])
+        .optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "unattributed"]),
@@ -61459,6 +61514,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .enum(["not_permitted", "deadline_passed", "approval_missing"])
+            .optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61501,6 +61559,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .enum(["not_permitted", "deadline_passed", "approval_missing"])
+            .optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61511,6 +61572,18 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       parallel: zod.boolean().optional(),
       end: zod
         .enum(["finished", "failed", "passed", "no_return", "cut_off"])
+        .optional(),
+      end_state: zod
+        .enum([
+          "completed",
+          "failed",
+          "no_return",
+          "deadline_passed",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+        ])
         .optional(),
       children: zod.array(zod.number()).optional(),
       call: zod
@@ -61550,6 +61623,9 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .enum(["not_permitted", "deadline_passed", "approval_missing"])
+            .optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -61601,6 +61677,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
   }),
   cut_off: zod.boolean(),
   beyond_boundary: zod.boolean(),
+  placements: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      status: zod.enum(["failed", "inconclusive"]),
+      step: zod.number(),
+      worker_id: zod.string().min(1),
+      untied: zod.enum(["no_moment", "never_called"]),
+      tool: zod.string().min(1).optional(),
+    }),
+  ),
   pending: zod.boolean(),
   next_read_at: zod.string().min(1).optional(),
 });
@@ -62377,6 +62463,8 @@ export const simulateV3TestExecutionCallsResponseSummaryScoringFailedMin = 0;
 
 export const simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin = 0;
 
+export const simulateV3TestExecutionCallsResponseResultsItemSubGoalResultsItemSubjectKindDefault = `task`;
+
 export const SimulateV3TestExecutionCallsResponse = zod.object({
   execution: zod.object({
     id: zod.string().uuid(),
@@ -62605,6 +62693,17 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .describe(
               "What the check was decided from: world_state, tool_calls, transcript, recording.",
             ),
+          subject: zod.string().min(1).optional(),
+          subject_kind: zod
+            .enum(["task", "worker"])
+            .default(
+              simulateV3TestExecutionCallsResponseResultsItemSubGoalResultsItemSubjectKindDefault,
+            ),
+          worker_id: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe("The worker whose own check this is."),
         }),
       ),
       harness_outcome_status: zod.string().min(1),

@@ -57812,6 +57812,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "counts",
         "cut_off",
         "beyond_boundary",
+        "placements",
         "pending",
       ],
       type: "object",
@@ -57896,6 +57897,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         beyond_boundary: {
           title: "Beyond boundary",
           type: "boolean",
+        },
+        placements: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FailurePlacement",
+          },
         },
         pending: {
           title: "Pending",
@@ -98547,6 +98554,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        subject: {
+          title: "Subject",
+          type: "string",
+          minLength: 1,
+        },
+        subject_kind: {
+          title: "Subject kind",
+          type: "string",
+          enum: ["task", "worker"],
+          default: "task",
+        },
+        worker_id: {
+          title: "Worker id",
+          description: "The worker whose own check this is.",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     TrialState: {
@@ -98747,6 +98771,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "observed",
         "undeclared",
         "instance_ids",
+        "cut_short",
       ],
       type: "object",
       properties: {
@@ -98788,6 +98813,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tokens: {
           title: "Tokens",
           type: "integer",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "completed",
+            "failed",
+            "no_return",
+            "deadline_passed",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+          ],
+        },
+        cut_short: {
+          title: "Cut short",
+          type: "boolean",
         },
       },
     },
@@ -98892,6 +98935,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         output_omitted: {
           title: "Output omitted",
           type: "boolean",
+        },
+        refusal_code: {
+          title: "Refusal code",
+          type: "string",
+          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         relationship: {
           title: "Relationship",
@@ -99006,6 +99054,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["finished", "failed", "passed", "no_return", "cut_off"],
         },
+        end_state: {
+          title: "End state",
+          type: "string",
+          enum: [
+            "completed",
+            "failed",
+            "no_return",
+            "deadline_passed",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+          ],
+        },
         children: {
           type: "array",
           items: {
@@ -99028,6 +99090,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Relationship",
           type: "string",
           enum: ["observed", "unknown"],
+        },
+      },
+    },
+    FailurePlacement: {
+      required: ["name", "status", "step", "worker_id", "untied"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["failed", "inconclusive"],
+        },
+        step: {
+          title: "Step",
+          type: "integer",
+          "x-nullable": true,
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        untied: {
+          title: "Untied",
+          type: "string",
+          enum: ["no_moment", "never_called"],
+          "x-nullable": true,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -109178,6 +109278,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           maxItems: 16,
+        },
+        subject: {
+          title: "Subject",
+          type: "string",
+          pattern: "^(task|worker:.*\\S.*)$",
+          maxLength: 255,
+          minLength: 1,
         },
       },
     },
@@ -124183,6 +124290,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/BlockedCall",
           },
         },
+        refused_actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialRefusedAction",
+          },
+        },
+        worker_id: {
+          title: "Worker id",
+          description:
+            "The worker this participant is; absent for the agent and the actors.",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     ShownText: {
@@ -124313,6 +124433,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         output_omitted: {
           title: "Output omitted",
           type: "boolean",
+        },
+        refusal_code: {
+          title: "Refusal code",
+          type: "string",
+          enum: ["not_permitted", "deadline_passed", "approval_missing"],
         },
         relationship: {
           title: "Relationship",
@@ -138497,6 +138622,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "How many calls to this host were refused; absent on older trials (one).",
           type: "integer",
+        },
+      },
+    },
+    TrialRefusedAction: {
+      required: ["action", "code", "reason"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },

@@ -151435,6 +151435,13 @@
                         "minLength": 1
                     },
                     "maxItems": 16
+                },
+                "subject": {
+                    "title": "Subject",
+                    "type": "string",
+                    "pattern": "^(task|worker:.*\\S.*)$",
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         },
@@ -160303,6 +160310,26 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "subject": {
+                    "title": "Subject",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "subject_kind": {
+                    "title": "Subject kind",
+                    "type": "string",
+                    "enum": [
+                        "task",
+                        "worker"
+                    ],
+                    "default": "task"
+                },
+                "worker_id": {
+                    "title": "Worker id",
+                    "description": "The worker whose own check this is.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -160606,6 +160633,29 @@
                 }
             }
         },
+        "TrialRefusedAction": {
+            "required": [
+                "action",
+                "code",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
         "TrialStateChange": {
             "required": [
                 "who",
@@ -160679,6 +160729,18 @@
                     "items": {
                         "$ref": "#/definitions/BlockedCall"
                     }
+                },
+                "refused_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TrialRefusedAction"
+                    }
+                },
+                "worker_id": {
+                    "title": "Worker id",
+                    "description": "The worker this participant is; absent for the agent and the actors.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -161958,7 +162020,8 @@
                 "name",
                 "observed",
                 "undeclared",
-                "instance_ids"
+                "instance_ids",
+                "cut_short"
             ],
             "type": "object",
             "properties": {
@@ -162000,6 +162063,24 @@
                 "tokens": {
                     "title": "Tokens",
                     "type": "integer"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "completed",
+                        "failed",
+                        "no_return",
+                        "deadline_passed",
+                        "cancel_requested",
+                        "cancelled",
+                        "infrastructure",
+                        "not_observed"
+                    ]
+                },
+                "cut_short": {
+                    "title": "Cut short",
+                    "type": "boolean"
                 }
             }
         },
@@ -162129,6 +162210,15 @@
                 "output_omitted": {
                     "title": "Output omitted",
                     "type": "boolean"
+                },
+                "refusal_code": {
+                    "title": "Refusal code",
+                    "type": "string",
+                    "enum": [
+                        "not_permitted",
+                        "deadline_passed",
+                        "approval_missing"
+                    ]
                 },
                 "relationship": {
                     "title": "Relationship",
@@ -162272,6 +162362,15 @@
                     "title": "Output omitted",
                     "type": "boolean"
                 },
+                "refusal_code": {
+                    "title": "Refusal code",
+                    "type": "string",
+                    "enum": [
+                        "not_permitted",
+                        "deadline_passed",
+                        "approval_missing"
+                    ]
+                },
                 "relationship": {
                     "title": "Relationship",
                     "type": "string",
@@ -162372,6 +162471,20 @@
                         "passed",
                         "no_return",
                         "cut_off"
+                    ]
+                },
+                "end_state": {
+                    "title": "End state",
+                    "type": "string",
+                    "enum": [
+                        "completed",
+                        "failed",
+                        "no_return",
+                        "deadline_passed",
+                        "cancel_requested",
+                        "cancelled",
+                        "infrastructure",
+                        "not_observed"
                     ]
                 },
                 "children": {
@@ -162497,6 +162610,56 @@
                 }
             }
         },
+        "FailurePlacement": {
+            "required": [
+                "name",
+                "status",
+                "step",
+                "worker_id",
+                "untied"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "failed",
+                        "inconclusive"
+                    ]
+                },
+                "step": {
+                    "title": "Step",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "worker_id": {
+                    "title": "Worker id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "untied": {
+                    "title": "Untied",
+                    "type": "string",
+                    "enum": [
+                        "no_moment",
+                        "never_called"
+                    ],
+                    "x-nullable": true
+                },
+                "tool": {
+                    "title": "Tool",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "CallWorkersResponse": {
             "required": [
                 "workers",
@@ -162511,6 +162674,7 @@
                 "counts",
                 "cut_off",
                 "beyond_boundary",
+                "placements",
                 "pending"
             ],
             "type": "object",
@@ -162600,6 +162764,12 @@
                 "beyond_boundary": {
                     "title": "Beyond boundary",
                     "type": "boolean"
+                },
+                "placements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FailurePlacement"
+                    }
                 },
                 "pending": {
                     "title": "Pending",
