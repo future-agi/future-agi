@@ -4,6 +4,8 @@
 export const TOOLS_CARD_COPY = {
   inputs: "Inputs",
   noInputs: "Takes no inputs",
+  returns: "Returns",
+  returnsNotDeclared: "Not recorded for this environment version",
   changesRecords: "Changes records",
   effect: {
     read: "Reads only",
@@ -25,6 +27,11 @@ export const TOOLS_CARD_COPY = {
 // One argument as a line: "refund_amount: number, cents, USD".
 export function inputLine(name, type, unit) {
   return [`${name}: ${type || "any"}`, unit].filter(Boolean).join(", ");
+}
+
+// One returned field as a line: "amount: integer, cents, USD"; a field recorded without a type reads its name alone.
+export function returnLine(name, kind) {
+  return kind ? `${name}: ${kind}` : name;
 }
 
 // What a tool changes, from its entrypoint's declared effect.

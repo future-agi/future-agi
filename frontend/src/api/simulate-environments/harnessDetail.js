@@ -35,6 +35,7 @@ const toWorldTool = (tool) =>
         requires: tool?.requires || undefined,
         // The contract's reading of each tool, for the Tools card's detail: units, refusals and what it changes.
         argUnits: tool?.arg_units || undefined,
+        returns: tool?.returns || undefined,
         refuses: tool?.refuses || undefined,
         effects: tool?.effects || undefined,
       };

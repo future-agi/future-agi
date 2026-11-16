@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
 import {
   TOOLS_CARD_COPY as T,
+  returnLine,
   effectLabel,
   inputLine,
 } from "./toolsCard.constants";
@@ -378,6 +379,7 @@ function ToolDetail({ tool, entry, known, behindDoor }) {
   const args = tool.args || [];
   const units = tool.argUnits || {};
   const types = tool.argTypes || {};
+  const returned = Object.entries(tool.returns || {});
   const field = (label, body) => (
     <Box key={label} sx={{ display: "contents" }}>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -418,6 +420,23 @@ function ToolDetail({ tool, entry, known, behindDoor }) {
           </Stack>
         ) : (
           text(T.noInputs)
+        ),
+      )}
+      {field(
+        T.returns,
+        returned.length ? (
+          <Stack spacing={0.25}>
+            {returned.map(([name, kind]) => (
+              <Typography
+                key={name}
+                sx={{ typography: "s1", fontFamily: MONO }}
+              >
+                {returnLine(name, kind)}
+              </Typography>
+            ))}
+          </Stack>
+        ) : (
+          text(T.returnsNotDeclared)
         ),
       )}
       {field(

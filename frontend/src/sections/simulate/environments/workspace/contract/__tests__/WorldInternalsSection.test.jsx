@@ -10,6 +10,7 @@ const env = {
       args: ["refund_amount", "order_id"],
       argTypes: { refund_amount: "number", order_id: "string" },
       argUnits: { refund_amount: "cents, USD" },
+      returns: { refund_id: "string", amount: "integer, cents, USD" },
       refuses: "the order is older than 30 days",
       effects: "adds a refund row and marks the order refunded",
       requires: ["lookup_order"],
@@ -38,6 +39,10 @@ describe("WorldInternalsSection tools", () => {
       screen.getByText("refund_amount: number, cents, USD"),
     ).toBeInTheDocument();
     expect(screen.getByText("order_id: string")).toBeInTheDocument();
+    expect(screen.getByText("refund_id: string")).toBeInTheDocument();
+    expect(
+      screen.getByText("amount: integer, cents, USD"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Can change records")).toBeInTheDocument();
     expect(
       screen.getByText("adds a refund row and marks the order refunded"),
@@ -59,6 +64,10 @@ describe("WorldInternalsSection tools", () => {
       screen.getByRole("button", { name: "Show the contract of summarise" }),
     );
     expect(screen.getByText("Not reset by the test world")).toBeInTheDocument();
+    // A contract written before returned fields were recorded says so rather than showing nothing.
+    expect(
+      screen.getByText("Not recorded for this environment version"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Not declared")).toBeInTheDocument();
     expect(screen.getAllByText("Simulated")).toHaveLength(1);
   });
