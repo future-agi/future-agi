@@ -13,7 +13,9 @@ describe("getObservePaneTabLabel", () => {
   });
 
   it("uses Data labels for agent views (not graph charts)", () => {
-    expect(getObservePaneTabLabel("agentGraph", "primary")).toBe("Primary Data");
+    expect(getObservePaneTabLabel("agentGraph", "primary")).toBe(
+      "Primary Data",
+    );
     expect(getObservePaneTabLabel("agentPath", "compare")).toBe(
       "Comparison Data",
     );
