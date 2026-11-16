@@ -785,6 +785,8 @@ class CallExecutionSnapshot(BaseModel):
         validators=[validate_provider_sent_objects],
     )
     monitor_call_data = models.JSONField(null=True, blank=True)
+    # The call's metadata at the rerun (its worker record and trial state among it); null on snapshots taken before.
+    call_metadata = models.JSONField(null=True, blank=True)
 
     # Conversation metrics
     avg_agent_latency_ms = models.IntegerField(null=True, blank=True)

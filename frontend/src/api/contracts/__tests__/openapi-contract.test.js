@@ -722,13 +722,36 @@ describe("OpenAPI runtime contract", () => {
         },
       ],
       turns: [
-        { turn: 1, request: null, response: null },
-        { turn: null, request: null, response: null },
+        {
+          turn: 1,
+          request: null,
+          response: null,
+          children: [1],
+          calls_outside: 0,
+        },
+        {
+          turn: null,
+          request: null,
+          response: null,
+          children: [3],
+          calls_outside: 0,
+        },
       ],
       depth: 1,
       parallel: 0,
       overlap_unknown: false,
       worker_depths: {},
+      counts: {
+        hand_offs: 2,
+        workers: 1,
+        finished: 0,
+        did_not_finish: 2,
+        passed: 0,
+        cut_off: 0,
+      },
+      cut_off: false,
+      beyond_boundary: false,
+      pending: false,
     };
     const result = validateContractedResponse({
       config: {

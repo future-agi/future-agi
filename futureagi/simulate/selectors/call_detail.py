@@ -302,6 +302,20 @@ def _actor_turn(row: dict[str, Any], actor: Mapping[str, str]) -> dict[str, Any]
     }
 
 
+def tool_call_count(transcript: Sequence[Mapping[str, object]]) -> int:
+    """The tool calls in a call's transcript; a hand-off to another agent is a Participants step, not a tool call."""
+    count = 0
+    for turn in transcript:
+        calls = turn.get("tool_calls")
+        if isinstance(calls, list):
+            count += sum(
+                1
+                for one in calls
+                if not (isinstance(one, Mapping) and one.get("delegated_to"))
+            )
+    return count
+
+
 def transcript_turns(
     rows: Sequence[Mapping[str, Any]], actors: Sequence[Mapping[str, str]], chat: bool
 ) -> list[dict[str, Any]]:

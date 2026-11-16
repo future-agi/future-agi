@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import tempfile
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any, BinaryIO, cast
 from uuid import UUID
@@ -29,6 +30,7 @@ from simulate.models import (
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
+from simulate.services.harness_workers import FIRST_READ
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -40,7 +42,8 @@ from simulate.services.hosted_harness_validation import (
     receipt_call_times,
     validate_jsonb_strings,
 )
-from simulate.types import CallCallActors
+from simulate.tasks.alk_sim import record_call_workers
+from simulate.types import CallCallActors, CallWorkersRead
 from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -1193,13 +1196,9 @@ def _apply_receipt_to_call(
 
 def _dispatch_worker_read(call_id: UUID) -> None:
     """Read the call's worker timeline once its spans have had time to arrive."""
-    from datetime import timedelta
-
-    from simulate.services.harness_workers import FIRST_READ
-    from simulate.tasks.alk_sim import record_call_workers
-
+    read = CallWorkersRead(str(call_id))
     record_call_workers.apply_async(
-        args=(str(call_id),), start_delay=timedelta(seconds=FIRST_READ)
+        args=(asdict(read),), start_delay=timedelta(seconds=FIRST_READ)
     )
 
 

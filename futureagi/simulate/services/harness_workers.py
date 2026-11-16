@@ -6,22 +6,31 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, TypedDict, cast
+from uuid import UUID
 
 import structlog
+from django.utils import timezone
 
+from simulate.models import CallExecution, CallTranscript, HostedHarnessJob
+from simulate.models.chat_message import ChatMessageModel
+from simulate.models.test_execution import CallExecutionSnapshot
+from simulate.services.run_traces_v3 import list_run_traces
+from simulate.services.scoring_status import locked_call_metadata_update
 from simulate.types import (
     CallTurn,
     DeclaredWorker,
     HarnessWorker,
+    SealedToolCall,
     WorkerEvent,
     WorkerSpan,
+    WorkerStatus,
     WorkerTimeline,
 )
-
-if TYPE_CHECKING:
-    from simulate.models import HostedHarnessJob
+from tracer.services.clickhouse.application_read_policy import application_read_context
+from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 logger = structlog.get_logger(__name__)
 
@@ -139,18 +148,29 @@ def _digest(value: Any) -> str | None:
     return None if payload is None else json.dumps(payload, sort_keys=True, default=str)
 
 
-def _shown_by_spans(
-    spans: list[WorkerEvent], rows: list[dict[str, Any]]
-) -> dict[int, WorkerEvent]:
-    """The sealed rows a span already showed, by row index, with the span event that showed each; each span stands
-    for at most one row.
+class _MatchRow(TypedDict):
+    """A sealed row as `_shown_by_spans` matches it against the span events."""
 
-    First, a row that names a span's id (its span id or runtime event id) is that span's call, for every row before
-    any guess, and a row whose id names no span is another call. Then a row with no id is a span's call only when its
-    input or time fits that span and nothing else could be paired: the row and the span are each other's only candidate,
-    or every row and span that could be paired have the same input. An input recorded on one side only is no evidence.
-    A row that can't be told apart is kept, so it can show next to its span, but no call is dropped.
-    """
+    index: int
+    ids: set[str]
+    kind: Literal["delegated", "tool_call"]
+    worker_id: str | None
+    by: str | None
+    by_known: bool
+    tool: str
+    status: WorkerStatus | None
+    result: str | None
+    output: str | None
+    sig: str | None
+    at: str | None
+
+
+def _shown_by_spans(
+    spans: list[WorkerEvent], rows: list[_MatchRow]
+) -> dict[int, WorkerEvent]:
+    """The sealed rows a span already showed, by row index, each span standing for at most one row: a row naming a
+    span's id first; then, with no id, only a fit by input or time that nothing else could share. An input recorded on
+    one side only is no evidence; a row that can't be told apart is kept, so no call is dropped."""
     open_ = [one for one in spans if one["type"] in ("tool_call", "delegated")]
     returns = {
         one.get("delegation_id"): one for one in spans if one["type"] == "returned"
@@ -178,7 +198,7 @@ def _shown_by_spans(
             else (span.get("task") or None)
         )
 
-    def fits(row: dict[str, Any], span: WorkerEvent) -> bool:
+    def fits(row: _MatchRow, span: WorkerEvent) -> bool:
         if span["type"] != row["kind"] or span.get("worker_id") != row["worker_id"]:
             return False
         if row["kind"] == "tool_call" and span.get("tool") != row["tool"]:
@@ -202,9 +222,9 @@ def _shown_by_spans(
     free = [at for at in range(len(open_)) if at not in claimed]
     edges = {row["index"]: [at for at in free if fits(row, open_[at])] for row in loose}
     # Rows and spans that could be each other's call, in groups that share no candidate.
-    group: dict[Any, Any] = {}
+    group: dict[tuple[str, int], tuple[str, int]] = {}
 
-    def root(node: Any) -> Any:
+    def root(node: tuple[str, int]) -> tuple[str, int]:
         while group.setdefault(node, node) != node:
             node = group[node]
         return node
@@ -212,7 +232,7 @@ def _shown_by_spans(
     for index, spans_of in edges.items():
         for at in spans_of:
             group[root(("row", index))] = root(("span", at))
-    members: dict[Any, tuple[list[dict[str, Any]], list[int]]] = {}
+    members: dict[tuple[str, int], tuple[list[_MatchRow], list[int]]] = {}
     for row in loose:
         if edges[row["index"]]:
             members.setdefault(root(("row", row["index"])), ([], []))[0].append(row)
@@ -229,7 +249,7 @@ def _shown_by_spans(
         # The same input is not the same call: a span stands for a row only when their outcomes agree too.
         left = list(paired_rows)
         for at in paired_spans:
-            ended: Mapping[str, Any] = returns.get(open_[at].get("delegation_id"), {})
+            ended = returns.get(open_[at].get("delegation_id"))
             match = next(
                 (row for row in left if _same_outcome(row, open_[at], ended)), None
             )
@@ -240,23 +260,22 @@ def _shown_by_spans(
 
 
 def _same_outcome(
-    row: dict[str, Any], span: WorkerEvent, returned: Mapping[str, Any]
+    row: _MatchRow, span: WorkerEvent, returned: WorkerEvent | None
 ) -> bool:
     """Whether a sealed row and a span agree on how the call or hand-off ended, where both recorded it. A hand-off's
     end is its return."""
+    status: WorkerStatus | None
     if row["kind"] == "tool_call":
         status, mine, theirs = (
             span.get("status"),
-            row.get("output"),
+            row["output"],
             _digest(span.get("output")),
         )
     else:
-        status, mine, theirs = (
-            returned.get("status"),
-            row.get("result"),
-            returned.get("result"),
-        )
-    if row.get("status") and status and row["status"] != status:
+        status = returned.get("status") if returned is not None else None
+        mine = row["result"]
+        theirs = returned.get("result") if returned is not None else None
+    if row["status"] and status and row["status"] != status:
         return False
     return mine is None or theirs is None or mine == theirs
 
@@ -292,14 +311,14 @@ def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
 
 
 def _utc_iso(seconds: float) -> str | None:
-    """Epoch seconds as a naive UTC timestamp; None for a value no date can hold."""
+    """Epoch seconds as a UTC timestamp with its zone; None for a value no date can hold."""
     try:
-        return datetime.fromtimestamp(seconds, tz=UTC).replace(tzinfo=None).isoformat()
+        return datetime.fromtimestamp(seconds, tz=UTC).isoformat()
     except (OverflowError, ValueError, OSError):
         return None
 
 
-def _runtime_ids(row: Mapping[str, Any]) -> Mapping[str, Any]:
+def _runtime_ids(row: SealedToolCall) -> Mapping[str, object]:
     ids = row.get("runtime_ids")
     return ids if isinstance(ids, Mapping) else {}
 
@@ -345,7 +364,7 @@ def worker_timeline(
     declared: Iterable[DeclaredWorker],
     *,
     run_key: str,
-    traced_calls: Iterable[Mapping[str, Any]] = (),
+    traced_calls: Iterable[SealedToolCall] = (),
     turns: Iterable[CallTurn] = (),
     started_at: str | None = None,
 ) -> WorkerTimeline:
@@ -522,8 +541,7 @@ def worker_timeline(
             # The hand-off the call ran in, read from the span tree.
             made["delegation_id"] = delegation_of(owner)
         events.append(made)
-    # Each worker's own model calls: the models it used, in the order first seen, and the tokens it spent, as the
-    # spans recorded them.
+    # Each worker's models in the order first seen and the tokens it spent, as its own model-call spans recorded them.
     for span in by_id.values():
         owner = agent_ancestor(span) if _kind(span) == "llm" else None
         worker_id = worker_of(owner) if owner is not None else None
@@ -558,8 +576,7 @@ def worker_timeline(
         for row in rows
         if by_of(row)
     }
-    # A harness that records each event's kind and parent is read as recorded. A control pass is only ever the one
-    # the harness recorded: never read from a tool's name or arguments.
+    # A recorded kind and parent are read as recorded; a control pass is never guessed from a tool's name or arguments.
     recorded = any(row.get("kind") for row in rows)
     transfers = {
         index: target
@@ -640,7 +657,7 @@ def worker_timeline(
             event["relationship"] = place["relationship"]
         return event
 
-    def ids_of(row: Mapping[str, Any]) -> set[str]:
+    def ids_of(row: SealedToolCall) -> set[str]:
         # The ids a runtime gave this call: its span, and its own event id.
         return {
             str(one)
@@ -651,13 +668,13 @@ def worker_timeline(
             if one
         }
 
-    def own_id(row: Mapping[str, Any], index: int) -> str:
+    def own_id(row: SealedToolCall, index: int) -> str:
         return str(
             row.get("span_id") or _runtime_ids(row).get("event_id") or f"traced-{index}"
         )
 
     # A sealed call or hand-off a span already showed is not repeated.
-    sealed: list[dict[str, Any]] = []
+    sealed: list[_MatchRow] = []
     for index, call in enumerate(rows):
         by, target = by_of(call), str(call.get("delegated_to") or "").strip()
         if (not by and not target) or index in transfers:
@@ -714,8 +731,7 @@ def worker_timeline(
                 ),
             }
         )
-    # A launching call the spans read as a plain tool call (its agent run not read as a hand-off, as when the read has
-    # no top-level span yet) is the sealed hand-off with its id, shown once, as the hand-off.
+    # A launching call read as a plain tool call (no top-level span yet) is the sealed hand-off: shown once, as that.
     handed_ids = {
         one for row in sealed if row["kind"] == "delegated" for one in row["ids"]
     }
@@ -725,11 +741,7 @@ def worker_timeline(
         if not (one["type"] == "tool_call" and one.get("span_id") in handed_ids)
     ]
     shown = _shown_by_spans(events, sealed)
-    # The sealed row is the call as the harness recorded it while it ran; the span shows it, links to it and times
-    # it, but who made it, where it sits and how it ended are the row's, so an incomplete span tree never moves a
-    # worker's call to the coordinator or reads a refusal as a success.
-    # The agent the spans read at the top, unless the rows show it being handed work, is the coordinator: a row naming
-    # it is the coordinator's own call, not a worker's.
+    # The top agent the rows never hand work to is the coordinator: a row naming it is its own call, not a worker's.
     span_top = {
         _slug(name_of(span))
         for span in by_id.values()
@@ -786,8 +798,7 @@ def worker_timeline(
                             else "ok"
                         )
                         one["result"] = _summary(call.get("result"))
-    # Sealed rows are the same in every read, so an event keeps the row it stands for: a read without spans and a
-    # later one with them then join on it.
+    # Sealed rows are the same in every read, so a read without spans and a later one with them join on the row.
     for index, span_event in shown.items():
         span_event["row"] = index
         if span_event["type"] == "delegated":
@@ -810,8 +821,7 @@ def worker_timeline(
         )
         if index in transfers:
             target = transfers[index]
-            # Spans may have read this control pass as a hand-off, keyed on its launching call or its agent run: the
-            # recorded transfer replaces it, and what ran inside it now sits under the transfer.
+            # The recorded transfer replaces any hand-off the spans read for it; what ran inside moves under it.
             recorded_ids = ids_of(call)
             ids = recorded_ids | {
                 handed for handed, known in hand_off_ids.items() if known & recorded_ids
@@ -832,8 +842,7 @@ def worker_timeline(
                     or (one["type"] == "tool_call" and one.get("span_id") in ids)
                 )
             ]
-            # The link is the span the hand-off was read from, its launching call: Open in Traces lands on that call,
-            # not on the agent run it started.
+            # Open in Traces lands on the launching call the hand-off was read from, not the agent run it started.
             for one in events:
                 if one.get("delegation_id") in ids:
                     one["delegation_id"] = own_id(call, index)
@@ -942,9 +951,7 @@ def worker_timeline(
                 "instance_ids": [],
             },
         )
-    # The coordinator as the app names it: the top-level agent span, else the runtime's label for it.
-    # A top-level agent span the sealed rows show being handed work is a worker whose launcher this read lacks, not the
-    # coordinator.
+    # A top-level agent span the rows show being handed work is a worker whose launcher this read lacks.
     coordinator = next(
         (
             name_of(span)
@@ -987,12 +994,27 @@ WORKERS_KEY = "harness_workers"
 # Seconds after the result; OpenTelemetry's batch exporter delivers a span within 30 s.
 FIRST_READ = 35
 SECOND_READ = 600
+# How long past its due time a read may still be waiting in the queue.
+READ_GRACE = 240
 # One call's span read: at most this many spans (past it the timeline is `partial`), for at most this long.
 MAX_SPANS = 5000
 SPAN_READ_CAP_MS = 30_000
 
 
-def _span_dict(span: Any) -> WorkerSpan:
+def stored_record(
+    call: CallExecution, attempt: UUID | None = None
+) -> WorkerTimeline | None:
+    """The call's worker record, or an earlier attempt's as its rerun snapshot kept it; None when none was kept."""
+    if attempt is None:
+        metadata = call.call_metadata
+    else:
+        snapshot = call.snapshots.filter(id=attempt).only("call_metadata").first()
+        metadata = snapshot.call_metadata if snapshot is not None else None
+    record = metadata.get(WORKERS_KEY) if isinstance(metadata, dict) else None
+    return cast(WorkerTimeline, record) if record else None
+
+
+def _span_dict(span: CHSpan) -> WorkerSpan:
     return {
         "span_id": str(span.id),
         "parent_span_id": span.parent_span_id or None,
@@ -1025,7 +1047,7 @@ def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
     ]
 
 
-def _clock_start(call: Any, sealed: list[dict[str, Any]]) -> float | None:
+def _clock_start(call: CallExecution, sealed: list[SealedToolCall]) -> float | None:
     """Epoch seconds the call's `start_time_ms` offsets count from: a sealed tool call's, else the call's start."""
     for one in sealed:
         at, offset = one.get("at"), one.get("start_time_ms")
@@ -1036,16 +1058,13 @@ def _clock_start(call: Any, sealed: list[dict[str, Any]]) -> float | None:
     return call.started_at.timestamp() if call.started_at else None
 
 
-def _call_start(call: Any, sealed: list[dict[str, Any]]) -> str | None:
+def _call_start(call: CallExecution, sealed: list[SealedToolCall]) -> str | None:
     start = _clock_start(call, sealed)
     return _utc_iso(start) if start is not None else None
 
 
-def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
+def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallTurn]:
     """The call's messages with when each was said, on the tool calls' clock; a message with no offset is left out."""
-    from simulate.models import CallTranscript
-    from simulate.models.chat_message import ChatMessageModel
-
     start = _clock_start(call, sealed)
     if start is None:
         return []
@@ -1124,7 +1143,7 @@ def _event_keys(one: Mapping[str, Any]) -> set[tuple[Any, ...]]:
     return keys
 
 
-def _has_roots(spans: list[Any]) -> bool:
+def _has_roots(spans: list[CHSpan]) -> bool:
     """Whether every trace read has its top-level span: a trace whose spans all name a parent lacks its root."""
     rooted: dict[str, bool] = {}
     for one in spans:
@@ -1135,17 +1154,14 @@ def _has_roots(spans: list[Any]) -> bool:
     return all(rooted.values())
 
 
-def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
-    """What a call keeps after another read: everything either read found.
-
-    Events are joined by their recorded ids, so no event either read kept is lost, and a worker either read observed
-    stays observed. The record's other fields come from the read that found spans, then got further, then had every
-    trace's top-level span; on a tie, the later read. Its `collection` is the best of the reads that found spans, if any did.
-    """
-    if not isinstance(stored, Mapping) or not (
-        stored.get("events") or stored.get("workers")
-    ):
+def kept_record(
+    kept: Mapping[str, object] | None, read: WorkerTimeline
+) -> WorkerTimeline:
+    """Everything either read found, events joined by their recorded ids; the other fields from the read that found
+    spans, then got further, then had every top-level span (on a tie, the later read)."""
+    if not isinstance(kept, Mapping) or not (kept.get("events") or kept.get("workers")):
         return read
+    stored = cast(WorkerTimeline, kept)
 
     def weight(one: Mapping[str, Any]) -> tuple[bool, int, bool]:
         # Not how many events a read found: an incomplete span tree finds more (a launcher read twice), not better.
@@ -1174,21 +1190,21 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
     # The merged record keeps the same bounds as one read: as many events, and as much payload.
     events, cut = _bounded(events)
     omitted += cut
-    workers = [dict(one) for one in best.get("workers") or []]
+    workers = [cast(HarnessWorker, dict(one)) for one in best.get("workers") or []]
     by_id = {one["worker_id"]: one for one in workers}
-    for one in other.get("workers") or []:
-        if not one.get("observed"):
+    for worker in other.get("workers") or []:
+        if not worker.get("observed"):
             continue
-        mine = by_id.get(one["worker_id"])
+        mine = by_id.get(worker["worker_id"])
         if mine is None:
-            workers.append(dict(one))
+            workers.append(cast(HarnessWorker, dict(worker)))
         elif not mine.get("observed"):
             mine["observed"] = True
             mine["instance_ids"] = list(
                 dict.fromkeys(
                     [
                         *(mine.get("instance_ids") or []),
-                        *(one.get("instance_ids") or []),
+                        *(worker.get("instance_ids") or []),
                     ]
                 )
             )
@@ -1213,13 +1229,11 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
     )
 
 
-def attempt_reset(call_execution_id: Any) -> datetime | None:
+def attempt_reset(call_execution_id: UUID | str) -> datetime | None:
     """When the call was last reset for a rerun of the call itself; None when it never was."""
-    from simulate.models.test_execution import CallExecutionSnapshot
-
     return (
         CallExecutionSnapshot.objects.filter(
-            call_execution_id=call_execution_id,
+            call_execution_id=UUID(str(call_execution_id)),
             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         )
         .order_by("-snapshot_timestamp")
@@ -1232,7 +1246,7 @@ def _epoch(at: datetime) -> float:
     return (at if at.tzinfo else at.replace(tzinfo=UTC)).timestamp()
 
 
-def _begun_after(spans: list[Any], since: float) -> list[Any]:
+def _begun_after(spans: list[CHSpan], since: float) -> list[CHSpan]:
     """The spans of the traces whose first span began after `since`; a trace with no start time is kept."""
     first: dict[str, float] = {}
     for one in spans:
@@ -1244,24 +1258,55 @@ def _begun_after(spans: list[Any], since: float) -> list[Any]:
     ]
 
 
-def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
-    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
-    from django.utils import timezone
+def with_later_read(
+    record: WorkerTimeline, now: datetime, *, second_read: bool
+) -> WorkerTimeline:
+    """The record with when its later read is due, set after the first read only when that read may change it."""
+    record.pop("next_read_at", None)
+    # Spans may still be arriving: the later read replaces what an incomplete tree got wrong.
+    if not second_read and (
+        any(not one["observed"] for one in record["workers"])
+        or not record.get("tree_complete", True)
+        or record.get("collection") in ("partial", "unavailable")
+    ):
+        record["next_read_at"] = (now + timedelta(seconds=SECOND_READ)).isoformat()
+    return record
 
-    from simulate.models import CallExecution, HostedHarnessJob
-    from simulate.services.run_traces_v3 import list_run_traces
-    from simulate.services.scoring_status import locked_call_metadata_update
-    from tracer.services.clickhouse.application_read_policy import (
-        application_read_context,
+
+def read_pending(due: str | None, now: datetime) -> bool:
+    """Whether a read due at `due` may still change the record, allowing for the queue's delay."""
+    if not due:
+        return False
+    try:
+        at = datetime.fromisoformat(due)
+    except ValueError:
+        return False
+    return now < (at if at.tzinfo else at.replace(tzinfo=UTC)) + timedelta(
+        seconds=READ_GRACE
     )
-    from tracer.services.clickhouse.v2 import get_reader
 
+
+def first_read_due(call: CallExecution) -> str | None:
+    """When a completed hosted call's first worker read runs; None when none is scheduled."""
+    if call.status != CallExecution.CallStatus.COMPLETED or call.completed_at is None:
+        return None
+    if not HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id=call.test_execution_id
+    ).exists():
+        return None
+    return (call.completed_at + timedelta(seconds=FIRST_READ)).isoformat()
+
+
+def record_call_workers(
+    call_execution_id: str, *, second_read: bool = False
+) -> WorkerTimeline | None:
+    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
     call = CallExecution.objects.select_related("test_execution").get(
         id=call_execution_id
     )
     traces = list_run_traces(call.test_execution, call_execution_id=call.id)
     sealed = [
-        one
+        cast(SealedToolCall, one)
         for one in ((call.provider_call_data or {}).get("livekit") or {}).get(
             "tool_calls"
         )
@@ -1277,13 +1322,12 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         test_execution=call.test_execution
     ).first()
     declared = declared_workers(job) if job is not None else []
-    # A multi-agent app whose call left no spans and no attributed rows is still recorded, with every declared
-    # worker not observed, so it never reads like a single-agent call and the later read runs.
+    # A declared team with no evidence is still recorded, so the call never reads like a single-agent one.
     if traces.project_id is None and not traced_calls and not declared:
         return None
-    spans, partial, unavailable = [], False, False
-    # A rerun keeps the call's id, so the earlier attempt's traces are found with it: only those begun after the
-    # call was reset for this attempt are read.
+    spans: list[CHSpan] = []
+    partial, unavailable = False, False
+    # A rerun keeps the call's id, so only the traces begun after this attempt's reset are read.
     reset = attempt_reset(call.id)
     since = reset.timestamp() if reset is not None else None
     if traces.project_id is not None:
@@ -1303,8 +1347,7 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
                     limit=MAX_SPANS + 1,
                 )
             except Exception:
-                # Kept and returned rather than raised: a retry would repeat the read on a loaded ClickHouse, and
-                # a declared worker left unobserved still gets the later read.
+                # Kept, not raised: a retry would repeat the read on a loaded ClickHouse, and the later read still runs.
                 logger.warning(
                     "call_workers_span_read_failed",
                     call_execution_id=str(call.id),
@@ -1325,12 +1368,10 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         turns=_call_turns(call, sealed),
         started_at=_call_start(call, sealed),
     )
-    timeline["collected_at"] = timezone.now().isoformat()
-    # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
-    # bound: such a read is ranked below a whole one and gets the later read.
+    now = timezone.now()
+    timeline["collected_at"] = now.isoformat()
+    # An early read can lack the top-level span (it ends last) or stop at the row bound; it ranks below a whole one.
     timeline["tree_complete"] = not partial and _has_roots(spans)
-    # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
-    # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
     timeline["collection"] = (
         "unavailable"
         if unavailable
@@ -1347,10 +1388,18 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
 
     kept: list[WorkerTimeline] = []
 
-    def keep(metadata: dict) -> bool:
+    def keep(metadata: dict[str, object]) -> bool:
         # A later read adds what it found, and never takes away what an earlier one kept.
-        kept.append(kept_record(metadata.get(WORKERS_KEY), timeline))
-        metadata[WORKERS_KEY] = kept[-1]
+        merged = with_later_read(
+            kept_record(
+                cast("Mapping[str, object] | None", metadata.get(WORKERS_KEY)),
+                timeline,
+            ),
+            now,
+            second_read=second_read,
+        )
+        kept.append(merged)
+        metadata[WORKERS_KEY] = merged
         return True
 
     locked_call_metadata_update(call.id, keep)
