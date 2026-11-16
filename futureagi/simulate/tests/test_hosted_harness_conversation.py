@@ -2437,3 +2437,90 @@ def test_a_person_cannot_mark_their_message_as_sent_by_the_platform(
     message = job.conversation.messages.get(client_request_id="spoof")
     assert "from_platform" not in message.payload
     assert message.payload["note"] == "kept"
+
+
+@pytest.mark.django_db
+def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_the_old_one(
+    organization,
+):
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-asked-again"
+    )
+    conversation, _command, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    sent = iter(range(1, 10))
+
+    def ask(message_id):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-asked-again-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": "question_requested",
+            "message_id": message_id,
+            "stage": "builder",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": {
+                "prompt": "Confirm this change",
+                "options": ["Yes, make this change", "No"],
+            },
+        }
+        event["digest"] = canonical_digest(event)
+        response = APIClient().post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": 0,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    first, again = str(uuid.uuid4()), str(uuid.uuid4())
+    ask(first)
+    _c, late, _ = enqueue_message(
+        job,
+        content="Yes, make this change",
+        client_request_id="late",
+        kind="user_response",
+        reply_to=uuid.UUID(first),
+    )
+    # The turn was stopped before the answer reached it, and the builder asks the same question again.
+    ask(again)
+
+    conversation.refresh_from_db()
+    late.refresh_from_db()
+    assert late.state == "failed"
+    assert (conversation.state, conversation.blocking_input["message_id"]) == (
+        "waiting_for_user",
+        again,
+    )
+
+    _c, answer, _ = enqueue_message(
+        job,
+        content="Yes, make this change",
+        client_request_id="answer",
+        kind="user_response",
+        reply_to=uuid.UUID(again),
+    )
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input) == ("responding", None)
+    served = pending_commands(conversation, after=0)["commands"]
+    assert [
+        one["payload"]["reply_to"] for one in served if one["payload"]["reply_to"]
+    ] == [again]
+    assert answer.id in {uuid.UUID(one["message_id"]) for one in served}

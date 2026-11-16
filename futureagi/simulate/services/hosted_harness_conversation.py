@@ -1211,6 +1211,16 @@ def _project_event(
         ).exists():
             # Asked again after a restart, but already answered.
             return
+        # An answer still queued for another question can't be taken any more: that question is closed and the builder
+        # asks this one in its place, so the person answers this one.
+        conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER,
+            state=HostedHarnessConversationMessage.State.QUEUED,
+            reply_to__isnull=False,
+        ).exclude(reply_to=message_id).update(
+            state=HostedHarnessConversationMessage.State.FAILED,
+            updated_at=timezone.now(),
+        )
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),

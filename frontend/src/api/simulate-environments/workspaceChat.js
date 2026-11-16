@@ -408,8 +408,9 @@ export function useWorkspaceChat(env, { source } = {}) {
     frozen,
     frozenReason,
     inFlight,
-    // Stop interrupts the turn, or stops the queued or running rebuild.
-    canStop: inFlight || Boolean(active),
+    // Stop interrupts the turn, or stops the queued or running rebuild. A turn paused on the person's answer, as the
+    // server says (waiting_for_user), runs nothing to stop.
+    canStop: (inFlight && !awaiting) || Boolean(active),
     // The working indicator: a turn in flight or a running rebuild, not one
     // that only waits.
     working: (inFlight && !awaiting) || activeRunning,

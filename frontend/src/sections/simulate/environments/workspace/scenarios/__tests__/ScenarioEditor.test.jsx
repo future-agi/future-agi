@@ -9,7 +9,10 @@ import {
 import { render } from "src/utils/test-utils";
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
 import ScenarioEditor from "../ScenarioEditor";
-import { focusBuilderChat } from "../../../buildEnvironment/console/builderChatFocusBus";
+import {
+  focusBuilderChat,
+  subscribeBuilderChatFocus,
+} from "../../../buildEnvironment/console/builderChatFocusBus";
 
 const ROW_API = {
   id: "s1",
@@ -131,9 +134,14 @@ describe("ScenarioEditor and the builder chat", () => {
     );
     expect(onClose).not.toHaveBeenCalled();
 
+    const shown = [];
+    const stop = subscribeBuilderChatFocus((id) => shown.push(id));
     act(() => focusBuilderChat("ask-1"));
     fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+    // The chat is shown the question again once the editor is out of the way, as when nothing was unsaved.
+    expect(shown).toEqual(["ask-1", "ask-1"]);
+    stop();
   });
 });
 
