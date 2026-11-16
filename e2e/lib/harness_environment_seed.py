@@ -345,7 +345,7 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
-    trial_ids = _finished_trial(environment, definition, documents[0]) if trial else {}
+    trial_ids = _finished_trial(environment, definition, documents[0], world_changes=actors) if trial else {}
     return {
         **trial_ids,
         "environmentId": str(environment.id),
@@ -358,12 +358,11 @@ def seed_environment(
     }
 
 
-def _finished_trial(environment, definition, document):
-    """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
-    harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+def _finished_trial(environment, definition, document, *, world_changes):
+    """One finished run of the Environment with one completed trial of its first scenario and, for an actors seed, its
+    World changes as the harness seals them (ingestion keeps them under ``harness_trial_state``)."""
     from simulate.models import HostedHarnessScenario
     from simulate.models.test_execution import CallExecution, TestExecution
-    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
     # A call belongs to the scenario its trial ran, as a real run's calls do.
     provisioned = HostedHarnessScenario.no_workspace_objects.get(
@@ -385,9 +384,13 @@ def _finished_trial(environment, definition, document):
         call_metadata={
             "harness_scenario_key": document["scenario_key"],
             "harness_trial_index": 0,
-            TRIAL_STATE_KEY: TRIAL_STATE,
         },
     )
+    if world_changes:
+        from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+        call.call_metadata[TRIAL_STATE_KEY] = TRIAL_STATE
+        call.save(update_fields=["call_metadata"])
     return {
         "runTestId": str(environment.run_test_id),
         "testExecutionId": str(execution.id),
