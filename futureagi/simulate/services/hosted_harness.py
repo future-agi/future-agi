@@ -988,10 +988,11 @@ def _held_back_checked(
 
         labels = {one.id: one.label for one in CATALOGUE}
         labels["scenario_dropped"] = "Certification"
+        labels["worker_limits"] = "Worker limits"
         labels.update(
             {
                 f"worker:{one['worker_id']}": one["name"]
-                for one in planned.plan.report.get("workers") or []
+                for one in planned.plan.report["workers"]
             }
         )
         reasons = planned.plan.view["reasons"]

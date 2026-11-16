@@ -1680,7 +1680,14 @@ def _ingest_hosted_transcript(
                 {
                     **{
                         key: one.get(key)
-                        for key in ("code", "message", "action", "on_call", "mode", "count")
+                        for key in (
+                            "code",
+                            "message",
+                            "action",
+                            "on_call",
+                            "mode",
+                            "count",
+                        )
                         if key in one
                     },
                     # The workers a notice names, e.g. a separate worker that bypassed its channel.

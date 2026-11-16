@@ -43,8 +43,7 @@ TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
 # Each tool call the qualification conversation made that reached the test world.
 TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
-# The world door's sealed worker limits: whether the door holds per-worker limits, and each worker's allow-list.
-DOOR_FILE_PATH = "environment-bundle/generated/tool-proxy/door.json"
+# The world door's sealed per-worker allow-lists.
 PERMISSIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/permissions.json"
 # What ALK decided for this build: whether the door stands and on which surface, or why not; each worker's limits and
 # the workers each scenario relies on; and each sealed world action's tool.
@@ -221,6 +220,12 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
         values = (_json_object(files.get(path)) or {}).get(name)
         return [one for one in values or [] if isinstance(one, dict)]
 
+    door_paths = (
+        PERMISSIONS_FILE_PATH,
+        DOOR_OUTCOME_PATH,
+        WORKER_LIMITS_PATH,
+        ACTIONS_FILE_PATH,
+    )
     return {
         "object_key": object_key,
         "files_version": CERTIFICATION_FILES_VERSION,
@@ -229,11 +234,15 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
         "routed": items(TOOL_ROUTING, "tools"),
         "unobserved": items(TOOL_ROUTING, "unobserved"),
         # Mappings, not lists: read by key, None when absent.
-        "door": _json_object(files.get(DOOR_FILE_PATH)),
         "worker_permissions": _json_object(files.get(PERMISSIONS_FILE_PATH)),
         "door_outcome": _json_object(files.get(DOOR_OUTCOME_PATH)),
         "worker_limits": _json_object(files.get(WORKER_LIMITS_PATH)),
         "actions_to_tools": _json_object(files.get(ACTIONS_FILE_PATH)),
+        # A door file sealed but not a JSON object: worker limits read as not known, never as absent.
+        "door_unreadable": any(
+            files.get(path) and _json_object(files.get(path)) is None
+            for path in door_paths
+        ),
     }
 
 

@@ -35,6 +35,7 @@ from simulate.services.harness_readiness.catalogue import (
     Reading,
     targets,
 )
+from simulate.services.harness_readiness.children import children
 from simulate.services.harness_versioning import archives, assembly
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -63,8 +64,9 @@ _SANDBOX_SOURCES = frozenset(
 )
 
 
-# The per-tool and per-action certification an archive holds, and whether it was read.
-CertificationFiles = dict[str, list[Mapping[str, Any]]]
+# The per-tool and per-action certification an archive holds (lists), its door files (mappings or None), and
+# whether it was read.
+CertificationFiles = dict[str, Any]
 _Read = tuple[CertificationFiles, bool]
 
 
@@ -89,14 +91,15 @@ class Evidence:
     unreadable: bool = False
     # The certificate itself: what made it (harness and framework versions) included.
     certificate: Mapping[str, Any] = field(default_factory=dict)
-    # The world door's sealed `door.json` and `permissions.json`; None when absent or not read.
-    door: Mapping[str, Any] | None = None
+    # What ALK sealed for the world's door: the root `door.json` (whether the door stands, on which surface, or why
+    # not), `worker-limits.json` and the tool proxy's `permissions.json` and `actions.json` (world action to tool);
+    # None when absent or not read.
     worker_permissions: Mapping[str, Any] | None = None
-    # ALK's own decisions sealed with the bundle: `door.json`, `worker-limits.json` and the tool proxy's
-    # `actions.json` (world action to tool); None for a bundle sealed before ALK wrote them.
     door_outcome: Mapping[str, Any] | None = None
     worker_limits: Mapping[str, Any] | None = None
     actions_to_tools: Mapping[str, Any] | None = None
+    # A door file was sealed but could not be read: worker limits are not known.
+    door_unreadable: bool = False
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -122,7 +125,6 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
 _FILES = ("tools", "actions", "routed", "unobserved")
 # Read by key, never through `_items`: each is a mapping or None.
 _DOOR_FILES = (
-    "door",
     "worker_permissions",
     "door_outcome",
     "worker_limits",
@@ -152,6 +154,7 @@ def _certification_files(
         return {
             **{name: _items(kept, name) for name in _FILES},
             **{name: _mapping(kept.get(name)) for name in _DOOR_FILES},
+            "door_unreadable": bool(kept.get("door_unreadable")),
         }
     files, readable = _read_once(object_key)
     if not readable:
@@ -227,7 +230,6 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
                 TOOL_CERTIFICATION,
                 ACTION_CERTIFICATION,
                 TOOL_ROUTING,
-                assembly.DOOR_FILE_PATH,
                 assembly.PERMISSIONS_FILE_PATH,
                 assembly.DOOR_OUTCOME_PATH,
                 assembly.WORKER_LIMITS_PATH,
@@ -255,6 +257,7 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
         {
             **{name: kept[name] for name in _FILES},
             **{name: kept.get(name) for name in _DOOR_FILES},
+            "door_unreadable": bool(kept.get("door_unreadable")),
         },
         True,
     )
@@ -306,11 +309,11 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
             unreadable=bool(files.get("unreadable")),
             certificate=bundle.certificate or {},
-            door=_mapping(files.get("door")),
             worker_permissions=_mapping(files.get("worker_permissions")),
             door_outcome=_mapping(files.get("door_outcome")),
             worker_limits=_mapping(files.get("worker_limits")),
             actions_to_tools=_mapping(files.get("actions_to_tools")),
+            door_unreadable=bool(files.get("door_unreadable")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -337,11 +340,11 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         covers_suite=_covers_suite(version, pairing.suite_version),
         unreadable=bool(files.get("unreadable")),
         certificate=certificate if isinstance(certificate, Mapping) else {},
-        door=_mapping(files.get("door")),
         worker_permissions=_mapping(files.get("worker_permissions")),
         door_outcome=_mapping(files.get("door_outcome")),
         worker_limits=_mapping(files.get("worker_limits")),
         actions_to_tools=_mapping(files.get("actions_to_tools")),
+        door_unreadable=bool(files.get("door_unreadable")),
     )
 
 
@@ -841,7 +844,7 @@ def recent_runs(pairing: Pairing) -> list[Any]:
     )
 
 
-def _contract(pairing: Pairing) -> Mapping[str, Any]:
+def contract_of(pairing: Pairing) -> Mapping[str, Any]:
     contract = (pairing.environment_version.documents or {}).get("contract")
     return contract if isinstance(contract, Mapping) else {}
 
@@ -871,7 +874,7 @@ def _continuity(runs: list[Any]) -> Reading:
 
 
 def _streaming(pairing: Pairing) -> Reading:
-    contract = _contract(pairing)
+    contract = contract_of(pairing)
     interface = (contract.get("runtime") or {}).get("interface") or {}
     kind = str(interface.get("kind") or "") if isinstance(interface, Mapping) else ""
     if str(contract.get("modality") or "").lower() == "voice":
@@ -902,7 +905,7 @@ def _streaming(pairing: Pairing) -> Reading:
 
 
 def _audio(pairing: Pairing, runs: list[Any]) -> Reading:
-    if str(_contract(pairing).get("modality") or "").lower() != "voice":
+    if str(contract_of(pairing).get("modality") or "").lower() != "voice":
         return Reading(
             "not_applicable", "not_voice", "A chat connection carries no audio"
         )
@@ -967,197 +970,9 @@ def _cost(runs: list[Any]) -> Reading:
     )
 
 
-_CHILD_CALLS_READ = 20
-# The call metadata key the workers record is stored under (`harness_workers.WORKERS_KEY`); named here so readiness
-# does not need that module to read it.
-WORKERS_KEY = "harness_workers"
-_CUT_SHORT = frozenset(
-    {"deadline_passed", "no_return", "cancel_requested", "cancelled"}
-)
-
-
-def _children(pairing: Pairing, runs: list[Any]) -> Reading:
-    """Sub-agent evidence from this agent's own runs: one evidence line per checklist item, seen or not. Absence is
-    unmeasured, never a failure."""
-    from simulate.models import CallExecution
-    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
-
-    declared = [
-        one
-        for one in _contract(pairing).get("workers") or []
-        if isinstance(one, Mapping)
-    ]
-    calls = (
-        list(
-            CallExecution.objects.filter(
-                test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(
-                    id__in=runs
-                ).values("test_execution_id"),
-                call_metadata__has_key=WORKERS_KEY,
-            ).order_by("-created_at")[:_CHILD_CALLS_READ]
-        )
-        if runs
-        else []
-    )
-    if not declared and not calls:
-        return Reading(
-            "not_applicable",
-            "single_agent",
-            "This agent declares no workers and its runs recorded none.",
-        )
-    if not calls:
-        return Reading(
-            "not_run", "no_run", "No run of this agent has shown its workers yet."
-        )
-    records = [(call.call_metadata or {}).get(WORKERS_KEY) or {} for call in calls]
-    trials = [(call.call_metadata or {}).get(TRIAL_STATE_KEY) or {} for call in calls]
-    receipts = [
-        (call.call_metadata or {}).get("hosted_harness_receipt") or {} for call in calls
-    ]
-    declared_ids = {str(one.get("id")) for one in declared if one.get("id")}
-
-    def hand_offs_whole(record: Mapping[str, Any]) -> bool:
-        events = record.get("events") or []
-        out = {
-            one.get("delegation_id") for one in events if one.get("type") == "delegated"
-        }
-        back = {
-            one.get("delegation_id") for one in events if one.get("type") == "returned"
-        }
-        ended = {
-            one.get("worker_id")
-            for one in record.get("workers") or []
-            if one.get("state") in _CUT_SHORT
-        }
-        stuck = [
-            one
-            for one in events
-            if one.get("type") == "delegated"
-            and one.get("delegation_id") not in back
-            and one.get("worker_id") not in ended
-        ]
-        return bool(out) and not stuck
-
-    def seen_all(record: Mapping[str, Any]) -> bool:
-        observed_ids = {
-            str(one.get("id"))
-            for one in record.get("workers") or []
-            if one.get("observed")
-        }
-        return declared_ids <= observed_ids
-
-    any_hand_off = any(
-        one.get("type") == "delegated"
-        for record in records
-        for one in record.get("events") or []
-    )
-    ids_by_call = [
-        {
-            str(one.get("worker_id"))
-            for one in record.get("workers") or []
-            if one.get("observed")
-        }
-        for record in records
-    ]
-    sub_goals = [
-        one
-        for receipt in receipts
-        for one in receipt.get("sub_goals") or []
-        if isinstance(one, Mapping)
-    ]
-    worker_goals = [
-        one for one in sub_goals if str(one.get("subject") or "").startswith("worker:")
-    ]
-
-    def result(found: bool, applicable: bool = True) -> str:
-        return "not_applicable" if not applicable else "seen" if found else "not_seen"
-
-    checks: list[EvidenceCheck] = [
-        {
-            "check": "stable_ids",
-            "result": result(
-                any(
-                    a & b
-                    for i, a in enumerate(ids_by_call)
-                    for b in ids_by_call[i + 1 :]
-                ),
-                len(calls) > 1,
-            ),
-        },
-        {
-            "check": "delegation_and_return",
-            "result": result(any(hand_offs_whole(one) for one in records)),
-        },
-        {
-            "check": "tool_attribution",
-            "result": result(
-                all(
-                    one.get("attribution") != "unattributed"
-                    for record in records
-                    for one in record.get("events") or []
-                    if one.get("type") == "tool_call"
-                )
-            ),
-        },
-        {
-            "check": "permissions_exercised",
-            "result": result(
-                any(
-                    str(entry.get("who") or "").startswith("worker:")
-                    and (entry.get("refused_actions") or entry.get("committed_actions"))
-                    for trial in trials
-                    for entry in trial.get("state_changes") or []
-                    if isinstance(entry, Mapping)
-                )
-            ),
-        },
-        {"check": "worker_verdicts", "result": result(bool(worker_goals))},
-        {
-            "check": "timeout_or_cancel",
-            "result": result(
-                any(
-                    one.get("state") in _CUT_SHORT
-                    for record in records
-                    for one in record.get("workers") or []
-                )
-            ),
-        },
-        {
-            "check": "unmeasured_without_evidence",
-            "result": result(any(one.get("held") is None for one in worker_goals)),
-        },
-    ]
-    at = calls[0].created_at.isoformat()
-    if any(seen_all(record) and hand_offs_whole(record) for record in records):
-        return Reading("passed", evidence=checks, checked_at=at)
-    if not any_hand_off:
-        return Reading(
-            "limited",
-            "no_hand_offs",
-            "Workers were seen only through their tool calls; the app records no hand-offs.",
-            evidence=checks,
-            checked_at=at,
-        )
-    seen_ids = {
-        str(one.get("id"))
-        for record in records
-        for one in record.get("workers") or []
-        if one.get("observed")
-    }
-    return Reading(
-        "limited",
-        "workers_partly_observed",
-        f"{len(declared_ids & seen_ids)} of {len(declared_ids)} declared workers were seen in runs; the rest read Not"
-        " observed.",
-        evidence=checks,
-        checked_at=at,
-    )
-
-
-def observed(pairing: Pairing) -> dict[str, Reading]:
-    """What this agent's runs on this environment version show for the rows no check
+def observed(pairing: Pairing, runs: list[Any]) -> dict[str, Reading]:
+    """What this agent's ``runs`` on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""
-    runs = recent_runs(pairing)
     return {
         "continuity": _continuity(runs),
         "streaming": _streaming(pairing),
@@ -1170,5 +985,5 @@ def observed(pairing: Pairing) -> dict[str, Reading]:
         ),
         "resume": _resume(runs),
         "cost": _cost(runs),
-        "children": _children(pairing, runs),
+        "children": children(contract_of(pairing).get("workers"), runs),
     }

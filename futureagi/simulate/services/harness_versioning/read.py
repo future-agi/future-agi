@@ -814,6 +814,8 @@ def run_version_labels(
         "agent_version__version_number",
         "environment_version__agent_version_id",
     )
+    from simulate.services.harness_readiness.report import snapshot_as_read
+
     snapshots = (
         {
             str(one): (snapshot, selection)
@@ -844,7 +846,9 @@ def run_version_labels(
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
             **(
                 {
-                    "capability_snapshot": snapshots.get(str(execution_id), (None,))[0],
+                    "capability_snapshot": snapshot_as_read(
+                        snapshots.get(str(execution_id), (None,))[0]
+                    ),
                     "readiness_selection": snapshots.get(
                         str(execution_id), (None, None)
                     )[1],
