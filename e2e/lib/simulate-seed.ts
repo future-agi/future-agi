@@ -249,8 +249,9 @@ export function seedHarnessEnvironment(opts: {
   trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
   /** The contract's tools with their fields: inputs, units and what each returns. */
   toolDetail?: boolean;
-  // Two separately wired workers, with the world door's worker limits sealed or, as an old seal, without.
-  workers?: 'sealed' | 'old_seal';
+  // Two separately wired workers and what ALK sealed for them: a tool proxy holding their limits, no door in front of
+  // the tool service, or, as an old seal, nothing.
+  workers?: 'sealed' | 'not_fronted' | 'old_seal';
   // Each refund case gives the refund worker a budget, so the case relies on that worker.
   refundWorkerBudget?: boolean;
 }): HarnessEnvironmentSeed {
