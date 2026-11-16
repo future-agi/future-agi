@@ -188,6 +188,22 @@ a public URL, and every origin while it is only port-forwarded. */ -}}
 {{- end -}}
 {{- if and $cors (ne $cors "*") }}{{ $_ := set $plain "CORS_ALLOWED_ORIGINS" $cors }}{{ end -}}
 {{- if $csrf }}{{ $_ := set $plain "EXTRA_CSRF_ORIGINS" (join "," $csrf) }}{{ end -}}
+{{- /* MCP_OAUTH_TRUSTED_PROXIES: while the chart routes the API through an
+Ingress or Gateway API routes, their trustedProxies, trusted for exactly one
+hop, so the MCP OAuth request limits count each client by the address the
+controller saw. Without those routes (or with empty addresses) neither
+variable is set and every request counts by its peer address. */ -}}
+{{- $trustedProxies := list -}}
+{{- range $route := list "ingress" "gatewayApi" -}}
+{{- $r := get $v $route | default dict -}}
+{{- if $r.enabled -}}
+{{- range splitList "," ($r.trustedProxies | default "" | toString) }}{{ with trim . }}{{ $trustedProxies = append $trustedProxies . }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if $trustedProxies -}}
+{{- $_ := set $plain "MCP_OAUTH_TRUSTED_PROXIES" ($trustedProxies | uniq | join ",") -}}
+{{- $_ := set $plain "MCP_OAUTH_TRUSTED_PROXY_HOPS" "1" -}}
+{{- end -}}
 {{- /* Django's pooled connection (PGBOUNCER_*) and read replica. PG_HOST stays
 the direct server: the outbox CDC's advisory lock needs a session. */ -}}
 {{- $pooler := $v.postgres.pooler | default dict -}}

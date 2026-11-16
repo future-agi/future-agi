@@ -841,6 +841,52 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
     return failed
 
 
+# ingress.trustedProxies and gatewayApi.trustedProxies by default: the private
+# and shared address ranges pod networks use.
+OAUTH_TRUSTED_PROXIES = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"
+# Renders whose values set them: (MCP_OAUTH_TRUSTED_PROXIES,
+# MCP_OAUTH_TRUSTED_PROXY_HOPS). examples/ingress-traefik.yaml narrows them to
+# k3s's pod network; examples/cloud/gke.yaml trusts GKE's load balancer
+# ranges and its address for the two entries the load balancer adds.
+OAUTH_TRUSTED_PROXIES_BY_RENDER = {
+    "ingress-traefik": ("10.42.0.0/16", "1"),
+    "cloud-gke": ("35.191.0.0/16,130.211.0.0/22,203.0.113.10/32", "2"),
+}
+
+
+def check_oauth_client_address(name: str, docs: list[dict]) -> list[str]:
+    """Behind the chart's Ingress or Gateway API routes, the Python pods trust
+    exactly the controller's hop for the MCP OAuth request limits' client
+    address; without those routes they set neither variable, so every request
+    counts by its peer address."""
+    routed = any(d["kind"] in ("Ingress", "HTTPRoute") for d in docs)
+    proxies, hops = OAUTH_TRUSTED_PROXIES_BY_RENDER.get(
+        name, (OAUTH_TRUSTED_PROXIES, "1")
+    )
+    expected = (
+        {
+            "MCP_OAUTH_TRUSTED_PROXIES": proxies,
+            "MCP_OAUTH_TRUSTED_PROXY_HOPS": hops,
+        }
+        if routed
+        else {"MCP_OAUTH_TRUSTED_PROXIES": None, "MCP_OAUTH_TRUSTED_PROXY_HOPS": None}
+    )
+    failed = []
+    for doc in (d for d in app_workloads(docs) if is_python(d)):
+        for container in containers(doc):
+            values = env_values(container)
+            if "DJANGO_SETTINGS_MODULE" not in values:
+                continue
+            for key, want in expected.items():
+                if values.get(key) != want:
+                    failed.append(
+                        f"{name}: {doc['metadata']['name']}/{container['name']} sets "
+                        f"{key}={values.get(key)!r}, expected {want!r}"
+                        + (" (Ingress or HTTPRoute rendered)" if routed else "")
+                    )
+    return failed
+
+
 def check_compose_defaults(name: str, docs: list[dict], compose: Path) -> list[str]:
     """The long-running Python containers against the compose service of the
     same name (x-backend-env for one it does not have)."""
@@ -1541,6 +1587,7 @@ def main() -> int:
         failed += check_alb_health_checks(name, docs)
         # ci/all-components.yaml turns serviceAccount.automountServiceAccountToken on.
         failed += check_token_mounts(name, docs, mounted=name == "all-components")
+        failed += check_oauth_client_address(name, docs)
     # examples/cloud/gke.yaml: the UI, API and collector; ci/gateway-api.yaml
     # adds the LLM gateway.
     for render, wanted in (("cloud-gke", 3), ("gateway-api", 4)):

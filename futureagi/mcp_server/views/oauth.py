@@ -41,6 +41,7 @@ from mcp_server.throttles import (
     clear_invalid_token_attempts,
     log_token_warning,
     record_invalid_token_attempt,
+    release_token_attempt_reservation,
 )
 from tfc.utils.api_contracts import validated_request
 
@@ -271,6 +272,14 @@ class MCPOAuthTokenView(APIView):
         MCPOAuthTokenIPThrottle,
         MCPOAuthTokenClientThrottle,
     ]
+
+    def dispatch(self, request, *args, **kwargs):
+        try:
+            return super().dispatch(request, *args, **kwargs)
+        finally:
+            # Free the in-flight slot taken by MCPOAuthTokenLockoutThrottle,
+            # after any invalid attempt has been recorded.
+            release_token_attempt_reservation(getattr(self, "request", None))
 
     def throttled(self, request, wait):
         retry_after = max(int(wait or 1), 1)
