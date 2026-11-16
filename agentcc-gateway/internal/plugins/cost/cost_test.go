@@ -507,8 +507,8 @@ func TestProcessResponse_KnownModel_NotMarkedUnpriced(t *testing.T) {
 
 	p.ProcessResponse(context.Background(), rc)
 
-	if got, ok := rc.Metadata["cost_source"]; ok {
-		t.Fatalf("priced model got cost_source=%q", got)
+	if got := rc.Metadata["cost_source"]; got != CostSourceCatalogue {
+		t.Fatalf("priced model got cost_source=%q, want %q", got, CostSourceCatalogue)
 	}
 }
 
@@ -666,8 +666,8 @@ func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 			if got := rc.Metadata["cost"]; got != tc.want {
 				t.Fatalf("Metadata[cost] = %q, want %q", got, tc.want)
 			}
-			if got, ok := rc.Metadata["cost_source"]; ok {
-				t.Fatalf("priced model got cost_source=%q", got)
+			if got := rc.Metadata["cost_source"]; got != CostSourceCatalogue {
+				t.Fatalf("priced model got cost_source=%q, want %q", got, CostSourceCatalogue)
 			}
 		})
 	}
