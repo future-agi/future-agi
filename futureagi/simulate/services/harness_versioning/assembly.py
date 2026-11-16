@@ -43,6 +43,9 @@ TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
 # Each tool call the qualification conversation made that reached the test world.
 TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
+# The world door's sealed worker limits: whether the door holds per-worker limits, and each worker's allow-list.
+DOOR_FILE_PATH = "environment-bundle/generated/tool-proxy/door.json"
+PERMISSIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/permissions.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
@@ -201,6 +204,10 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# Bumped when the kept certification files gain a file: readiness reads an older row's archive once more.
+CERTIFICATION_FILES_VERSION = 2
+
+
 def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
     """The per-tool and per-action certification and the tool routing among a sealed
     bundle's files, with the key of the archive they are kept with."""
@@ -211,10 +218,14 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
 
     return {
         "object_key": object_key,
+        "files_version": CERTIFICATION_FILES_VERSION,
         "tools": items(TOOL_CERTIFICATION, "tools"),
         "actions": items(ACTION_CERTIFICATION, "actions"),
         "routed": items(TOOL_ROUTING, "tools"),
         "unobserved": items(TOOL_ROUTING, "unobserved"),
+        # Mappings, not lists: read by key, None when absent.
+        "door": _json_object(files.get(DOOR_FILE_PATH)),
+        "worker_permissions": _json_object(files.get(PERMISSIONS_FILE_PATH)),
     }
 
 

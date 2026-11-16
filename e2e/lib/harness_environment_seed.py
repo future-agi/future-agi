@@ -147,18 +147,57 @@ def _with_actor(documents):
     return documents
 
 
-def _documents(refunds, lookups, suffix):
+def _documents(refunds, lookups, suffix, *, refund_worker_budget=False):
     """``refunds`` cases that issue a refund on their only path, then ``lookups`` that
-    only look the order up; numbered in that order."""
+    only look the order up; numbered in that order. ``refund_worker_budget`` gives each
+    refund case a budget for the refund worker, so it relies on that worker."""
+    budget = {"worker_budget_seconds": {"refund": 30}} if refund_worker_budget else {}
     return [
-        _scenario(f"refund-{suffix}-{n:03d}", TOOLS) for n in range(1, refunds + 1)
+        {**_scenario(f"refund-{suffix}-{n:03d}", TOOLS), **budget} for n in range(1, refunds + 1)
     ] + [
         _scenario(f"status-{suffix}-{n:03d}", TOOLS[:1]) for n in range(1, lookups + 1)
     ]
 
 
-def _authoring(documents, *, certified, production_only, actors=False):
+# Two declared workers wired separately, each reaching the world through its own channel. ``workers="sealed"`` seals
+# the world door's per-worker limits in the bundle; ``workers="old_seal"`` declares them without, as a bundle sealed
+# before worker limits.
+WORKERS = [
+    {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["lookup_order", "issue_refund"],
+        "allowed_tools": ["lookup_order"],
+        "binding": "separate",
+        "address_env": "ORDER_LOOKUP_API_URL",
+    },
+    {
+        "id": "refund",
+        "name": "Refund worker",
+        "tools": ["issue_refund"],
+        "allowed_tools": ["issue_refund"],
+        "binding": "separate",
+        "address_env": "REFUND_API_URL",
+    },
+]
+DOOR_FILES = {
+    "environment-bundle/generated/tool-proxy/door.json": {"worker_deadlines": "per_worker"},
+    "environment-bundle/generated/tool-proxy/permissions.json": {
+        "worker:order_lookup": {"allow": ["POST orders.lookup"]},
+        "worker:refund": {"allow": ["POST refunds.issue"]},
+    },
+}
+
+
+def _authoring(documents, *, certified, production_only, actors=False, workers=None):
     contract = {"agent": "support", "tools": list(TOOLS)}
+    if workers:
+        # Reached on the agent's tool service, which the world's door fronts as tools-api.
+        contract["tool_entrypoints"] = [
+            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST", "mode": "service", "service": "tools-api"},
+            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
+        ]
+        contract["workers"] = WORKERS
     if production_only:
         contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
         contract["dependencies"] = [
@@ -187,7 +226,17 @@ def _authoring(documents, *, certified, production_only, actors=False):
         files.update(
             {
                 "environment-bundle/manifest.json": {
-                    "files": [{"path": "world.sqlite", "sha256": "a" * 64, "size": 2}],
+                    "files": [
+                        {"path": "world.sqlite", "sha256": "a" * 64, "size": 2},
+                        *(
+                            {
+                                "path": path.removeprefix("environment-bundle/"),
+                                "sha256": "a" * 64,
+                                "size": 2,
+                            }
+                            for path in (DOOR_FILES if workers == "sealed" else ())
+                        ),
+                    ],
                     "digest": BUNDLE_DIGEST,
                     "provenance": {"source_digest": "e" * 64},
                 },
@@ -211,6 +260,8 @@ def _authoring(documents, *, certified, production_only, actors=False):
                 },
             }
         )
+    if certified and workers == "sealed":
+        files.update(DOOR_FILES)
     return {
         path: (value if isinstance(value, str) else json.dumps(value)).encode()
         for path, value in files.items()
@@ -229,6 +280,8 @@ def seed_environment(
     failed_check=None,
     actors=False,
     trial=False,
+    workers=None,
+    refund_worker_budget=False,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; with ``actors`` its refunds
     include a world actor with no channel, with ``trial`` one finished trial whose World changes hold a committed
@@ -248,7 +301,9 @@ def seed_environment(
     )
     from simulate.services.hosted_harness_gateway import authoring_content_digest
 
-    documents = _documents(refunds, lookups, suffix)
+    documents = _documents(
+        refunds, lookups, suffix, refund_worker_budget=refund_worker_budget
+    )
     if actors:
         documents = _with_actor(documents)
     environment, _ = create_hosted_job(
@@ -294,6 +349,7 @@ def seed_environment(
             certified=certified,
             production_only=production_only,
             actors=actors,
+            workers=workers,
         )
     )
     object_key = archives.pair_key(organization.id, environment.id, body)

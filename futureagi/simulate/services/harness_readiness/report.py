@@ -33,8 +33,10 @@ from simulate.services.harness_readiness.catalogue import (
     RowView,
     Status,
     VersionRef,
+    WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
+    _runs,
     agent_tools,
     certified,
     pair_bundle,
@@ -47,6 +49,7 @@ from simulate.services.harness_readiness.rules import (
     rows,
     worst,
 )
+from simulate.services.harness_readiness.workers import worker_boundaries
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.read import (
     _agent_definition_id,
@@ -73,6 +76,8 @@ class ReadinessReport(TypedDict):
     answer: AnswerView
     areas: list[AreaView]
     rows: list[RowView]
+    # One row per declared worker: which of its tools the world holds it to. Never Supported.
+    workers: list[WorkerBoundaryView]
     counts: dict[Status, int]
     catalog_version: str
     rules_version: str
@@ -393,6 +398,7 @@ def _computed_report(
         ),
         "areas": areas,
         "rows": found,
+        "workers": worker_boundaries(pairing, evidence, _runs(pairing)),
         "counts": counts,
         "catalog_version": CATALOG_VERSION,
         "rules_version": RULES_VERSION,

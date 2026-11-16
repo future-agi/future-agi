@@ -974,6 +974,39 @@ class HarnessCapabilityCountsSerializer(serializers.Serializer):
     stale = serializers.IntegerField()
 
 
+class WorkerToolSerializer(serializers.Serializer):
+    tool = serializers.CharField()
+    action = serializers.CharField(
+        allow_null=True,
+        help_text="The sealed world action; null when the tool has no route.",
+    )
+    boundary = serializers.ChoiceField(choices=("allowed", "blocked", "not_enforced"))
+
+
+class WorkerBypassSerializer(serializers.Serializer):
+    run_id = serializers.CharField()
+    call_execution_id = serializers.CharField()
+    tool = serializers.CharField(allow_null=True)
+
+
+class WorkerBoundarySerializer(serializers.Serializer):
+    """One declared worker's tool boundary: what the world holds it to. Never supported: the limit is cooperative."""
+
+    worker_id = serializers.CharField()
+    name = serializers.CharField()
+    binding = serializers.ChoiceField(choices=("separate", "shared"))
+    status = serializers.ChoiceField(choices=_READINESS_STATUSES)
+    reason_code = serializers.CharField()
+    reason = serializers.CharField()
+    tools = WorkerToolSerializer(many=True)
+    bypassed = WorkerBypassSerializer(
+        many=True,
+        help_text="Recent calls where the worker reached the world without its own channel.",
+    )
+    fix = HarnessCapabilityFixSerializer(allow_null=True)
+    checked_at = serializers.CharField(allow_null=True)
+
+
 class HarnessCapabilityReportSerializer(serializers.Serializer):
     """A pairing's run readiness, computed when read."""
 
@@ -982,6 +1015,11 @@ class HarnessCapabilityReportSerializer(serializers.Serializer):
     answer = HarnessCapabilityAnswerSerializer()
     areas = HarnessCapabilityAreaSerializer(many=True)
     rows = HarnessCapabilityRowSerializer(many=True)
+    workers = WorkerBoundarySerializer(
+        many=True,
+        required=False,
+        help_text="One row per declared worker; empty when the contract declares none.",
+    )
     counts = HarnessCapabilityCountsSerializer()
     catalog_version = serializers.CharField()
     rules_version = serializers.CharField()
@@ -1116,6 +1154,11 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
     stale = serializers.IntegerField(min_value=0)
     untested = serializers.IntegerField(min_value=0)
     lists = HarnessCapabilityCaseListsSerializer()
+    held_by_workers = serializers.DictField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        help_text="Held cases per declared worker whose limits cannot be held, keyed by worker id.",
+    )
     dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
     grading = HarnessCapabilityGradingSerializer()
     requirements_recorded = serializers.BooleanField(

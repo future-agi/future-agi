@@ -21,7 +21,7 @@ const MEASURED = {
   reset: 'supported',
   cancel: 'untested',
 };
-const COUNTS = { blocked: 1, stale: 0, untested: 9, partial: 0, unavailable: 1, supported: 5 };
+const COUNTS = { blocked: 1, stale: 0, untested: 8, partial: 0, unavailable: 2, supported: 5 }; // audio, and children (single_agent)
 
 interface Ref { id: string; label: string }
 interface Row { id: string; status: string; measured: boolean; reason_code: string | null;

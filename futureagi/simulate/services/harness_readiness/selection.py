@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
@@ -204,7 +204,13 @@ def selection_report(
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
     report = readiness_report(pairing)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    )
     placed = placement.placed
     requested = len(placed)
     by_bucket: dict[Bucket, list[str]] = {bucket: [] for bucket in BUCKETS}
@@ -233,6 +239,16 @@ def selection_report(
             "stale": len(by_bucket["stale"]),
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
+            # How many held cases each blocked worker holds back, so the run dialog names the worker.
+            "held_by_workers": dict(
+                Counter(
+                    reason[len("worker:") :]
+                    for one in placed
+                    if one.bucket == "blocked"
+                    for reason in one.by
+                    if reason.startswith("worker:")
+                )
+            ),
             "dropped": placement.dropped,
             "grading": {
                 "gradable": requested - len(not_gradable),
@@ -320,7 +336,13 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             retryable=True,
         )
     report = readiness_report(pairing, bundle=bundle)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    )
     dropped = [
         one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
     ]
@@ -334,6 +356,14 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     }
     if NO_DOOR_ROW in by:
         reasons[NO_DOOR_ROW] = NO_DOOR_REASON
+    # A worker is not a row: a case it holds back reads its boundary's reason.
+    reasons.update(
+        {
+            f"worker:{one['worker_id']}": one["reason"]
+            for one in report.get("workers") or []
+            if f"worker:{one['worker_id']}" in by
+        }
+    )
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
@@ -368,7 +398,13 @@ def case_page(
         HostedHarnessError: as ``selection_report``.
     """
     report = readiness_report(pairing)
-    placed = _place_all(pairing, report["rows"], keys=keys, trials=trials).placed
+    placed = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        workers=report.get("workers") or [],
+    ).placed
     matching = [
         one
         for one in placed
@@ -466,7 +502,12 @@ def _capped(keys: list[str]) -> CaseList:
 
 
 def _place_all(
-    pairing: Pairing, rows: list[RowView], *, keys: list[str] | None, trials: int
+    pairing: Pairing,
+    rows: list[RowView],
+    *,
+    keys: list[str] | None,
+    trials: int,
+    workers: list[Mapping[str, Any]] = (),
 ) -> _Placement:
     from simulate.services.hosted_harness_gateway import _scenario_token
 
@@ -508,6 +549,10 @@ def _place_all(
     voice = _voice(pairing)
     reach = _door_reach(pairing)
     many = len(kept) > 1 or trials > 1
+    # A case relying on a worker whose limits a run cannot rely on is held until its binding is fixed.
+    blocked_workers = frozenset(
+        str(one.get("worker_id")) for one in workers if one.get("status") == "blocked"
+    )
     placed = [
         _place(
             case,
@@ -519,6 +564,7 @@ def _place_all(
             pair_failed=pair_failed,
             no_door=_needs_a_missing_door(case, reach),
             judge_failed=judge_failed,
+            blocked_workers=blocked_workers,
         )
         for case in kept
     ]
@@ -670,6 +716,7 @@ def _place(
     pair_failed: bool,
     no_door: bool = False,
     judge_failed: bool = False,
+    blocked_workers: frozenset[str] = frozenset(),
 ) -> Placed:
     needed = set(case.rows)
     if voice:
@@ -698,6 +745,7 @@ def _place(
         blocked.append("pair_failed")
     if no_door:
         blocked.append(NO_DOOR_ROW)
+    blocked.extend(f"worker:{one}" for one in sorted(case.workers & blocked_workers))
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")
