@@ -53,12 +53,21 @@ export function Turn({ turn }) {
       <Stack alignItems="flex-end">
         <Box
           sx={{
-            maxWidth: "82%", px: 2, py: 1, borderRadius: "8px",
+            maxWidth: "82%",
+            px: 2,
+            py: 1,
+            borderRadius: "8px",
             bgcolor: "action.selected",
           }}
         >
           {/* pre-wrap keeps the line breaks the user typed. */}
-          <Typography sx={{ typography: "m3", color: "text.primary", whiteSpace: "pre-wrap" }}>
+          <Typography
+            sx={{
+              typography: "m3",
+              color: "text.primary",
+              whiteSpace: "pre-wrap",
+            }}
+          >
             {turn.text}
           </Typography>
         </Box>
@@ -72,12 +81,21 @@ export function Turn({ turn }) {
     <Stack spacing={1.5}>
       {turn.title && (
         <Typography
-          sx={{ typography: "s1", fontWeight: 500, color: "text.primary", pt: 0.5 }}
+          sx={{
+            typography: "s1",
+            fontWeight: 500,
+            color: "text.primary",
+            pt: 0.5,
+          }}
         >
           {turn.title}
         </Typography>
       )}
-      {(turn.steps || []).map((step, i) => <Step key={step.id ?? i} step={step} />)}
+      {(turn.steps || []).map((step, i) => (
+        <div key={step.id ?? i} data-message-id={step.id ?? undefined}>
+          <Step step={step} />
+        </div>
+      ))}
     </Stack>
   );
 }
@@ -139,10 +157,26 @@ export function Step({ step }) {
   if (step.kind === "file") {
     return (
       <QuietRow role="success">
-        <Typography sx={{ typography: "s1", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
+        <Typography
+          sx={{
+            typography: "s1",
+            fontFamily: MONO,
+            flexShrink: 0,
+            maxWidth: "60%",
+            color: "text.primary",
+          }}
+        >
           {step.path}
         </Typography>
-        <Typography noWrap sx={{ typography: "s1", color: "text.secondary", flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s1",
+            color: "text.secondary",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {step.note}
         </Typography>
       </QuietRow>
@@ -153,25 +187,46 @@ export function Step({ step }) {
     return (
       <Box>
         <Stack
-          direction="row" alignItems="center" spacing={1}
+          direction="row"
+          alignItems="center"
+          spacing={1}
           onClick={() => setOpen((o) => !o)}
-          sx={{ py: 0.5, cursor: "pointer", borderRadius: "4px", px: 1, "&:hover": { bgcolor: "action.hover" } }}
+          sx={{
+            py: 0.5,
+            cursor: "pointer",
+            borderRadius: "4px",
+            px: 1,
+            "&:hover": { bgcolor: "action.hover" },
+          }}
         >
           <Iconify
-            icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography sx={{ typography: "s1", fontFamily: MONO, color: "text.secondary" }}>
+          <Typography
+            sx={{ typography: "s1", fontFamily: MONO, color: "text.secondary" }}
+          >
             {step.label}
           </Typography>
         </Stack>
         <Collapse in={open} unmountOnExit>
           <Typography
             sx={{
-              ml: 3, mt: 0.5, px: 1.5, py: 1, borderRadius: "4px",
-              typography: "s1", color: "text.secondary", whiteSpace: "pre-wrap",
-              fontFamily: MONO, bgcolor: "background.neutral",
+              ml: 3,
+              mt: 0.5,
+              px: 1.5,
+              py: 1,
+              borderRadius: "4px",
+              typography: "s1",
+              color: "text.secondary",
+              whiteSpace: "pre-wrap",
+              fontFamily: MONO,
+              bgcolor: "background.neutral",
             }}
           >
             {step.value}
@@ -187,12 +242,24 @@ export function Step({ step }) {
     return (
       <Box>
         <Stack
-          direction="row" alignItems="center" spacing={1}
+          direction="row"
+          alignItems="center"
+          spacing={1}
           onClick={() => setOpen((o) => !o)}
-          sx={{ py: 0.5, cursor: "pointer", borderRadius: "4px", px: 1, "&:hover": { bgcolor: "action.hover" } }}
+          sx={{
+            py: 0.5,
+            cursor: "pointer",
+            borderRadius: "4px",
+            px: 1,
+            "&:hover": { bgcolor: "action.hover" },
+          }}
         >
           <Iconify
-            icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
@@ -203,7 +270,14 @@ export function Step({ step }) {
         <Collapse in={open} unmountOnExit>
           <Stack spacing={0.25} sx={{ ml: 3, mt: 0.5 }}>
             {(step.lines || []).map((line, i) => (
-              <Typography key={i} sx={{ typography: "s1", color: "text.secondary", fontFamily: MONO }}>
+              <Typography
+                key={i}
+                sx={{
+                  typography: "s1",
+                  color: "text.secondary",
+                  fontFamily: MONO,
+                }}
+              >
                 {line}
               </Typography>
             ))}
@@ -216,7 +290,9 @@ export function Step({ step }) {
   if (step.kind === "error") {
     return (
       <QuietRow role="danger">
-        <Typography sx={{ typography: "s1", color: "text.primary", flex: 1, minWidth: 0 }}>
+        <Typography
+          sx={{ typography: "s1", color: "text.primary", flex: 1, minWidth: 0 }}
+        >
           {step.text}
         </Typography>
         {step.onRetry && (
@@ -224,8 +300,13 @@ export function Step({ step }) {
             component="button"
             onClick={step.onRetry}
             sx={{
-              flexShrink: 0, border: "none", background: "none", cursor: "pointer",
-              typography: "s1", fontWeight: 500, color: "text.primary",
+              flexShrink: 0,
+              border: "none",
+              background: "none",
+              cursor: "pointer",
+              typography: "s1",
+              fontWeight: 500,
+              color: "text.primary",
               textDecoration: "underline",
               "&:hover": { color: "text.secondary" },
             }}
@@ -239,18 +320,40 @@ export function Step({ step }) {
 
   if (step.kind === "cancelled") {
     return (
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-        <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.secondary", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s1", color: "text.secondary" }}>{step.text || "Stopped."}</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 0.5, py: 0.25 }}
+      >
+        <Iconify
+          icon="solar:close-circle-linear"
+          width={14}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {step.text || "Stopped."}
+        </Typography>
       </Stack>
     );
   }
 
   if (step.kind === "completed") {
     return (
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-        <Iconify icon="solar:check-circle-bold" width={14} sx={{ color: "status.success.solid", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s1", color: "text.secondary" }}>{step.text || "Done."}</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 0.5, py: 0.25 }}
+      >
+        <Iconify
+          icon="solar:check-circle-bold"
+          width={14}
+          sx={{ color: "status.success.solid", flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {step.text || "Done."}
+        </Typography>
       </Stack>
     );
   }
@@ -273,7 +376,9 @@ Step.propTypes = { step: STEP_SHAPE };
 function formatToolOutput(text) {
   try {
     const parsed = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? JSON.stringify(parsed, null, 2) : text;
+    return parsed !== null && typeof parsed === "object"
+      ? JSON.stringify(parsed, null, 2)
+      : text;
   } catch {
     return text;
   }
@@ -297,10 +402,21 @@ function ToolStep({ step }) {
 
   const row = (
     <QuietRow role={role} pulse={running}>
-      <Typography sx={{ typography: "s1", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
+      <Typography
+        sx={{
+          typography: "s1",
+          fontFamily: MONO,
+          flexShrink: 0,
+          maxWidth: "60%",
+          color: "text.primary",
+        }}
+      >
         {step.label}
       </Typography>
-      <Typography noWrap sx={{ typography: "s1", color: "text.secondary", flex: 1, minWidth: 0 }}>
+      <Typography
+        noWrap
+        sx={{ typography: "s1", color: "text.secondary", flex: 1, minWidth: 0 }}
+      >
         {running ? "…" : step.result}
       </Typography>
       {expandable && (
@@ -313,7 +429,10 @@ function ToolStep({ step }) {
             color: "text.secondary",
             opacity: open ? 1 : 0,
             transform: open ? "rotate(180deg)" : "none",
-            transition: (t) => t.transitions.create(["opacity", "transform"], { duration: t.transitions.duration.shorter }),
+            transition: (t) =>
+              t.transitions.create(["opacity", "transform"], {
+                duration: t.transitions.duration.shorter,
+              }),
           }}
         />
       )}
@@ -344,7 +463,9 @@ function ToolStep({ step }) {
           borderRadius: "4px",
           outline: "none",
           "&:hover, &:focus-visible": { bgcolor: "action.hover" },
-          "&:hover .tool-step-chevron, &:focus-visible .tool-step-chevron": { opacity: 1 },
+          "&:hover .tool-step-chevron, &:focus-visible .tool-step-chevron": {
+            opacity: 1,
+          },
         }}
       >
         {row}
@@ -353,11 +474,22 @@ function ToolStep({ step }) {
         <Typography
           data-testid="tool-step-output"
           sx={{
-            ml: 3, mt: 0.5, mb: 0.5, px: 1.5, py: 1, borderRadius: "4px",
-            typography: "s1", fontFamily: MONO, color: "text.secondary",
-            whiteSpace: "pre-wrap", overflowWrap: "anywhere",
-            maxHeight: 320, overflowY: "auto",
-            bgcolor: "background.neutral", border: "1px solid", borderColor: "divider",
+            ml: 3,
+            mt: 0.5,
+            mb: 0.5,
+            px: 1.5,
+            py: 1,
+            borderRadius: "4px",
+            typography: "s1",
+            fontFamily: MONO,
+            color: "text.secondary",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxHeight: 320,
+            overflowY: "auto",
+            bgcolor: "background.neutral",
+            border: "1px solid",
+            borderColor: "divider",
           }}
         >
           {output}
@@ -376,13 +508,25 @@ ToolStep.propTypes = { step: STEP_SHAPE };
 // `pulse` animates the dot for an in-flight tool call.
 export function QuietRow({ role, pulse, children }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ px: 0.5, py: 0.25 }}
+    >
       <Box
         sx={{
-          width: 8, height: 8, borderRadius: "50%", flexShrink: 0, bgcolor: `status.${role}.solid`,
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          flexShrink: 0,
+          bgcolor: `status.${role}.solid`,
           ...(pulse && {
             animation: "quietPulse 1.1s ease-in-out infinite",
-            "@keyframes quietPulse": { "0%,100%": { opacity: 0.35 }, "50%": { opacity: 1 } },
+            "@keyframes quietPulse": {
+              "0%,100%": { opacity: 0.35 },
+              "50%": { opacity: 1 },
+            },
             "@media (prefers-reduced-motion: reduce)": { animation: "none" },
           }),
         }}
@@ -392,7 +536,14 @@ export function QuietRow({ role, pulse, children }) {
   );
 }
 QuietRow.propTypes = {
-  role: PropTypes.oneOf(["success", "warning", "danger", "info", "neutral", "discovery"]),
+  role: PropTypes.oneOf([
+    "success",
+    "warning",
+    "danger",
+    "info",
+    "neutral",
+    "discovery",
+  ]),
   pulse: PropTypes.bool,
   children: PropTypes.node,
 };

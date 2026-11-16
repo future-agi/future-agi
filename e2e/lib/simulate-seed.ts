@@ -245,8 +245,10 @@ export function seedHarnessEnvironment(opts: {
   failedCheck?: 'lookup_order' | 'issue_refund';
   /** The refunds include a world actor with no channel (Dana Brooks). */
   actors?: boolean;
-  /** One finished trial whose World changes hold a committed write and a read. */
-  trial?: boolean;
+  /** One finished trial; the string variants pick its World changes (see harness_environment_seed.py). */
+  trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
+  /** The contract's tools with their fields: inputs, units and what each returns. */
+  toolDetail?: boolean;
   // Two separately wired workers, with the world door's worker limits sealed or, as an old seal, without.
   workers?: 'sealed' | 'old_seal';
   // Each refund case gives the refund worker a budget, so the case relies on that worker.
@@ -269,6 +271,7 @@ export function seedHarnessEnvironment(opts: {
         failed_check: opts.failedCheck ?? null,
         actors: opts.actors ?? false,
         trial: opts.trial ?? false,
+        tool_detail: opts.toolDetail ?? false,
         workers: opts.workers ?? null,
         refund_worker_budget: opts.refundWorkerBudget ?? false,
       }),

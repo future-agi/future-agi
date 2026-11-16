@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
 // Save keys are counted so a test can tell a reused key from a fresh one.
 let keyCount = 0;
@@ -34,6 +34,10 @@ const {
   useDrafts,
   useSaveDrafts,
   useDiscardDraft,
+  useEditActor,
+  useActorCheck,
+  checkActor,
+  actorsKey,
   draftsKey,
   toDrafts,
   nudgesKey,
@@ -350,10 +354,24 @@ describe("useRunPlan", () => {
       null,
       "e1",
       null,
+      null,
     ]);
     expect(
       client.getQueryData(runPlanKey("env-1", { environment: "e1" })),
     ).toEqual(PLAN);
+  });
+
+  it("asks about the chosen scenarios only, by their keys", async () => {
+    axios.get.mockResolvedValue({ data: PLAN });
+    const { result } = renderHook(
+      () => useRunPlan("env-1", {}, { scenarioKeys: ["k1", "k2"] }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/run-plan/",
+      { params: { scenario_keys: "k1,k2" } },
+    );
   });
 
   it("asks with no params for the defaults", async () => {
@@ -1481,5 +1499,134 @@ describe("drafts", () => {
     expect(invalidated(spy)).toContainEqual({
       queryKey: environmentVersionsKey("env-1"),
     });
+  });
+});
+
+describe("useEditActor", () => {
+  const ACTORS = "/simulate/api/harness-environments/env-1/actors/";
+  const edit = async (change) => {
+    const { result } = renderHook(() => useEditActor("env-1"), { wrapper });
+    await act(() => result.current.mutateAsync(change).catch(() => {}));
+    return result;
+  };
+
+  it("sends each change as typed changes with the revision it was read at, a create's own id when typed, and seeds the cast with the answer", async () => {
+    const answer = { actors: [], revision: 4 };
+    const changes = { name: "Priya" };
+    axios.post.mockResolvedValue({ data: answer });
+    axios.put.mockResolvedValue({ data: answer });
+    axios.delete.mockResolvedValue({ data: answer });
+
+    await edit({ op: "create", changes, id: "manager", revision: 3 });
+    await edit({ op: "create", changes, revision: 3 });
+    await edit({ op: "replace", changes, actorId: "manager", revision: 3 });
+    await edit({ op: "delete", actorId: "manager", revision: 3 });
+
+    expect(axios.post).toHaveBeenNthCalledWith(1, ACTORS, {
+      changes,
+      id: "manager",
+      expected_revision: 3,
+    });
+    expect(axios.post).toHaveBeenNthCalledWith(2, ACTORS, {
+      changes,
+      expected_revision: 3,
+    });
+    expect(axios.put).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      changes,
+      expected_revision: 3,
+    });
+    expect(axios.delete).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      params: { expected_revision: 3 },
+    });
+    expect(client.getQueryData(actorsKey("env-1"))).toEqual(answer);
+  });
+
+  it("refreshes the cast and the Save bar on a draft_changed refusal, and keeps its code for the form", async () => {
+    const refusal = { error: "draft_changed", message: "m", statusCode: 409 };
+    axios.put.mockRejectedValue(refusal);
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    const result = await edit({
+      op: "replace",
+      changes: {},
+      actorId: "manager",
+      revision: 3,
+    });
+
+    await waitFor(() => expect(result.current.error).toEqual(refusal));
+    expect(spy).toHaveBeenCalledWith({ queryKey: draftsKey("env-1") });
+    expect(actorsKey("env-1").slice(0, draftsKey("env-1").length)).toEqual(
+      draftsKey("env-1"),
+    );
+  });
+
+  it("leaves the drafts alone when the actor itself was refused", async () => {
+    axios.put.mockRejectedValue({ error: "actor_invalid", statusCode: 400 });
+    const spy = vi.spyOn(client, "invalidateQueries");
+    await edit({ op: "replace", changes: {}, actorId: "manager", revision: 3 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("useActorCheck", () => {
+  it("asks on open, then once typing pauses about the latest request only, and counts only a verdict on that request", async () => {
+    const verdict = {
+      problems: [],
+      conflicts: [],
+      suggested_id: "sam",
+      over_by: 0,
+    };
+    axios.post.mockResolvedValue({ data: verdict });
+    const { result, rerender } = renderHook(
+      ({ request }) => useActorCheck("env-1", request),
+      {
+        wrapper,
+        initialProps: { request: { op: "create", changes: { name: "S" } } },
+      },
+    );
+    rerender({ request: { op: "create", changes: { name: "Sa" } } });
+    rerender({ request: { op: "create", changes: { name: "Sam" } } });
+    expect(result.current.verdict).toBeNull();
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(result.current.verdict).toEqual(verdict));
+    // The form's first request is asked at once; the keystrokes after it, once they pause.
+    expect(
+      axios.post.mock.calls.map(([url, body]) => [url, body.changes.name]),
+    ).toEqual([
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "S"],
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "Sam"],
+    ]);
+    rerender({ request: { op: "create", changes: { name: "Samir" } } });
+    expect(result.current.verdict).toBeNull();
+  });
+
+  it("asks nothing for a request the form cannot build", () => {
+    const { result } = renderHook(() => useActorCheck("env-1", null), {
+      wrapper,
+    });
+    expect(result.current).toMatchObject({ verdict: null, pending: false });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkActor", () => {
+  it("names the actor for a replace or delete, sends no changes for a delete, and no revision", async () => {
+    axios.post.mockResolvedValue({ data: {} });
+    await checkActor("env-1", {
+      op: "replace",
+      actorId: "manager",
+      changes: { role: "lead" },
+      shareActions: ["crm.approve"],
+    });
+    await checkActor("env-1", { op: "delete", actorId: "manager" });
+    expect(axios.post.mock.calls.map(([, body]) => body)).toEqual([
+      {
+        op: "replace",
+        actor_id: "manager",
+        changes: { role: "lead" },
+        share_actions: ["crm.approve"],
+      },
+      { op: "delete", actor_id: "manager" },
+    ]);
   });
 });

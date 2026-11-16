@@ -9,12 +9,6 @@ const unwrap = (data) => data?.result ?? data;
 
 export const agentDetailQueryKey = (agentId) => ["agents", "detail", agentId];
 
-export const passRateOf = ({ passed, failed, skipped }) => {
-  if (passed == null) return null;
-  const measured = passed + (failed ?? 0) + (skipped ?? 0);
-  return measured ? Math.round((passed / measured) * 100) : null;
-};
-
 const toVersionRef = (v) => (v ? { id: v.id, number: v.version_number } : null);
 
 export const toRun = (raw) => ({
@@ -28,12 +22,12 @@ export const toRun = (raw) => ({
   agentVersion: toVersionRef(raw.agent_version),
   passed: raw.outcome_passed ?? null,
   failed: raw.outcome_failed ?? null,
+  errored: raw.outcome_errored ?? null,
+  noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
-  passRate: passRateOf({
-    passed: raw.outcome_passed ?? null,
-    failed: raw.outcome_failed,
-    skipped: raw.outcome_skipped,
-  }),
+  // Null when nothing was scored.
+  passRate: raw.pass_rate,
+  scored: raw.scored,
   startedAt: raw.started_at ?? null,
   completedAt: raw.completed_at ?? null,
 });

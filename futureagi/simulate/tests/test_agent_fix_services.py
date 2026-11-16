@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 from django.conf import settings as django_settings
+from django.db import connection, transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -19,10 +20,15 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
+    HarnessSuiteVersion,
     HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
+)
+from simulate.models import (
+    TestExecution as SimTestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
@@ -33,40 +39,60 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRunRequest,
     Ending,
     EngineReport,
+    EvalGrading,
+    EvalReview,
+    EvalWarning,
     FailureOwner,
     FixRequest,
     Surface,
+    VerdictTier,
 )
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
+    VERDICT_TIERS,
     _record,
     check_failure,
     check_run_status,
     committed_usd,
     engine_brief,
+    eval_review,
+    graded_check_runs,
     is_retryable,
+    launch_options,
+    limited_validation,
     ran_at,
+    verdict_tiers,
+    with_spend,
 )
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_runs import (
     HELD_BACK_MIN_CASES,
     close_fix_run,
     launch_fix_run,
     make_candidate_default,
     request_stop,
+    require_shippable,
     retry_fix_run,
     split_held_back,
 )
+from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
+from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    canonical_digest,
     create_selected_harness_run,
     hash_secret,
+    register_attempt,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
+from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_versioning_backfill import (
     _agent_version,
 )
@@ -74,9 +100,14 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
-from simulate.utils.test_execution_utils import eval_source
+from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
+    eval_source,
+    is_fix_check_run,
+)
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
+from tracer.services.clickhouse.client import CHError
 
 pytestmark = pytest.mark.django_db
 
@@ -355,18 +386,165 @@ class TestHeldBackSplit:
 
         assert split_held_back("run", failing) == []
 
+    # Four failing cases, each with two variations that failed too: twelve cases.
+    PARENTS = {f"s{i}-v{n}": f"s{i}" for i in range(4) for n in (1, 2)}
+
+    def test_a_case_and_its_variations_are_held_back_together(self):
+        failing = {key: ["refunded"] for key in [f"s{i}" for i in range(4)]}
+        failing |= {key: ["refunded"] for key in self.PARENTS}
+
+        for seed in ("a", "b", "c", "d", "e", "f"):
+            held = split_held_back(seed, failing, self.PARENTS)
+            cases = {self.PARENTS.get(key, key) for key in held}
+            # A third is four: one case and its two variations fit, a second would not.
+            assert len(cases) == 1
+            assert sorted(held) == sorted(
+                key for key in failing if self.PARENTS.get(key, key) in cases
+            )
+
+    def test_a_case_whose_family_alone_fails_a_sub_goal_stays_to_search_on(self):
+        failing = {key: ["refunded"] for key in [f"s{i}" for i in range(1, 4)]}
+        failing |= {
+            key: ["apologised"] if parent == "s0" else ["refunded"]
+            for key, parent in self.PARENTS.items()
+        } | {"s0": ["apologised"]}
+
+        for seed in ("a", "b", "c", "d", "e", "f"):
+            held = split_held_back(seed, failing, self.PARENTS)
+            assert held
+            assert "s0" not in {self.PARENTS.get(key, key) for key in held}
+
+
+def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
+    from itertools import product
+
+    from simulate.selectors.agent_fix import verified_cases_min
+
+    def most_held_cases(count):
+        """The most distinct cases any split holds back, over every way the count's
+        cases can keep their variations, at the default floor of twelve."""
+        best = 0
+        for kept in product(range(4), repeat=count):
+            failing, parents = {}, {}
+            for case, variations in enumerate(kept):
+                failing[f"s{case}"] = ["refunded"]
+                for number in range(variations):
+                    failing[f"s{case}-v{number}"] = ["refunded"]
+                    parents[f"s{case}-v{number}"] = f"s{case}"
+            if len(failing) < 12:
+                continue
+            for seed in ("a", "b", "c", "d"):
+                held = split_held_back(seed, failing, parents)
+                best = max(best, len({parents.get(key, key) for key in held}))
+        return best
+
+    assert verified_cases_min() == 6
+    assert most_held_cases(5) < 4
+    assert most_held_cases(6) == 4
+
+
+@pytest.mark.parametrize(
+    ("held_back", "parents", "limited"),
+    [
+        # Four held-back cases from two cases of the run: not enough to verify.
+        (["a", "a-v1", "a-v2", "b"], {"a-v1": "a", "a-v2": "a"}, True),
+        (["a", "b", "c", "d-v1"], {"d-v1": "d"}, False),
+    ],
+)
+def test_verified_needs_held_back_cases_from_four_different_cases(
+    source_run, held_back, parents, limited
+):
+    fix_run = _fix_run(source_run)
+    fix_run.request = {
+        **fix_run.request,
+        "held_back_scenario_keys": held_back,
+        "variation_parents": parents,
+    }
+
+    assert limited_validation(fix_run) is limited
+
+
+def _open_suite_draft(environment):
+    """Unsaved scenario changes on the environment's default suite."""
+    return HarnessSuiteVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        status="draft",
+        origin="manual",
+        hash="sha256:" + "d" * 64,
+        archive_object_key="drafts/suite.tar.gz",
+        archive_sha256="0" * 64,
+        archive_size=1,
+        parent=environment.suite_version,
+    )
+
 
 class TestLaunch:
     def test_too_few_failing_cases_are_refused_and_passing_ones_do_not_count(
         self, source_run, user, settings
     ):
-        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+        # One failing case and its three variations cannot reach five.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 5
 
         with pytest.raises(HostedHarnessError) as refused:
             _launch(source_run, user, targets=KEYS)
 
         assert refused.value.code == "fix_targets_too_few"
         assert refused.value.status_code == 422
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_run_under_the_floor_writes_variations_first_instead_of_refusing(
+        self, source_run, user, settings
+    ):
+        # One failing case and its three variations can reach four.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+
+        fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.variations_pending,
+            request.target_scenario_keys,
+            request.held_back_scenario_keys,
+            fix_run.suite_version_id,
+        ) == (True, [KEYS[0]], [], None)
+
+    def test_an_open_suite_draft_refuses_a_fix_that_writes_variations(
+        self, environment, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+        _open_suite_draft(environment)
+
+        refused = _refusal(_launch, source_run, user)
+        options = launch_options(source_run)
+
+        assert refused == ("fix_draft_open", 409)
+        assert not AgentFixRun.no_workspace_objects.exists()
+        # The fix itself could start: only the variations it writes first are blocked.
+        assert options.blocked is None
+        assert options.variations_blocked.code == "fix_draft_open"
+        # A fix with enough failing cases writes no variations, so the draft is no matter.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 1
+        fix_run = _launch(source_run, user)
+        assert FixRequest.model_validate(fix_run.request).variations_pending is False
+
+    def test_variations_that_would_not_fit_are_refused(
+        self, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+
+        # The suite's two scenarios and three variations.
+        with patch("simulate.services.agent_fix_runs.CHAT_CHECKPOINT_MAX_SCENARIOS", 4):
+            too_many = _refusal(_launch, source_run, user)
+        # The failing case and its three variations, once each.
+        settings.HARNESS_MAX_EXECUTIONS_PER_RUN = 3
+        too_large = _refusal(_launch, source_run, user)
+
+        assert (too_many, too_large) == (
+            ("scenario_limit_exceeded", 422),
+            ("run_too_large", 422),
+        )
         assert not AgentFixRun.no_workspace_objects.exists()
 
     def test_the_split_reaches_the_request_and_the_engine(self, source_run, user):
@@ -851,7 +1029,7 @@ class TestCheckRuns:
                 fix_run=fix_run
             ).exists()
 
-    def test_a_check_run_is_held_at_its_worst_case_until_its_usage_is_sealed(
+    def test_a_check_run_is_held_at_its_worst_case_until_it_is_sealed_and_graded(
         self, source_run, settings
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
@@ -864,8 +1042,18 @@ class TestCheckRuns:
         HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
             fix_cost_usd=Decimal("0.09")
         )
-        # The sealed run at what it billed; the other still at 2 x $0.50.
+        # Sealed, but its run still scoring: its evals may bill yet.
+        assert committed_usd(fix_run) == Decimal("2.25")
+        SimTestExecution.objects.filter(id=first.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+        # The settled run at what it billed; the other still at 2 x $0.50.
         assert committed_usd(fix_run) == Decimal("1.34")
+        # A winner's grading opens it again: held until its evals are done.
+        SimTestExecution.objects.filter(id=first.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+        assert committed_usd(fix_run) == Decimal("2.25")
 
     def test_a_sealed_check_run_is_priced_from_its_billed_usage(
         self, source_run, monkeypatch
@@ -1373,13 +1561,15 @@ class TestCheckRunStatus:
                 speaker_role="user",
                 content=key,
             )
-        # A finished run, so the transcripts and its last attempt are read too.
+        # A finished run, so the transcripts, its fix's request (whether its agent is
+        # traced) and its last attempt are read too.
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
             state="completed"
         )
         run.refresh_from_db()
 
-        with django_assert_num_queries(3):
+        # One more: what the fix has committed, which the engine's budget follows.
+        with django_assert_num_queries(5):
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10
@@ -1422,8 +1612,18 @@ def _chat(call, *rows):
     ]
 
 
-def _finished_trials(source_run, trials=1):
-    run = _check(_fix_run(source_run), trials=trials)
+def _finished_trials(source_run, trials=1, *, traced=False):
+    """A finished check run's calls, of a fix whose source run exported the agent's model
+    calls when ``traced``."""
+    fix_run = _fix_run(source_run)
+    if traced:
+        fix_run.request = {
+            **fix_run.request,
+            "observes_models": True,
+            "meters_agent_cost": True,
+        }
+        fix_run.save(update_fields=["request"])
+    run = _check(fix_run, trials=trials)
     executions = sorted(_executions(run), key=lambda one: one.trial_index)
     for execution in executions:
         _receipt(execution.call_execution, KEYS[0], {"refunded": True})
@@ -1566,8 +1766,9 @@ class TestChatTranscripts:
                 call, ("user", [{"content": "hi"}]), ("assistant", [{"content": "ok"}])
             )
 
-        # The executions, the last attempt, the call transcripts and the chat rows.
-        with django_assert_num_queries(4):
+        # The executions, the last attempt, the call transcripts, the chat rows, the
+        # fix's request and what the fix has committed.
+        with django_assert_num_queries(6):
             status = check_run_status(run)
 
         assert {one.transcript for one in status.records} == {"user: hi\nassistant: ok"}
@@ -1801,7 +2002,7 @@ class TestReport:
                 ),
                 {
                     "code": "fix_engine_failed",
-                    "message": "the improvement engine hit an error it could not recover from",
+                    "message": "the engine hit an error it could not recover from",
                 },
             ),
         ],
@@ -2012,6 +2213,99 @@ class TestMakeDefault:
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
 
+    def _winner(self, source_run):
+        """A finished fix's proven candidate, made on the source run's version."""
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=Outcome.WINNER
+        )
+        close_fix_run(fix_run.id, State.READY)
+        candidate.refresh_from_db()
+        return candidate
+
+    def test_a_busy_environment_refuses_the_ship_and_leaves_no_move_for_later(
+        self, environment, source_run, user
+    ):
+        from simulate.services.harness_versioning.rebuild import (
+            retry_deferred_activations,
+        )
+
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        first = self._winner(source_run)
+        second = self._winner(source_run)
+        # An update is adding scenarios: a move now would wait for it.
+        payload = dict(environment.payload)
+        payload["metadata"] = {**payload["metadata"], "scenario_extend": {"n": 1}}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(second, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_environment_busy",
+            409,
+        )
+        # Meanwhile another fix ships; the update ends and deferred moves are retried.
+        payload["metadata"].pop("scenario_extend")
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        assert make_candidate_default(first, user=user) == "activated"
+        retry_deferred_activations(second.agent_version_id)
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.agent_version_id
+
+    def test_a_fix_is_not_shipped_over_a_default_that_moved_since_its_base(
+        self, environment, source_run, user
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        # Two fixes from the same run: shipping the second would undo the first.
+        first = self._winner(source_run)
+        second = self._winner(source_run)
+
+        assert make_candidate_default(first, user=user) == "activated"
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(second, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_base_moved",
+            409,
+        )
+        base = source_run.agent_version.version_number
+        now = first.agent_version.version_number
+        assert f"made on v{base}" in refused.value.message
+        assert f"now v{now}" in refused.value.message
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.agent_version_id
+
+    def test_a_fix_is_refused_not_failed_when_the_environment_lost_its_default(
+        self, environment, source_run, user
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        winner = self._winner(source_run)
+        # The default is SET_NULL: deleting the version leaves the environment none.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=None
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(winner, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_base_moved",
+            409,
+        )
+        assert "no default version any more" in refused.value.message
+
     @pytest.mark.parametrize(
         ("state", "outcome", "refusal"),
         [
@@ -2050,3 +2344,1654 @@ def test_the_base_source_is_fetched_once_per_fix(source_run):
 
     assert first == again == body
     assert acquirer.return_value.acquire.call_count == 1
+
+
+# The spans a traced agent exported, as the run reader returns them for one run.
+TRACED = "simulate.selectors.agent_fix.run_usage"
+
+
+def _usage(by_call):
+    """``run_usage`` for runs whose calls exported ``by_call``; None for an untraced agent."""
+    return lambda execution: by_call
+
+
+class TestMeasuredConversations:
+    def test_a_finished_run_s_records_carry_each_call_s_models_spans_and_cost(
+        self, source_run
+    ):
+        run, [priced, unpriced, silent] = _finished_trials(
+            source_run, trials=3, traced=True
+        )
+        usage = {
+            str(priced.id): CallUsage(models=["m1", "m2"], llm_spans=3, cost_usd=0.03),
+            str(unpriced.id): CallUsage(
+                models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
+            ),
+            str(silent.id): CallUsage(
+                models=[], llm_spans=0, cost_usd=None, partial=True
+            ),
+        }
+
+        with patch(TRACED, _usage(usage)):
+            status = check_run_status(run)
+
+        assert [
+            (
+                one.models,
+                one.spans_seen,
+                one.agent_cost_usd,
+                one.unpriced_models,
+                one.instrumentation_partial,
+            )
+            for one in sorted(status.records, key=lambda one: one.trial)
+        ] == [
+            (["m1", "m2"], 3, 0.03, [], False),
+            (["m1"], 1, None, ["m1"], False),
+            ([], 0, None, [], True),
+        ]
+        assert status.usage_unreadable is False
+
+    def test_a_run_still_going_reads_no_span(self, source_run):
+        run, [call] = _finished_trials(source_run, traced=True)
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(state="running")
+        run.refresh_from_db()
+
+        with patch(TRACED) as read:
+            [record] = check_run_status(run).records
+
+        read.assert_not_called()
+        assert (record.spans_seen, record.agent_cost_usd) == (0, None)
+
+    def test_an_untraced_fix_reads_no_span(self, source_run):
+        run, [call] = _finished_trials(source_run)
+
+        with patch(TRACED) as read:
+            [record] = check_run_status(run).records
+
+        read.assert_not_called()
+        assert (record.models, record.spans_seen) == ([], 0)
+
+    def test_a_span_read_that_fails_says_so_so_the_engine_never_reads_it_untraced(
+        self, source_run
+    ):
+        run, [call] = _finished_trials(source_run, traced=True)
+
+        with patch(TRACED, side_effect=CHError("down")):
+            status = check_run_status(run)
+
+        assert status.usage_unreadable is True
+        [record] = status.records
+        assert (record.models, record.spans_seen, record.agent_cost_usd) == (
+            [],
+            0,
+            None,
+        )
+
+    def test_a_chat_s_reply_latency_is_its_median_reply_after_a_user_turn(
+        self, source_run
+    ):
+        run, [call] = _finished_trials(source_run)
+        CallExecution.objects.filter(id=call.id).update(
+            simulation_call_type=CallExecution.SimulationCallType.TEXT
+        )
+        call.refresh_from_db()
+        # A transcript as the hosted harness reports one, stored by its ingestion:
+        # every row gets its own created_at.
+        _store_alk_chat_messages(
+            call,
+            [
+                # The agent's greeting answers no user turn.
+                {"speaker_role": "assistant", "content": "Hi!", "start_time_ms": 0},
+                {
+                    "speaker_role": "user",
+                    "content": "Book a visit",
+                    "start_time_ms": 1200,
+                },
+                # A tool call before the answer is time the user still waits.
+                {
+                    "speaker_role": "tool_calls",
+                    "content": "find_slot",
+                    "start_time_ms": 3050,
+                },
+                {
+                    "speaker_role": "assistant",
+                    "content": "Tuesday 10?",
+                    "start_time_ms": 3400,
+                },
+                {"speaker_role": "user", "content": "Yes", "start_time_ms": 6000},
+                {
+                    "speaker_role": "assistant",
+                    "content": "Booked.",
+                    "start_time_ms": 8200,
+                },
+                {"speaker_role": "user", "content": "Thanks", "start_time_ms": 10000},
+                {"speaker_role": "assistant", "content": "Bye", "start_time_ms": 10900},
+                # A last turn the agent never answered.
+                {
+                    "speaker_role": "user",
+                    "content": "One more thing",
+                    "start_time_ms": 15000,
+                },
+            ],
+        )
+        stored = ChatMessageModel.no_workspace_objects.filter(call_execution=call)
+        assert stored.values("created_at").distinct().count() == stored.count() == 8
+
+        [record] = check_run_status(run).records
+
+        # Replies of 2200 (the text after the tool call, not the call), 2200 and 900 ms.
+        assert record.reply_latency_ms == 2200
+
+    def test_a_voice_call_s_reply_latency_is_its_agent_s_average(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        CallExecution.objects.filter(id=call.id).update(
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            avg_agent_latency_ms=820,
+        )
+
+        [record] = check_run_status(run).records
+
+        assert record.reply_latency_ms == 820
+
+
+class TestLaunchConstraints:
+    def _source_usage(self, source_run, by_call):
+        calls = [one.call_execution_id for one in _executions(source_run)]
+        return {str(call): usage for call, usage in zip(calls, by_call, strict=False)}
+
+    def test_the_form_allows_the_models_the_run_s_spans_show(self, source_run):
+        usage = self._source_usage(
+            source_run,
+            [
+                CallUsage(
+                    models=["vertex_ai/gemini-3.8-flash"], llm_spans=2, cost_usd=0.01
+                ),
+                CallUsage(
+                    models=["gpt-5-mini", "vertex_ai/gemini-3.8-flash"],
+                    llm_spans=1,
+                    cost_usd=0.0,
+                ),
+            ],
+        )
+        with patch(TRACED, _usage(usage)):
+            defaults = launch_options(source_run).defaults
+
+        assert (
+            defaults.allowed_models,
+            defaults.agent_cost_metered,
+            defaults.reply_latency_margin_pct,
+            defaults.cost_margin_pct,
+        ) == (["gpt-5-mini", "vertex_ai/gemini-3.8-flash"], True, 25, 25)
+
+    def test_an_untraced_agent_s_form_allows_no_model(self, source_run):
+        with patch(TRACED, _usage(None)):
+            defaults = launch_options(source_run).defaults
+
+        assert (defaults.allowed_models, defaults.agent_cost_metered) == ([], False)
+
+    def test_a_form_whose_spans_name_no_model_still_says_their_cost_is_measured(
+        self, source_run
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=[], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            defaults = launch_options(source_run).defaults
+
+        assert (
+            defaults.allowed_models,
+            defaults.agent_cost_metered,
+            defaults.agent_calls_unmeasured,
+        ) == ([], True, False)
+
+    def test_a_form_whose_every_call_went_unmeasured_says_their_cost_is_unknown(
+        self, source_run
+    ):
+        # Every model call went through something the sandbox can't read: spans say
+        # so, and none carries a cost.
+        partial = CallUsage(models=[], llm_spans=0, cost_usd=None, partial=True)
+        every = self._source_usage(source_run, [partial, partial])
+        some = self._source_usage(
+            source_run, [partial, CallUsage(models=[], llm_spans=1, cost_usd=0.01)]
+        )
+
+        def unmeasured(usage):
+            with patch(TRACED, _usage(usage)):
+                defaults = launch_options(source_run).defaults
+            return defaults.agent_cost_metered, defaults.agent_calls_unmeasured
+
+        # One measured call still measures the agent's cost.
+        assert (unmeasured(every), unmeasured(some), unmeasured(None)) == (
+            (True, True),
+            (True, False),
+            (False, False),
+        )
+
+    def test_a_form_whose_run_s_traces_cannot_be_read_says_so_instead_of_untraced(
+        self, source_run
+    ):
+        with patch(TRACED, side_effect=CHError("down")):
+            options = launch_options(source_run)
+
+        assert (options.blocked.code, options.blocked.message) == (
+            "fix_traces_unreadable",
+            "could not read this run's traces; try again",
+        )
+        assert options.defaults.allowed_models == []
+
+    def test_a_launch_whose_traces_cannot_be_read_is_refused_to_be_tried_again(
+        self, source_run, user
+    ):
+        with patch(TRACED, side_effect=CHError("down")):
+            with pytest.raises(HostedHarnessError) as refused:
+                _launch(source_run, user)
+
+        assert (
+            refused.value.code,
+            refused.value.status_code,
+            refused.value.retryable,
+        ) == ("fix_traces_unreadable", 503, True)
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_traced_agent_s_fix_is_locked_to_its_models_and_measures_its_calls(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        request = engine_brief(fix_run).request
+        assert (
+            request.allowed_models,
+            request.observes_models,
+            request.meters_agent_cost,
+            request.reply_latency_margin_pct,
+            request.cost_margin_pct,
+            request.cost_limit_usd,
+        ) == (["m1"], True, True, 25, 25, None)
+
+    def test_an_untraced_agent_s_fix_measures_nothing_it_cannot_see(
+        self, source_run, user
+    ):
+        with patch(TRACED, _usage(None)):
+            fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.allowed_models,
+            request.observes_models,
+            request.meters_agent_cost,
+        ) == ([], False, False)
+
+    def test_spans_that_name_no_model_meter_cost_but_lock_nothing(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=[], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (request.observes_models, request.meters_agent_cost) == (False, True)
+
+    def test_the_user_s_models_and_limits_are_kept(self, source_run, user):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = launch_fix_run(
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=["m1", "m2", "m1"],
+                reply_latency_margin_pct=10,
+                cost_margin_pct=50,
+                cost_limit_usd=0.02,
+            )
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.allowed_models,
+            request.reply_latency_margin_pct,
+            request.cost_margin_pct,
+            request.cost_limit_usd,
+        ) == (["m1", "m2"], 10, 50, 0.02)
+
+    def test_a_traced_agent_s_fix_that_leaves_out_a_model_its_run_called_is_refused(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run,
+            [CallUsage(models=["m1", "vertex_ai/m2"], llm_spans=2, cost_usd=0.01)],
+        )
+
+        def launch(allowed):
+            return launch_fix_run(
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=allowed,
+            )
+
+        with patch(TRACED, _usage(usage)):
+            with pytest.raises(HostedHarnessError) as refused:
+                launch(["m1"])
+            assert not AgentFixRun.no_workspace_objects.exists()
+            # A provider prefix does not count, as in the engine's lock.
+            fix_run = launch(["m1", "M2"])
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_models_exclude_source",
+            400,
+        )
+        assert refused.value.message.endswith(": vertex_ai/m2")
+        assert FixRequest.model_validate(fix_run.request).allowed_models == ["m1", "M2"]
+
+    def test_a_traced_agent_s_fix_with_no_model_allowed_is_refused(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            refused = _refusal(
+                launch_fix_run,
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=[],
+            )
+
+        assert refused == ("fix_models_empty", 400)
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+
+def _finished_and_sealed(run):
+    """A check run whose calls finished with their own evals done, sealed and settled."""
+    for execution in _executions(run):
+        call = execution.call_execution
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            **(call.call_metadata or {}),
+            "eval_started": True,
+            "eval_completed": True,
+        }
+        call.save(update_fields=["status", "call_metadata"])
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+        fix_cost_usd=Decimal("0.01")
+    )
+    SimTestExecution.objects.filter(id=run.test_execution_id).update(
+        status=SimTestExecution.ExecutionStatus.COMPLETED
+    )
+
+
+class TestWinnerGrading:
+    """A fix's check runs are graded only once it has a winner, and then only the runs its
+    warnings compare: the baseline and the winner's final check."""
+
+    def _fix(self, source_run):
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        runs = {
+            "base": _check(fix_run, label="baseline-r1"),
+            "screen": _check(
+                fix_run, label="c1-target-r1", version_id=candidate.agent_version_id
+            ),
+            "final": _check(
+                fix_run, label="c1-finalist-r1", version_id=candidate.agent_version_id
+            ),
+        }
+        for run in runs.values():
+            _finished_and_sealed(run)
+        return fix_run, candidate, runs, _mapped_eval(source_run)
+
+    def _won(self, fix_run, candidate):
+        with (
+            patch("simulate.services.harness_run_evals._dispatch_one") as dispatched,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            engine.apply_report(
+                fix_run,
+                EngineReport(stage="Select", winner_candidate_id=str(candidate.id)),
+            )
+        return dispatched
+
+    def test_a_repeat_asked_for_again_is_graded_in_place_of_the_one_that_failed(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, _config = self._fix(source_run)
+        lost = _check(fix_run, label="baseline-r2")
+        HostedHarnessJob.no_workspace_objects.filter(id=lost.id).update(state="failed")
+        before = committed_usd(fix_run)
+        again = _check(fix_run, label="baseline-r2-again")
+
+        # The replacement holds a graded run's reserve, its eval included.
+        assert committed_usd(fix_run) - before == Decimal("0.75")
+        _finished_and_sealed(again)
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+        base, final = graded_check_runs(
+            AgentFixRun.no_workspace_objects.get(id=fix_run.id), winner
+        )
+        assert [run.id for run in base] == [runs["base"].id, again.id]
+        assert [run.id for run in final] == [runs["final"].id]
+
+    def test_grading_whose_final_check_has_no_graded_call_is_not_done(self, source_run):
+        fix_run, candidate, runs, config = self._fix(source_run)
+        self._won(fix_run, candidate)
+        # Every baseline verdict landed; no call of the final check finished to be graded.
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for one in _executions(runs["base"])]
+        ).update(eval_outputs={str(config.id): {"status": "completed", "output": True}})
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for one in _executions(runs["final"])]
+        ).update(status=CallExecution.CallStatus.FAILED)
+        SimTestExecution.objects.filter(
+            id__in=[runs["base"].test_execution_id, runs["final"].test_execution_id]
+        ).update(status=SimTestExecution.ExecutionStatus.COMPLETED)
+
+        assert eval_review(fix_run).grading == EvalGrading.INCOMPLETE
+
+    def test_a_winner_grades_the_baseline_and_its_final_check_and_holds_them(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, config = self._fix(source_run)
+        # Before a winner, the baseline and the final check still hold their eval.
+        assert committed_usd(fix_run) == Decimal("0.03") + 2 * Decimal("0.25")
+
+        dispatched = self._won(fix_run, candidate)
+
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        assert {call.args[0] for call in dispatched.call_args_list} == graded
+        assert {tuple(call.args[1]) for call in dispatched.call_args_list} == {
+            (str(config.id),)
+        }
+        # The graded runs are held at their worst case, an eval included, until their
+        # evals are done; the screen stays at what it billed.
+        assert committed_usd(fix_run) == Decimal("0.01") + 2 * Decimal("0.75")
+        assert eval_review(fix_run).grading == EvalGrading.PENDING
+
+    def test_a_winner_is_graded_on_every_billed_eval_not_only_the_first(
+        self, source_run
+    ):
+        # Queueing one config reopens a call's eval side, so grading config by config
+        # left every config but the first skipped as "pending" (proof 3, 12 Nov).
+        fix_run, candidate, runs, first = self._fix(source_run)
+        second = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        # One job per call carrying both configs: two jobs for one call each save
+        # the call's whole eval_outputs and drop the other's verdict (slot 6, 12 Nov:
+        # 177 of 576 verdicts lost when each config was its own job).
+        assert len(dispatched.call_args_list) == len(graded)
+        assert {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        } == {call_id: sorted([str(first.id), str(second.id)]) for call_id in graded}
+
+    def test_a_failed_hand_off_unstamps_every_config_of_the_calls_it_did_not_reach(
+        self, source_run
+    ):
+        fix_run, _, _, first = self._fix(source_run)
+        second = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+        run = _check(fix_run, label="baseline-r2", keys=KEYS)
+        _finished_and_sealed(run)
+        calls = sorted(str(e.call_execution_id) for e in _executions(run))
+        assert len(calls) == 2
+
+        def _hand_off(*args, **kwargs):
+            if kwargs["args"] == (calls[1],):
+                raise RuntimeError("broker unreachable")
+
+        with (
+            patch(
+                "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+                side_effect=_hand_off,
+            ) as hand_off,
+            TestCase.captureOnCommitCallbacks(execute=True),
+            transaction.atomic(),
+        ):
+            queue_evals_for_finished_calls(run.test_execution, [first, second])
+
+        assert [call.kwargs["args"][0] for call in hand_off.call_args_list] == calls[:2]
+        assert sorted(
+            hand_off.call_args_list[0].kwargs["kwargs"]["eval_config_ids"]
+        ) == sorted([str(first.id), str(second.id)])
+        reached = CallExecution.objects.get(id=calls[0])
+        assert set(reached.call_metadata["eval_queued"]) == {
+            str(first.id),
+            str(second.id),
+        }
+        for call_id in calls[1:]:
+            call = CallExecution.objects.get(id=call_id)
+            assert not set(call.call_metadata.get("eval_queued") or {}) & {
+                str(first.id),
+                str(second.id),
+            }
+            assert str(first.id) not in (call.eval_outputs or {})
+            assert str(second.id) not in (call.eval_outputs or {})
+            assert call.call_metadata["eval_completed"] is True
+
+    def test_a_fix_with_no_winner_pays_for_no_evals(self, source_run):
+        fix_run, candidate, _, _ = self._fix(source_run)
+
+        with patch(
+            "simulate.services.agent_fix_engine.queue_evals_for_finished_calls"
+        ) as queue:
+            engine.apply_report(
+                fix_run,
+                EngineReport(
+                    stage="Select",
+                    candidates=[
+                        CandidateUpdate(
+                            candidate_id=str(candidate.id), outcome="rejected"
+                        )
+                    ],
+                ),
+            )
+
+        queue.assert_not_called()
+        assert eval_review(fix_run).grading == EvalGrading.NONE
+
+    def test_the_winner_ships_only_once_grading_is_no_longer_pending(self, source_run):
+        fix_run, candidate, runs, config = self._fix(source_run)
+        self._won(fix_run, candidate)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(state=State.READY)
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+
+        assert _refusal(require_shippable, winner, override_reason="") == (
+            "fix_grading_pending",
+            409,
+        )
+
+        # One job was lost: the evals did not check all of it, and it ships anyway.
+        for key in ("base", "final"):
+            CallExecution.objects.filter(
+                id__in=[one.call_execution_id for one in _executions(runs[key])]
+            ).update(eval_outputs={str(config.id): {"status": "timed_out"}})
+            SimTestExecution.objects.filter(id=runs[key].test_execution_id).update(
+                status=SimTestExecution.ExecutionStatus.COMPLETED
+            )
+        assert eval_review(fix_run).grading == EvalGrading.INCOMPLETE
+        require_shippable(
+            AgentFixCandidate.no_workspace_objects.get(id=candidate.id),
+            override_reason="",
+        )
+
+
+class TestRetryGrading:
+    """A retry reads again the baselines the failed fix finished, and its winner grades
+    them: their evals are the retry's to hold and pay, never the failed fix's."""
+
+    def _retry(self, source_run, user, *, labels=("baseline-r1",)):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        finished = {label: _check(failed, label=label) for label in labels}
+        for run in finished.values():
+            _finished_and_sealed(run)
+            HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+                state="completed"
+            )
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+        return failed, retried, finished
+
+    def _limit(self, fix_run, budget_usd):
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "budget_usd": budget_usd}
+        )
+        fix_run.refresh_from_db()
+
+    def test_a_baseline_read_again_holds_its_evals_against_the_retry_s_limit(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.7)
+        candidate = _candidate(retried)
+
+        assert _check(retried, label="baseline-r1").id == finished["baseline-r1"].id
+        # Its simulation was the failed fix's; its eval, which the winner runs, is not.
+        assert committed_usd(retried) == Decimal("0.25")
+        # So a screen that would fit without that eval does not.
+        assert _refusal(
+            _check, retried, label="c1-target-r1", version_id=candidate.agent_version_id
+        ) == ("fix_budget_exhausted", 402)
+
+    def test_a_baseline_whose_evals_do_not_fit_is_not_read_again(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.2)
+
+        assert _refusal(_check, retried, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        finished["baseline-r1"].refresh_from_db()
+        assert finished["baseline-r1"].graded_for_id is None
+
+    def test_what_the_evals_of_a_baseline_read_again_bill_is_the_retry_s_spend(
+        self, source_run, user, temporal
+    ):
+        _mapped_eval(source_run)
+        failed, retried, finished = self._retry(source_run, user)
+        _check(retried, label="baseline-r1")
+        spent = dict(
+            with_spend(
+                AgentFixRun.no_workspace_objects.filter(id__in=[failed.id, retried.id])
+            ).values_list("id", "fix_spent_usd")
+        )
+
+        accrue_check_run_eval_cost(finished["baseline-r1"].test_execution_id, 25)
+
+        now = dict(
+            with_spend(
+                AgentFixRun.no_workspace_objects.filter(id__in=[failed.id, retried.id])
+            ).values_list("id", "fix_spent_usd")
+        )
+        assert now[retried.id] - spent[retried.id] == Decimal("0.25")
+        assert now[failed.id] == spent[failed.id]
+
+    def test_the_same_baseline_asked_for_twice_at_once_is_adopted_once(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(source_run, user)
+        self._limit(retried, 0.3)
+        # The second request read the run before the first adopted it.
+        stale = HostedHarnessJob.no_workspace_objects.get(id=finished["baseline-r1"].id)
+        _check(retried, label="baseline-r1")
+
+        with patch.object(engine, "_finished_earlier", return_value=stale):
+            again = _check(retried, label="baseline-r1")
+
+        assert again.id == finished["baseline-r1"].id
+        assert committed_usd(retried) == Decimal("0.25")
+
+    def test_a_retry_s_winner_holds_the_evals_it_grades_until_they_finish(
+        self, source_run, user, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        _mapped_eval(source_run)
+        failed, retried, finished = self._retry(source_run, user)
+        baseline = finished["baseline-r1"]
+        _check(retried, label="baseline-r1")
+        # The retry won and closed; its winner's grading runs the baseline's evals.
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(state=State.READY)
+        SimTestExecution.objects.filter(id=baseline.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+
+        # The retry holds them; the failed fix holds only the simulation it paid for.
+        assert committed_usd(retried) == Decimal("0.25")
+        assert committed_usd(failed) == Decimal("0.01")
+
+        SimTestExecution.objects.filter(id=baseline.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+        assert committed_usd(retried) == Decimal("0")
+
+    def test_a_retry_grades_only_the_baselines_it_read_again(
+        self, source_run, user, temporal
+    ):
+        _mapped_eval(source_run)
+        _failed, retried, finished = self._retry(
+            source_run, user, labels=("baseline-r1", "baseline-r2")
+        )
+        _check(retried, label="baseline-r1")
+        candidate = _candidate(retried)
+        _finished_and_sealed(
+            _check(
+                retried, label="c1-finalist-r1", version_id=candidate.agent_version_id
+            )
+        )
+
+        base, _final = graded_check_runs(
+            AgentFixRun.no_workspace_objects.get(id=retried.id), candidate
+        )
+        # The second repeat was never asked for again: its evals were never held.
+        assert [run.id for run in base] == [finished["baseline-r1"].id]
+
+
+class TestCheckRunEvalCost:
+    def test_a_job_written_without_the_eval_cost_column_starts_at_zero(self):
+        # A build from before the column inserts jobs without it, during a rollout.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_default FROM information_schema.columns"
+                " WHERE table_name = %s AND column_name = %s",
+                ["simulate_hosted_harness_job", "fix_eval_cost_usd"],
+            )
+            (default,) = cursor.fetchone()
+
+        assert default is not None
+        assert Decimal(default.split("::")[0].strip("'()")) == 0
+
+    def test_an_eval_s_bill_is_counted_on_its_check_run_only(self, source_run):
+        fix_run = _fix_run(source_run)
+        run = _check(fix_run)
+
+        accrue_check_run_eval_cost(run.test_execution_id, 250)
+        accrue_check_run_eval_cost(run.test_execution_id, Decimal("12.5"))
+        accrue_check_run_eval_cost(source_run.test_execution_id, 999)
+
+        run.refresh_from_db()
+        source_run.refresh_from_db()
+        assert run.fix_eval_cost_usd == Decimal("2.6250")
+        assert source_run.fix_eval_cost_usd == 0
+
+    def test_a_deleted_check_run_stays_its_fix_s_and_its_eval_bill_is_counted(
+        self, source_run
+    ):
+        fix_run = _fix_run(source_run)
+        run = _check(fix_run)
+        HostedHarnessJob.all_objects.filter(id=run.id).update(
+            deleted=True, deleted_at=timezone.now()
+        )
+
+        assert is_fix_check_run(run.test_execution_id)
+        assert eval_source(run.test_execution_id) == FIX_CHECK_RUN_EVAL_SOURCE
+        accrue_check_run_eval_cost(run.test_execution_id, 40)
+        assert HostedHarnessJob.all_objects.get(id=run.id).fix_eval_cost_usd == Decimal(
+            "0.4000"
+        )
+
+    def test_a_graded_run_s_reserve_covers_each_eval_a_winner_s_grading_may_run(
+        self, source_run, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "1"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run, budget_usd=1.5, spent_usd=Decimal("0.5"))
+        _mapped_eval(source_run)
+
+        # $0.50 spent and $1.25 for the baseline: past the $1.50 limit with its eval in.
+        assert _refusal(_check, fix_run, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        brief = engine_brief(fix_run)
+        assert (
+            brief.worst_case_usd_per_execution,
+            brief.worst_case_usd_per_graded_execution,
+        ) == (1.0, 1.25)
+
+    def test_a_settled_graded_run_holds_its_evals_until_the_fix_ends(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run)
+        _mapped_eval(source_run)
+        run = _check(fix_run, label="baseline-r1")
+        # The baseline ends and its usage seals: a winner's grading may still run its eval.
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            fix_cost_usd=Decimal("0.1")
+        )
+        SimTestExecution.objects.filter(id=run.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+
+        assert committed_usd(fix_run) == Decimal("0.35")
+
+        # It ended with no winner, so nothing will grade the baseline.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=State.NO_IMPROVEMENT
+        )
+        assert committed_usd(fix_run) == Decimal("0.1")
+
+    def test_a_screen_holds_its_simulation_only_and_a_graded_run_its_evals_too(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        _mapped_eval(source_run)
+
+        _check(fix_run, label="c1-target-r1", version_id=candidate.agent_version_id)
+        assert committed_usd(fix_run) == Decimal("0.5")
+        _check(fix_run, label="variations")
+        assert committed_usd(fix_run) == Decimal("1.0")
+        _check(fix_run, label="baseline-r1")
+        _check(fix_run, label="c1-finalist-r1", version_id=candidate.agent_version_id)
+        assert committed_usd(fix_run) == Decimal("2.5")
+
+    def test_a_small_limit_still_takes_a_screen_its_evals_never_grade(
+        self, source_run, settings, temporal
+    ):
+        """Before evals counted, a screen reserved only its simulation; it still does."""
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run, budget_usd=0.6)
+        candidate = _candidate(fix_run)
+        _mapped_eval(source_run)
+
+        assert _refusal(_check, fix_run, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        screen = _check(
+            fix_run, label="c1-target-r1", version_id=candidate.agent_version_id
+        )
+        assert screen.fix_run_id == fix_run.id
+
+
+class TestPullRequestEvals:
+    def _body(self, source_run, review, outcome=Outcome.WINNER):
+        from simulate.services import agent_fix_github
+
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        # A pull request comes from a finished fix.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(state=State.READY)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome
+        )
+        candidate.refresh_from_db()
+        with patch.object(agent_fix_github, "eval_review", return_value=review):
+            return agent_fix_github._description(candidate, b"")[1]
+
+    def test_the_body_names_each_eval_the_winner_does_worse_on(self, source_run):
+        warning = EvalWarning(
+            name="Politeness",
+            pass_rate=0.25,
+            base_pass_rate=1.0,
+            trials=12,
+            base_trials=12,
+        )
+        body = self._body(
+            source_run,
+            EvalReview(grading=EvalGrading.DONE, warnings=[warning], compared=1),
+        )
+        assert "**Platform evals this change does worse on.**" in body
+        assert "They do not pick the winner" in body
+        assert (
+            "- Politeness: 25% passed (12 trials), 100% on the current version (12 trials)"
+            in body
+        )
+
+    def test_the_body_says_when_no_eval_did_worse_or_grading_did_not_finish(
+        self, source_run
+    ):
+        assert "Platform evals: none did worse than the current version." in self._body(
+            source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
+        )
+        assert (
+            "**Platform evals did not finish on this candidate,** so their results are missing."
+            " Review it closely before you merge."
+            in self._body(
+                source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
+            )
+        )
+
+    def test_the_body_says_nothing_about_evals_none_ran_or_graded(self, source_run):
+        for review, outcome in (
+            (EvalReview(grading=EvalGrading.DONE, compared=0), Outcome.WINNER),
+            (EvalReview(grading=EvalGrading.NONE), Outcome.FINALIST),
+        ):
+            assert "Platform evals" not in self._body(source_run, review, outcome)
+
+
+def _diff(*files: tuple[str, int, int]) -> bytes:
+    """A unified diff changing each (path, added, removed) file."""
+    lines = []
+    for path, added, removed in files:
+        lines += [
+            f"diff --git a/{path} b/{path}",
+            f"--- a/{path}",
+            f"+++ b/{path}",
+            f"@@ -1,{removed} +1,{added} @@",
+            # A removed line that itself starts with dashes is still a removed line.
+            *(f"--- old line {n}" for n in range(removed)),
+            *(f"+new line {n}" for n in range(added)),
+        ]
+    return ("\n".join(lines) + "\n").encode()
+
+
+_TIERS = [
+    {"name": "static", "status": "passed", "detail": "Lint and types pass."},
+    {"name": "target", "status": "passed", "detail": "0/8 → 5/8 | 2 repeats"},
+    {"name": "held-back", "status": "passed", "detail": "1/4 → 3/4"},
+    {"name": "must-pass", "status": "passed", "detail": "All 6 held."},
+    {"name": "repeats", "status": "passed", "detail": "3 of 3 repeats agree."},
+    {"name": "ceilings", "status": "passed", "detail": "Within the limits."},
+]
+_CAUSES = [
+    "The agent books the date the caller first said, not the one they corrected to.",
+    "It never reads the booking back before it confirms.",
+]
+_PATCH = _diff(
+    ("concierge/agents.py", 12, 3), ("prompts/booking.md", 4, 1), ("config.yaml", 1, 1)
+)
+
+
+class TestVerdictTiers:
+    """An older engine's cost and latency check, for an agent whose cost is not metered,
+    judged the reply time alone: it reads as that reply time and a cost unknown."""
+
+    _LATENCY = {"name": "reply latency", "detail": ""}
+    _COST = {"name": "agent cost", "status": "skipped", "detail": ""}
+
+    @staticmethod
+    def _candidate(tiers, **request_fields):
+        request = FixRequest(
+            target_scenario_keys=["k1"],
+            failing_sub_goals=["g1"],
+            surfaces=[Surface.PROMPT],
+            budget_usd=1,
+            max_minutes=10,
+            **request_fields,
+        )
+        return SimpleNamespace(
+            verdict=None if tiers is None else {"accepted": True, "tiers": tiers},
+            fix_run=SimpleNamespace(request=request.model_dump(mode="json")),
+        )
+
+    @staticmethod
+    def _read(candidate):
+        return verdict_tiers(candidate)
+
+    @staticmethod
+    def _tiers(*tiers):
+        return [VerdictTier.model_validate(tier) for tier in tiers]
+
+    @pytest.mark.parametrize(
+        ("status", "reads", "parts"),
+        [
+            ("passed", "skipped", [{**_LATENCY, "status": "passed"}, _COST]),
+            ("failed", "failed", [{**_LATENCY, "status": "failed"}, _COST]),
+            # A skipped one may not have measured the reply time either.
+            ("skipped", "skipped", [_COST]),
+        ],
+    )
+    def test_an_unmetered_agents_older_ceilings_read_as_reply_time_and_cost_unknown(
+        self, status, reads, parts
+    ):
+        old = {"name": "ceilings", "status": status, "detail": "latency 3.2s"}
+        static = {"name": "static", "status": "passed", "detail": "", "parts": []}
+
+        tiers = self._read(self._candidate([static, old]))
+
+        assert tiers == self._tiers(
+            static,
+            {
+                "name": "ceilings",
+                "status": reads,
+                "detail": "latency 3.2s",
+                "parts": parts,
+            },
+        )
+
+    def test_a_metered_agents_check_and_a_newer_engines_parts_stay_as_sent(self):
+        old = {
+            "name": "ceilings",
+            "status": "passed",
+            "detail": "cost within",
+            "parts": [],
+        }
+        newer = {
+            **old,
+            "status": "skipped",
+            "parts": [
+                {"name": "agent cost", "status": "skipped", "detail": "untraced"}
+            ],
+        }
+
+        assert self._read(
+            self._candidate([old], meters_agent_cost=True)
+        ) == self._tiers(old)
+        assert self._read(self._candidate([newer])) == self._tiers(newer)
+        assert self._read(self._candidate(None)) == []
+
+    def test_the_checks_read_as_typed_tiers_and_a_missing_field_reads_its_default(self):
+        # A check stored before its detail and parts existed.
+        tiers = verdict_tiers(self._candidate([{"name": "static", "status": "passed"}]))
+
+        assert tiers == [VerdictTier(name="static", status="passed")]
+        assert (tiers[0].detail, tiers[0].parts) == ("", [])
+
+
+class TestPullRequestDescription:
+    """The pull request's title says what the whole change does, and its body lays out
+    the verdict, the files, why, what could still go wrong, and where it came from."""
+
+    @pytest.fixture(autouse=True)
+    def _frontend(self, settings):
+        settings.FRONTEND_BASE_URL = "https://app.example"
+
+    def _described(
+        self,
+        source_run,
+        *,
+        held_back=4,
+        diagnosis=None,
+        verdict=None,
+        outcome=Outcome.WINNER,
+        override_reason="",
+        report=None,
+        plan=None,
+        evidence=None,
+        patch_body=_PATCH,
+        request_fields=None,
+        summary="Changed only prompts (booking.md).",
+    ):
+        fix_run = _fix_run(source_run, diagnosis=diagnosis, report=report, plan=plan)
+        request = {
+            **fix_run.request,
+            "held_back_scenario_keys": [f"held-{n}" for n in range(held_back)],
+            **(request_fields or {}),
+        }
+        if evidence is not None:
+            request["evidence"] = evidence
+        candidate = _candidate(fix_run)
+        # A pull request comes from a finished fix.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=State.READY, request=request
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome,
+            verdict=verdict
+            or {
+                "accepted": True,
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0.25, 0.75],
+                "tiers": _TIERS,
+            },
+            override_reason=override_reason,
+            summary=summary,
+        )
+        candidate = AgentFixCandidate.no_workspace_objects.select_related(
+            "fix_run"
+        ).get(id=candidate.id)
+        none_graded = EvalReview(grading=EvalGrading.NONE)
+        with patch.object(agent_fix_github, "eval_review", return_value=none_graded):
+            return candidate, *agent_fix_github._description(candidate, patch_body)
+
+    # Text the engine, a check or the agent's repository wrote, made to read as the page's
+    # own markup: it closes the folded section, adds a heading, an image, a link and a cell.
+    _HOSTILE = (
+        "</details>\n\n### Approved by security\n<img src=x onerror=alert(1)>"
+        " [docs](https://evil.example) *now* _also_ | x"
+    )
+
+    def test_what_the_engine_and_the_checks_wrote_stays_literal_text(self, source_run):
+        hostile = self._HOSTILE
+        _, _, body = self._described(
+            source_run,
+            diagnosis={"causes": [hostile]},
+            verdict={
+                "accepted": True,
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0.25, 0.75],
+                "tiers": [
+                    {"name": "target", "status": "passed", "detail": hostile},
+                    {"name": "must-pass", "status": "passed"},
+                ],
+            },
+            report={
+                "flaky_protected": [
+                    {
+                        "key": "k1",
+                        "name": hostile,
+                        "sub_goal": "confirms",
+                        "passed": 1,
+                        "runs": 3,
+                    }
+                ]
+            },
+            summary=f"# Shipped\n1. done\n{hostile}",
+            patch_body=(
+                b"diff --git a/a`b|c.py b/a`b|c.py\n--- a/a`b|c.py\n+++ b/a`b|c.py\n"
+                b"@@ -1 +1 @@\n-x\n+y\n"
+            ),
+        )
+
+        # Only the page's own folded sections open and close.
+        assert body.count("<details>") == body.count("</details>") == 2
+        assert "<img" not in body and "&lt;img src=x onerror=alert(1)&gt;" in body
+        assert "\n### Approved" not in body and "\n# Shipped" not in body
+        assert "\\# Shipped\n1\\. done\n" in body
+        assert "[docs](https://evil.example)" not in body
+        assert "\\[docs\\](https://evil.example) \\*now\\* \\_also\\_ \\| x" in body
+        # The target row keeps its three cells; the file's name is one code span.
+        target = next(line for line in body.splitlines() if line.startswith("| Target"))
+        assert len(re.findall(r"(?<!\\)\|", target)) == 4
+        assert "| ``a`b\\|c.py`` | +1 | −1 |" in body
+
+    def test_a_verified_fix_reads_each_check_as_the_fix_page_says_it(self, source_run):
+        candidate, title, body = self._described(
+            source_run,
+            diagnosis={"causes": _CAUSES},
+            plan={"must_pass": 6, "protected": 2},
+            request_fields={"meters_agent_cost": True},
+        )
+
+        assert title == "Epoch: fix 2 diagnosed causes in 3 files"
+        # The fix page's headline: the pass rates and the must-pass cases it broke.
+        assert (
+            "Verified by Epoch: held-back pass rate 25% → 75%, target pass rate"
+            " 0% → 63%, broke none\n\n### Verdict" in body
+        )
+        # The engine's own reason is not product text: the checks say it in words.
+        assert "passed every tier" not in body
+        assert "### Verdict: Verified" in body
+        # The fix page's words for each check, from the verdict's own numbers.
+        table, decided = body.split("<details><summary>How it was decided</summary>")
+        for row in (
+            "| Change is valid | Passed | Applies cleanly and edits only allowed files. |",
+            "| Target scenarios | Passed | 0% → 63%, a clear gain. |",
+            "| Held-back scenarios | Passed | 25% → 75% on scenarios the epoch never"
+            " saw, a clear gain. |",
+            "| Must-pass scenarios | Passed | None of the 6 must-pass scenarios broke,"
+            " including the 2 you protected. |",
+            "| Holds over repeats | Passed | Held up over the repeat runs. |",
+            # A metered agent's older check judged its cost too, so it stays whole.
+            "| Reply time and cost | Passed | Within the reply-time and cost limits. |",
+        ):
+            assert row in table
+        assert "| target |" not in body and "| passed |" not in body
+        # The engine's statistics are folded below, never in the table.
+        assert "0/8 → 5/8" not in table
+        # The engine's words stay text: its pipe is escaped, so it reads as written.
+        assert "- Target scenarios: 0/8 → 5/8 \\| 2 repeats" in decided
+        assert "The held-back pass rate above comes from the repeat runs." in decided
+        # The platform did not measure the calls itself, so nothing says how it does.
+        assert "Measured automatically" not in body
+        # The feature is Epoch wherever the user reads it.
+        assert "Fix my agent" not in title + body
+        assert "### What changed" in body
+        assert "| `concierge/agents.py` | +12 | −3 |" in body
+        assert "| `prompts/booking.md` | +4 | −1 |" in body
+        assert "### Why" in body and f"- {_CAUSES[1]}" in body
+        assert "### What could still go wrong\n\nNothing the checks flagged." in body
+        assert "### Evidence" not in body
+        # The engine's summary is labelled as its own, on the trial the page names.
+        assert (
+            "<details><summary>Notes from Epoch on the last change of Candidate 1"
+            "</summary>" in body
+        )
+        run = candidate.fix_run
+        assert (
+            "[Open this epoch on Future AGI](https://app.example/dashboard/simulate/"
+            f"environments/{run.environment_id}/improvements/{run.id})" in body
+        )
+
+    @pytest.mark.parametrize(
+        ("causes", "paths", "marks", "title"),
+        [
+            pytest.param(
+                6,
+                ["instructions.md"],
+                "",
+                "Epoch: fix 6 diagnosed causes in instructions.md",
+                id="one-file",
+            ),
+            pytest.param(
+                2,
+                ["agent.py", "prompts/booking.md", "config.yaml"],
+                "",
+                "Epoch: fix 2 diagnosed causes in 3 files",
+                id="many-files",
+            ),
+            pytest.param(
+                2,
+                [f"agents/{'scheduling_' * 6}instructions.md"],
+                "",
+                "Epoch: fix 2 diagnosed causes in 1 file",
+                id="long-file-name",
+            ),
+            pytest.param(
+                1,
+                ["prompts/booking.md"],
+                "",
+                "Epoch: fix 1 diagnosed cause in booking.md",
+                id="one-cause",
+            ),
+            pytest.param(
+                0, ["prompts/booking.md"], "", "Epoch: change booking.md", id="no-cause"
+            ),
+            pytest.param(
+                0,
+                ["agent.py", "config.yaml"],
+                "",
+                "Epoch: change 2 files",
+                id="no-cause-files",
+            ),
+            pytest.param(
+                2,
+                ["agent.py", "config.yaml", "prompts/booking.md"],
+                "limited validation, known regression",
+                "Epoch (limited validation, known regression): fix 2 causes in 3 files",
+                id="both-marks",
+            ),
+        ],
+    )
+    def test_a_title_says_how_many_diagnosed_causes_it_fixes_and_where(
+        self, causes, paths, marks, title
+    ):
+        diagnosis = {"causes": [f"Cause {n}." for n in range(causes)]}
+        candidate = SimpleNamespace(fix_run=SimpleNamespace(diagnosis=diagnosis))
+        files = [(path, 1, 0) for path in paths]
+
+        made = agent_fix_github._title(candidate, files, marks)
+
+        # Counts and a file name only: never a cause's words, never a cut sentence.
+        assert (made, len(made) <= 72) == (title, True)
+
+    def test_the_e2e_winner_reads_one_held_back_rate_and_an_unknown_cost(
+        self, source_run
+    ):
+        # The verdict of the winner behind the real pull request, as the engine sent it:
+        # an older engine, so its cost and latency check has no parts.
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier; protected cases: 5 of 5 held",
+            "target_pass_rate": [0.0278, 0.5833],
+            "held_back_pass_rate": [0.0, 0.5556],
+            "must_pass_regressions": [],
+            "must_pass_within_noise": [],
+            "tiers": [
+                {
+                    "name": "static",
+                    "status": "passed",
+                    "detail": "6 checks passed, no model call",
+                },
+                {
+                    "name": "target",
+                    "status": "passed",
+                    "detail": "58% pass vs baseline 3%; noise allows up to 29%"
+                    " (p < 0.001, bar 0.3)",
+                },
+                {
+                    "name": "held-back",
+                    "status": "passed",
+                    "detail": "50% pass vs baseline 0%; noise allows up to 17%"
+                    " (p = 0.016, bar 0.3)",
+                },
+                {
+                    "name": "must-pass",
+                    "status": "passed",
+                    "detail": "always passed: 0 of 28 down; chance predicts 0.4, noise"
+                    " allows up to 3; sometimes passed: 0 of 7 failed every run; chance"
+                    " predicts 1.0, noise allows up to 4; protected cases: 5 of 5 held",
+                },
+                {
+                    "name": "repeats",
+                    "status": "passed",
+                    "detail": "56% pass vs baseline 0%; noise allows up to 39%"
+                    " (p < 0.001, bar 0.05); finalist repeats 50%, 67%, 50%, baseline"
+                    " repeats 0%, 0%, 0%",
+                },
+                {
+                    "name": "ceilings",
+                    "status": "passed",
+                    "detail": "cost not measurable: the environment does not meter the"
+                    " agent's own model calls; latency 32.6s (baseline 55.4s, ceiling"
+                    " 3600s)",
+                },
+            ],
+        }
+
+        _, title, body = self._described(
+            source_run,
+            held_back=6,
+            diagnosis={"causes": [f"Cause {n}." for n in range(6)]},
+            plan={"must_pass": 6, "protected": 5, "held_back": 6, "repeats": 3},
+            verdict=verdict,
+            patch_body=_diff(("instructions.md", 28, 14)),
+        )
+
+        assert title == "Epoch: fix 6 diagnosed causes in instructions.md"
+        table, decided = body.split("<details><summary>How it was decided</summary>")
+        # The headline and its row quote the verdict's one held-back rate.
+        assert "held-back pass rate 0% → 56%" in table
+        assert (
+            "| Held-back scenarios | Passed | 0% → 56% on scenarios the epoch never saw,"
+            " a clear gain. |" in table
+        )
+        assert "50%" not in table
+        # An unmetered agent's cost was never measured: it never reads passed.
+        assert (
+            "| Reply time and cost | Couldn't measure |  |\n"
+            "| ↳ Reply time | Passed | Within the limit. |\n"
+            "| ↳ Agent's cost | Cost unknown | This agent's model calls weren't"
+            " measured. Epoch measures calls made through the OpenAI or Anthropic"
+            " Python SDK on its own. For other agents, add traceAI tracing. |" in table
+        )
+        assert "Measured automatically" not in body
+        # The statistics stay folded, with the engine's numbers as it sent them.
+        assert "p < 0.001" not in table and "chance predicts" not in table
+        assert "- Held-back scenarios: 50% pass vs baseline 0%" in decided
+        assert "The held-back pass rate above comes from the repeat runs." in decided
+
+    def test_the_measured_line_shows_only_when_the_platform_measured_the_calls(
+        self, source_run
+    ):
+        ceilings = {
+            "name": "ceilings",
+            "status": "passed",
+            "detail": "latency within; cost within",
+            "parts": [
+                {"name": "reply latency", "status": "passed", "detail": "1.2 s"},
+                {"name": "agent cost", "status": "passed", "detail": "$0.002"},
+            ],
+        }
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier",
+            "target_pass_rate": [0, 0.625],
+            "held_back_pass_rate": [0.25, 0.75],
+            "tiers": [*_TIERS[:-1], ceilings],
+        }
+
+        def body(**fields):
+            AgentFixRun.no_workspace_objects.all().delete()
+            return self._described(
+                source_run,
+                verdict=verdict,
+                request_fields={"meters_agent_cost": True, **fields},
+            )[2]
+
+        measured = body(measured_automatically=True)
+        traced = body()
+
+        assert (
+            "| ↳ Agent's cost | Passed | Within the limit. |\n\nMeasured automatically:"
+            " model, tokens and timing only. Prompts and replies are never recorded."
+            in measured
+        )
+        # A cost from the agent's own traces is measured, but not by the platform.
+        assert "| ↳ Agent's cost | Passed | Within the limit. |" in traced
+        assert "Measured automatically" not in traced
+
+    def test_a_body_lists_the_first_50_files_and_counts_the_rest(self, source_run):
+        many = _diff(*((f"agent/module_{n}.py", 1, 0) for n in range(120)))
+
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, patch_body=many
+        )
+
+        assert "| `agent/module_49.py` | +1 | −0 |" in body
+        assert "module_50.py" not in body
+        assert "\n\nand 70 more files" in body
+
+    def test_a_body_too_long_for_github_is_cut_at_a_line_and_keeps_the_link(
+        self, source_run
+    ):
+        # GitHub refuses a body over 65,536 characters, after the branch is pushed.
+        causes = [f"Cause {n}: " + "the agent repeats itself " * 400 for n in range(20)]
+
+        candidate, _, body = self._described(source_run, diagnosis={"causes": causes})
+
+        assert len(body) <= 60_000
+        assert (
+            "*Cut to fit GitHub's size limit. The epoch's page has all of it.*" in body
+        )
+        run = candidate.fix_run
+        assert f"/improvements/{run.id})" in body
+        assert body.endswith("Opened by Epoch on Future AGI.")
+        assert body.count("<details>") == body.count("</details>")
+
+    def test_a_limited_fix_without_a_diagnosis_is_titled_by_the_files_it_changes(
+        self, source_run
+    ):
+        flaky = [
+            {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3},
+            {"key": "case-2", "sub_goal": "polite", "passed": 1, "runs": 3},
+            {
+                "key": "case-4",
+                "name": "Refund a late order",
+                "sub_goal": "apologised",
+                "passed": 1,
+                "runs": 3,
+            },
+        ]
+        ceilings = {
+            "name": "ceilings",
+            "status": "skipped",
+            "detail": "Cost not measured.",
+            "parts": [
+                {
+                    "name": "reply latency",
+                    "status": "passed",
+                    "detail": "1.2 s of 1.5 s",
+                },
+                {"name": "agent cost", "status": "skipped"},
+            ],
+        }
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier",
+            "target_pass_rate": [0, 0.625],
+            "tiers": [
+                *_TIERS[:-1],
+                ceilings,
+                {"name": "model-lock", "status": "skipped"},
+            ],
+        }
+        _, title, body = self._described(
+            source_run,
+            held_back=2,
+            report={"flaky_protected": flaky},
+            verdict=verdict,
+        )
+
+        assert title == "Epoch (limited validation): change 3 files"
+        # How many were held back, and how many it takes.
+        assert body.startswith(
+            "**Limited validation.** Only 2 failing cases were held back from the epoch to"
+            " verify it; it takes 4 or more."
+        )
+        assert "Checked by Epoch" in body and "Verified by" not in body
+        assert "### Verdict: Limited validation" in body
+        assert "### Why" not in body
+        # A check that could not measure says so, and an untraced agent's cost says why.
+        assert "| Reply time and cost | Couldn't measure |  |" in body
+        assert "| ↳ Reply time | Passed | Within the limit. |" in body
+        assert (
+            "| ↳ Agent's cost | Cost unknown | This agent's model calls weren't"
+            " measured. Epoch measures calls made through the OpenAI or Anthropic"
+            " Python SDK on its own. For other agents, add traceAI tracing. |" in body
+        )
+        assert (
+            "| Model unchanged | Couldn't measure | This agent sends no traces. The"
+            " change names no new model. |" in body
+        )
+        # The engine's own words for each part stay folded below.
+        assert (
+            "- Reply time and cost: Cost not measured.\n  - Reply time: 1.2 s of 1.5 s"
+            in body
+        )
+        # No cost was measured, so nothing says how one is.
+        assert "Measured automatically" not in body
+        # A protected case reads once, by its name, and by its key only without one.
+        assert (
+            "- Protected case “case-2” is flaky on the current version, so this epoch"
+            " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
+            " check passed 1 of 3 runs." in body
+        )
+        assert body.count("Protected case “case-2”") == 1
+        assert "- Protected case “Refund a late order” is flaky" in body
+        assert "case-4" not in body
+
+    def test_every_check_the_engine_records_reads_as_the_fix_page_names_it(self):
+        _check_label = agent_fix_github._check_label
+
+        assert set(VERDICT_TIERS) - {"model-lock"} == set(
+            agent_fix_github._CHECK_LABELS
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a"]}) == (
+            "Model unchanged"
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a", "b"]}) == (
+            "Approved models"
+        )
+        # A check a newer engine adds still reads as words.
+        assert _check_label("tool_budget", {}) == "Tool budget"
+
+    def test_an_overridden_fix_names_its_regression_and_the_users_reason(
+        self, source_run
+    ):
+        tiers = [
+            {**tier, "status": "failed", "detail": "1 of 6 regressed."}
+            if tier["name"] == "must-pass"
+            else tier
+            for tier in _TIERS
+        ]
+        _, title, body = self._described(
+            source_run,
+            diagnosis={"causes": _CAUSES[:1]},
+            outcome=Outcome.REJECTED,
+            override_reason="The regression is a test we are retiring.",
+            plan={"held_back": 4},
+            verdict={
+                "accepted": False,
+                "reason": "a must-pass check regressed",
+                "target_pass_rate": [0, 0.625],
+                "must_pass_regressions": ["case-1: refunded"],
+                "must_pass_within_noise": ["case-3: polite"],
+                "tiers": tiers,
+            },
+        )
+
+        assert title == "Epoch (known regression): fix 1 diagnosed cause in 3 files"
+        assert body.startswith("**Known regression.**")
+        # The case and its check apart, and who chose to open it anyway.
+        assert "- Must-pass case “case-1”: its “refunded” check" in body
+        assert "It was opened anyway, for this reason:" in body
+        assert "> The regression is a test we are retiring." in body
+        assert "Checked by Epoch: target pass rate 0% → 63%, broke 1" in body
+        assert "### Verdict: Known regression" in body
+        assert "| Must-pass scenarios | Failed | 1 must-pass scenario broke. |" in body
+        assert "- Must-pass scenarios: 1 of 6 regressed." in body
+        assert (
+            "- Must-pass case “case-3”: its “polite” check passed less often, within"
+            " normal noise, so it was not counted." in body
+        )
+
+    def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
+        self, source_run
+    ):
+        evidence = [
+            {
+                "import_id": "6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11",
+                "source_kind": "session",
+                "source_ids": ["session-with-a-customer-name", "another-session"],
+                "scenario_keys": ["evidence-0a1b2c3d4e5f", "evidence-0a1b2c3d4e60"],
+            },
+            {
+                "import_id": "7e2f0b52-0b7a-4c4e-9a43-2b1a8f0c1d12",
+                "source_kind": "dataset",
+                "source_ids": ["row-1", "row-2", "row-3"],
+                "scenario_keys": ["evidence-1", "evidence-2", "evidence-3"],
+            },
+            {"source_kind": "a-kind-from-later", "scenario_keys": ["evidence-4"]},
+        ]
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, evidence=evidence
+        )
+
+        # The import page's words for each kind of source.
+        assert (
+            "### Evidence\n\nThis epoch started from imported evidence:\n\n"
+            "- 2 sessions from Observe\n"
+            "- 3 dataset rows\n"
+            "- 1 imported case"
+        ) in body
+        # Never an import's id, nor its sources.
+        assert "6d1f0b52" not in body and "row-1" not in body
+        assert "session-with-a-customer-name" not in body
+
+
+class TestCheckRunReceipts:
+    def test_a_check_run_s_hosted_receipt_starts_no_grading(self, source_run):
+        """A fix grades its check runs only once it has a winner: a check run's hosted
+        receipt queues no eval and no tool-call judge though its run test selects one, and
+        closes its call's eval side so a winner's grading can take it."""
+        fix_run = _fix_run(source_run)
+        _mapped_eval(source_run)
+        run = _check(fix_run)
+        attempt = register_attempt(
+            run.id, endpoint_base_url="https://harness.example.test"
+        ).attempt
+        execution = _executions(run).first()
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(run.id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "scenario_key": execution.execution_key,
+            "scenario_id": str(execution.source_scenario.scenario_id),
+            "scenario_attempt": 1,
+            "world_index": None,
+            "status": "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": None,
+            "failure": None,
+        }
+        body["digest"] = canonical_digest(body)
+
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            ingest_result_receipt(attempt, body)
+
+        dispatch.assert_not_called()
+        call = CallExecution.objects.get(id=execution.call_execution_id)
+        assert call.status == CallExecution.CallStatus.COMPLETED
+        assert (
+            call.call_metadata.get("eval_started"),
+            call.call_metadata.get("eval_completed"),
+        ) == (True, True)
