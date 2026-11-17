@@ -82,6 +82,9 @@ services:
       CH25_DROP_LEGACY_CDC_CHAIN: "false"
       CH25_TRACE_DUAL_WRITE: "false"
       CH_DUAL_WRITE: "false"
+      # Interpolated like the sandbox's ALK_SANDBOX_TOKEN, so a value exported
+      # only in the shell still reaches both sides.
+      ALK_HARNESS_SANDBOX_TOKEN: ${ALK_HARNESS_SANDBOX_TOKEN:-}
 
   # Local implementation of the hosted ALK sandbox contract. It is reachable by the
   # backend over the private Compose network; its host port is loopback-only.
@@ -103,6 +106,9 @@ services:
       ALK_SANDBOX_HOST: 0.0.0.0
       ALK_SANDBOX_PORT: 8788
       ALK_SANDBOX_ROOT: /var/lib/alk-sandbox
+      # The sandbox refuses to start on 0.0.0.0 without a token. The backend
+      # sends the same value; the check below stops the profile when it's empty.
+      ALK_SANDBOX_TOKEN: ${ALK_HARNESS_SANDBOX_TOKEN:-}
       # The Docker daemon is on the host. Mount the workspace at the same
       # absolute path inside the runner so Compose bind mounts resolve to a
       # path both the client and daemon can see. A hosted provider uses the
@@ -166,6 +172,7 @@ services:
       ALK_HOST_WORKSPACE_ROOT_SET: ${ALK_HOST_WORKSPACE_ROOT:+yes}
       FI_API_KEY_SET: ${FI_API_KEY:+yes}
       FI_SECRET_KEY_SET: ${FI_SECRET_KEY:+yes}
+      ALK_HARNESS_SANDBOX_TOKEN_SET: ${ALK_HARNESS_SANDBOX_TOKEN:+yes}
     command:
       - sh
       - -c
@@ -174,6 +181,7 @@ services:
         [ -n "$$ALK_HOST_WORKSPACE_ROOT_SET" ] || missing="$$missing ALK_HOST_WORKSPACE_ROOT (the directory containing agent repositories)"
         [ -n "$$FI_API_KEY_SET" ] || missing="$$missing FI_API_KEY"
         [ -n "$$FI_SECRET_KEY_SET" ] || missing="$$missing FI_SECRET_KEY"
+        [ -n "$$ALK_HARNESS_SANDBOX_TOKEN_SET" ] || missing="$$missing ALK_HARNESS_SANDBOX_TOKEN (authenticates the backend to the sandbox; set any long random string in .env)"
         [ -z "$$missing" ] && exit 0
         echo "alk-harness-sandbox needs:$$missing (FI_API_KEY and FI_SECRET_KEY carry harness results and evaluations to the backend)" >&2
         exit 1
