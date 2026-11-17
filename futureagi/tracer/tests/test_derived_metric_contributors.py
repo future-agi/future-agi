@@ -4,21 +4,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from django.utils import timezone
 
-from tracer.models.derived_metric import DerivedMetricRun
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricRun,
+    DerivedMetricVersion,
+)
 from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.errors import MetricInputError
-from tracer.services.derived_metrics.queries import QUERY_SETTINGS, rollup_insert
+from tracer.services.derived_metrics.queries import QUERY_SETTINGS, Scope, rollup_insert
 from tracer.services.derived_metrics.service import execute_run
 from tracer.tests.test_derived_metric_api import (  # noqa: F401 -- fixtures
     ROOT,
     RUNS,
+    native_run_database,
     run_body,
     saved,
 )
@@ -26,7 +30,12 @@ from tracer.tests.test_derived_metric_clickhouse import (  # noqa: F401 -- fixtu
     metric_ch,
     seed_span,
 )
-from tracer.tests.test_derived_metric_uncertainty import _scope, insert_units
+from tracer.tests.test_derived_metric_uncertainty import insert_units
+
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("retained_metrics_source_policy"),
+]
 
 # cohort, unit, y, x, p, invalid. Cohort "clean" holds four valid units (one
 # outside the denominator); cohort "dirty" holds one valid, one missing and one
@@ -42,8 +51,10 @@ UNITS = [
 ]
 
 
-def persisted_run(client, formula, rollups=("overall", "cohort")):
-    scope, snapshot = _scope(), uuid4()
+def persisted_run(fixture, formula, rollups=("overall", "cohort")):
+    client, workspace, project = fixture
+    scope = Scope(workspace.organization_id, workspace.id, project.id)
+    snapshot = uuid4()
     insert_units(
         client,
         scope,
@@ -53,29 +64,44 @@ def persisted_run(client, formula, rollups=("overall", "cohort")):
             for cohort, unit, y, x, p, invalid in UNITS
         ],
     )
-    definition = SimpleNamespace(
+    # The public reader now fences persisted PG namespaces before and after the
+    # native read. Keep the hand-computed CH vectors, but use a real committed
+    # run and tenant policy instead of bypassing lifecycle with SimpleNamespace.
+    metric = DerivedMetric.objects.create(
+        organization=workspace.organization,
+        workspace=workspace,
+        project=project,
+        name="Contributor vectors",
+    )
+    definition = DerivedMetricVersion.objects.create(
+        metric=metric,
         formula=formula,
-        inputs=[{"alias": "y"}, {"alias": "x"}],
+        inputs=[
+            {
+                "alias": name,
+                "source": "span",
+                "field": "attribute_number",
+                "attribute_key": name,
+                "reducer": "latest",
+            }
+            for name in ("y", "x")
+        ],
         selection_unit="session",
-        metric=SimpleNamespace(
-            id=uuid4(),
-            organization_id=scope.organization,
-            workspace_id=scope.workspace,
-            project_id=scope.project,
-        ),
+        weighting="inverse_probability",
         version=1,
         definition_hash="c" * 64,
     )
     now = datetime.now(UTC)
-    run = SimpleNamespace(
-        id=uuid4(),
+    run = DerivedMetricRun.objects.create(
         snapshot_id=snapshot,
         result_id=uuid4(),
         definition=definition,
         window_start=now - timedelta(days=1),
         window_end=now,
         as_of=now,
-        source_run_id="",
+        fingerprint=uuid4().hex,
+        status="complete",
+        completed_at=now,
         source_manifest={"sampling_scope": ""},
     )
     for rollup in rollups:
@@ -85,18 +111,12 @@ def persisted_run(client, formula, rollups=("overall", "cohort")):
 
 
 @pytest.fixture
-def explain(metric_ch):
-    with (
-        patch(
-            "tracer.services.derived_metrics.contributors.get_clickhouse_client",
-            return_value=metric_ch,
-        ),
-        patch(
-            "tracer.services.derived_metrics.service._authorized_metric",
-            return_value=True,
-        ),
+def explain(metric_ch, workspace, observe_project):
+    with patch(
+        "tracer.services.derived_metrics.contributors.get_clickhouse_client",
+        return_value=metric_ch,
     ):
-        yield metric_ch
+        yield metric_ch, workspace, observe_project
 
 
 def test_ratio_units_are_ranked_by_exact_leave_one_out_influence(explain):
@@ -205,12 +225,11 @@ def test_an_unpersisted_group_is_rejected_not_guessed(explain):
         read_contributors(run, rollup="overall", group_key="nope")
 
 
-@pytest.mark.django_db
+@pytest.mark.usefixtures("native_run_database")
 def test_contributors_api_is_scoped_bounded_and_links_units(
     auth_client, saved, user, workspace, observe_project, metric_ch
 ):
     from accounts.models.workspace import Workspace
-    from tracer.services.derived_metrics.queries import Scope
 
     now = timezone.now().replace(microsecond=0)
     scope = Scope(workspace.organization_id, workspace.id, observe_project.id)

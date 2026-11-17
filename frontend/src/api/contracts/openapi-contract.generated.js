@@ -77366,9 +77366,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reason: {
           title: "Reason",
           description:
-            "window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units) or too_large (the project's metrics are paused: it stores more rows than the limit)",
+            "window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass)",
           type: "string",
-          enum: ["not_calculated", "settling", "too_large"],
+          enum: ["not_calculated", "settling", "too_large", "too_busy"],
         },
       },
     },
@@ -101707,9 +101707,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reason: {
           title: "Reason",
           description:
-            "too_large: the project's stored metric rows exceed the limit",
+            "too_large: stored row limit; too_busy: work cannot finish in a pass",
           type: "string",
-          enum: ["too_large"],
+          enum: ["too_large", "too_busy"],
         },
         since: {
           title: "Since",
@@ -101721,12 +101721,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Stored metric rows measured when it paused",
           type: "integer",
           minimum: 0,
+          "x-nullable": true,
         },
         limit: {
           title: "Limit",
           description: "METRICS_MAX_CHECKPOINT_ROWS; raising it resumes",
           type: "integer",
           minimum: 1,
+        },
+        work: {
+          title: "Work",
+          description:
+            "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
         },
       },
       "x-nullable": true,

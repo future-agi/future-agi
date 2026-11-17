@@ -60248,7 +60248,9 @@ export const tracerDerivedMetricsListResponseResultsItemDraftDefinitionBackfillD
 export const tracerDerivedMetricsListResponseResultsItemDraftDefinitionBackfillDaysTotalMin = 0;
 export const tracerDerivedMetricsListResponseResultsItemDraftDefinitionBackfillDaysTotalMax = 2147483647;
 
-export const tracerDerivedMetricsListResponseResultsItemCalculationPausedRowsMin = 0;
+export const tracerDerivedMetricsListResponseResultsItemCalculationPausedOneRowsOneMin = 0;
+
+export const tracerDerivedMetricsListResponseResultsItemCalculationPausedOneWorkMinOne = 0;
 
 export const tracerDerivedMetricsListResponseResultsItemDefinitionVersionMin = 0;
 export const tracerDerivedMetricsListResponseResultsItemDefinitionVersionMax = 2147483647;
@@ -60647,26 +60649,48 @@ export const TracerDerivedMetricsListResponse = zod.object({
       snapshot_unsupported_reason: zod.string().optional(),
       value_mode: zod.string().min(1).optional(),
       calculation_paused: zod
-        .object({
-          reason: zod
-            .enum(["too_large"])
+        .union([
+          zod
+            .object({
+              reason: zod
+                .enum(["too_large", "too_busy"])
+                .describe(
+                  "too_large: stored row limit; too_busy: work cannot finish in a pass",
+                ),
+              since: zod.string().datetime({ offset: true }),
+              rows: zod.union([
+                zod
+                  .number()
+                  .min(
+                    tracerDerivedMetricsListResponseResultsItemCalculationPausedOneRowsOneMin,
+                  )
+                  .describe("Stored metric rows measured when it paused"),
+                zod.null(),
+              ]),
+              limit: zod
+                .number()
+                .min(1)
+                .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
+              work: zod
+                .record(
+                  zod.string(),
+                  zod
+                    .number()
+                    .min(
+                      tracerDerivedMetricsListResponseResultsItemCalculationPausedOneWorkMinOne,
+                    ),
+                )
+                .optional()
+                .describe(
+                  "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+                ),
+            })
             .describe(
-              "too_large: the project's stored metric rows exceed the limit",
+              "Why the project's metrics stopped calculating, or null.",
             ),
-          since: zod.string().datetime({ offset: true }),
-          rows: zod
-            .number()
-            .min(
-              tracerDerivedMetricsListResponseResultsItemCalculationPausedRowsMin,
-            )
-            .describe("Stored metric rows measured when it paused"),
-          limit: zod
-            .number()
-            .min(1)
-            .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
-        })
-        .optional()
-        .describe("Why the project's metrics stopped calculating, or null."),
+          zod.null(),
+        ])
+        .optional(),
       definition: zod
         .object({
           version: zod
@@ -62278,7 +62302,9 @@ export const tracerDerivedMetricsReadResponseDraftDefinitionBackfillDaysDoneMax 
 export const tracerDerivedMetricsReadResponseDraftDefinitionBackfillDaysTotalMin = 0;
 export const tracerDerivedMetricsReadResponseDraftDefinitionBackfillDaysTotalMax = 2147483647;
 
-export const tracerDerivedMetricsReadResponseCalculationPausedRowsMin = 0;
+export const tracerDerivedMetricsReadResponseCalculationPausedOneRowsOneMin = 0;
+
+export const tracerDerivedMetricsReadResponseCalculationPausedOneWorkMinOne = 0;
 
 export const tracerDerivedMetricsReadResponseDefinitionVersionMin = 0;
 export const tracerDerivedMetricsReadResponseDefinitionVersionMax = 2147483647;
@@ -62639,24 +62665,46 @@ export const TracerDerivedMetricsReadResponse = zod.object({
   snapshot_unsupported_reason: zod.string().optional(),
   value_mode: zod.string().min(1).optional(),
   calculation_paused: zod
-    .object({
-      reason: zod
-        .enum(["too_large"])
-        .describe(
-          "too_large: the project's stored metric rows exceed the limit",
-        ),
-      since: zod.string().datetime({ offset: true }),
-      rows: zod
-        .number()
-        .min(tracerDerivedMetricsReadResponseCalculationPausedRowsMin)
-        .describe("Stored metric rows measured when it paused"),
-      limit: zod
-        .number()
-        .min(1)
-        .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
-    })
-    .optional()
-    .describe("Why the project's metrics stopped calculating, or null."),
+    .union([
+      zod
+        .object({
+          reason: zod
+            .enum(["too_large", "too_busy"])
+            .describe(
+              "too_large: stored row limit; too_busy: work cannot finish in a pass",
+            ),
+          since: zod.string().datetime({ offset: true }),
+          rows: zod.union([
+            zod
+              .number()
+              .min(
+                tracerDerivedMetricsReadResponseCalculationPausedOneRowsOneMin,
+              )
+              .describe("Stored metric rows measured when it paused"),
+            zod.null(),
+          ]),
+          limit: zod
+            .number()
+            .min(1)
+            .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
+          work: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerDerivedMetricsReadResponseCalculationPausedOneWorkMinOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+            ),
+        })
+        .describe("Why the project's metrics stopped calculating, or null."),
+      zod.null(),
+    ])
+    .optional(),
   definition: zod
     .object({
       version: zod
@@ -63302,7 +63350,9 @@ export const tracerDerivedMetricsUpdateResponseDraftDefinitionBackfillDaysDoneMa
 export const tracerDerivedMetricsUpdateResponseDraftDefinitionBackfillDaysTotalMin = 0;
 export const tracerDerivedMetricsUpdateResponseDraftDefinitionBackfillDaysTotalMax = 2147483647;
 
-export const tracerDerivedMetricsUpdateResponseCalculationPausedRowsMin = 0;
+export const tracerDerivedMetricsUpdateResponseCalculationPausedOneRowsOneMin = 0;
+
+export const tracerDerivedMetricsUpdateResponseCalculationPausedOneWorkMinOne = 0;
 
 export const tracerDerivedMetricsUpdateResponseDefinitionVersionMin = 0;
 export const tracerDerivedMetricsUpdateResponseDefinitionVersionMax = 2147483647;
@@ -63669,24 +63719,46 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
   snapshot_unsupported_reason: zod.string().optional(),
   value_mode: zod.string().min(1).optional(),
   calculation_paused: zod
-    .object({
-      reason: zod
-        .enum(["too_large"])
-        .describe(
-          "too_large: the project's stored metric rows exceed the limit",
-        ),
-      since: zod.string().datetime({ offset: true }),
-      rows: zod
-        .number()
-        .min(tracerDerivedMetricsUpdateResponseCalculationPausedRowsMin)
-        .describe("Stored metric rows measured when it paused"),
-      limit: zod
-        .number()
-        .min(1)
-        .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
-    })
-    .optional()
-    .describe("Why the project's metrics stopped calculating, or null."),
+    .union([
+      zod
+        .object({
+          reason: zod
+            .enum(["too_large", "too_busy"])
+            .describe(
+              "too_large: stored row limit; too_busy: work cannot finish in a pass",
+            ),
+          since: zod.string().datetime({ offset: true }),
+          rows: zod.union([
+            zod
+              .number()
+              .min(
+                tracerDerivedMetricsUpdateResponseCalculationPausedOneRowsOneMin,
+              )
+              .describe("Stored metric rows measured when it paused"),
+            zod.null(),
+          ]),
+          limit: zod
+            .number()
+            .min(1)
+            .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
+          work: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerDerivedMetricsUpdateResponseCalculationPausedOneWorkMinOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+            ),
+        })
+        .describe("Why the project's metrics stopped calculating, or null."),
+      zod.null(),
+    ])
+    .optional(),
   definition: zod
     .object({
       version: zod
@@ -64043,7 +64115,9 @@ export const tracerDerivedMetricsActivateResponseDraftDefinitionBackfillDaysDone
 export const tracerDerivedMetricsActivateResponseDraftDefinitionBackfillDaysTotalMin = 0;
 export const tracerDerivedMetricsActivateResponseDraftDefinitionBackfillDaysTotalMax = 2147483647;
 
-export const tracerDerivedMetricsActivateResponseCalculationPausedRowsMin = 0;
+export const tracerDerivedMetricsActivateResponseCalculationPausedOneRowsOneMin = 0;
+
+export const tracerDerivedMetricsActivateResponseCalculationPausedOneWorkMinOne = 0;
 
 export const tracerDerivedMetricsActivateResponseDefinitionVersionMin = 0;
 export const tracerDerivedMetricsActivateResponseDefinitionVersionMax = 2147483647;
@@ -64412,24 +64486,46 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
   snapshot_unsupported_reason: zod.string().optional(),
   value_mode: zod.string().min(1).optional(),
   calculation_paused: zod
-    .object({
-      reason: zod
-        .enum(["too_large"])
-        .describe(
-          "too_large: the project's stored metric rows exceed the limit",
-        ),
-      since: zod.string().datetime({ offset: true }),
-      rows: zod
-        .number()
-        .min(tracerDerivedMetricsActivateResponseCalculationPausedRowsMin)
-        .describe("Stored metric rows measured when it paused"),
-      limit: zod
-        .number()
-        .min(1)
-        .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
-    })
-    .optional()
-    .describe("Why the project's metrics stopped calculating, or null."),
+    .union([
+      zod
+        .object({
+          reason: zod
+            .enum(["too_large", "too_busy"])
+            .describe(
+              "too_large: stored row limit; too_busy: work cannot finish in a pass",
+            ),
+          since: zod.string().datetime({ offset: true }),
+          rows: zod.union([
+            zod
+              .number()
+              .min(
+                tracerDerivedMetricsActivateResponseCalculationPausedOneRowsOneMin,
+              )
+              .describe("Stored metric rows measured when it paused"),
+            zod.null(),
+          ]),
+          limit: zod
+            .number()
+            .min(1)
+            .describe("METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"),
+          work: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerDerivedMetricsActivateResponseCalculationPausedOneWorkMinOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+            ),
+        })
+        .describe("Why the project's metrics stopped calculating, or null."),
+      zod.null(),
+    ])
+    .optional(),
   definition: zod
     .object({
       version: zod

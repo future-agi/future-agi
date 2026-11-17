@@ -92,9 +92,22 @@ def cleanup_recorder(monkeypatch, expiry):
     return calls, normal
 
 
+def queued_analytics(project):
+    # Model an already-queued analytics delivery, with its real persisted fence.
+    # Fresh admission now prioritizes durable expiry debt even while visible;
+    # asking reserve_projects for analytics here would instead reserve cleanup.
+    grant = MetricProjectRefresh.take_lease(
+        project.pk,
+        holder="metrics:queued:incremental",
+        ttl=timedelta(minutes=5),
+    )
+    assert grant is not None
+    return admission.Reservation(grant, "incremental", None)
+
+
 def test_durable_expiry_continues_after_visible_to_hidden(expiry, monkeypatch):
-    # Reserve ordinary work while visible, then revoke visibility before delivery.
-    (normal,) = admission.reserve_projects()
+    # Revoke visibility before an already-queued ordinary delivery is claimed.
+    normal = queued_analytics(expiry.project)
     assert normal.purpose != "cleanup"
     hide(expiry.project)
     calls, analytics = cleanup_recorder(monkeypatch, expiry)
@@ -194,21 +207,33 @@ def test_cleanup_failure_retries_same_intent_with_backoff(expiry, monkeypatch, f
     analytics.assert_not_called()
 
 
-def test_cleanup_off_then_on_preserves_existing_rollout_oracle(
+def test_cleanup_off_then_on_follows_source_retention_not_analytics_rollout(
     expiry, settings, monkeypatch
 ):
     hide(expiry.project)
     calls, analytics = cleanup_recorder(monkeypatch, expiry)
     (reservation,) = admission.reserve_projects()
     settings.METRICS_ENABLED = 0
+    # OFF cannot revoke privacy obligations. The occupied slot still prevents
+    # duplication, but a lost delivery must be reservable and executable OFF.
     assert admission.reserve_projects() == []
-    assert not admission.execute_reservation(reservation.payload())
+    later = reservation.grant.expires_at + timedelta(seconds=1)
+    (retry,) = admission.reserve_projects(clock=lambda: later)
+    assert retry.purpose == "cleanup"
+    assert retry.expiry_id == reservation.expiry_id == expiry.intent.id
+    assert retry.grant.fencing_epoch > reservation.grant.fencing_epoch
+    assert not admission.execute_reservation(reservation.payload(), clock=lambda: later)
     expiry.intent.refresh_from_db()
     assert expiry.intent.status == "queued" and not calls
+    assert admission.execute_reservation(retry.payload(), clock=lambda: later)
+    expiry.intent.refresh_from_db()
+    assert expiry.intent.status == "done"
+    assert expiry.intent.receipts["final_scrub"]["remaining"] == 0
+    assert len(calls) == 1
     settings.METRICS_ENABLED = 1
-    (retry,) = admission.reserve_projects()
-    assert retry.expiry_id == reservation.expiry_id
-    assert admission.execute_reservation(retry.payload())
+    assert admission.reserve_projects(clock=lambda: later) == []
+    assert not admission.execute_reservation(retry.payload(), clock=lambda: later)
+    assert len(calls) == 1
     analytics.assert_not_called()
 
 
@@ -437,7 +462,7 @@ def test_real_ch_cleanup_continues_without_hidden_analytics(
     assert count(project.pk, expired) > 0
     unrelated_count = count(unrelated, expired)
     assert unrelated_count > 0
-    (stale,) = admission.reserve_projects()
+    stale = queued_analytics(project)
     hide(project)
     analytics = Mock(side_effect=AssertionError("hidden analytics executed"))
     monkeypatch.setattr(admission, "run_project_pass", analytics)

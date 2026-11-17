@@ -22,7 +22,7 @@ from tracer.tests.test_derived_metric_reads_clickhouse import AT, WINDOW
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("enabled_metrics"),
+    pytest.mark.usefixtures("enabled_metrics", "retained_metrics_source_policy"),
 ]
 
 
@@ -35,7 +35,7 @@ def published_fixture(
     formula,
     values,
     level="conversation",
-    watermark_ns=1,
+    watermark_ns=int((WINDOW["window_end"] + timedelta(hours=1)).timestamp()) * 10**9,
 ):
     metric = DerivedMetric.objects.create(
         organization=workspace.organization,

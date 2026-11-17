@@ -74,6 +74,25 @@ def enabled_metrics(settings):
 
 
 @pytest.fixture
+def retained_metrics_source_policy(workspace, monkeypatch):
+    """Give read/run contract fixtures a real, authoritative retained policy."""
+    from ee.usage.models.usage import PlanEntitlement
+    from tfc.capabilities import retention as policy_adapter
+    from tfc.licensing.types import DeploymentFlavor
+
+    monkeypatch.setattr(
+        policy_adapter, "get_deployment_flavor", lambda: DeploymentFlavor.CLOUD
+    )
+    policy, _ = PlanEntitlement.objects.update_or_create(
+        organization=workspace.organization,
+        plan="free",
+        feature="retention_traces_days",
+        defaults={"value_int": 900},
+    )
+    return policy
+
+
+@pytest.fixture
 def ch_seed():
     """Seed ObservationSpan rows directly into the CH ``spans`` table.
 

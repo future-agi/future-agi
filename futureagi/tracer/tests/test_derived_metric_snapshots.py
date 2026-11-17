@@ -19,7 +19,9 @@ from tracer.tests.test_derived_metric_lifecycle_safety import _commit, _metric
 
 
 @pytest.fixture
-def snapshot_metric(workspace, observe_project, monkeypatch):
+def snapshot_metric(
+    workspace, observe_project, monkeypatch, retained_metrics_source_policy
+):
     monkeypatch.setattr(snapshots, "enqueue_capture", lambda _: None)
     metric = _metric(workspace, observe_project)
     definition = DerivedMetricVersion.objects.create(
@@ -38,7 +40,14 @@ def snapshot_metric(workspace, observe_project, monkeypatch):
     )
     metric.active_version = definition
     metric.save(update_fields=["active_version"])
-    _commit(observe_project, timezone.now())
+    # This protocol-only fixture publishes an empty, fully consumed source cut.
+    # A manifest alone does not prove that any window is calculated.
+    now = timezone.now()
+    _commit(
+        observe_project,
+        now,
+        cursors={"watermark_ns": int(now.timestamp()) * 10**9},
+    )
     return metric
 
 
@@ -199,9 +208,11 @@ def test_rejected_submission_keeps_committed_no_dispatch_receipt(snapshot_metric
 def test_unproven_legacy_writer_cannot_get_erasure_completion(snapshot_metric):
     from unittest.mock import Mock
 
-    from tracer.models.derived_metric import MetricStateConflict
     from tracer.services.derived_metrics.deletion_protocol import _intent
-    from tracer.services.derived_metrics.erasure import _purge_snapshots
+    from tracer.services.derived_metrics.erasure import (
+        ErasureRecoveryRequired,
+        _purge_snapshots,
+    )
 
     request = _intent(
         organization_id=snapshot_metric.organization_id,
@@ -210,8 +221,15 @@ def test_unproven_legacy_writer_cannot_get_erasure_completion(snapshot_metric):
         run_key=uuid4(),
         store_payload={"kind": "run", "status": "running"},
     )
-    with pytest.raises(MetricStateConflict, match="drainage"):
-        _purge_snapshots(Mock(), request)
+    # An unenrolled writer cannot have a submission-drainage receipt. It must
+    # fail at the stricter enrollment precondition, without claiming any purge.
+    store = Mock()
+    with pytest.raises(
+        ErasureRecoveryRequired, match="^legacy_writer_precondition_failed$"
+    ):
+        _purge_snapshots(store, request)
+    store.execute.assert_not_called()
+    store.client.execute.assert_not_called()
     request.refresh_from_db()
     assert request.status == "queued" and request.receipts == {}
 

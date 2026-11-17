@@ -252,29 +252,39 @@ def snapshot_read(run):
 
     require_run(run)
     project_id = run.definition.metric.project_id
+    # A raw run may recompute while its LAST committed result remains readable.
+    # Its active attempt is not that result's identity. Saved snapshots, however,
+    # must remain closed during capture/redaction, even with an old result id.
+    readable = Q(status="complete") | Q(
+        kind="run",
+        status__in=["queued", "running", "failed"],
+        result_id__isnull=False,
+        snapshot_id__isnull=False,
+        completed_at__isnull=False,
+    )
     with serialized_project(project_id):
         current = (
             DerivedMetricRun.objects.select_related("definition__metric")
-            .filter(pk=run.id, status="complete", deleted_at__isnull=True)
+            .filter(readable, pk=run.id, deleted_at__isnull=True)
             .first()
         )
         if current is None:
             raise MetricInputError("This snapshot is no longer available.")
-        revision = (current.attempt_id, current.result_id, current.changed_at)
+        revision = {
+            "kind": current.kind,
+            "snapshot_id": current.snapshot_id,
+            "result_id": current.result_id,
+            "changed_at": current.changed_at,
+        }
+        if current.kind != "run":
+            revision["attempt_id"] = current.attempt_id
     yield current
     with serialized_project(project_id):
         from tracer.services.derived_metrics.service import _authorized_metric
 
         final = (
             DerivedMetricRun.objects.select_related("definition__metric")
-            .filter(
-                pk=run.id,
-                status="complete",
-                deleted_at__isnull=True,
-                attempt_id=revision[0],
-                result_id=revision[1],
-                changed_at=revision[2],
-            )
+            .filter(readable, pk=run.id, deleted_at__isnull=True, **revision)
             .first()
         )
         if final is None or not _authorized_metric(final.definition.metric):

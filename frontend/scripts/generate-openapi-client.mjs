@@ -130,7 +130,11 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          name.startsWith("HostUpdateStatusResponse")
+          // Busy pauses have no measured row count; both the pause and its
+          // rows can be null. Normalize this one shared response component,
+          // not every legacy endpoint's Swagger nullability at once.
+          name.startsWith("HostUpdateStatusResponse") ||
+          name === "MetricCalculationPaused"
             ? normalizeHostStatusSchema(schema)
             : schema,
         ]),

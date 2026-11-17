@@ -384,6 +384,13 @@ class DerivedMetricManifestSerializer(serializers.Serializer):
     semantics = serializers.CharField()
 
     def to_representation(self, instance):
+        from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
+
+        # Admission enrolls a run in the write barrier before it has captured
+        # evidence. That internal marker is not a source manifest. Keep the
+        # nullable API contract until the worker freezes actual provenance.
+        if instance == {"write_protocol": SUBMISSION_PROTOCOL}:
+            return None
         result = super().to_representation(instance)
         # Older records described an exemption that no longer applies.
         result["semantics"] = result["semantics"].replace(

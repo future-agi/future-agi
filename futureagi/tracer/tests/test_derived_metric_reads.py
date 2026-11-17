@@ -199,8 +199,22 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
     metric = DerivedMetric.objects.select_related("active_version").get(pk=saved["id"])
     definition = metric.active_version
     committed = datetime(2026, 1, 11, tzinfo=UTC)
+    from tracer.models.derived_metric import MetricProjectRefresh
+
+    # The pin mock still supplies the current finality contract: a consumed
+    # project cut and the same frozen cut for this historical manifest.
+    cut = int(committed.timestamp()) * 10**9
+    state = MetricProjectRefresh.for_project(metric.project_id)
+    state.watermark_ns = cut
+    state.save(update_fields=["watermark_ns"])
     manifest = SimpleNamespace(
-        id=uuid4(), generation=7, published_by=SimpleNamespace(committed_at=committed)
+        id=uuid4(),
+        project_id=metric.project_id,
+        generation=7,
+        published_by=SimpleNamespace(
+            committed_at=committed,
+            source_ceilings={"cursor_updates": {"watermark_ns": cut}},
+        ),
     )
     pinned, ranges = [], []
 

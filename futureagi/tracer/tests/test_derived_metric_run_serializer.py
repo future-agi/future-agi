@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from tracer.models.derived_metric import (
     DerivedMetric,
     DerivedMetricRun,
@@ -14,7 +16,11 @@ from tracer.serializers.derived_metric import (
 )
 
 
-def test_run_serializes_its_immutable_definition_without_queries():
+@pytest.mark.parametrize("status", ["queued", "running", "failed"])
+@pytest.mark.parametrize("enrolled", [False, True])
+def test_run_serializes_its_immutable_definition_without_queries(status, enrolled):
+    from tracer.services.derived_metrics.snapshots import SUBMISSION_PROTOCOL
+
     metric = DerivedMetric(id=UUID(int=1), current_version=2, name="Current metric")
     version = DerivedMetricVersion(
         metric=metric,
@@ -42,8 +48,12 @@ def test_run_serializes_its_immutable_definition_without_queries():
         window_end=datetime(2026, 10, 26, tzinfo=UTC),
         as_of=datetime(2026, 10, 26, tzinfo=UTC),
         filters=[],
+        status=status,
+        source_manifest={"write_protocol": SUBMISSION_PROTOCOL} if enrolled else None,
     )
     serialized = DerivedMetricRunSerializer(run).data
+    assert serialized["source_manifest"] is None
+    assert serialized["status"] == status
     assert serialized["metric_version"] == 1
     assert serialized["definition"] == DerivedMetricVersionSerializer(version).data
     assert serialized["definition"]["selection_unit"] == "session"

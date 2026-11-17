@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from clickhouse_driver.errors import ServerException
 
 from tracer.models.derived_metric import MetricProjectRefresh
 from tracer.services.derived_metrics import reads, span_evidence
@@ -22,6 +21,7 @@ from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
 from tracer.services.derived_metrics.retention import expire_project
+from tracer.services.derived_metrics.service import MetricUnavailableError
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
     FIELD_VALUES,
@@ -40,7 +40,9 @@ from tracer.tests.test_derived_metric_refresh_clickhouse import (
     span_definition_for,
 )
 from tracer.tests.test_derived_metric_span_evidence_clickhouse import (
+    READ_CUT,
     publish,
+    source_policy_matches_writer,  # noqa: F401
     unit_values,
 )
 
@@ -48,6 +50,25 @@ pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.usefixtures("enabled_metrics"),
 ]
+
+
+def assert_expired_span_copies_removed(writer, definition):
+    """All seeded January units are before the one-day cutoff; truth is empty."""
+    head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+    assert metric_bucket_rows(writer, head, definition) == []
+    for name in (
+        "metric_field_values",
+        "metric_field_values_checkpoint",
+        "metric_bucket_totals",
+        "metric_bucket_totals_checkpoint",
+        "metric_bucket_retired_parts",
+        "metric_unit_state",
+        "metric_source_dependencies",
+    ):
+        assert writer.store.execute(f"SELECT count() FROM {name}") == [(0,)], name
+    assert writer.store.execute(
+        "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
+    ) == [(0,)]
 
 
 def legacy_head(writer, head):
@@ -78,7 +99,7 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
             (),
             (),
             (),
-            {"watermark_ns": 2},
+            {"watermark_ns": READ_CUT + 1},
         ),
         [definition],
         Scope(writer.org_id, writer.workspace_id, observe_project.id),
@@ -102,7 +123,10 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
         )
         == 1
     )
-    assert MetricProjectRefresh.for_project(observe_project.id).watermark_ns == 2
+    assert (
+        MetricProjectRefresh.for_project(observe_project.id).watermark_ns
+        == READ_CUT + 1
+    )
     # Normal refresh can resume, using the published fields as identity proof
     # even when this legacy producer had no dependency rows to migrate.
     refreshed = writer.refresh(
@@ -112,7 +136,7 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
             (),
             (),
             (),
-            {"watermark_ns": 3},
+            {"watermark_ns": READ_CUT + 2},
         ),
         [definition],
         Scope(writer.org_id, writer.workspace_id, observe_project.id),
@@ -121,7 +145,10 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
         as_of=datetime.now(UTC),
     )
     assert refreshed.id != upgraded.id
-    assert MetricProjectRefresh.for_project(observe_project.id).watermark_ns == 3
+    assert (
+        MetricProjectRefresh.for_project(observe_project.id).watermark_ns
+        == READ_CUT + 2
+    )
     assert unit_values(writer, metric, ids)["results"] == expected
     trace, span = json.loads(ids[0])
     writer.store.execute(
@@ -138,7 +165,12 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
     ).head_manifest.published_by.source_ceilings.get("retention_retired_live")
     admitted = writer.refresh(
         ChangeBatch(
-            (SourceKey(trace, "unproven"),), (), (), (), (), {"watermark_ns": 4}
+            (SourceKey(trace, "unproven"),),
+            (),
+            (),
+            (),
+            (),
+            {"watermark_ns": READ_CUT + 3},
         ),
         [definition],
         Scope(writer.org_id, writer.workspace_id, observe_project.id),
@@ -172,9 +204,12 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
     assert expire_project(writer, [definition], retention_days=writer.retention_days)[
         "purged"
     ]
-    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"][
-        "value"
-    ] == pytest.approx(10 / 3)
+    # Source policy, not the pre-expiry KPI, is the oracle: the whole
+    # January window is expired, including its aggregate contributions.
+    with pytest.raises(MetricUnavailableError) as expired:
+        reads.read_kpi(metric, WINDOW, store=writer.store)
+    assert expired.value.code == "retention_expired"
+    assert_expired_span_copies_removed(writer, definition)
 
 
 def two_publications(writer, workspace, project):
@@ -366,7 +401,7 @@ def test_same_bucket_arrivals_cannot_mask_uncovered_legacy_partial_expiry(
 
 
 @pytest.mark.parametrize("budget", ["rows", "bytes"])
-def test_idle_retirement_streams_multiple_admitted_batches_and_terminal_moves(
+def test_idle_expiry_discards_all_batches_without_recapturing_terminal_moves(
     live_writer, workspace, observe_project, monkeypatch, budget
 ):
     writer = live_writer
@@ -408,29 +443,17 @@ def test_idle_retirement_streams_multiple_admitted_batches_and_terminal_moves(
     assert expire_project(writer, [definition], retention_days=writer.retention_days)[
         "purged"
     ]
-    assert len(captures) >= 2
-    assert sum(count for count, _ in captures) == 6
-    assert all(
-        count <= span_evidence.SPAN_CAPTURE_ROWS
-        and size <= span_evidence.SPAN_CAPTURE_BYTES
-        for count, size in captures
-    )
-    new_head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
-    assert [row[2:] for row in metric_bucket_rows(writer, new_head, definition)] == [
-        (2, 5.0, 2.0),
-        (4, 25.0, 4.0),
-    ]
-    for name in ("metric_field_values", "metric_field_values_checkpoint"):
-        assert writer.store.execute(f"SELECT count() FROM {name}") == [(0,)]
-    assert writer.store.execute(
-        "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
-    ) == [(0,)]
+    # Every source anchor (including the terminal move) predates the cutoff.
+    # No source correction can produce a retained contribution. In particular,
+    # expiry must not recapture expired values just to keep anonymous history.
+    assert captures == []
+    assert_expired_span_copies_removed(writer, definition)
     assert not expire_project(
         writer, [definition], retention_days=writer.retention_days
     )["purged"]
 
 
-def test_retirement_restarts_all_pages_after_later_capture_byte_overflow(
+def test_expiry_ignores_source_corrections_that_exceed_capture_byte_budget(
     live_writer, workspace, observe_project, monkeypatch
 ):
     writer = live_writer
@@ -466,65 +489,27 @@ def test_retirement_restarts_all_pages_after_later_capture_byte_overflow(
             revision=2,
             group=group,
         )
-    captures, overflows = [], []
-    original = span_evidence.captured_span_fields
 
+    # The old anonymous-retirement implementation re-evaluated these expired
+    # sources, overflowed on page two, and restarted. No page is retainable
+    # under the current contract, so source capture must not run at all.
     @contextmanager
-    def recorded(*args, **kwargs):
-        lower = kwargs["previous_page"][1]["retiring_after"]
-        try:
-            with original(*args, **kwargs) as captured:
-                captures.append((lower, captured[3], captured[4]))
-                yield captured
-        except ServerException as exc:
-            assert "metric_span_capture_budget" in str(exc)
-            assert writer.store.client.connection.socket is None
-            # The first page has already succeeded and owns an accumulator in
-            # the now-discarded session. This is not a first-page overflow.
-            assert len(captures) == 1 and captures[0][1] == 3
-            overflows.append(lower)
-            raise
+    def forbidden_capture(*args, **kwargs):
+        raise AssertionError("expired source was recaptured")
+        yield  # pragma: no cover -- context-manager protocol
 
-    monkeypatch.setattr(span_evidence, "captured_span_fields", recorded)
+    monkeypatch.setattr(span_evidence, "captured_span_fields", forbidden_capture)
     writer.retention_days = lambda: 1
     assert expire_project(writer, [definition], retention_days=writer.retention_days)[
         "purged"
     ]
-    assert overflows == [json.dumps([str(trace), "0-2"], separators=(",", ":"))]
-    # The discarded three-row prefix is read again; all six identities then
-    # succeed once under the reduced cap, which must survive successful pages.
-    assert [count for _, count, _ in captures] == [3, 1, 1, 1, 1, 1, 1]
-    assert captures[0][0] == captures[1][0] == ""
-    assert captures[0][2] == bound
-    assert all(size <= bound for _, _, size in captures)
-    assert all(size > row_bytes for _, _, size in captures[-3:])
-    new_head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
-    assert metric_bucket_rows(writer, new_head, definition) == [
-        (AT, json.dumps(["value", "west"], separators=(",", ":")), 3, 6.0, 3.0),
-        (
-            AT + timedelta(minutes=15),
-            json.dumps(["value", group], separators=(",", ":")),
-            3,
-            33.0,
-            3.0,
-        ),
-    ]
-    assert writer.store.execute(
-        "SELECT sum(unit_count), sum(weighted_n), sum(weighted_d) "
-        "FROM metric_bucket_retired_parts WHERE is_deleted = 0"
-    ) == [(6, 39.0, 6.0)]
-    for name in ("metric_field_values", "metric_field_values_checkpoint"):
-        assert writer.store.execute(f"SELECT count() FROM {name}") == [(0,)]
-    assert writer.store.execute(
-        "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
-    ) == [(0,)]
-    monkeypatch.setattr(span_evidence, "captured_span_fields", original)
+    assert_expired_span_copies_removed(writer, definition)
     assert not expire_project(
         writer, [definition], retention_days=writer.retention_days
     )["purged"]
 
 
-def test_retirement_capture_failure_does_not_publish_partial_anonymous_history(
+def test_expiry_freeze_failure_does_not_publish_partial_replacement(
     live_writer, workspace, observe_project, monkeypatch
 ):
     writer = live_writer
@@ -533,20 +518,19 @@ def test_retirement_capture_failure_does_not_publish_partial_anonymous_history(
         writer, workspace, observe_project
     )
     expected = metric_bucket_rows(writer, head, definition)
-    original, captures = span_evidence.captured_span_fields, []
+    original, freezes = writer.freeze, []
 
-    @contextmanager
     def fail_second(*args, **kwargs):
-        captures.append(True)
-        if len(captures) == 2:
-            raise RuntimeError("injected second retirement capture failure")
-        with original(*args, **kwargs) as captured:
-            yield captured
+        freezes.append(True)
+        if len(freezes) == 2:
+            raise RuntimeError("injected second expiry freeze failure")
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(span_evidence, "captured_span_fields", fail_second)
+    monkeypatch.setattr(writer, "freeze", fail_second)
     writer.retention_days = lambda: 1
-    with pytest.raises(RuntimeError, match="second retirement capture"):
+    with pytest.raises(RuntimeError, match="second expiry freeze"):
         expire_project(writer, [definition], retention_days=writer.retention_days)
+    assert len(freezes) == 2
     assert (
         MetricProjectRefresh.for_project(observe_project.id).head_manifest_id == head.id
     )
@@ -557,9 +541,8 @@ def test_retirement_capture_failure_does_not_publish_partial_anonymous_history(
     assert writer.store.execute(
         "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
     ) == [(0,)]
-    monkeypatch.setattr(span_evidence, "captured_span_fields", original)
+    monkeypatch.setattr(writer, "freeze", original)
     assert expire_project(writer, [definition], retention_days=writer.retention_days)[
         "purged"
     ]
-    head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
-    assert metric_bucket_rows(writer, head, definition) == expected
+    assert_expired_span_copies_removed(writer, definition)

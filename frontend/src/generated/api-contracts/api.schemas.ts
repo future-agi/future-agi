@@ -28456,34 +28456,19 @@ export interface DerivedMetricCommittedResultPageApi {
   result_id: string;
 }
 
-/**
- * too_large: the project's stored metric rows exceed the limit
- */
-export type MetricCalculationPausedApiReason =
-  (typeof MetricCalculationPausedApiReason)[keyof typeof MetricCalculationPausedApiReason];
-
-export const MetricCalculationPausedApiReason = {
-  too_large: "too_large",
-} as const;
-
-/**
- * Why the project's metrics stopped calculating, or null.
- */
-export interface MetricCalculationPausedApi {
-  /** too_large: the project's stored metric rows exceed the limit */
-  reason: MetricCalculationPausedApiReason;
+export type MetricCalculationPausedApi = {
+  /** too_large: stored row limit; too_busy: work cannot finish in a pass */
+  reason: "too_large" | "too_busy";
   since: string;
-  /**
-   * Stored metric rows measured when it paused
-   * @minimum 0
-   */
-  rows: number;
+  rows: number | null;
   /**
    * METRICS_MAX_CHECKPOINT_ROWS; raising it resumes
    * @minimum 1
    */
   limit: number;
-}
+  /** Non-identifying busy-slot counts: owners, definitions, captures and capacity */
+  work?: { [key: string]: number };
+} | null;
 
 export interface DerivedMetricApi {
   readonly id?: string;
@@ -28505,7 +28490,7 @@ export interface DerivedMetricApi {
   readonly snapshot_unsupported_reason?: string;
   /** @minLength 1 */
   readonly value_mode?: string;
-  calculation_paused?: MetricCalculationPausedApi;
+  calculation_paused?: MetricCalculationPausedApi | null;
   definition?: DerivedMetricVersionApi;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -28884,7 +28869,7 @@ export const MetricUnavailableApiValueMode = {
 } as const;
 
 /**
- * window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units) or too_large (the project's metrics are paused: it stores more rows than the limit)
+ * window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass)
  */
 export type MetricUnavailableApiReason =
   (typeof MetricUnavailableApiReason)[keyof typeof MetricUnavailableApiReason];
@@ -28893,6 +28878,7 @@ export const MetricUnavailableApiReason = {
   not_calculated: "not_calculated",
   settling: "settling",
   too_large: "too_large",
+  too_busy: "too_busy",
 } as const;
 
 export interface MetricUnavailableApi {
@@ -28904,7 +28890,7 @@ export interface MetricUnavailableApi {
   value_mode?: MetricUnavailableApiValueMode;
   /** window_not_calculated_yet: the read cut; values are final only before it */
   calculated_through?: string;
-  /** window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units) or too_large (the project's metrics are paused: it stores more rows than the limit) */
+  /** window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass) */
   reason?: MetricUnavailableApiReason;
 }
 

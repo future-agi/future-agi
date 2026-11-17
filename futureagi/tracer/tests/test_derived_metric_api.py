@@ -28,7 +28,9 @@ metric_ch = metric_fixtures.metric_ch
 seed_span = metric_fixtures.seed_span
 
 # These are enabled-feature scenarios; rollout denial has a separate suite.
-pytestmark = pytest.mark.usefixtures("enabled_metrics")
+pytestmark = pytest.mark.usefixtures(
+    "enabled_metrics", "retained_metrics_source_policy"
+)
 
 ROOT = "/tracer/derived-metrics/"
 RUNS = "/tracer/derived-metric-runs/"
@@ -68,7 +70,21 @@ def run_body():
 
 
 @pytest.fixture
-def saved(auth_client, observe_project, enabled_metrics):
+def native_run_database(metric_ch, settings):
+    # The worker opens an independent, no-reconnect native connection. Route it
+    # to the same guarded database as the source fixture and HTTP reader; merely
+    # patching service.get_clickhouse_client no longer routes capture writes.
+    database = metric_ch.execute("SELECT currentDatabase()")[0][0]
+    settings.CLICKHOUSE_V2 = {
+        **getattr(settings, "CLICKHOUSE_V2", {}),
+        "CH25_DATABASE": database,
+    }
+
+
+@pytest.fixture
+def saved(
+    auth_client, observe_project, enabled_metrics, retained_metrics_source_policy
+):
     # Other suites import this fixture without this module's usefixtures mark.
     response = auth_client.post(ROOT, body(observe_project), format="json")
     assert response.status_code == 201, response.data
@@ -287,7 +303,8 @@ def test_formula_rejects_execution_and_invalid_windows(
     )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_formula_to_frozen_result_dashboard_and_monitor_with_late_data(
     auth_client, observe_project, workspace, saved, metric_ch
 ):
@@ -524,7 +541,8 @@ def test_worker_rechecks_revoked_requester_before_query(auth_client, saved, user
     assert DerivedMetricRun.objects.get(pk=response.data["id"]).status == "failed"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_weighted_eval_formula_persists_and_drives_real_dashboard_and_monitor_apis(
     auth_client, observe_project, workspace, custom_eval_config, metric_ch
 ):
@@ -725,7 +743,8 @@ def test_scope_permission_rejects_foreign_and_deleted_workspaces(user):
     assert MetricWorkspacePermission().has_permission(request, None) is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_monitor_delivery_is_idempotent_for_nonconsecutive_replay(
     auth_client, observe_project, workspace, saved, metric_ch
 ):
@@ -946,7 +965,8 @@ def test_healthy_monitor_evaluation_is_durably_consumed(delivery_case):
     )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_composite_span_identity_persists_two_trace_scoped_units(
     auth_client, observe_project, workspace, metric_ch
 ):

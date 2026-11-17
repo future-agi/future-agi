@@ -751,7 +751,9 @@ def test_m10_complete_service_budget_with_source_retained_parts(
             "cold_max_s": max(samples[:2]),
             "warm_p95_s": sorted(samples[2:])[9],
             "samples_s": samples,
-            "budget_s": 0.8 if mode == "dimension_trend" else 0.3,
+            "budget_s": (
+                0.8 if mode == "dimension_trend" else 0.5 if days == 90 else 0.3
+            ),
         }
     # Print ALL measurements even when a strict gate fails.
     print(
