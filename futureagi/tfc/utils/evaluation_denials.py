@@ -1,7 +1,5 @@
 """Expected evaluation refusals, available without the optional billing package."""
 
-from typing import TYPE_CHECKING, Any
-
 
 class EvaluationDenied(Exception):
     """A policy refusal, not an evaluator or billing infrastructure failure."""
@@ -19,14 +17,11 @@ class EvaluationDenied(Exception):
     def as_dict(self):
         return {**self.details, "code": self.code, "message": str(self)}
 
-    if TYPE_CHECKING:
-        # Declared for the type checker only. The subclasses a view can catch
-        # define it; this class does not, so response() on a bare
-        # EvaluationDenied still raises AttributeError.
-        def _response(self, general_methods: Any) -> Any: ...
-
     def response(self, general_methods):
-        response = self._response(general_methods)
+        # Only the subclasses define _response. A bare EvaluationDenied
+        # (raise_if_evaluation_denied) has none, so this call raises
+        # AttributeError on it.
+        response = self._response(general_methods)  # type: ignore[attr-defined]
         if self.completed_results is not None:
             # Earlier items have already executed and may have been charged.
             # Callers must resume at failed_index, not retry the entire batch.
