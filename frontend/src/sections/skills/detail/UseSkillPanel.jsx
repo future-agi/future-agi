@@ -1,11 +1,9 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import { Link as RouterLink } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
   Button,
-  Link,
   MenuItem,
   Stack,
   Tab,
@@ -13,23 +11,31 @@ import {
   Typography,
 } from "@mui/material";
 
-import { HOST_API } from "src/config-global";
-import { paths } from "src/routes/paths";
 import CodeBlock from "src/components/code-block";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
+import { useSkillVersion } from "src/api/skills";
+import { useSkillV11Scope } from "src/api/skills/testing";
 import TechnicalDetails from "../components/TechnicalDetails";
 import Section from "src/components/section";
 import EmptyState from "src/components/empty-state";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { INSTALL_CLIENTS } from "../constants";
 import VersionSelect from "../components/VersionSelect";
+import ContextPilotCredentials from "../contexts/ContextPilotCredentials";
+import { InstallSteps } from "../contexts/ContextUsePanel";
+import { useSkillsAccess } from "../utils/access";
+import { publicApiOrigin } from "../utils/origin";
 import {
-  buildInstallCommand,
+  CREDENTIAL_COMMENT,
+  buildCurlInstall,
   buildCurlResolve,
-  buildPythonSnippet,
-  buildTypeScriptSnippet,
   buildMcpSnippet,
+  buildPythonSnippet,
+  buildSkillUpdate,
+  buildTypeScriptSnippet,
+  registryEnvLines,
+  registryScope,
 } from "../utils/install";
 
 // Retain confirmed-copy feedback until the shared SH8 CodeBlock API lands.
@@ -43,23 +49,70 @@ function CopyableCode({ code }) {
 }
 CopyableCode.propTypes = { code: PropTypes.string.isRequired };
 
-const CLIENTS = [
-  ...INSTALL_CLIENTS,
-  { id: "curl", label: "cURL" },
+// The key step shows this while the exact version loads. It ignores the other props the install steps add to the key panel.
+function KeyStatus({ children, onAvailabilityChange }) {
+  // No key is usable while the version loads, so the "Create a key first" badge must not keep the last selector's answer.
+  useEffect(() => { onAvailabilityChange?.(false); }, [onAvailabilityChange]);
+  return <Typography variant="s3" color="text.secondary" role="status">{children}</Typography>;
+}
+KeyStatus.propTypes = { children: PropTypes.node, onAvailabilityChange: PropTypes.func };
+
+const APPLICATION_CLIENTS = [
   { id: "python", label: "Python" },
   { id: "typescript", label: "TypeScript" },
-  { id: "mcp", label: "MCP" },
+  { id: "curl", label: "cURL" },
 ];
 
-export default function UseSkillPanel({ skill }) {
-  const [group, setGroup] = useState('coding');
+// Shows a builder's command, or why it cannot be built, without throwing during render.
+function Built({ build }) {
+  let code = "";
+  let problem = "";
+  try { code = build(); } catch (error) { problem = error.message; }
+  return problem ? <Alert severity="warning">{problem}</Alert> : <CopyableCode code={code} />;
+}
+Built.propTypes = { build: PropTypes.func.isRequired };
+
+// For tools the Python installer does not cover (Cursor, Gemini CLI, VS Code), and for machines
+// without Python: the same read-only key, read file by file through the consumption routes.
+function WithoutPython({ build, selectorReady }) {
   const [clientId, setClientId] = useState("claude-code");
   const [location, setLocation] = useState("project");
+  const client = INSTALL_CLIENTS.find((item) => item.id === clientId);
+  const dir = location === "personal" ? client.personalDir : client.projectDir;
+  return (
+    <TechnicalDetails title="Without Python">
+      <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+        <Typography variant="s3" color="text.secondary">
+          Uses curl and jq with the same read-only key. It writes the files into {dir}/ without
+          a preview and does not check digests; the Python installer does both. Back up local changes first.
+          It doesn&apos;t remove files deleted from the published skill.
+        </Typography>
+        <TextField select size="small" label="Coding client" value={clientId} onChange={(event) => setClientId(event.target.value)}>
+          {INSTALL_CLIENTS.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+        </TextField>
+        <SegmentedTabs value={location} onChange={(_event, value) => setLocation(value)} aria-label="Install location">
+          <Tab value="project" label="Project" />
+          <Tab value="personal" label="Personal" />
+        </SegmentedTabs>
+        {selectorReady
+          ? <Built build={() => build(dir)} />
+          : <Alert severity="info">Choose a published version to see the command.</Alert>}
+      </Stack>
+    </TechnicalDetails>
+  );
+}
+WithoutPython.propTypes = { build: PropTypes.func.isRequired, selectorReady: PropTypes.bool };
+
+// `qualification` and `footer` are optional slots: the host passes the installer qualification
+// when one exists, and the runtime section passes "Check tracing" for the foot of the tab.
+export default function UseSkillPanel({ skill, qualification, footer }) {
+  const [group, setGroup] = useState('coding');
+  const [clientId, setClientId] = useState("python");
   const [selector, setSelector] = useState(() => skill.labels.some((item) => item.name === 'production') ? 'label:production' : 'version');
   const [pinnedVersion, setPinnedVersion] = useState(skill.latestVersion);
-  const [tag, setTag] = useState(skill.tags[0] || "");
-  const client = CLIENTS.find((item) => item.id === clientId);
-  const installClient = Boolean(client.projectDir);
+  const access = useSkillV11Scope();
+  const rights = useSkillsAccess();
+  const api = publicApiOrigin();
   const label = selector === "version" ? undefined : selector.slice(6);
   const version = selector === "version" ? pinnedVersion : undefined;
   const missingLabel =
@@ -67,26 +120,43 @@ export default function UseSkillPanel({ skill }) {
     label !== "latest" &&
     !skill.labels.some((item) => item.name === label);
   const selectedNumber = selector === "version" ? pinnedVersion : label === "latest" ? skill.latestVersion : skill.labels.find((item) => item.name === label)?.version;
+  // A numbered version needs its version ID: the read-only key is bound to it.
+  const pinned = useSkillVersion(selector === "version" ? skill.id : null, selector === "version" ? pinnedVersion : null);
   const selectorName = label ? label.charAt(0).toUpperCase() + label.slice(1) : `v${pinnedVersion}`;
-  const selectorHelp = installClient
-    ? label ? `${selectorName} resolves${selectedNumber ? ` to v${selectedNumber}` : ""} when you run this command; installed files don't follow later releases.` : `Downloads v${pinnedVersion}; installed files don't follow later releases.`
+  const coding = group === "coding";
+  const selectorHelp = coding
+    ? label ? `${selectorName} resolves${selectedNumber ? ` to v${selectedNumber}` : ""} when you run the plan; installed files don't follow later releases.` : `Installs v${pinnedVersion}; installed files don't follow later releases.`
     : `${label ? selectorName : "A label"} resolves when requested; a numbered version stays fixed.`;
-  const installDir = location === "personal" ? client.personalDir : client.projectDir;
-  const overwriteWarning = `This can overwrite files in ${installDir}. Use an empty folder or back up local changes first. It doesn't remove files deleted from the published skill.`;
   const selectorReady = selector !== "version" || Number.isInteger(version);
-  const args = {
-    hostApi: HOST_API,
-    names: [skill.name],
-    label,
-    version,
-    dir: location === "personal" ? client.personalDir : client.projectDir,
+  const names = [skill.name];
+  const scope = { origin: api.origin, organizationId: access.scope?.organizationId, workspaceId: access.scope?.workspaceId };
+  const hasProduction = skill.labels.some((item) => item.name === 'production');
+
+  // Step 2 of the install flow. The key is limited to what the command will ask for: the label
+  // when you install a label, or the exact version when you pin one.
+  const keyPanel = selector === "version"
+    ? (pinned.data?.id
+      ? <ContextPilotCredentials key={pinned.data.id} kind="skill" resourceId={skill.id} snapshot={{ version: pinnedVersion, versionId: pinned.data.id }} canIssue={rights.canAdmin} />
+      : <KeyStatus>{pinned.isError ? "Could not load this version. Choose another version or try again." : "Loading this version…"}</KeyStatus>)
+    : <ContextPilotCredentials key={`label:${label}`} kind="skill" resourceId={skill.id} label={label} snapshot={{ version: selectedNumber }} canIssue={rights.canAdmin} />;
+
+  const snapshot = {
+    kind: "skill",
+    name: skill.name,
+    ...(label ? { label } : {}),
+    ...(selectedNumber != null ? { version: selectedNumber } : {}),
+    ...(selector === "version" && pinned.data ? { versionId: pinned.data.id, digest: pinned.data.digest } : {}),
   };
-  const snippet = () => {
-    if (installClient) return buildInstallCommand(args);
-    if (clientId === "curl") return buildCurlResolve(args);
-    if (clientId === "python") return buildPythonSnippet(args);
-    if (clientId === "typescript") return buildTypeScriptSnippet(args);
-    return `get_skill(${JSON.stringify({ name: skill.name, ...(version != null ? { version } : { label }) }, null, 2)})`;
+  const noOrigin = !api.origin || api.error ? "This workspace has no public HTTPS API address configured. Ask an admin to set VITE_PUBLIC_API_ORIGIN." : "";
+  const guarded = (build) => (...args) => { if (noOrigin) throw new Error(noOrigin); return build(...args); };
+  const environment = () => {
+    const url = registryScope(scope);
+    return [...registryEnvLines({ url, organizationId: scope.organizationId, workspaceId: scope.workspaceId }), CREDENTIAL_COMMENT].join("\n");
+  };
+  const applicationSnippet = () => {
+    if (clientId === "curl") return buildCurlResolve({ ...scope, names, label, version });
+    if (clientId === "typescript") return buildTypeScriptSnippet({ names, label, version });
+    return buildPythonSnippet({ names, label, version });
   };
 
   if (!skill.latestVersion) {
@@ -106,7 +176,7 @@ export default function UseSkillPanel({ skill }) {
         "& pre": { overflowWrap: "anywhere", wordBreak: "break-word" },
       }}
     >
-      <Typography variant="s1">{installClient ? `Install ${skill.name} into ${client.label}.` : `Fetch ${skill.name} with ${client.label}.`} {skill.labels.some((item) => item.name === 'production') ? `Production is v${skill.labels.find((item) => item.name === 'production').version}.` : 'Production is not assigned.'}</Typography>
+      <Typography variant="s1">{coding ? `Install ${skill.name} into your coding agent.` : `Fetch ${skill.name} ${group === "mcp" ? "with MCP" : "from your application"}.`} {hasProduction ? `Production is v${skill.labels.find((item) => item.name === 'production').version}.` : 'Production is not assigned.'}</Typography>
       <Section
         title="Choose what agents receive"
         description={selectorHelp}
@@ -115,7 +185,7 @@ export default function UseSkillPanel({ skill }) {
           <TextField
             select
             size="small"
-            label={installClient ? "Version to download" : "Version to fetch"}
+            label={coding ? "Version to install" : "Version to fetch"}
             value={selector}
             onChange={(event) => setSelector(event.target.value)}
             sx={{ minWidth: 200 }}
@@ -129,7 +199,7 @@ export default function UseSkillPanel({ skill }) {
               ]),
             ].map((name) => (
               <MenuItem key={name} value={`label:${name}`}>
-                {name === "production" && skill.labels.some((item) => item.name === name) ? `Production (currently v${skill.labels.find((item) => item.name === name).version})` : name}
+                {name === "production" && hasProduction ? `Production (currently v${skill.labels.find((item) => item.name === name).version})` : name}
               </MenuItem>
             ))}
             <MenuItem value="version">Pinned version</MenuItem>
@@ -154,7 +224,7 @@ export default function UseSkillPanel({ skill }) {
         <Box sx={{ minWidth: 0, maxWidth: "100%", overflowX: "auto" }}>
           <SegmentedTabs
             value={group}
-            onChange={(_event, value) => { setGroup(value); setClientId(value === 'coding' ? 'claude-code' : value === 'application' ? 'curl' : 'mcp'); }}
+            onChange={(_event, value) => { setGroup(value); setClientId("python"); }}
             variant="scrollable"
             scrollButtons="auto"
             allowScrollButtonsMobile
@@ -167,82 +237,57 @@ export default function UseSkillPanel({ skill }) {
           </SegmentedTabs>
         </Box>
         <Stack spacing={1.5} sx={{ mt: 1.5, minWidth: 0 }}>
-          {group !== 'mcp' && <TextField select size="small" label={group === 'coding' ? 'Coding client' : 'Fetch with'} value={clientId} onChange={(event) => setClientId(event.target.value)}>
-            {CLIENTS.filter((item) => group === 'coding' ? Boolean(item.projectDir) : ['curl', 'python', 'typescript'].includes(item.id)).map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
-          </TextField>}
-          {installClient && <TechnicalDetails title="Installation details"><Typography variant="s3">Keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Typography></TechnicalDetails>}
-          {installClient && (
-            <SegmentedTabs
-              value={location}
-              onChange={(_event, value) => setLocation(value)}
-              aria-label="Install location"
-            >
-              <Tab value="project" label="Project" />
-              <Tab value="personal" label="Personal" />
-            </SegmentedTabs>
+          {group === "coding" && (
+            selectorReady
+              ? <InstallSteps
+                snapshot={snapshot}
+                origin={api.origin}
+                originError={api.error}
+                organizationId={scope.organizationId}
+                workspaceId={scope.workspaceId}
+                qualification={qualification}
+                runtimeAccess={keyPanel}
+                title={`Install ${skill.name}${selectedNumber != null ? ` v${selectedNumber}` : ""}`}
+                afterInstall={<Stack spacing={1}>
+                  <TechnicalDetails title="Update an installed skill">
+                    <Stack spacing={1}>
+                      <Typography variant="s3" color="text.secondary">Run from the project root. The first command checks whether a newer release exists; the second writes a new plan to review with the inspect command, then apply it as above.</Typography>
+                      <Built build={guarded(() => buildSkillUpdate({ ...scope, name: skill.name, project: "." }))} />
+                    </Stack>
+                  </TechnicalDetails>
+                  <WithoutPython selectorReady={selectorReady} build={guarded((dir) => buildCurlInstall({ ...scope, names, label, version, dir }))} />
+                </Stack>}
+              />
+              : <Alert severity="info">Choose a published version to see the command.</Alert>
           )}
-          <Typography variant="s1" color="text.secondary">
-            Set FI_API_KEY and FI_SECRET_KEY in your environment.{" "}
-            <Link component={RouterLink} to={paths.dashboard.settings.apiKeys}>
-              Manage API keys
-            </Link>
-            .
-          </Typography>
-          <Typography variant="s3" color="text.secondary">
-            API keys carry their existing access permissions; these commands do
-            not make them read-only. Keep credentials out of source control.
-          </Typography>
+          {group === "application" && (
+            <Stack spacing={1.5}>
+              <Typography variant="m3" component="h3">1. Create a read-only key</Typography>
+              {keyPanel}
+              <Typography variant="m3" component="h3">2. Fetch the skill</Typography>
+              <Typography variant="s3" color="text.secondary">
+                The SDK verifies every file against the manifest digest, and the load can be recorded in your traces.
+                Set these in your application&apos;s environment; never paste the key into code.
+              </Typography>
+              <Built build={guarded(environment)} />
+              <TextField select size="small" label="Fetch with" value={clientId} onChange={(event) => setClientId(event.target.value)}>
+                {APPLICATION_CLIENTS.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+              </TextField>
+              {selectorReady
+                ? <Built build={clientId === "curl" ? guarded(applicationSnippet) : applicationSnippet} />
+                : <Alert severity="info">Choose a published version to see the command.</Alert>}
+            </Stack>
+          )}
           {group === "mcp" && <Typography variant="s1">Ask your connected MCP server for the selected skill, then read its files using the returned version.</Typography>}
-          {group === "mcp" && <TechnicalDetails title="MCP file-reading protocol"><Typography variant="s3" sx={{ whiteSpace: "pre-wrap" }}>{buildMcpSnippet(args)}</Typography></TechnicalDetails>}
-          {selectorReady ? (
-            <Stack spacing={1}>{installClient && <Typography variant="s3" color="text.secondary">{overwriteWarning}</Typography>}<CopyableCode code={snippet()} /></Stack>
-          ) : (
-            <Alert severity="info">
-              Choose a published version to see the command.
-            </Alert>
-          )}
-          {installClient && (
-            <Typography variant="s3" color="text.secondary">
-              Run from your project root for a project install. The download
-              includes a lock file with the resolved version and digest. Review
-              scripts before letting an agent run them.
-            </Typography>
-          )}
+          {group === "mcp" && <TechnicalDetails title="MCP file-reading protocol"><Typography variant="s3" sx={{ whiteSpace: "pre-wrap" }}>{buildMcpSnippet({ names, label, version })}</Typography></TechnicalDetails>}
+          {group === "mcp" && (selectorReady
+            ? <CopyableCode code={`get_skill(${JSON.stringify({ name: skill.name, ...(version != null ? { version } : { label }) }, null, 2)})`} />
+            : <Alert severity="info">Choose a published version to see the command.</Alert>)}
         </Stack>
       </Section>
-      {installClient && skill.tags.length > 0 && (
-        <Section
-          title="Install every skill with a tag"
-          description="Downloads up to 50 skills. The lock file lists skills skipped because they do not have the chosen label."
-        >
-          <Stack spacing={1.5}>
-            <TextField
-              select
-              size="small"
-              label="Tag"
-              value={tag}
-              onChange={(event) => setTag(event.target.value)}
-              sx={{ maxWidth: 320 }}
-            >
-              {skill.tags.map((name) => (
-                <MenuItem key={name} value={name}>
-                  {name === "production" && skill.labels.some((item) => item.name === name) ? `Production (currently v${skill.labels.find((item) => item.name === name).version})` : name}
-                </MenuItem>
-              ))}
-            </TextField>
-            {selector === "version" ? (
-              <Alert severity="info">
-                Choose a label to install multiple skills. Version numbers are
-                specific to one skill.
-              </Alert>
-            ) : (
-              <Stack spacing={1}><Typography variant="s3" color="text.secondary">{overwriteWarning}</Typography><CopyableCode code={buildInstallCommand({ ...args, names: [], tag })} /></Stack>
-            )}
-          </Stack>
-        </Section>
-      )}
+      {footer}
     </Stack>
   );
 }
 
-UseSkillPanel.propTypes = { skill: PropTypes.object.isRequired };
+UseSkillPanel.propTypes = { skill: PropTypes.object.isRequired, qualification: PropTypes.object, footer: PropTypes.node };

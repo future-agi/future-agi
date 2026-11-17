@@ -37,7 +37,28 @@ import {
 const EXPIRY_DAYS = [1, 7, 30];
 const DAY_MS = 86_400_000;
 
-// A pilot credential is purpose-bound: consume only, this context, this exact
+// A key is purpose-bound: consume only, one resource, and either one exact version
+// or (skills only) one named label. The grant must match the selector the install
+// command asks for, because the server answers 403 for anything else.
+export function consumeCredentialInput({
+  kind = "agent_context",
+  resourceId,
+  labels = [],
+  versionIds = [],
+  days,
+  now = Date.now(),
+}) {
+  if (!resourceId || !EXPIRY_DAYS.includes(days) || (!labels.length && !versionIds.length))
+    throw new Error("Choose an exact version or a label, and an expiry.");
+  return {
+    purpose: "consume",
+    grants: [{ kind, resourceId, labels, versionIds }],
+    bindingIds: [],
+    expiresAt: new Date(now + days * DAY_MS).toISOString(),
+  };
+}
+
+// A context key is purpose-bound: consume only, this context, this exact
 // version. No labels, so a later release cannot be delivered through it.
 export function pilotCredentialInput({
   contextId,
@@ -47,26 +68,32 @@ export function pilotCredentialInput({
 }) {
   if (!contextId || !versionId || !EXPIRY_DAYS.includes(days))
     throw new Error("Choose an exact version and an expiry.");
-  return {
-    purpose: "consume",
-    grants: [
-      {
-        kind: "agent_context",
-        resourceId: contextId,
-        labels: [],
-        versionIds: [versionId],
-      },
-    ],
-    bindingIds: [],
-    expiresAt: new Date(now + days * DAY_MS).toISOString(),
-  };
+  return consumeCredentialInput({
+    kind: "agent_context",
+    resourceId: contextId,
+    versionIds: [versionId],
+    days,
+    now,
+  });
 }
 
+export const grantsResource = (credential, kind, resourceId) =>
+  credential.purpose === "consume" &&
+  credential.grants.some(
+    (grant) => grant.kind === kind && grant.resourceId === resourceId,
+  );
+
 export const grantsContext = (credential, contextId) =>
+  grantsResource(credential, "agent_context", contextId);
+
+// Does this key grant exactly what the install command will ask for?
+export const grantMatches = (credential, { kind, resourceId, label, versionId }) =>
   credential.purpose === "consume" &&
   credential.grants.some(
     (grant) =>
-      grant.kind === "agent_context" && grant.resourceId === contextId,
+      grant.kind === kind &&
+      grant.resourceId === resourceId &&
+      (label ? grant.labels?.includes(label) : grant.versionIds?.includes(versionId)),
   );
 
 const credentialStatus = (credential, now = Date.now()) => {
@@ -201,6 +228,9 @@ CredentialStackRow.propTypes = CredentialRow.propTypes;
 // install uses, next to the exact version it is bound to.
 export default function ContextPilotCredentials({
   contextId,
+  resourceId = contextId,
+  kind = "agent_context",
+  label,
   snapshot,
   canIssue,
   onAvailabilityChange,
@@ -223,8 +253,9 @@ export default function ContextPilotCredentials({
   const issue = useIssueContextCredential();
   const revoke = useRevokeContextCredential();
   const issued = issue.data;
+  const noun = kind === "skill" ? "skill" : "context";
   const rows = (list.data?.results ?? []).filter((row) =>
-    grantsContext(row, contextId) && row.grants.some((grant) => grant.kind === "agent_context" && grant.resourceId === contextId && grant.versionIds?.includes(snapshot.versionId)),
+    grantMatches(row, { kind, resourceId, label, versionId: snapshot.versionId }),
   );
   const hasKey = !list.isError && rows.some((row) => credentialStatus(row) === 'active');
   const folded = rows.filter((row) => credentialStatus(row) === 'revoked' && !justRevoked.includes(row.id));
@@ -232,6 +263,8 @@ export default function ContextPilotCredentials({
   useEffect(() => { onAvailabilityChange?.(hasKey); }, [hasKey, onAvailabilityChange]);
   const versionLabel = (credential) => {
     const ids = credential.grants.flatMap((grant) => grant.versionIds);
+    const named = credential.grants.flatMap((grant) => grant.labels ?? []);
+    if (!ids.length && named.length) return named.length === 1 ? `${named[0]} label` : `${named.length} labels`;
     return ids.length === 1 && ids[0] === snapshot.versionId
       ? `v${snapshot.version}`
       : `${ids.length} exact ${ids.length === 1 ? 'version' : 'versions'}`;
@@ -243,11 +276,11 @@ export default function ContextPilotCredentials({
   return (
     <>
       <Stack spacing={1.5}>
-        {showHeading && <Typography variant="m3">Create a read-only key for v{snapshot.version}</Typography>}
+        {showHeading && <Typography variant="m3">{label ? `Create a read-only key for the ${label} label` : `Create a read-only key for v${snapshot.version}`}</Typography>}
         <Typography variant="s3" color="text.secondary">
-          Read-only, and bound to v{snapshot.version} of this context. It
-          can&apos;t read drafts, other versions or moving labels. The secret is
-          shown once and is never placed in a command.
+          {label
+            ? `Read-only, and limited to the ${label} label of this ${noun}. It reads whichever version that label points to when you run a plan, so an update can see a new release. It can't read drafts, other labels or other ${noun}s. The secret is shown once and is never placed in a command.`
+            : `Read-only, and bound to v${snapshot.version} of this ${noun}. It can't read drafts, other versions or moving labels. The secret is shown once and is never placed in a command.`}
         </Typography>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
           <TextField
@@ -272,11 +305,9 @@ export default function ContextPilotCredentials({
               setCopyState("");
               issue.mutate(
                 {
-                  ...pilotCredentialInput({
-                    contextId,
-                    versionId: snapshot.versionId,
-                    days,
-                  }),
+                  ...(label
+                    ? consumeCredentialInput({ kind, resourceId, labels: [label], days })
+                    : consumeCredentialInput({ kind, resourceId, versionIds: [snapshot.versionId], days })),
                   idempotencyKey: issueKey,
                 },
                 { onSuccess: () => setIssueKey(newKey()) },
@@ -295,7 +326,7 @@ export default function ContextPilotCredentials({
           <Alert severity={issued.secretAvailable ? "success" : "warning"}>
             <Stack spacing={1}>
               <Typography variant="s1">
-                Read-only key created for v{snapshot.version}.
+                {label ? `Read-only key created for the ${label} label.` : `Read-only key created for v${snapshot.version}.`}
                 {issued.secretAvailable
                   ? " Copy it now; it isn't shown again. The install steps below say where to set it."
                   : " This was a replay; the secret is no longer available. Create a new key."}
@@ -346,7 +377,7 @@ export default function ContextPilotCredentials({
             </Button>
           </Alert>
         ) : visible.length > 0 && phone ? (
-          <Stack role="list" aria-label="Pilot credentials for this context" sx={{ minWidth: 0 }}>
+          <Stack role="list" aria-label={`Pilot credentials for this ${noun}`} sx={{ minWidth: 0 }}>
             {visible.map((row) => (
               <CredentialStackRow
                 key={row.id}
@@ -357,7 +388,7 @@ export default function ContextPilotCredentials({
             ))}
           </Stack>
         ) : visible.length > 0 ? (
-          <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
+          <TableContainer><Table size="small" aria-label={`Pilot credentials for this ${noun}`}>
             <TableHead>
               <TableRow>
                 <TableCell>Key</TableCell>
@@ -426,7 +457,10 @@ export default function ContextPilotCredentials({
   );
 }
 ContextPilotCredentials.propTypes = {
-  contextId: PropTypes.string.isRequired,
+  contextId: PropTypes.string,
+  resourceId: PropTypes.string,
+  kind: PropTypes.oneOf(["agent_context", "skill"]),
+  label: PropTypes.string,
   snapshot: PropTypes.object.isRequired,
   canIssue: PropTypes.bool,
   onAvailabilityChange: PropTypes.func,

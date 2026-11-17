@@ -12,7 +12,7 @@ vi.mock("src/api/skills", () => ({
   useRevokeContextCredential: () => hooks.revoke,
 }));
 
-const { default: ContextPilotCredentials, pilotCredentialInput, grantsContext } =
+const { default: ContextPilotCredentials, pilotCredentialInput, grantsContext, consumeCredentialInput, grantMatches } =
   await import("./ContextPilotCredentials");
 
 const CONTEXT = "11111111-1111-4111-8111-111111111111";
@@ -198,4 +198,64 @@ it('keeps a key you just revoked on its row for this visit so the action is conf
   expect(screen.getByText('Revoked')).toBeVisible();
   expect(screen.getByText('No active keys yet.')).toBeVisible();
   expect(screen.queryByRole('button', { name: /revoked keys/ })).not.toBeInTheDocument();
+});
+
+const SKILL = "44444444-4444-4444-8444-444444444444";
+const skillGrant = (extra) => ({ kind: "skill", resourceId: SKILL, labels: [], versionIds: [], ...extra });
+describe("skill keys", () => {
+  it("builds a label grant or an exact-version grant, never an empty one", () => {
+    const now = Date.UTC(2026, 10, 10);
+    expect(consumeCredentialInput({ kind: "skill", resourceId: SKILL, labels: ["production"], days: 7, now })).toEqual({
+      purpose: "consume", bindingIds: [], expiresAt: "2026-11-17T00:00:00.000Z", grants: [skillGrant({ labels: ["production"] })],
+    });
+    expect(consumeCredentialInput({ kind: "skill", resourceId: SKILL, versionIds: [VERSION], days: 1, now }).grants).toEqual([skillGrant({ versionIds: [VERSION] })]);
+    expect(() => consumeCredentialInput({ kind: "skill", resourceId: SKILL, days: 7 })).toThrow();
+    expect(() => consumeCredentialInput({ kind: "skill", resourceId: SKILL, labels: ["production"], days: 365 })).toThrow();
+  });
+  it("matches a key only when its grant covers the selector the command will ask for", () => {
+    const byLabel = credential("a", SKILL, { grants: [skillGrant({ labels: ["production"] })] });
+    const byVersion = credential("b", SKILL, { grants: [skillGrant({ versionIds: [VERSION] })] });
+    expect(grantMatches(byLabel, { kind: "skill", resourceId: SKILL, label: "production" })).toBe(true);
+    expect(grantMatches(byLabel, { kind: "skill", resourceId: SKILL, label: "staging" })).toBe(false);
+    expect(grantMatches(byLabel, { kind: "skill", resourceId: SKILL, versionId: VERSION })).toBe(false);
+    expect(grantMatches(byVersion, { kind: "skill", resourceId: SKILL, versionId: VERSION })).toBe(true);
+    expect(grantMatches(byVersion, { kind: "skill", resourceId: SKILL, label: "production" })).toBe(false);
+    expect(grantMatches(byVersion, { kind: "agent_context", resourceId: SKILL, versionId: VERSION })).toBe(false);
+    expect(grantMatches({ ...byLabel, purpose: "report" }, { kind: "skill", resourceId: SKILL, label: "production" })).toBe(false);
+  });
+  it("says a label key follows the label, and never says it cannot read moving labels", () => {
+    render(<ContextPilotCredentials kind="skill" resourceId={SKILL} label="production" snapshot={{ version: 4 }} canIssue />);
+    expect(screen.getByText("Create a read-only key for the production label")).toBeVisible();
+    expect(screen.getByText(/limited to the production label of this skill/)).toBeVisible();
+    expect(screen.queryByText(/moving labels/)).not.toBeInTheDocument();
+  });
+  it("issues a label grant with no version IDs and a stable idempotency key", () => {
+    render(<ContextPilotCredentials kind="skill" resourceId={SKILL} label="production" snapshot={{ version: 4 }} canIssue />);
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+    const [input] = hooks.issue.mutate.mock.calls[0];
+    expect(input.grants).toEqual([skillGrant({ labels: ["production"] })]);
+    expect(input.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+  });
+  it("issues an exact-version grant for a pinned skill and says so", () => {
+    render(<ContextPilotCredentials kind="skill" resourceId={SKILL} snapshot={{ version: 4, versionId: VERSION }} canIssue />);
+    expect(screen.getByText(/bound to v4 of this skill/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+    expect(hooks.issue.mutate.mock.calls[0][0].grants).toEqual([skillGrant({ versionIds: [VERSION] })]);
+  });
+  it("lists only keys for this skill and selector, and names a label key by its label", () => {
+    hooks.list = { data: { results: [
+      credential("11111111-1111-4111-8111-111111111111", SKILL, { grants: [skillGrant({ labels: ["production"] })] }),
+      credential("22222222-2222-4222-8222-222222222222", SKILL, { grants: [skillGrant({ labels: ["staging"] })] }),
+      credential("33333333-3333-4333-8333-333333333334", CONTEXT),
+    ] }, isLoading: false, isError: false };
+    render(<ContextPilotCredentials kind="skill" resourceId={SKILL} label="production" snapshot={{ version: 4 }} canIssue />);
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("production label")).toBeVisible();
+    expect(screen.getByRole("table", { name: "Pilot credentials for this skill" })).toBeVisible();
+    expect(screen.queryByText("No active keys yet.")).not.toBeInTheDocument();
+  });
+  it("keeps the context copy and key filter unchanged", () => {
+    render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+    expect(screen.getByText(/bound to v1 of this context. It can't read drafts, other versions or moving labels/)).toBeVisible();
+  });
 });

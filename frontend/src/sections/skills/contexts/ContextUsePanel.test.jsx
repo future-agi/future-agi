@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 const access = vi.hoisted(() => ({ isViewer: false }));
 vi.mock('../utils/access', () => ({ useSkillsAccess: () => access }));
-import ContextUsePanel from './ContextUsePanel';
+import ContextUsePanel, { InstallSteps, buildContextPlan } from './ContextUsePanel';
 afterEach(() => { cleanup(); access.isViewer = false; });
 const props = {
   scopeKey: 'scope', state: 'ready', productionVersion: 1, viewingVersion: 2,
@@ -71,4 +71,39 @@ it('tells only people who can create keys to create one first', () => {
   expect(screen.queryByText('Create a key first')).not.toBeInTheDocument();
   view.rerender(<ContextUsePanel {...props} runtimeAccess={<Access canIssue />} />);
   expect(screen.getByText('Create a key first')).toBeVisible();
+});
+
+it('never generates a command or snippet that needs the full API keys', () => {
+  const { container } = render(<ContextUsePanel {...props} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Before you install' }));
+  expect(container.textContent).not.toMatch(/FI_API_KEY|FI_SECRET_KEY|X-Api-Key|X-Secret-Key|unzip|curl/);
+  expect(buildContextPlan({ ...props, snapshot: props.snapshot, profile: { id: 'codex' }, project: '.', preview: true })).not.toMatch(/FI_API_KEY|FI_SECRET_KEY/);
+});
+it('keeps the context command byte for byte, from the shared builder', () => {
+  expect(buildContextPlan({ ...props, profile: { id: 'claude-code' }, project: '.', preview: true }).split('\n')).toEqual([
+    "export FI_CONTEXT_ORIGIN='https://api.example.invalid'",
+    "export FI_CONTEXT_ORGANIZATION_ID='22222222-2222-4222-8222-222222222222'",
+    "export FI_CONTEXT_WORKSPACE_ID='33333333-3333-4333-8333-333333333333'",
+    '# needs your read-only key in FI_CONTEXT_CREDENTIAL',
+    "python -m fi.context plan --name 'support-agent' --version 1 --client 'claude-code' --project '.' --allow-preview --out 'context-plan.json'",
+    "python -m fi.context inspect --plan 'context-plan.json' --diff",
+  ]);
+});
+it('renders a skill through the same steps, with the skill command and no context-only switch', () => {
+  const skill = { kind: 'skill', name: 'support-policy', label: 'production', version: 1 };
+  const { origin, organizationId, workspaceId } = props;
+  const view = render(<InstallSteps snapshot={skill} origin={origin} organizationId={organizationId} workspaceId={workspaceId} productionVersion={3} viewingVersion={2} />);
+  const skillHeadings = screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent);
+  expect(screen.getByLabelText('Skill install plan command')).toHaveTextContent("python -m fi.skills plan --name 'support-policy' --label 'production'");
+  expect(screen.queryByRole('checkbox', { name: /Install viewed/ })).not.toBeInTheDocument();
+  expect(screen.queryByText(/No production version is assigned/)).not.toBeInTheDocument();
+  expect(screen.getByText('Preview: not yet tested with Claude Code')).toBeVisible();
+  view.unmount();
+  render(<ContextUsePanel {...props} />);
+  expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(skillHeadings);
+});
+it('passes the footer and after-install slots through for Check tracing and the skill fallback', () => {
+  render(<InstallSteps snapshot={props.snapshot} origin={props.origin} organizationId={props.organizationId} workspaceId={props.workspaceId} footer={<p>Footer slot</p>} afterInstall={<p>After install slot</p>} />);
+  expect(screen.getByText('Footer slot')).toBeVisible();
+  expect(screen.getByText('After install slot')).toBeVisible();
 });
