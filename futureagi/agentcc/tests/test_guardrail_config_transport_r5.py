@@ -154,6 +154,31 @@ def _nested_leaf(config, depth):
     return config
 
 
+def _failing_depth(encode, kind="object"):
+    # Builtin encoders need not use Python's recursion limit (notably on 3.12).
+    # Probe the real operation, then leave ample room for the caller's shallower
+    # stack. The tests still independently assert rejection at the returned depth.
+    depth = 200
+    while depth <= 65_536:
+        try:
+            encode(_nested_config(depth, kind))
+        except (ValueError, RecursionError):
+            return 2 * depth
+        depth *= 2
+    pytest.fail("no serializer rejection found within the probe budget")
+
+
+def _encode_full_config(config):
+    payload = _build_test_payload(_policy([SIBLING]))
+    payload["guardrails"]["key_policies"][0]["checks"]["custom-static"] = {
+        "enabled": True,
+        "action": "block",
+        "config": config,
+    }
+    _client_body(payload)
+    _bulk_body(payload)
+
+
 @pytest.mark.parametrize("depth", [129, 200])
 @pytest.mark.parametrize("kind", ["object", "array"])
 def test_opaque_depth_survives_actual_full_payload_transports(depth, kind):
@@ -191,7 +216,7 @@ def test_opaque_depth_survives_actual_full_payload_transports(depth, kind):
 
 @pytest.mark.parametrize("kind", ["object", "array"])
 def test_actual_serializer_depth_failure_is_isolated_not_a_depth_policy(kind):
-    depth = max(2000, 2 * sys.getrecursionlimit())
+    depth = _failing_depth(_encode_full_config, kind)
     config = _nested_config(depth, kind)
     raw = {
         "name": "custom-static",
@@ -231,11 +256,12 @@ def test_actual_serializer_depth_failure_is_isolated_not_a_depth_policy(kind):
 
 
 def test_full_payload_context_not_standalone_config_decides_transport():
-    # Find the real runtime boundary, rather than pin another guessed constant.
-    # This control specifically requires cfg-alone success/full-envelope failure.
+    # Calibrate in this frame: an extra helper frame can move the boundary.
+    # Python's recursion limit is not an upper bound for builtin JSON encoders.
     unprojected = _build_test_payload(_policy([SIBLING]))
     checks = unprojected["guardrails"]["key_policies"][0]["checks"]
-    for depth in range(129, sys.getrecursionlimit() + 1):
+    passing_depth, failing_depth, depth = 0, None, 200
+    while True:
         config = _nested_config(depth)
         checks["custom-static"] = {
             "enabled": True,
@@ -246,10 +272,24 @@ def test_full_payload_context_not_standalone_config_decides_transport():
             _client_body(unprojected)
             _bulk_body(unprojected)
         except (ValueError, RecursionError):
-            httpx.Request("PUT", "http://synthetic.invalid/", json=config)
+            failing_depth = depth
+        else:
+            passing_depth = depth
+        if failing_depth is None:
+            assert depth < 65_536, "no full-envelope serializer boundary exercised"
+            depth *= 2
+        elif failing_depth - passing_depth > 1:
+            depth = (passing_depth + failing_depth) // 2
+        else:
             break
-    else:
-        pytest.fail("no full-envelope serializer boundary exercised")
+    config = _nested_config(failing_depth)
+    checks["custom-static"]["config"] = config
+    # Recheck at the same call sites/depth as calibration, independently of the
+    # production projection. Config alone must still fit the real HTTPX encoder.
+    with pytest.raises((ValueError, RecursionError)):
+        _client_body(unprojected)
+        _bulk_body(unprojected)
+    httpx.Request("PUT", "http://synthetic.invalid/", json=config)
     payload = _build_test_payload(
         _policy([{"name": "custom-static", "config": config}, SIBLING])
     )
@@ -312,8 +352,11 @@ def test_injected_values_use_the_same_wire_boundary_without_mutating_saved_data(
 
 @pytest.mark.parametrize("kind", ["nested", "cycle", "serializer_failure"])
 def test_injected_containers_are_owned_and_checked_in_full_payload(kind):
-    depth = 200 if kind == "nested" else max(2000, 2 * sys.getrecursionlimit())
+    depth = _failing_depth(_encode_full_config) if kind == "serializer_failure" else 200
     credential = _nested_config(depth)
+    if kind == "serializer_failure":
+        with pytest.raises((ValueError, RecursionError)):
+            _encode_full_config(credential)
     if kind == "cycle":
         credential = {}
         credential["cycle"] = credential
@@ -346,7 +389,7 @@ def test_injected_containers_are_owned_and_checked_in_full_payload(kind):
 
 
 def test_deep_eval_id_conversion_failure_does_not_remove_siblings():
-    value = _nested_config(max(2000, 2 * sys.getrecursionlimit()))
+    value = _nested_config(_failing_depth(str))
     raw = {"name": "custom-static", "config": {"eval_id": value}}
     with pytest.raises(RecursionError):
         str(value)
