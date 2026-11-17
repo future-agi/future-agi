@@ -55,6 +55,14 @@ describe("skill file editor", () => {
     expect(editorElement.parentElement.parentElement).toHaveStyle({ flex: "1", minHeight: "0" });
   });
 
+  it("keeps a height floor only when one is requested", () => {
+    const { rerender } = render(<SkillFileEditor file={file} onChange={vi.fn()} />);
+    const root = () => screen.getByLabelText("Code editor").parentElement.parentElement;
+    expect(root()).toHaveStyle({ minHeight: "0" });
+    rerender(<SkillFileEditor file={file} onChange={vi.fn()} minHeight={304} />);
+    expect(root()).toHaveStyle({ flex: "1", minHeight: "304px" });
+  });
+
   it("focuses the requested file and check line", () => {
     render(<SkillFileEditor file={file} onChange={vi.fn()} target={{ line: 3 }} />);
     expect(editor.setPosition).toHaveBeenCalledWith({ lineNumber: 3, column: 1 });
