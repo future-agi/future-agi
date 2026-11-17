@@ -13,6 +13,7 @@ import copy
 import json
 import re
 import tarfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -260,22 +261,28 @@ def sealed_certificate(sealed: Mapping[str, bytes]) -> dict[str, Any] | None:
     return safe
 
 
-SEALED_CONTRACT = "environment-bundle/contract.json"
-# A bundle's object never changes once ready, so the contract read from it is kept by its key.
+# A bundle's object never changes once ready, so what is read from it is kept by its key; a bundle that could not
+# be read is tried again only after a short while.
 _SEALED_CONTRACT_CACHE = "harness_sealed_contract:"
 _SEALED_CONTRACT_SECONDS = 7 * 24 * 60 * 60
+_SEALED_CONTRACT_RETRY_SECONDS = 5 * 60
 _SEALED_CONTRACT_MAX_BYTES = 8 * 1024 * 1024
+_UNREADABLE = {"unreadable": True}
 
 
-def sealed_contract(environment_version: Any) -> dict[str, Any] | None:
-    """The contract the version's latest ready bundle was sealed and certified with; None when it has no ready
-    bundle or the bundle cannot be read.
+def sealed_contract(
+    environment_version: Any, *, agent_version_id: Any, suite_version_id: Any
+) -> dict[str, Any] | None:
+    """The contract this version's ready bundle for the agent and suite pair was sealed and certified with; None
+    when that pair has no ready bundle or it cannot be read.
 
     A build can amend the authored contract while it builds, and a version recorded before its documents carried
-    the sealed contract still holds the authored one: the bundle is what its runs replay."""
+    the sealed contract still holds the authored one: the bundle is what a run of the pair replays."""
     key = (
         HarnessAssembledBundle._base_manager.filter(
             environment_version_id=environment_version.id,
+            agent_version_id=agent_version_id,
+            suite_version_id=suite_version_id,
             state=HarnessAssembledBundle.State.READY,
             deleted=False,
         )
@@ -289,27 +296,32 @@ def sealed_contract(environment_version: Any) -> dict[str, Any] | None:
         return None
     cached = cache.get(_SEALED_CONTRACT_CACHE + key)
     if cached is not None:
-        return cached or None
+        return cached if cached and cached != _UNREADABLE else None
     try:
         found = archives.read_members(
-            archives.get_archive(key), {SEALED_CONTRACT}, _SEALED_CONTRACT_MAX_BYTES
+            archives.get_archive(key),
+            {archives.SEALED_CONTRACT},
+            _SEALED_CONTRACT_MAX_BYTES,
         )
-        contract = (
-            json.loads(found[SEALED_CONTRACT]) if SEALED_CONTRACT in found else {}
-        )
+        contract = json.loads(found.get(archives.SEALED_CONTRACT) or b"{}")
     except (
         S3Error,
         HTTPError,
         HostedHarnessError,
         ValueError,
         OSError,
+        EOFError,
         tarfile.TarError,
+        zlib.error,
     ):
-        # Unreadable now: the version's own documents stand in, and the next read tries again.
+        # Unreadable: the version's own documents stand in until it is tried again.
         logger.warning(
             "harness_sealed_contract_unreadable",
             environment_version_id=str(environment_version.id),
             exc_info=True,
+        )
+        cache.set(
+            _SEALED_CONTRACT_CACHE + key, _UNREADABLE, _SEALED_CONTRACT_RETRY_SECONDS
         )
         return None
     contract = contract if isinstance(contract, dict) else {}

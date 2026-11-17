@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from simulate.models import HarnessEnvironmentVersion
+from simulate.selectors.environment_documents import recorded_contract
 from simulate.services.harness_environment import environment_detail
 from simulate.services.harness_tool_reach import blocked_tools, production_only
 from simulate.services.harness_versioning import archives, drafts
@@ -103,8 +104,18 @@ def _built(contract=AUTHORED, sealed=SEALED, **extra) -> bytes:
     return _authoring(contract=contract, **files, **extra)
 
 
-def _blocked(environment, version=None) -> list[str]:
-    pins = SimpleNamespace(environment_version=version) if version is not None else None
+def _blocked(environment, version=None, agent_version_id=None, suite=None) -> list[str]:
+    """What the run gate holds back for a run of ``version`` by the agent and suite named, else the defaults; no
+    pins at all without a version."""
+    pins = (
+        SimpleNamespace(
+            environment_version=version,
+            agent_version_id=agent_version_id or environment.agent_version_id,
+            suite_version=suite or environment.suite_version,
+        )
+        if version is not None
+        else None
+    )
     return [entry["tool"] for entry in blocked_tools(environment, pins)]
 
 
@@ -128,7 +139,9 @@ def test_a_build_s_version_runs_and_shows_the_contract_its_bundle_sealed(
     recorded = record_authoring(environment, _built(), origin="authoring")
     environment.refresh_from_db()
 
-    assert recorded.environment.documents["contract"] == SEALED
+    # The authored contract stays what diffs compare; the sealed one is recorded beside it.
+    assert recorded.environment.documents["contract"] == AUTHORED
+    assert recorded_contract(recorded.environment.documents) == SEALED
     # The run gate, pinned and unpinned, and the Contract tab's Tools card.
     assert _blocked(environment, recorded.environment) == []
     assert _blocked(environment) == []
@@ -144,7 +157,7 @@ def test_an_edit_carrying_an_older_bundle_keeps_its_own_contract(
 
     recorded = record_authoring(environment, _built(), origin="chat")
 
-    assert recorded.environment.documents["contract"] == AUTHORED
+    assert recorded_contract(recorded.environment.documents) == AUTHORED
 
 
 def test_an_older_version_and_a_rerun_on_it_keep_its_own_contract(
@@ -166,7 +179,9 @@ def test_an_older_version_and_a_rerun_on_it_keep_its_own_contract(
     assert [one.id for one in _versions(environment)] == [older.id, newer.id]
     assert _blocked(environment, older) == sorted(TOOLS)
     assert _blocked(environment, newer) == []
-    assert older.documents["contract"] == AUTHORED
+    assert recorded_contract(older.documents) == AUTHORED
+    # The newer version's diff compares authored contracts: the build's amendment is no change of the author's.
+    assert "tool_entrypoints" not in newer.diff["contract"]["fields"]
 
 
 def test_a_draft_the_chat_resealed_with_an_amended_contract_shows_it_as_the_draft_s(
@@ -178,7 +193,7 @@ def test_a_draft_the_chat_resealed_with_an_amended_contract_shows_it_as_the_draf
     drafts.record_draft(environment, _resealed(), origin="chat")
 
     draft = drafts.open_draft(environment, "environment")
-    assert draft.documents["contract"] == SEALED
+    assert recorded_contract(draft.documents) == SEALED
     assert environment_detail(environment)["contract"]["production_only"] == []
     # The default version, the one runs use until the draft is saved, keeps its own.
     assert _blocked(environment) == sorted(TOOLS)
@@ -199,7 +214,8 @@ def test_a_draft_whose_bundle_was_not_sealed_from_it_keeps_its_authored_contract
     drafts.record_draft(environment, archives.pack_archive(files), origin="chat")
 
     assert (
-        drafts.open_draft(environment, "environment").documents["contract"] == AUTHORED
+        recorded_contract(drafts.open_draft(environment, "environment").documents)
+        == AUTHORED
     )
 
 
@@ -227,7 +243,10 @@ def test_a_draft_that_leaves_the_contract_alone_runs_with_the_build_s_until_the_
         ),
         origin="chat",
     )
-    assert drafts.open_draft(environment, "environment").documents["contract"] == SEALED
+    assert (
+        recorded_contract(drafts.open_draft(environment, "environment").documents)
+        == SEALED
+    )
 
     edited = {**AUTHORED, "one_liner": "returns desk"}
     drafts.record_draft(
@@ -235,7 +254,10 @@ def test_a_draft_that_leaves_the_contract_alone_runs_with_the_build_s_until_the_
         _authoring(contract=edited, sealed=False, **{"handlers/refund.py": "x = 1\n"}),
         origin="chat",
     )
-    assert drafts.open_draft(environment, "environment").documents["contract"] == edited
+    assert (
+        recorded_contract(drafts.open_draft(environment, "environment").documents)
+        == edited
+    )
 
 
 def test_a_new_version_saved_from_a_chat_reseal_runs_with_the_contract_it_sealed(
@@ -257,14 +279,17 @@ def test_a_new_version_saved_from_a_chat_reseal_runs_with_the_contract_it_sealed
         "world.sqlite": WORLD_EDIT,
     }
     _publish(environment, storage, NAMES[:2], sequence=10, contract=AUTHORED, **sealed)
-    assert drafts.open_draft(environment, "environment").documents["contract"] == SEALED
+    assert (
+        recorded_contract(drafts.open_draft(environment, "environment").documents)
+        == SEALED
+    )
 
     _save_drafts(environment)
 
     saved = environment.environment_version
-    assert saved.id != first.id and saved.documents["contract"] == SEALED
+    assert saved.id != first.id and recorded_contract(saved.documents) == SEALED
     assert _blocked(environment) == [] and _blocked(environment, saved) == []
-    assert first.documents["contract"] != SEALED
+    assert recorded_contract(first.documents) != SEALED
 
 
 class TestVersionRecordedBeforeItsSealedContract:
@@ -289,11 +314,16 @@ class TestVersionRecordedBeforeItsSealedContract:
         version.refresh_from_db()
         return environment, version, storage
 
-    def _bundle(self, environment, version, storage, contract=SEALED):
-        from simulate.tests.test_harness_versioning_picks import _ready, _suite
+    def _bundle(
+        self, environment, version, storage, contract=SEALED, agent_version_id=None
+    ):
+        from simulate.tests.test_harness_versioning_picks import _ready
 
         row = _ready(
-            environment, environment.agent_version_id, version, _suite(environment, 1)
+            environment,
+            agent_version_id or environment.agent_version_id,
+            version,
+            environment.suite_version,
         )
         if contract is not None:
             storage.objects[row.object_key] = archives.pack_archive(
@@ -335,3 +365,139 @@ class TestVersionRecordedBeforeItsSealedContract:
         self._bundle(environment, version, storage, contract=None)
 
         assert _blocked(environment, version) == sorted(TOOLS)
+
+    def test_a_truncated_bundle_leaves_the_recorded_contract_and_is_not_read_again_at_once(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-truncated", monkeypatch
+        )
+        row = self._bundle(environment, version, storage)
+        storage.objects[row.object_key] = storage.objects[row.object_key][:40]
+        reads = []
+        read = storage.get_object
+        monkeypatch.setattr(
+            storage,
+            "get_object",
+            lambda bucket, key: reads.append(key) or read(bucket, key),
+        )
+
+        assert _blocked(environment, version) == sorted(TOOLS)
+        assert environment_detail(environment)["contract"]["production_only"] == sorted(
+            TOOLS
+        )
+        assert reads == [row.object_key]
+
+    def test_a_run_reads_the_bundle_of_its_own_agent_never_another_agent_s(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.tests.test_harness_versioning_picks import _second_agent
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-pair", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        other = _second_agent(environment)
+        # Agent B's bundle, sealed later, still imports the tools.
+        self._bundle(
+            environment, version, storage, contract=AUTHORED, agent_version_id=other.id
+        )
+
+        assert _blocked(environment, version) == []
+        assert _blocked(environment, version, agent_version_id=other.id) == sorted(
+            TOOLS
+        )
+
+    def test_the_run_plan_and_the_environment_detail_read_it_through_their_views(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-views", monkeypatch
+        )
+        base = f"/simulate/api/harness-environments/{environment.id}"
+        plan = auth_client.get(f"{base}/run-plan/")
+        detail = auth_client.get(f"{base}/")
+        assert (plan.status_code, detail.status_code) == (200, 200)
+        assert plan.json()["blocked_tools"] and (
+            detail.json()["contract"]["production_only"] == sorted(TOOLS)
+        )
+
+        self._bundle(environment, version, storage)
+
+        plan = auth_client.get(f"{base}/run-plan/").json()
+        contract = auth_client.get(f"{base}/").json()["contract"]
+        assert (plan["blocked_tools"], plan["runnable"]) == ([], True)
+        assert contract["production_only"] == [] and contract["from_draft"] is False
+
+    def test_fault_targets_and_the_list_row_read_the_contract_the_version_runs_with(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.services.harness_environment import (
+            annotate_for_list,
+            edit_fault_side,
+            environment_row,
+        )
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-faults", monkeypatch
+        )
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents={**version.documents, "run_contract": SEALED}
+        )
+        self._bundle(environment, version, storage)
+
+        targets, _ = edit_fault_side(environment)
+        assert {one["tool"]: one["reachable"] for one in targets} == dict.fromkeys(
+            TOOLS, True
+        )
+        listed = annotate_for_list(
+            type(environment).no_workspace_objects.filter(id=environment.id)
+        ).get()
+        assert listed.version_contract == SEALED
+        assert environment_row(listed)["tools_count"] == len(TOOLS)
+
+    def test_the_scenarios_page_and_a_draft_write_judge_faults_on_the_sealed_contract(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        from simulate.models import (
+            HostedHarnessJob,
+            HostedHarnessScenario,
+            HostedHarnessStageOutput,
+        )
+        from simulate.services.harness_versioning.drafts import _targets_before
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-scenarios", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        # The authoring snapshot is the first contract, whose in-process tools the door cannot reach.
+        unreached = {
+            **AUTHORED,
+            "tool_entrypoints": [
+                {**one, "door_unreached": "a method of a helper object"}
+                for one in AUTHORED["tool_entrypoints"]
+            ],
+        }
+        HostedHarnessJob._base_manager.filter(id=environment.id).update(
+            stage_outputs=[{"kind": "contract", "data": unreached}]
+        )
+        HostedHarnessStageOutput._base_manager.filter(
+            job=environment, kind="contract"
+        ).update(data=unreached)
+        scenario = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).first()
+        HostedHarnessScenario._base_manager.filter(id=scenario.id).update(
+            faults=[{"action": "get_order", "mode": "timeout", "on_call": 1}]
+        )
+        environment.refresh_from_db()
+
+        rows = auth_client.get(
+            f"/simulate/api/harness-jobs/{environment.id}/scenarios/",
+            {"group_by": ""},
+        ).json()["results"]
+        faulted = [one for one in rows if one.get("faults")]
+        assert len(faulted) == 1 and faulted[0]["door_problem"] is None
+        assert {
+            one["tool"]: one["reachable"] for one in _targets_before(environment)
+        } == (dict.fromkeys(TOOLS, True))

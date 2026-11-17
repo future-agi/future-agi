@@ -14,22 +14,41 @@ def contract_data(job: HostedHarnessJob) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def version_contract(job: HostedHarnessJob, version: Any = None) -> dict[str, Any]:
-    """The contract of an environment version: ``version``'s, else the environment's default version's, as its
-    ready bundle was sealed with, else as its documents record it. The authoring snapshot only before the
-    environment has a version, or for one that recorded no contract.
+def recorded_contract(documents: Any) -> dict[str, Any]:
+    """The contract a version's documents record it runs with: the one its build sealed (or the default's it
+    keeps), else the authored one."""
+    documents = documents if isinstance(documents, dict) else {}
+    for field in ("run_contract", "contract"):
+        contract = documents.get(field)
+        if isinstance(contract, dict) and contract:
+            return contract
+    return {}
 
-    Reads the version's bundle row, and the bundle once per bundle, when the version has one."""
+
+def version_contract(
+    job: HostedHarnessJob,
+    version: Any = None,
+    *,
+    agent_version_id: Any = None,
+    suite_version_id: Any = None,
+) -> dict[str, Any]:
+    """The contract a run of an environment version uses: ``version``, else the environment's default version, run
+    by the agent and suite named, else the environment's default ones.
+
+    The one that pair's ready bundle was sealed with, else the one the version's documents record; the authoring
+    snapshot only before the environment has a version. Reads the pair's bundle row, and the bundle once per
+    bundle."""
     from simulate.services.harness_versioning.assembly import sealed_contract
 
     version = version if version is not None else job.environment_version
     if version is None:
         return contract_data(job)
-    sealed = sealed_contract(version)
-    if sealed:
-        return sealed
-    contract = (version.documents or {}).get("contract")
-    return contract if isinstance(contract, dict) and contract else contract_data(job)
+    sealed = sealed_contract(
+        version,
+        agent_version_id=agent_version_id or job.agent_version_id,
+        suite_version_id=suite_version_id or job.suite_version_id,
+    )
+    return sealed or recorded_contract(version.documents) or contract_data(job)
 
 
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
