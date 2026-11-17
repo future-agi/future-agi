@@ -137,7 +137,7 @@ export default function EditableAccordionText({
           >
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}
@@ -187,7 +187,7 @@ export default function EditableAccordionText({
                     placeholder={placeholderText}
                     inputProps={{ minLength: min, maxLength: max }}
                     sx={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: theme.typography.fontWeightRegular,
                       lineHeight: 1.6,
                       backgroundColor: "action.hover",

@@ -151,6 +151,22 @@ const editFormValues = (detail) =>
   getDefaultAlertConfigValues(normalizeAlertDetail(detail));
 
 describe("saved alert config hydration", () => {
+  it("hydrates the webhook method and exact stored destination", () => {
+    const url = "https://receiver.example.test/alert";
+    const values = editFormValues({
+      ...savedAlert,
+      slack_webhook_url: "",
+      slack_notes: "",
+      webhook_url: url,
+    });
+    expect(values.notification).toEqual({
+      method: "webhook",
+      emails: [],
+      slack: { webhookUrl: "", notes: "" },
+      webhook: { url },
+    });
+  });
+
   it("opens the edit form on the stored alert rather than the defaults", () => {
     const values = editFormValues(savedAlert);
 
@@ -179,6 +195,7 @@ describe("saved alert config hydration", () => {
         webhookUrl: savedAlert.slack_webhook_url,
         notes: savedAlert.slack_notes,
       },
+      webhook: { url: "" },
     });
 
     expect(values.alert_frequency).not.toBe(

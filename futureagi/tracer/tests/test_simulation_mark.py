@@ -8,6 +8,7 @@ import inspect
 import itertools
 import re
 import uuid
+from collections.abc import Iterable
 from typing import Literal, get_type_hints
 
 import pytest
@@ -85,7 +86,7 @@ def test_mark_is_bounded_and_total():
             (None, "Support Bot, prod=1 ü"),
             (None, COLLECTOR),
             (None, "our_keys"),
-            (None, "traceai", "opentelemetry"),
+            (None, "traceai", "opentelemetry", "none"),
         ):
             result = _environment(
                 job_id=job_id,
@@ -311,6 +312,7 @@ def test_signature_and_written_names_match_the_contract():
         "collector_url",
         "export",
         "instrumentation",
+        "model_hosts",
     ]
     assert {parameter.kind for parameter in parameters.values()} == {
         inspect.Parameter.KEYWORD_ONLY
@@ -325,6 +327,7 @@ def test_signature_and_written_names_match_the_contract():
         "collector_url": None,
         "export": None,
         "instrumentation": None,
+        "model_hosts": (),
     }
     assert get_type_hints(customer_code_environment) == {
         "organization_id": str,
@@ -336,6 +339,7 @@ def test_signature_and_written_names_match_the_contract():
         "collector_url": str | None,
         "export": Literal["our_keys"] | None,
         "instrumentation": str | None,
+        "model_hosts": Iterable[str],
         "return": dict[str, str],
     }
 
@@ -362,3 +366,57 @@ def test_signature_and_written_names_match_the_contract():
     }
     assert RESOURCE_MARK_KEY.startswith("fi.simulation.")
     assert _attribute_keys(result)[1] == RESOURCE_MARK_KEY
+
+
+def test_an_untraced_agent_is_measured_under_names_no_agent_reads():
+    exporting = {
+        "organization_id": "o",
+        "job_id": "j",
+        "run_id": "r",
+        "run_test_id": None,
+        "test_execution_id": None,
+        "project_name": "p",
+        "collector_url": "https://c.example",
+        "instrumentation": "none",
+    }
+
+    assert customer_code_environment(export="our_keys", **exporting) == {
+        "OTEL_RESOURCE_ATTRIBUTES": f"project_name=p,{RESOURCE_MARK_KEY}=simulation,"
+        "fi.simulation.job_id=j,fi.simulation.run_id=r",
+        "FI_SIMULATION_EXPORT": "our_keys",
+        # The sandbox turns on the model SDKs' instrumentors and sends their spans here.
+        "FI_SIMULATION_INSTRUMENT": "traceai",
+        "FI_SIMULATION_TRACES_ENDPOINT": "https://c.example/v1/traces",
+    }
+    # Without the export the run is marked only, as any other run.
+    assert customer_code_environment(**exporting) == {
+        "OTEL_RESOURCE_ATTRIBUTES": f"{RESOURCE_MARK_KEY}=simulation,"
+        "fi.simulation.job_id=j,fi.simulation.run_id=r",
+    }
+
+
+def test_a_measured_agent_is_told_where_its_model_calls_go():
+    # The sandbox counts a request to one of these outside a measured SDK call as a model call
+    # it did not measure, so its call reads partial instead of a lower cost.
+    exporting = {
+        "organization_id": "o",
+        "job_id": "j",
+        "run_id": "r",
+        "run_test_id": None,
+        "test_execution_id": None,
+        "project_name": "p",
+        "collector_url": "https://c.example",
+        "export": "our_keys",
+        "model_hosts": ["Gateway.Example", "llm.example", "gateway.example", " "],
+    }
+
+    measured = customer_code_environment(instrumentation="none", **exporting)
+    assert measured["FI_SIMULATION_MODEL_HOSTS"] == "gateway.example,llm.example"
+    # A traced agent exports its own spans; the sandbox measures nothing for it.
+    for traced in ("traceai", "opentelemetry"):
+        assert "FI_SIMULATION_MODEL_HOSTS" not in customer_code_environment(
+            instrumentation=traced, **exporting
+        )
+    assert "FI_SIMULATION_MODEL_HOSTS" not in customer_code_environment(
+        instrumentation="none", **{**exporting, "model_hosts": ()}
+    )
