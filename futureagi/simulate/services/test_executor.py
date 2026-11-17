@@ -230,6 +230,12 @@ def conversation_presence_signals(
         for chat_message in call_execution.chat_messages.all().order_by("created_at"):
             role_lower = str(getattr(chat_message, "role", "") or "").lower()
             messages = getattr(chat_message, "messages", None) or []
+            # An agent turn that only called tools carries no text, but it answered.
+            if role_lower in agent_roles and any(
+                isinstance(item, dict) and item.get("tool_calls")
+                for item in getattr(chat_message, "content", None) or []
+            ):
+                has_agent_message = True
             for message in messages:
                 message_count += 1
                 text = str(message or "")

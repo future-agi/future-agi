@@ -2560,3 +2560,40 @@ def test_hosted_scenario_count_scopes_its_silent_filter_to_the_run(
     # from the call table, so the plan never scans the other runs' calls.
     assert 'FROM "simulate_call_execution"' not in silent
     assert job.id.hex in silent.replace("-", "")
+
+
+@pytest.mark.django_db
+def test_hosted_text_agent_that_only_acted_keeps_its_pass(organization, workspace):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key="hosted-tool-calls-only", modality="text"
+    )
+    digest, content = _store_transcript_artifact(
+        job,
+        [
+            {"role": "user", "content": "Please transfer me to billing."},
+            {
+                "role": "tool_calls",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "transfer_call",
+                        "arguments": {"department": "billing"},
+                    }
+                ],
+            },
+        ],
+    )
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality="text", transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert not call.call_metadata.get("processing_skipped")
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1

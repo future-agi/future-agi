@@ -1571,7 +1571,9 @@ def _store_alk_chat_messages(
     current: dict | None = None
     for seg in segments:
         role = (seg.get("speaker_role") or "").lower()
-        if not (seg.get("content") or "").strip():
+        # An agent that only acted (a transfer, an end_call) sends no text, yet it
+        # answered: its tool-call segment is a turn.
+        if not (seg.get("content") or "").strip() and not seg.get("tool_calls"):
             continue
         if role in {"user", "customer"}:
             current = {"user": seg, "agent": []}
@@ -1862,7 +1864,20 @@ def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
 _SILENT_AGENT_SKIP_REASON = SILENT_AGENT_SKIP_REASON
 
 
-def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
+def _agent_acted_in(segments: list[dict[str, Any]] | None) -> bool:
+    """Whether an agent segment carries tool calls: it answered without words."""
+    return any(
+        isinstance(segment, dict)
+        and segment.get("tool_calls")
+        and str(segment.get("speaker_role") or "").lower()
+        in {"assistant", "tool_calls"}
+        for segment in segments or ()
+    )
+
+
+def _skip_harness_evals_without_agent(
+    call_execution: CallExecution, segments: list[dict[str, Any]] | None = None
+) -> bool:
     """Withhold the harness verdicts of a call the agent never answered.
 
     Harness checks arrive already graded, so they bypass the platform's own
@@ -1876,7 +1891,8 @@ def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
     from simulate.services.test_executor import conversation_presence_signals
 
     _, has_agent_message, _ = conversation_presence_signals(call_execution)
-    if has_agent_message:
+    # Voice rows keep no tool calls, so the submitted segments count too.
+    if has_agent_message or _agent_acted_in(segments):
         # A transcript stored later (recovery, a replacing receipt) can answer a
         # call an earlier apply marked silent; drop that mark, never the executor's.
         metadata = call_execution.call_metadata
@@ -1926,9 +1942,9 @@ def _apply_harness_verdicts(
     _apply_harness_evaluation_outputs(
         call_execution,
         transcript_segments=segments,
-        localize_errors=has_agent_message,
+        localize_errors=has_agent_message or _agent_acted_in(segments),
     )
-    _skip_harness_evals_without_agent(call_execution)
+    _skip_harness_evals_without_agent(call_execution, segments)
 
 
 def _apply_harness_evaluation_outputs(

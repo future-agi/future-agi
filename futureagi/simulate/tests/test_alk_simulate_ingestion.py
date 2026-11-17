@@ -6978,6 +6978,31 @@ def _answered_transcript():
     ]
 
 
+def _tool_calls_only_transcript():
+    """The customer asks, and the agent only acts: a transfer, no words."""
+    return [
+        {
+            "speaker_role": "user",
+            "content": "Please transfer me to billing.",
+            "start_time_ms": 0,
+            "end_time_ms": 3000,
+        },
+        {
+            "speaker_role": "tool_calls",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "name": "transfer_call",
+                    "arguments": {"department": "billing"},
+                }
+            ],
+            "start_time_ms": 3500,
+            "end_time_ms": 4000,
+        },
+    ]
+
+
 def _ingest_with_harness_pass(auth_client, run_test, transcript):
     _, call_ids = _start_and_batch(auth_client, run_test)
     resp = auth_client.patch(
@@ -7040,6 +7065,37 @@ class TestSilentAgentHarnessEvals:
         assert output["status"] == "completed"
         assert not call.call_metadata.get("processing_skipped")
         assert call_outcome(call, {}) == "passed"
+
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_agent_that_only_acted_keeps_its_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _tool_calls_only_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert not call.call_metadata.get("processing_skipped")
+        assert not call.call_metadata.get("harness_verdict_withheld")
+        assert call_outcome(call, {}) == "passed"
+
+    def test_only_acted_chat_agent_turn_counts_as_an_agent_message(
+        self, auth_client, text_run_test
+    ):
+        from simulate.services.test_executor import conversation_presence_signals
+
+        call = _ingest_with_harness_pass(
+            auth_client, text_run_test, _tool_calls_only_transcript()
+        )
+
+        _, has_agent_message, has_customer_message = conversation_presence_signals(call)
+        assert (has_agent_message, has_customer_message) == (True, True)
 
     def test_call_with_no_transcript_at_all_gets_no_pass(
         self, auth_client, text_run_test
