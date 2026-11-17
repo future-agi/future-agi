@@ -1392,7 +1392,10 @@ class LiteLlmModelProvider(Enum):
 
 
 # Brand casing that title() gets wrong. Labels only; stored values are unchanged.
-_PROVIDER_DISPLAY_NAMES = {LiteLlmModelProvider.TYPESAFE.value: "TypeSafe"}
+_PROVIDER_DISPLAY_NAMES = {
+    LiteLlmModelProvider.TYPESAFE.value: "TypeSafe",
+    LiteLlmModelProvider.OPENROUTER.value: "OpenRouter",
+}
 
 
 class ProviderLogoUrls(Enum):

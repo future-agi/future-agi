@@ -383,7 +383,7 @@ const TraceTree = ({
         }}
       >
         <Box sx={{ flex: 1 }}>
-          <Typography color="text.secondary" fontSize="13px" fontWeight={600}>
+          <Typography color="text.secondary" fontSize="12px" fontWeight={600}>
             {label}
           </Typography>
         </Box>
@@ -472,7 +472,7 @@ const TraceTree = ({
                     label={
                       <Typography
                         sx={{
-                          fontSize: "13px",
+                          fontSize: "12px",
                           color: "text.primary",
                           fontWeight: 400,
                         }}

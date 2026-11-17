@@ -1,15 +1,24 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "src/utils/test-utils";
+import { render, userEvent, waitFor } from "src/utils/test-utils";
 import { screen, fireEvent, act } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerCreateNew from "./EvalPickerCreateNew";
 
-const { capturedProps, enqueueSnackbarSpy } = vi.hoisted(() => ({
-  capturedProps: { simulation: null, tracing: null, dataset: null },
-  enqueueSnackbarSpy: vi.fn(),
-}));
+const { capturedProps, enqueueSnackbarSpy, updateDraftSpy } = vi.hoisted(
+  () => ({
+    capturedProps: {
+      simulation: null,
+      tracing: null,
+      dataset: null,
+      instruction: null,
+      output: null,
+    },
+    enqueueSnackbarSpy: vi.fn(),
+    updateDraftSpy: vi.fn(async () => ({})),
+  }),
+);
 
 vi.mock("src/sections/evals/components/SimulationTestMode", () => {
   const M = React.forwardRef((props, _ref) => {
@@ -44,13 +53,20 @@ vi.mock("src/sections/evals/components/TestPlayground", () => {
   return { default: M };
 });
 
+vi.mock("src/api/evaluations/decision-models", () => ({
+  default: () => ({ data: [] }),
+  decisionModelsQueryKey: ["eval-decision-models"],
+}));
 vi.mock("src/sections/evals/components/ModelSelector", () => ({
   default: () => <div />,
   FAGI_MODEL_VALUES: new Set(),
 }));
 
 vi.mock("src/sections/evals/components/InstructionEditor", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.instruction = props;
+    return <div />;
+  },
 }));
 
 vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
@@ -62,7 +78,10 @@ vi.mock("src/sections/evals/components/CodeEvalEditor", () => ({
 }));
 
 vi.mock("src/sections/evals/components/OutputTypeConfig", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.output = props;
+    return <div />;
+  },
 }));
 
 vi.mock("src/sections/evals/components/FewShotExamples", () => ({
@@ -102,7 +121,7 @@ vi.mock("src/sections/evals/hooks/useCreateEval", () => ({
 vi.mock("src/sections/evals/hooks/useEvalDetail", () => ({
   useUpdateEval: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({})),
+    mutateAsync: updateDraftSpy,
   }),
 }));
 
@@ -120,6 +139,7 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
     ...actual,
     useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
     useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useFeatureDenied: () => false,
     useCapabilities: () => ({ data: undefined, isLoading: false }),
   };
 });
@@ -152,6 +172,55 @@ const renderWithSource = (
       <EvalPickerCreateNew onBack={() => {}} onSave={onSave} />
     </EvalPickerProvider>,
   );
+
+it("creates and attaches a decision rubric without dropping its connection or typed mapping", async () => {
+  const onSave = vi.fn();
+  const route = "decision/openrouter/openai/gpt-6-luna-decisions";
+  updateDraftSpy.mockClear();
+  renderWithSource("dataset", { onSave });
+  await screen.findByText("Draft");
+  await act(async () => {
+    capturedProps.instruction.onModelChange(route);
+    capturedProps.instruction.onModeChange("quick");
+    capturedProps.instruction.onChange("Rate the response {{input}}");
+    capturedProps.output.onOutputTypeChange("percentage");
+    capturedProps.dataset.onReadyChange(true, { input: "output" });
+  });
+  await userEvent.type(
+    screen.getByPlaceholderText("e.g. hallucination_detector"),
+    "decision_quality",
+  );
+  expect(
+    screen.getByRole("button", { name: "Save & Add Evaluation" }),
+  ).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Add level" }));
+  await userEvent.type(screen.getByLabelText("Level 0"), "Incorrect");
+  await userEvent.click(screen.getByRole("button", { name: "Add level" }));
+  await userEvent.type(screen.getByLabelText("Level 1"), "Correct");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Save & Add Evaluation" }),
+  );
+  await waitFor(() => expect(onSave).toHaveBeenCalled());
+  expect(updateDraftSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      model: route,
+      publish: true,
+      jev_mapping: expect.objectContaining({
+        question_type: "score",
+        score: { levels: ["Incorrect", "Correct"] },
+      }),
+    }),
+  );
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      model: route,
+      config: expect.objectContaining({
+        model: route,
+        jev_mapping: expect.objectContaining({ question_type: "score" }),
+      }),
+    }),
+  );
+});
 
 describe("EvalPickerCreateNew — onReadyChange wiring (TH-5013 regression)", () => {
   beforeEach(() => {

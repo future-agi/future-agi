@@ -178,7 +178,7 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
           />
           <Box sx={{ display: "flex", flexDirection: "column" }}>
             <Typography
-              fontSize={13}
+              fontSize={12}
               fontWeight={500}
               color={theme.palette.text.secondary}
             >
