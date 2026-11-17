@@ -22,6 +22,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     HarnessEnvironmentVersion,
@@ -615,6 +616,21 @@ def _discard(draft: Any, *, user: Any = None, **documents: Any) -> None:
     draft.save(update_fields=fields)
 
 
+def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
+    """The fault targets of the environment's files before this write; None when they cannot be read or the contract
+    says nothing about the door, so every scenario's faults are checked."""
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
+    from simulate.services.harness_tool_reach import door_targets
+
+    try:
+        files = edit_sides(environment)["environment"]
+        contract = json.loads(files.get("contract.json") or b"{}")
+    except (S3Error, HTTPError, HostedHarnessError, ValueError):
+        # Unreadable earlier files: every fault is checked, never one waved through.
+        return None
+    return door_targets(contract, actor_rules(files), cast_records(files))
+
+
 def record_draft(
     environment: HostedHarnessJob,
     body: bytes,
@@ -655,6 +671,7 @@ def record_draft(
         before=before
         if isinstance(before, list)
         else stage_output(environment, "scenarios"),
+        before_targets=_targets_before(environment),
     )
     hashes = {
         "environment": prepared.environment_hash,

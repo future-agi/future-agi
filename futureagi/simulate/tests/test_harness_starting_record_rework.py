@@ -104,6 +104,28 @@ def test_a_choice_the_world_cannot_hold_is_refused_and_never_sent(
     assert not _requests(environment).exists()
 
 
+def _save(storage, command, body):
+    """The builder's save of ``body`` on ``command``'s turn, as the chat lands it: its checkpoint promoted."""
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+        promote_conversation_checkpoint,
+    )
+    from simulate.tests.test_hosted_harness_conversation import (
+        _put_conversation_checkpoint,
+    )
+
+    key, digest = _put_conversation_checkpoint(command.conversation, storage, body)
+    # Saved on the environment as it stands now, as a turn that read it last does.
+    return promote_conversation_checkpoint(
+        command.conversation,
+        object_key=key,
+        digest=digest,
+        sequence=command.sequence,
+        expected_revision=environment_authoring_revision(command.conversation.job),
+        command=command,
+    )
+
+
 def _land(
     environment, user, *, starts_from, holds=True, proved_at=None, first_name="Priya"
 ):
@@ -310,6 +332,22 @@ def test_a_rework_is_proven_only_by_the_record_at_the_path_it_asked_about(
     assert rework["state"] == "refused"
 
 
+def test_two_requests_for_one_choice_that_race_are_one_rework(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    # Both read the scenario before either was queued, as two tabs or a double click do.
+    from simulate.services import harness_starting_record_rework as rework
+
+    environment = _rides(user, workspace, storage, "rework-race")
+    monkeypatch.setattr(rework, "_latest_message", lambda job, key: None)
+
+    first = _rework(auth_client, environment)
+    second = _rework(auth_client, environment)
+
+    assert (first.status_code, second.status_code) == (202, 202)
+    assert _requests(environment).count() == 1
+
+
 def test_a_second_request_waits_for_the_first(user, workspace, storage, auth_client):
     environment = _rides(user, workspace, storage, "rework-pending")
     assert _rework(auth_client, environment).status_code == 202
@@ -359,8 +397,8 @@ def test_a_rework_outside_the_caller_s_workspace_is_not_found_and_never_sent(
 
 @pytest.mark.parametrize(
     "first_name, seeded_as",
-    [("Priyanka", None), (None, None), ("Invented", "Invented")],
-    ids=["invented", "not a field", "seed row rewritten to match"],
+    [("Priyanka", None), (None, None), ("Invented", "Invented"), ("Priya", "twice")],
+    ids=["invented", "not a field", "seed row rewritten to match", "seeded twice"],
 )
 def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario(
     user, workspace, storage, auth_client, first_name, seeded_as
@@ -393,7 +431,12 @@ def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario
     # The builder may also rewrite the seeded row to match what it wrote: the record it was asked for is the one
     # captured with the request, never the seed it submits.
     store = json.loads(json.dumps(STORE))
-    if seeded_as is not None:
+    if seeded_as == "twice":
+        # A second row with the key: the record a run reads may be this one, not the one shown.
+        store["rows"]["users"].append(
+            {"rider_id": "rdr_priya", "phone": "+14155550109", "first_name": "Invented"}
+        )
+    elif seeded_as is not None:
         for row in store["rows"]["users"]:
             if row["rider_id"] == "rdr_priya":
                 row["first_name"] = seeded_as
@@ -429,7 +472,6 @@ def test_a_save_that_leaves_a_scenario_as_it_is_is_never_held_up_by_its_record(
 ):
     # A mismatch made outside the builder (here, the scenario saved with an invented name) never refuses a builder
     # save that does not change that scenario.
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.harness_starting_records import scenario_files
     from simulate.tests.test_harness_amend_archive import NAMES
     from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
@@ -456,7 +498,7 @@ def test_a_save_that_leaves_a_scenario_as_it_is_is_never_held_up_by_its_record(
         },
     )
 
-    refuse_invented(environment, unchanged, _requests(environment).get())
+    _save(storage, _requests(environment).get(), unchanged)
 
 
 @pytest.mark.parametrize(
@@ -464,13 +506,14 @@ def test_a_save_that_leaves_a_scenario_as_it_is_is_never_held_up_by_its_record(
     [
         ("rewritten", True),
         ("removed", True),
+        ("added field", True),
+        ("seeded twice", True),
         ("another row", False),
     ],
 )
 def test_a_save_that_leaves_the_scenario_as_it_is_still_keeps_the_asked_record_as_seeded(
     user, workspace, storage, auth_client, change, refused
 ):
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.harness_starting_records import scenario_files
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.tests.test_harness_amend_archive import NAMES
@@ -485,6 +528,12 @@ def test_a_save_that_leaves_the_scenario_as_it_is_still_keeps_the_asked_record_a
     if change == "rewritten":
         next(one for one in users if one["rider_id"] == "rdr_priya")["first_name"] = (
             "Priyanka"
+        )
+    elif change == "added field":
+        next(one for one in users if one["rider_id"] == "rdr_priya")["vip"] = True
+    elif change == "seeded twice":
+        users.append(
+            {"rider_id": "rdr_priya", "phone": "+14155550109", "first_name": "Invented"}
         )
     elif change == "removed":
         store["rows"]["users"] = [
@@ -507,10 +556,10 @@ def test_a_save_that_leaves_the_scenario_as_it_is_still_keeps_the_asked_record_a
 
     command = _requests(environment).get()
     if not refused:
-        refuse_invented(environment, body, command)
+        _save(storage, command, body)
         return
     with pytest.raises(HostedHarnessError) as error:
-        refuse_invented(environment, body, command)
+        _save(storage, command, body)
     assert error.value.code == "starting_record_not_as_seeded"
     assert "users rdr_priya" in error.value.message
 
@@ -518,7 +567,6 @@ def test_a_save_that_leaves_the_scenario_as_it_is_still_keeps_the_asked_record_a
 def test_a_save_that_changes_the_scenario_without_starting_it_from_the_asked_record_is_refused(
     user, workspace, storage, auth_client
 ):
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.tests.test_harness_amend_archive import NAMES
     from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
@@ -541,7 +589,7 @@ def test_a_save_that_changes_the_scenario_without_starting_it_from_the_asked_rec
     )
 
     with pytest.raises(HostedHarnessError) as error:
-        refuse_invented(environment, body, _requests(environment).get())
+        _save(storage, _requests(environment).get(), body)
     assert error.value.code == "starting_record_not_as_seeded"
     assert "users rdr_priya" in error.value.message
 
@@ -549,7 +597,6 @@ def test_a_save_that_changes_the_scenario_without_starting_it_from_the_asked_rec
 def test_a_rework_s_save_that_drops_its_scenario_is_refused(
     user, workspace, storage, auth_client
 ):
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.tests.test_harness_amend_archive import NAMES
     from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
@@ -574,7 +621,7 @@ def test_a_rework_s_save_that_drops_its_scenario_is_refused(
     )
 
     with pytest.raises(HostedHarnessError) as error:
-        refuse_invented(environment, body, _requests(environment).get())
+        _save(storage, _requests(environment).get(), body)
     assert error.value.code == "starting_record_not_as_seeded"
 
 
@@ -598,7 +645,6 @@ def test_only_the_rework_s_own_turn_is_held_to_the_asked_record(
 ):
     # After the rework, an ordinary chat edit may start the scenario from another record and change that row; the
     # person's answer to the rework's own question is still the rework's turn.
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.tests.test_harness_amend_archive import NAMES
     from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
@@ -630,17 +676,16 @@ def test_only_the_rework_s_own_turn_is_held_to_the_asked_record(
     )
 
     if not refused:
-        refuse_invented(environment, body, command)
+        _save(storage, command, body)
         return
     with pytest.raises(HostedHarnessError) as error:
-        refuse_invented(environment, body, command)
+        _save(storage, command, body)
     assert error.value.code == "starting_record_not_as_seeded"
 
 
 def test_a_request_filed_without_the_record_s_fields_holds_the_row_as_seeded_before_the_save(
     user, workspace, storage, auth_client
 ):
-    from simulate.services.harness_starting_record_rework import refuse_invented
     from simulate.services.harness_starting_records import scenario_files
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.tests.test_harness_amend_archive import NAMES
@@ -670,7 +715,7 @@ def test_a_request_filed_without_the_record_s_fields_holds_the_row_as_seeded_bef
     )
 
     with pytest.raises(HostedHarnessError) as error:
-        refuse_invented(environment, body, rework)
+        _save(storage, rework, body)
     assert "first_name Priya" in error.value.message
 
 

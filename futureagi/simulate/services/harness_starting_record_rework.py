@@ -4,8 +4,8 @@ turn writes the scenario, into the unsaved changes; nothing here does."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -32,6 +32,7 @@ from simulate.services.harness_starting_records import (
     scenario_records,
     scenario_token,
     seeded_row,
+    seeded_rows,
 )
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import PROOF_CLOCK_SKEW
@@ -242,11 +243,27 @@ def _at_asked_path(record: StartingRecord, wanted: Mapping[str, object]) -> bool
 def _changed_field(
     named: str, row: Mapping[str, JsonValue], submitted: Mapping[str, JsonValue]
 ) -> str | None:
-    """The first field of the record as asked for that the save seeds with another value, or drops."""
+    """The first field of the record as asked for that the save seeds with another value or drops, or one it adds."""
     for name, value in row.items():
         if name not in submitted or not _same(submitted[name], value):
             changed = submitted.get(name, "removed")
             return f"{named} is seeded with {name} {value}, but the save changes it to {changed}; a rework keeps it."
+    added = sorted(set(submitted) - set(row))
+    if added:
+        return f"{named} is seeded without {added[0]}, but the save adds it; a rework keeps the record as seeded."
+    return None
+
+
+def _seeded_twice(files: ScenarioFiles, wanted: Mapping[str, object]) -> str | None:
+    """Why the save's world holds the asked record's key more than once: a run reads one of them, not the one shown."""
+    rows = seeded_rows(
+        files,
+        table=str(wanted["table"]),
+        key_field=str(wanted.get("key_field") or ""),
+        key=str(wanted["key"]),
+    )
+    if len(rows) > 1:
+        return f"{wanted['table']} {wanted['key']} is seeded more than once; a rework keeps one record per key."
     return None
 
 
@@ -254,12 +271,16 @@ def _seed_not_as_asked(
     files: ScenarioFiles, before: ScenarioFiles, wanted: Mapping[str, object]
 ) -> str | None:
     """Why a save that leaves the scenario as it is still changes the record its rework asked for: that record's
-    seeded row, rewritten or removed by this save. None when the save leaves that row as it was."""
+    seeded row, rewritten, removed or seeded again by this save. None when the save leaves that row as it was."""
     lookup = {
         "table": str(wanted["table"]),
         "key_field": str(wanted.get("key_field") or ""),
         "key": str(wanted["key"]),
     }
+    # A second row with the key is what a run may read, though the first one is unchanged.
+    twice = _seeded_twice(files, wanted)
+    if twice:
+        return twice
     row, _ = seeded_row(files, **lookup)
     if row == seeded_row(before, **lookup)[0]:
         return None
@@ -299,7 +320,7 @@ def _not_as_seeded(
     submitted = record["fields"] if record["status"] == "seeded" else None
     if submitted is None:
         return f"{named} is no longer seeded, so the scenario cannot start from it as seeded."
-    changed = _changed_field(named, row, submitted)
+    changed = _seeded_twice(files, wanted) or _changed_field(named, row, submitted)
     if changed:
         return changed
     block: JsonValue = files.document.get("fixture")
@@ -636,7 +657,15 @@ def file_rework(
             "this exact value, kept beside its key in the fixture; never change the record in the setup. If the "
             "scenario cannot hold with this record as seeded, change nothing and say which value rules it out."
         ),
-        client_request_id=f"starting-record-{uuid.uuid4().hex}",
+        # The same choice on the same scenario, after the same earlier request, is one request: a second click or a
+        # second tab that read the scenario before the first was queued gets the first, never a second rework.
+        client_request_id="starting-record-"
+        + hashlib.sha256(
+            json.dumps(
+                [own_key, path, table, key, str(earlier.id) if earlier else ""],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()[:40],
         server_payload={
             "_origin": REWORK_ORIGIN,
             "_author_id": author_id,

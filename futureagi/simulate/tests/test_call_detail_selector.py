@@ -280,6 +280,24 @@ def test_commits_with_no_record_change_say_the_agent_keeps_its_records_outside_t
 
     assert [one["code"] for one in outside["notices"]] == ["changed_outside_world"]
     assert changed["notices"] == [] and nothing["notices"] == []
+    # A worker's committed write with no record changed says so too, never a bare "No record changed".
+    by_worker = trial_state(
+        _call(
+            {
+                "state_changes": [
+                    {**committed, "committed": 0},
+                    {
+                        "who": "worker:refunds",
+                        "name": "Refunds worker",
+                        "committed": 1,
+                        "committed_actions": ["issue_refund"],
+                    },
+                ],
+                "records": {"changes": []},
+            }
+        )
+    )
+    assert [one["code"] for one in by_worker["notices"]] == ["changed_outside_world"]
 
 
 def test_the_agent_s_participant_heading_reads_as_a_heading_and_an_actor_keeps_its_own_name():

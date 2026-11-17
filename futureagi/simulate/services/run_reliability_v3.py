@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 from django.db.models import Q, QuerySet, TextField, Value
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
-from django.db.models.lookups import Exact
+from django.db.models.lookups import In
 
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_results_v3 import OUTCOME_LABELS
@@ -18,16 +18,17 @@ from simulate.services.run_results_v3 import OUTCOME_LABELS
 # Fewer scenarios than this give a range too wide to act on; show counts only.
 MIN_INTERVAL_SCENARIOS = 10
 _Z = 1.96
-# A trial that did not start from the seeded records says nothing about whether its scenario repeats.
-# Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would drop it as NULL.
+# A trial that did not start from the seeded records, or whose start could not be read, says nothing about whether
+# its scenario repeats. Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would
+# drop it as NULL.
 NOT_COMPARABLE = Q(
-    Exact(
+    In(
         Coalesce(
             KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"),
             Value(""),
             output_field=TextField(),
         ),
-        "differs",
+        ["differs", "unknown"],
     )
 )
 

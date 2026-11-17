@@ -501,11 +501,18 @@ class Comparability(TypedDict):
 
 
 def comparability(call: CallExecution) -> Comparability:
-    """A trial is not comparable when its recorded start differs from the seeded records; the reason names the
-    tables. A trial with no recorded start, or one that started clean, is comparable."""
+    """A trial is not comparable when its recorded start differs from the seeded records, the reason naming the
+    tables, or when whether it did could not be read. A trial with no recorded start, or one that started clean, is
+    comparable."""
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     state = metadata.get(TRIAL_STATE_KEY)
     start = state.get("start") if isinstance(state, dict) else None
+    if isinstance(start, dict) and start.get("state") == "unknown":
+        return {
+            "comparable": False,
+            "not_comparable_reason": "Whether it started from the seeded records could not be read, so it is left "
+            "out of repeatability and run comparisons.",
+        }
     if not (isinstance(start, dict) and start.get("state") == "differs"):
         return {"comparable": True, "not_comparable_reason": None}
     tables = (
@@ -531,26 +538,22 @@ def _start_notice(start: object) -> TrialNotice | None:
 def _outside_world_notice(
     state: Mapping[str, Any], unreadable: bool
 ) -> TrialNotice | None:
-    """The agent committed changes, yet no record of the test world changed: its tools keep their records in the
-    agent's own process, which the test world cannot read."""
+    """A participant (the agent, one of its workers or an actor) committed changes, yet no record of the test world
+    changed: the tools keep their records in the agent's own process, which the test world cannot read."""
     records = state.get("records")
     if not isinstance(records, dict) or unreadable or records.get("changes"):
         return None
-    agent = next(
-        (
-            one
-            for one in state.get("state_changes") or []
-            if isinstance(one, dict) and one.get("who") == AGENT
-        ),
-        None,
+    committed = any(
+        isinstance(one, dict) and one.get("committed")
+        for one in state.get("state_changes") or []
     )
-    if not agent or not agent.get("committed"):
+    if not committed:
         return None
     return {
         "code": "changed_outside_world",
         "message": (
-            "The agent's committed calls changed records its own process keeps, outside the test world's database, "
-            "so no record change shows below."
+            "Committed calls changed records the agent's own process keeps, outside the test world's database, so "
+            "no record change shows below."
         ),
     }
 

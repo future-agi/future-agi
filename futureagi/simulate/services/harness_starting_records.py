@@ -129,6 +129,8 @@ class _Table(Protocol):
 
     def lookup(self, key_field: str, key: Key) -> Row | None: ...
 
+    def matching(self, key_field: str, key: Key, limit: int) -> list[Row]: ...
+
     def others(self, key_field: str, key: Key, limit: int) -> list[Row]: ...
 
 
@@ -162,6 +164,10 @@ class _StoreTable:
     def lookup(self, key_field: str, key: Key) -> Row | None:
         return next((row for row in self.rows if _same(row.get(key_field), key)), None)
 
+    def matching(self, key_field: str, key: Key, limit: int) -> list[Row]:
+        rows = (row for row in self.rows if _same(row.get(key_field), key))
+        return [row for _, row in zip(range(limit), rows, strict=False)]
+
     def others(self, key_field: str, key: Key, limit: int) -> list[Row]:
         rows = (
             row
@@ -191,6 +197,17 @@ class _SqliteTable:
             (key,),
         ).fetchone()
         return _row(found) if found else None
+
+    def matching(self, key_field: str, key: Key, limit: int) -> list[Row]:
+        if key_field not in self.fields:
+            return []
+        return [
+            _row(found)
+            for found in self.connection.execute(
+                f"select * from {_quoted(self.name)} where {_quoted(key_field)} = ? limit ?",
+                (key, limit),
+            )
+        ]
 
     def others(self, key_field: str, key: Key, limit: int) -> list[Row]:
         if key_field not in self.fields:
@@ -559,6 +576,19 @@ def seeded_row(
         return held.lookup(key_field, key) if held is not None else None
 
     return _with_tables(files.environment, find)
+
+
+def seeded_rows(
+    files: ScenarioFiles, *, table: str, key_field: str, key: str, limit: int = 2
+) -> list[Row]:
+    """Up to ``limit`` seeded rows of ``table`` with that key: more than one means the world holds the key twice, and
+    which of them a run reads is not the one the platform shows."""
+
+    def find(tables: list[_Table]) -> list[Row]:
+        held = next((one for one in tables if one.name == table), None)
+        return held.matching(key_field, key, limit) if held is not None else []
+
+    return _with_tables(files.environment, find)[0] or []
 
 
 def archive_scenario_files(archive: bytes, scenario_key: str) -> ScenarioFiles | None:

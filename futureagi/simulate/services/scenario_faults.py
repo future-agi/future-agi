@@ -507,17 +507,35 @@ def _faults_by_scenario(scenarios: object) -> dict[str, object]:
     }
 
 
+def _same_targets(
+    faults: object, before: list[FaultTarget] | None, now: list[FaultTarget] | None
+) -> bool:
+    """Whether every tool these faults name is the same target before and after the write: still in the contract,
+    as reachable, with the same modes. Unknown before is never the same."""
+    if before is None:
+        return now is None
+    if now is None:
+        return False
+    for fault in faults if isinstance(faults, list) else []:
+        action = str(fault.get("action") or "") if isinstance(fault, dict) else ""
+        if target_of(action, before) != target_of(action, now):
+            return False
+    return True
+
+
 def require_valid_faults(
     scenarios: object,
     *,
     targets: list[FaultTarget] | None,
     cast: Sequence[ActorRecord],
     before: object = None,
+    before_targets: list[FaultTarget] | None = None,
 ) -> None:
-    """Refuse a fault the test world cannot apply, checking only scenarios whose faults changed from ``before``; an
-    approval no actor of the scenario may record is refused whatever changed, since dropping the approver from the
-    scenario or the cast leaves a fault that refuses every write. ``cast`` is the environment's actors, who alone can
-    record an approval.
+    """Refuse a fault the test world cannot apply, checking only scenarios whose faults changed from ``before`` or whose
+    faults' tools changed from ``before_targets`` (the targets the environment had before this write; None when they
+    could not be read, which checks every scenario). An approval no actor of the scenario may record is refused
+    whatever changed, since dropping the approver from the scenario or the cast leaves a fault that refuses every
+    write. ``cast`` is the environment's actors, who alone can record an approval.
 
     Raises ``HostedHarnessError`` ``fault_invalid`` (422)."""
     kept = _faults_by_scenario(before) if isinstance(before, list) else {}
@@ -526,7 +544,11 @@ def require_valid_faults(
         if not isinstance(scenario, dict) or not scenario.get("faults"):
             continue
         key = scenario_key(scenario)
-        unchanged = key in kept and kept[key] == scenario.get("faults")
+        unchanged = (
+            key in kept
+            and kept[key] == scenario.get("faults")
+            and _same_targets(scenario.get("faults"), before_targets, targets)
+        )
         name = str(scenario.get("name") or scenario.get("scenario_key") or "a scenario")
         found.extend(
             {

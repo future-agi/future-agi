@@ -440,7 +440,7 @@ describe("WorldActorsPanel", () => {
     refetch.mockReset();
     editState = { isPending: false, error: null };
     actorsData = cast([MANAGER]);
-    actorsState = { isLoading: false, isError: false };
+    actorsState = { isPending: false, isError: false };
     viewState = null;
     answer = CLEAN;
     asked = undefined;
@@ -448,7 +448,7 @@ describe("WorldActorsPanel", () => {
 
   it("shows a skeleton while loading, with no count and nothing to add yet", () => {
     actorsData = undefined;
-    actorsState = { isLoading: true, isError: false };
+    actorsState = { isPending: true, isError: false };
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading the actors…");
     expect(screen.queryByRole("progressbar")).toBeNull();
@@ -472,7 +472,7 @@ describe("WorldActorsPanel", () => {
 
   it("says the actors could not be loaded, offers a retry and nothing to add", () => {
     actorsData = undefined;
-    actorsState = { isLoading: false, isError: true };
+    actorsState = { isPending: false, isError: true };
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Couldn't load the actors")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -481,7 +481,7 @@ describe("WorldActorsPanel", () => {
   });
 
   it("keeps a cast already read when a refresh fails", () => {
-    actorsState = { isLoading: false, isError: true };
+    actorsState = { isPending: false, isError: true };
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText("Add actor")).toBeInTheDocument();
