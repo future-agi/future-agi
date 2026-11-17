@@ -79,9 +79,7 @@ def resume(auth_client, task, *, start=None):
 
 
 def details(auth_client, task):
-    response = auth_client.get(
-        f"/tracer/eval-task/get_eval_details/?eval_id={task.pk}"
-    )
+    response = auth_client.get(f"/tracer/eval-task/get_eval_details/?eval_id={task.pk}")
     assert response.status_code == 200, response.content
     return response.json()["result"]
 

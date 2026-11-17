@@ -278,9 +278,7 @@ def test_pending_instant_eval_is_not_eligible_for_saved_task_start(
         created = _start(auth_client, observe_project, [yes_no], sample_size=10)
     assert created.status_code == 200, created.content
     assert len(callbacks) == 1
-    task = EvalTask.objects.using("default").get(
-        pk=created.json()["result"]["task_id"]
-    )
+    task = EvalTask.objects.using("default").get(pk=created.json()["result"]["task_id"])
     assert InstantEvalRun.objects.using("default").filter(eval_task=task).exists()
     assert task.status == EvalTaskStatus.PENDING
     assert task.last_run is not None
@@ -291,9 +289,7 @@ def test_pending_instant_eval_is_not_eligible_for_saved_task_start(
     assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
     before = EvalTask.all_objects.using("default").filter(pk=task.pk).values().get()
 
-    details = auth_client.get(
-        f"/tracer/eval-task/get_eval_details/?eval_id={task.pk}"
-    )
+    details = auth_client.get(f"/tracer/eval-task/get_eval_details/?eval_id={task.pk}")
     response = auth_client.post(
         f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}",
         {} if start_only is None else {"start": start_only},

@@ -162,7 +162,9 @@ describe("generated task-details contract", () => {
 
   it("rejects an invalid start-only discriminator", () => {
     const body = { start: "not-a-boolean" };
-    expect(TracerEvalTaskUnpauseEvalTaskBody.safeParse(body).success).toBe(false);
+    expect(TracerEvalTaskUnpauseEvalTaskBody.safeParse(body).success).toBe(
+      false,
+    );
     expect(
       validateContractedRequestConfig({
         url: `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
