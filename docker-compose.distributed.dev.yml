@@ -99,6 +99,11 @@ services:
       dockerfile: Dockerfile.sandbox
     image: futureagi/alk-harness-sandbox:dev
     pull_policy: never
+    # On stop the sandbox stops each running job's worker and runs its `docker compose down`,
+    # waiting up to 170 s. Docker would kill it after 10 s, leaving the job's containers,
+    # network and volumes behind; an init passes its stop signal on to the server.
+    init: true
+    stop_grace_period: 180s
     env_file:
       - path: ${ALK_HARNESS_ENV_FILE:-../alk-pr58/.env.acceptance}
         required: false
