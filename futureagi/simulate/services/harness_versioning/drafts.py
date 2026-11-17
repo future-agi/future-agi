@@ -595,7 +595,12 @@ def _prepared(environment: HostedHarnessJob, files: Mapping[str, bytes]):
         )
     pair_body = archives.pack_archive(archives.compose(split.environment, split.suite))
     prepared = prepare_pieces(
-        environment, split, outputs=_stage_outputs(pair_body), authoring_revision=""
+        environment,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision="",
+        # A bundle the chat sealed from this tree runs the contract it sealed.
+        built=SEALED_MANIFEST in split.sealed and _stamped(split),
     )
     # A draft stands for no authoring revision until it is saved.
     prepared.environment_documents["authoring_revisions"] = []

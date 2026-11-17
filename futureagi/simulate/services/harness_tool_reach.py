@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 import structlog
 
 from simulate.models import HostedHarnessJob
-from simulate.selectors.environment_documents import contract_data
+from simulate.selectors.environment_documents import version_contract
 from simulate.selectors.stage_outputs import stage_output
 from simulate.services.harness_actor_rules import (
     ActorRecord,
@@ -184,7 +184,10 @@ def blocked_tools(
 ) -> list[BlockedTool]:
     """Each production-only tool of the run's environment version, with the scenarios that need it."""
     documents = _version_documents(environment, pins)
-    contract = documents.get("contract") or contract_data(environment)
+    # The run's version's contract, the one its bundle is sealed with; a run with no pin runs the default version.
+    contract = version_contract(
+        environment, pins.environment_version if pins is not None else None
+    )
     blocked = production_only(contract)
     if not blocked:
         return []

@@ -14,6 +14,16 @@ def contract_data(job: HostedHarnessJob) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def version_contract(job: HostedHarnessJob, version: Any = None) -> dict[str, Any]:
+    """The contract of an environment version: ``version``'s, else the environment's default version's. The
+    authoring snapshot only before the environment has a version, or for one that recorded no contract.
+
+    Reads the default version's row when it is not already loaded."""
+    version = version if version is not None else job.environment_version
+    contract = (getattr(version, "documents", None) or {}).get("contract")
+    return contract if isinstance(contract, dict) and contract else contract_data(job)
+
+
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
     """One authoring snapshot from the prefetch, else the row's live copy; never issues a query."""
     for output in getattr(job, "row_outputs", None) or []:

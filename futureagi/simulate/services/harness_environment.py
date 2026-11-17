@@ -50,6 +50,7 @@ from simulate.selectors.environment_documents import (
     contract_data,
     registration_key,
     row_stage_output,
+    version_contract,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.selectors.stage_outputs import stage_output
@@ -434,7 +435,11 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
     caller can tell "not built yet" from "built with nothing in it". Nothing is
     computed that ALK did not write; the contract is passed through whole.
     """
-    contract = contract_data(job)
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    # The working copy's contract: an open draft's, else the default version's (the one runs use), as a build sealed
+    # it.
+    contract = version_contract(job, fresh_draft(job, "environment"))
     environment = stage_output(job, "environment")
     scenario_docs = stage_output(job, "scenarios")
     catalogue = stage_output(job, "sub_goals")
