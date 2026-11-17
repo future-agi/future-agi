@@ -1151,32 +1151,18 @@ func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContex
 // Rebuild per attempt from trusted translator notes, never from headers or
 // arbitrary metadata. A nil writer supports async/scheduled request logs;
 // their admission response precedes execution and cannot report future drops.
+// The attempt's own notes are kept on rc.ResponsesRouteDrops, which the
+// response cache stores with the response.
 func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, extra []string) {
-	var drops []string
-	seen := make(map[string]bool)
-	for _, group := range [][]string{rc.TranslationDrops, extra} {
-		for _, drop := range group {
-			if drop != "" && !seen[drop] {
-				seen[drop] = true
-				drops = append(drops, drop)
-			}
-		}
-	}
-	if len(drops) == 0 {
-		delete(rc.Metadata, "translation_drops")
-		if w != nil {
-			w.Header().Del("x-agentcc-translation-drops")
-		}
+	joined := rc.SetResponsesRouteDrops(extra)
+	if w == nil {
 		return
 	}
-	if rc.Metadata == nil {
-		rc.Metadata = make(map[string]string)
+	if joined == "" {
+		w.Header().Del("x-agentcc-translation-drops")
+		return
 	}
-	joined := strings.Join(drops, ",")
-	rc.Metadata["translation_drops"] = joined
-	if w != nil {
-		w.Header().Set("x-agentcc-translation-drops", joined)
-	}
+	w.Header().Set("x-agentcc-translation-drops", joined)
 }
 
 // responsesRouteDrops names what provider's Responses route will omit;

@@ -2141,6 +2141,14 @@ func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *model
 	} else if rc.Flags.CacheHit {
 		w.Header().Set("x-agentcc-cache", "hit")
 	}
+	// A cache hit makes no provider attempt, so nothing above set the notes
+	// header. Report the notes the cache restored with the cached response;
+	// callers cannot write translation_drops metadata (see the denylist).
+	if rc.Flags.CacheHit {
+		if drops := rc.Metadata["translation_drops"]; drops != "" {
+			w.Header().Set("x-agentcc-translation-drops", drops)
+		}
+	}
 	if rc.Flags.GuardrailTriggered {
 		w.Header().Set("x-agentcc-guardrail-triggered", "true")
 	}
