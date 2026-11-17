@@ -75,30 +75,51 @@ def _reached_as_built(
     agent_version_id: Any,
     suite_version_id: Any,
 ) -> dict[str, Any]:
-    """A version's recorded contract, reaching its tools as the version it was made from runs them.
+    """A version's recorded contract, reaching each tool as the version it was made from runs it.
 
-    How tools are reached is a build's fact: a build can serve a tool the author's contract imports. An edit made
-    on the author's contract (a rule, a description) records that contract again, so a version no build sealed
-    reaches its tools as its base runs them, unless the edit changed how they are reached."""
+    How a tool is reached is a build's fact: a build can serve a tool the author's contract imports. An edit made on
+    the author's contract (a rule, a description, one more tool) records that contract again, so in a version no
+    build sealed, each tool whose authored entry the edit left alone is reached as its base runs it; a tool the edit
+    added or changed keeps its own entry, and one it removed is gone. Only ``tool_entrypoints`` are carried."""
     documents = version.documents or {}
     parent_id = getattr(version, "parent_id", None)
-    if "run_contract" in documents or parent_id is None:
+    entries = recorded.get("tool_entrypoints")
+    if (
+        "run_contract" in documents
+        or parent_id is None
+        or not isinstance(entries, list)
+    ):
         return recorded
     parent = type(version)._base_manager.filter(id=parent_id).first()
-    authored = (getattr(parent, "documents", None) or {}).get("contract")
-    if not isinstance(authored, dict) or authored.get(
-        "tool_entrypoints"
-    ) != recorded.get("tool_entrypoints"):
+    authored = _by_tool((getattr(parent, "documents", None) or {}).get("contract"))
+    if not authored:
         return recorded
-    base = version_contract(
-        job,
-        parent,
-        agent_version_id=agent_version_id,
-        suite_version_id=suite_version_id,
+    built = _by_tool(
+        version_contract(
+            job,
+            parent,
+            agent_version_id=agent_version_id,
+            suite_version_id=suite_version_id,
+        )
     )
-    if "tool_entrypoints" not in base:
-        return recorded
-    return {**recorded, "tool_entrypoints": base["tool_entrypoints"]}
+    reached = [
+        built[tool]
+        if isinstance(one, dict)
+        and (tool := one.get("tool")) in built
+        and authored.get(tool) == one
+        else one
+        for one in entries
+    ]
+    return {**recorded, "tool_entrypoints": reached}
+
+
+def _by_tool(contract: Any) -> dict[Any, dict[str, Any]]:
+    """A contract's tool entries by the tool each is for."""
+    entries = contract.get("tool_entrypoints") if isinstance(contract, dict) else None
+    listed = entries if isinstance(entries, list) else []
+    return {
+        one["tool"]: one for one in listed if isinstance(one, dict) and one.get("tool")
+    }
 
 
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
