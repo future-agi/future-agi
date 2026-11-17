@@ -348,7 +348,7 @@ def test_preflight_does_not_dispatch_a_livekit_agent_built_from_source(
     probe_agent.assert_not_called()
 
 
-# TH-9519: LiveKit's ElevenLabs plugin reads ELEVEN_API_KEY, while the agent-learning-kit used to
+# LiveKit's ElevenLabs plugin reads ELEVEN_API_KEY, while the agent-learning-kit used to
 # ask for ELEVENLABS_API_KEY. Either name is checked; when both are supplied, each is.
 
 
@@ -394,6 +394,12 @@ def test_the_elevenlabs_probe_waits_for_a_key():
         ((200, 200), True, "ElevenLabs accepted ELEVEN_API_KEY and ELEVENLABS_API_KEY"),
         ((200, 401), False, "ElevenLabs rejected ELEVENLABS_API_KEY (HTTP 401)"),
         ((401, 200), False, "ElevenLabs rejected ELEVEN_API_KEY (HTTP 401)"),
+        (
+            (401, 401),
+            False,
+            "ElevenLabs rejected ELEVEN_API_KEY (HTTP 401); "
+            "ElevenLabs rejected ELEVENLABS_API_KEY (HTTP 401)",
+        ),
     ],
 )
 @patch("simulate.services.harness_credential_probes.requests.request")
@@ -413,3 +419,29 @@ def test_the_elevenlabs_probe_checks_each_name_supplied(request, statuses, ok, m
         {"xi-api-key": "eleven-key"},
         {"xi-api-key": "labs-key"},
     ]
+    if not ok:
+        # Every rejected name is named, so the form points at each row to fix.
+        rejected = tuple(
+            name
+            for name, status in zip(("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"), statuses, strict=True)
+            if status != 200
+        )
+        assert result.aliases == rejected
+
+
+@pytest.mark.parametrize("status, ok", [(200, True), (401, False)])
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_the_same_elevenlabs_key_under_both_names_is_checked_once(request, status, ok):
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.return_value = Mock(status_code=status)
+
+    [result] = [
+        result
+        for result in probe_all({"ELEVEN_API_KEY": "one-key", "ELEVENLABS_API_KEY": "one-key"})
+        if result.provider == "elevenlabs"
+    ]
+
+    assert request.call_count == 1
+    assert result.ok is ok
+    assert result.aliases == ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY")

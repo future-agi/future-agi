@@ -212,18 +212,31 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     """Exercise one provider's credentials. Callers pass only providers that ``applies``.
-    For an any-alias provider given several of its names, each is checked, since an agent may
-    read any of them; the first rejected one is the answer."""
+    For an any-alias provider given several of its names, each distinct value is checked once,
+    since an agent may read any of them; a failure names every rejected name."""
     spec = PROVIDER_PROBES[provider]
     if spec.any_alias:
         present = tuple(
             alias for alias in spec.aliases if str(values.get(alias) or "").strip()
         )
         if len(present) > 1:
-            results = [_probe_once(provider, spec, {alias: values[alias]}) for alias in present]
-            failed = next((result for result in results if not result.ok), None)
-            if failed is not None:
-                return failed
+            by_value: dict[str, list[str]] = {}
+            for alias in present:
+                by_value.setdefault(str(values[alias]).strip(), []).append(alias)
+            failed = []
+            for names in by_value.values():
+                result = _probe_once(provider, spec, {names[0]: values[names[0]]})
+                if not result.ok:
+                    failed.append((names, result))
+            if failed:
+                rejected = {name for names, _ in failed for name in names}
+                return ProbeResult(
+                    provider,
+                    spec.label,
+                    tuple(alias for alias in present if alias in rejected),
+                    False,
+                    "; ".join(result.message for _, result in failed),
+                )
             return ProbeResult(
                 provider, spec.label, present, True,
                 f"{spec.label} accepted {' and '.join(present)}",
