@@ -6,20 +6,39 @@ import ModalWrapper from 'src/components/ModalWrapper/ModalWrapper';
 import { ConfirmDialog } from 'src/components/custom-dialog';
 import { buildFileTree, hasControlCharacters } from '../utils/paths';
 import { LIMITS } from '../constants';
+import { OTHER_FILES, OTHER_FILES_NOTE } from '../utils/terms';
 import FileStatusBadge from './FileStatusBadge';
 import './skillIcons';
 
 const DEFAULT_PINNED = ['SKILL.md'];
-// Files the platform adds so apps load the right versions. Their paths stay listed under this group.
-const OTHER_FILES_NOTE = 'Added by Future AGI so apps load the right versions.';
+// Files the platform adds so apps load the right versions are grouped under
+// "Other files" (OTHER_FILES_NOTE explains the group); their paths stay listed
+// inside it. Files that carry an origin (the read view) are grouped by origin.
+// Files without one (the draft editor) are grouped only for `generatedFolders`,
+// so owned and linked files keep their places (UXF-16).
 // The platform's context descriptor reads as settings, not as a file to edit. Its path stays in the title and the description.
 // Generated folders start closed unless the caller says which folders to close (collapsedFolders), as the draft editor does.
 const CONTEXT_SETTINGS_LABEL = 'Context settings (generated)';
 const plainPath = (path) => path.replace(/^group:[a-z]+\//, '');
+const originKind = (file) => (['linked', 'generated'].includes(file.origin?.kind) ? file.origin.kind : 'owned');
+const inFolder = (path, folder) => {
+  const name = folder.replace(/\/$/, '');
+  return path === name || path.startsWith(`${name}/`);
+};
 
 export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [], collapsedFolders }) {
   const noteId = useId();
-  const [collapsed, setCollapsed] = useState(() => new Set([...(collapsedFolders ?? generatedFolders), 'group:linked', 'group:generated']));
+  // Read view: every file carries its origin. Draft editor: no origin, so the
+  // generated folders alone form the "Other files" group.
+  const byOrigin = files.some((file) => file.origin?.kind);
+  const isGenerated = (file) => generatedFolders.some((folder) => inFolder(file.path, folder));
+  const generatedOnly = !byOrigin && files.some(isGenerated);
+  // Stable across renders when callers pass a new array with the same folders.
+  const generatedKey = generatedFolders.join('\u0000');
+  // A caller that names the folders to close keeps the generated group open
+  // unless it names a generated folder (the editor keeps its settings visible).
+  const closeGenerated = !collapsedFolders || generatedFolders.some((folder) => collapsedFolders.includes(folder));
+  const [collapsed, setCollapsed] = useState(() => new Set([...(collapsedFolders ?? generatedFolders), 'group:linked', ...(closeGenerated ? ['group:generated'] : [])]));
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pathInput, setPathInput] = useState('');
@@ -34,25 +53,36 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
         const kind = files.find((file) => file.path === selectedPath)?.origin?.kind;
         const group = `group:${['linked', 'generated'].includes(kind) ? kind : 'owned'}`;
         ancestors.push(...ancestors.map((path) => `${group}/${path}`), group);
+      } else if (selectedPath && generatedFolders.some((folder) => inFolder(selectedPath, folder))) {
+        ancestors.push(...ancestors.map((path) => `group:generated/${path}`), 'group:generated');
       }
       if (!ancestors.some((path) => previous.has(path))) return previous;
       return new Set([...previous].filter((path) => !ancestors.includes(path)));
     });
-  }, [selectedPath, files]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- generatedKey stands for generatedFolders.
+  }, [selectedPath, files, generatedKey]);
   const rows = useMemo(() => {
-    const grouped = files.some((file) => file.origin?.kind);
-    const groupTree = (kind, name) => {
+    const groupTree = (kind, name, items) => {
       const groupPath = `group:${kind}`;
       const prefixFolders = (nodes) => nodes.map((node) => node.children ? { ...node, path: `${groupPath}/${node.path}`, children: prefixFolders(node.children) } : node);
-      const items = files.filter((file) => (['linked', 'generated'].includes(file.origin?.kind) ? file.origin.kind : 'owned') === kind);
       return { name, path: groupPath, type: 'folder', children: prefixFolders(buildFileTree(items)) };
     };
-    const tree = grouped ? [['owned', 'Instructions'], ['linked', 'Linked skills'], ['generated', 'Other files']].map(([kind, name]) => groupTree(kind, name)).filter((group) => group.children.length) : buildFileTree(files);
-    tree.sort((a, b) => {
+    const pinnedFirst = (nodes) => nodes.sort((a, b) => {
       const ai = pinned.indexOf(a.path);
       const bi = pinned.indexOf(b.path);
       return (ai < 0 ? Infinity : ai) - (bi < 0 ? Infinity : bi) || 0;
     });
+    let tree;
+    if (byOrigin) {
+      tree = pinnedFirst([['owned', 'Instructions'], ['linked', 'Linked skills'], ['generated', OTHER_FILES]]
+        .map(([kind, name]) => groupTree(kind, name, files.filter((file) => originKind(file) === kind)))
+        .filter((group) => group.children.length));
+    } else if (generatedOnly) {
+      // The editor's own and linked files keep their places; only the platform's files move into the group, last.
+      tree = [...pinnedFirst(buildFileTree(files.filter((file) => !isGenerated(file)))), groupTree('generated', OTHER_FILES, files.filter(isGenerated))];
+    } else {
+      tree = pinnedFirst(buildFileTree(files));
+    }
     const visible = [];
     const visit = (nodes, level, parent) => nodes.forEach((node, index) => {
       visible.push({ ...node, level, parent, position: index + 1, setSize: nodes.length });
@@ -60,7 +90,8 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     });
     visit(tree, 1, null);
     return visible;
-  }, [files, pinned, collapsed]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- byOrigin, generatedOnly and isGenerated derive from files and generatedKey.
+  }, [files, pinned, collapsed, generatedKey]);
   const isContextSettings = (row) => row.type !== 'folder' && generatedFolders.some((folder) => plainPath(row.path) === `${folder.replace(/\/$/, '')}/context.json`);
   const activePath = rows.some((row) => row.path === focused) ? focused : rows.find((row) => row.path === selectedPath)?.path || rows[0]?.path;
   const selectedFile = files.find((file) => file.path === selectedPath);
