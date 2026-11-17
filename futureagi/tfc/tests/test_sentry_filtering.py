@@ -14,18 +14,27 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
+import time
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
 
 import pytest
 import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
+from sentry_sdk.integrations.stdlib import StdlibIntegration
 from sentry_sdk.scope import ScopeType, use_isolation_scope, use_scope
+from sentry_sdk.transport import Transport
 from sentry_sdk.utils import iter_event_frames
 from temporalio.worker import ExecuteActivityInput
 
+from tfc.logging import sentry as sentry_module
 from tfc.logging.sentry import (
+    _MAX_FORMATTED,
     _REDACTED,
     _event_scrubber,
+    _formatted,
     _get_before_send,
     _is_sensitive_key,
     _scrub,
@@ -431,6 +440,11 @@ def test_scrub_event_keeps_a_template_that_names_a_key():
         "access key abc",
         "Private-Key abc",
         "-----BEGIN PRIVATE KEY-----",
+        "cfg = {'accessKey': 'abc'}",
+        "postgres://app:abc@db:5432/app",
+        "redis://:abc@cache:6379/0",
+        "amqp://guest:abc@mq",
+        "<saml:Assertion ID='a'>x</saml:Assertion>",
     ],
 )
 def test_spaced_and_hyphenated_key_names_are_recognised(text):
@@ -502,12 +516,12 @@ class _LoggingNext:
     async def execute_activity(self, input):
         room_name = "r"
         attempts = 3
-        # Deliberate: a repr that mentions a sensitive substring is wiped
-        # whole, so this harmless token count is lost with the secrets.
+        # A token count is harmless and must reach Sentry.
+        max_tokens = 4096
         usage_info = _Usage(prompt_tokens=10)
         logging.getLogger("x").info("calling with customer_api_key=%s", "k")
         logging.getLogger("x").error("failed")
-        return room_name, attempts, usage_info
+        return room_name, attempts, usage_info, max_tokens
 
 
 async def _run_activity(next_interceptor, secret_values, before=None):
@@ -606,10 +620,342 @@ async def test_a_log_breadcrumb_naming_a_secret_is_replaced():
     assert logged["message"] == _REDACTED
 
 
-async def test_harmless_frame_locals_are_kept_and_token_count_reprs_are_wiped():
+async def test_harmless_frame_locals_and_token_counts_are_kept():
     sent = await _run_activity(_LoggingNext(), _new_secret_values())
     local_vars = [f["vars"] for f in iter_event_frames(sent[0]) if f.get("vars")]
     [frame_vars] = [v for v in local_vars if "usage_info" in v]
     assert frame_vars["room_name"] == "'r'"
     assert frame_vars["attempts"] == "3"
-    assert frame_vars["usage_info"] == _REDACTED
+    assert frame_vars["max_tokens"] == "4096"
+    assert "prompt_tokens=10" in frame_vars["usage_info"]
+
+
+def test_token_count_names_are_kept_but_a_text_that_also_names_a_key_is_not():
+    assert _scrub_strings(
+        {"max_tokens": 4096, "usage": {"prompt_tokens": 12}, "n": "total_tokens=3"}
+    ) == {"max_tokens": 4096, "usage": {"prompt_tokens": 12}, "n": "total_tokens=3"}
+    for name in (
+        "max_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "token_count",
+        "tokens_used",
+        "num_tokens",
+    ):
+        assert _scrub_strings(f"Usage({name}=1)") == f"Usage({name}=1)"
+        assert _scrub_strings(f"Usage({name}=1, api_key='k')") == _REDACTED
+        assert _scrub_strings(f"{name}=1 client_secret=k") == _REDACTED
+        assert _scrub_strings({name: 1, "api_key": "k"}) == {
+            name: 1,
+            "api_key": _REDACTED,
+        }
+    # Other token names, and `candidate`, still match as before.
+    assert _scrub_strings("access_token=abc") == _REDACTED
+    assert _scrub_strings("GenerateContentResponse(candidates=[])") == _REDACTED
+
+
+# Shared helpers for the tests below
+
+
+class _CollectingTransport(Transport):
+    """Collects what the client sends; a callable transport never sees transactions."""
+
+    def __init__(self, sent):
+        super().__init__()
+        self.sent = sent
+
+    def capture_envelope(self, envelope):
+        for item in envelope.items:
+            if item.type in ("event", "transaction"):
+                self.sent.append(item.payload.json)
+
+
+def _sent_through_client(action, **overrides):
+    """Run `action` under a client configured like init_sentry; return what it sent."""
+    sent = []
+    options = {
+        "dsn": "http://public@localhost.invalid/1",
+        "transport": _CollectingTransport(sent),
+        "integrations": [
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+        ],
+        "default_integrations": False,
+        "before_send": _get_before_send(),
+        "event_scrubber": _event_scrubber(),
+        "send_default_pii": True,
+        "attach_stacktrace": True,
+        "max_breadcrumbs": 100,
+        "include_source_context": True,
+        "include_local_variables": True,
+        "max_value_length": _MAX_FORMATTED,
+    }
+    options.update(overrides)
+    client = sentry_sdk.Client(**options)
+    isolation = sentry_sdk.Scope(client=client, ty=ScopeType.ISOLATION)
+    with use_isolation_scope(isolation), use_scope(sentry_sdk.Scope(client=client)):
+        action()
+    client.flush()
+    return sent
+
+
+@pytest.fixture
+def scrub_logger_ignored():
+    # init_sentry ignores this logger; the tests that make the scrub fail need
+    # it ignored too, or its own error record would re-enter the hook.
+    ignore_logger(sentry_module.SCRUB_LOGGER_NAME)
+
+
+# Transactions (4597165438)
+
+
+class _OkHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_a_sampled_transaction_leaks_no_secret_in_span_data_or_extra():
+    secret = secrets.token_hex(16)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OkHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            sentry_sdk.set_extra("call_input", f"Input(customer_api_key='{secret}')")
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/u?access_token={secret}"
+            ).read()
+
+    try:
+        sent = _sent_through_client(
+            action,
+            integrations=[StdlibIntegration()],
+            traces_sample_rate=1.0,
+            before_send_transaction=sentry_module._get_before_send_transaction(),
+        )
+    finally:
+        server.shutdown()
+    [transaction] = [e for e in sent if e.get("type") == "transaction"]
+    assert transaction["spans"], "the outbound call should be a span"
+    assert any("http.query" in (s.get("data") or {}) for s in transaction["spans"])
+    assert secret not in json.dumps(sent, default=str)
+
+
+def test_the_transaction_hook_scrubs_the_same_places_as_error_events():
+    event = {
+        "type": "transaction",
+        "request": {"query_string": "api_key=leak", "cookies": {"s": "x"}},
+        "extra": {"call_input": "Input(customer_api_key='leak')", "n": 1},
+        "contexts": {"c": {"password": "leak"}},
+        "breadcrumbs": [{"data": {"customer_api_key": "leak"}}],
+        "spans": [
+            {"data": {"http.query": "access_token=leak", "http.method": "GET"}},
+            {"data": "unexpected-shape"},
+            {"op": "no data"},
+            "unexpected-span",
+        ],
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert "leak" not in json.dumps(out)
+    assert out["spans"][0]["data"] == {
+        "http.query": _REDACTED,
+        "http.method": "GET",
+    }
+    assert out["extra"]["n"] == 1
+
+
+# Exception values and the message (4597165450)
+
+
+def test_an_exception_value_that_names_a_key_is_replaced():
+    secret = secrets.token_hex(16)
+
+    def action():
+        try:
+            raise ValueError(f"Key (api_key)=({secret}) is bad")
+        except ValueError as exc:
+            sentry_sdk.capture_exception(exc)
+
+    [event] = _sent_through_client(action)
+    [value] = event["exception"]["values"]
+    assert value["type"] == "ValueError"
+    assert value["value"] == _REDACTED
+    assert secret not in json.dumps(event, default=str)
+
+
+def test_logger_exception_on_an_error_holding_a_secret_leaks_nothing():
+    secret = secrets.token_hex(16)
+
+    def action():
+        try:
+            raise RuntimeError(f"upstream rejected token {secret}")
+        except RuntimeError:
+            logging.getLogger("x").exception("call failed")
+
+    [event] = _sent_through_client(action)
+    assert secret not in json.dumps(event, default=str)
+    assert event["exception"]["values"][0]["type"] == "RuntimeError"
+
+
+def test_a_captured_message_that_names_a_key_is_replaced():
+    secret = secrets.token_hex(16)
+    [event] = _sent_through_client(
+        lambda: sentry_sdk.capture_message(f"retrying with token={secret}")
+    )
+    assert secret not in json.dumps(event, default=str)
+    assert event["message"] == _REDACTED
+
+
+def test_an_exception_value_and_message_without_a_key_are_kept():
+    event = {
+        "message": "plain",
+        "exception": {"values": [{"type": "ValueError", "value": "bad max_tokens"}]},
+    }
+    _scrub_event(event)
+    assert event["message"] == "plain"
+    assert event["exception"]["values"][0]["value"] == "bad max_tokens"
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"exception": {"values": ["x", {"value": 3}, {"type": "E"}]}},
+        {"message": {"formatted": "m"}},
+    ],
+)
+def test_odd_exception_and_message_shapes_do_not_raise(event):
+    _scrub_event(event)
+
+
+# Fail closed (4597165465)
+
+
+def _boom(*args, **kwargs):
+    raise TypeError("planted bug")
+
+
+def test_a_failing_scrub_drops_the_event_and_logs_only_the_failure(
+    monkeypatch, caplog, scrub_logger_ignored
+):
+    secret = secrets.token_hex(16)
+    monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
+
+    def action():
+        sentry_sdk.add_breadcrumb(message="m", data={"customer_api_key": secret})
+        logging.getLogger("x").error("failed")
+
+    with caplog.at_level(logging.INFO):
+        sent = _sent_through_client(action)
+    assert sent == []
+    records = [r for r in caplog.records if r.name == sentry_module.SCRUB_LOGGER_NAME]
+    assert [r.getMessage() for r in records] == ["sentry_scrub_failed: TypeError"]
+    assert records[0].exc_info is None
+    assert secret not in caplog.text
+
+
+def test_a_failing_scrub_drops_a_transaction(
+    monkeypatch, caplog, scrub_logger_ignored
+):
+    monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
+
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            sentry_sdk.set_extra("call_input", "x")
+
+    sent = _sent_through_client(
+        action,
+        traces_sample_rate=1.0,
+        before_send_transaction=sentry_module._get_before_send_transaction(),
+    )
+    assert sent == []
+    assert "sentry_scrub_failed: TypeError" in caplog.text
+
+
+def test_a_failing_telemetry_scrub_also_drops_the_event(
+    monkeypatch, scrub_logger_ignored
+):
+    monkeypatch.setattr(sentry_module, "_scrub_deployment_telemetry_event", _boom)
+    assert before_send({"message": "x"}, {}) is None
+    assert sentry_module._get_before_send_transaction()({"type": "t"}, {}) is None
+
+
+def _init_sentry_kwargs(monkeypatch):
+    seen = {}
+    ignored = []
+    monkeypatch.setattr(sentry_module, "SENTRY_ENABLED", True)
+    monkeypatch.setattr(sentry_module, "SENTRY_DSN", "http://k@localhost.invalid/1")
+    monkeypatch.setattr(sentry_module, "_initialized_components", set())
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(
+        "sentry_sdk.integrations.logging.ignore_logger", ignored.append
+    )
+    assert sentry_module.init_sentry(component="temporal")
+    return seen, ignored
+
+
+def test_init_sentry_ignores_the_scrub_logger_and_wires_the_hooks(monkeypatch):
+    seen, ignored = _init_sentry_kwargs(monkeypatch)
+    assert sentry_module.SCRUB_LOGGER_NAME in ignored
+    assert seen["max_value_length"] == _MAX_FORMATTED
+    event = {"type": "transaction", "spans": [{"data": {"q": "token=leak"}}]}
+    out = seen["before_send_transaction"](event, {})
+    assert out["spans"][0]["data"] == {"q": _REDACTED}
+
+
+# Over-matching and narrow catch (4597165486, 4597165488)
+
+
+def test_accesskey_and_password_urls_are_sensitive_but_plain_urls_are_not():
+    assert _is_sensitive_key("accessKey")
+    assert _scrub_strings("postgres://app:pw@db/app") == _REDACTED
+    for harmless in (
+        "https://example.test:8443/path?x=1",
+        "http://user@host/path",
+        "see http://a/b@c and://x",
+    ):
+        assert _scrub_strings(harmless) == harmless
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "://a:" + "b" * 300_000,
+        "://" + "a:" * 150_000,
+        "://a:b" * 60_000,
+        "x" * 300_000,
+    ],
+)
+def test_the_password_url_check_stays_linear_on_long_strings(text):
+    started = time.monotonic()
+    _scrub_strings(text)
+    assert time.monotonic() - started < 2
+
+
+@pytest.mark.parametrize(
+    "message, params",
+    [("took %d ms", ["x"]), ("%(a)s", {}), ("%z", [1])],
+)
+def test_a_line_that_does_not_format_falls_back_to_the_template(message, params):
+    assert _formatted(message, params) == message
+
+
+def test_an_unexpected_error_while_formatting_is_not_swallowed():
+    class Bad:
+        def __str__(self):
+            raise RuntimeError("bug")
+
+    with pytest.raises(RuntimeError):
+        _formatted("value %s", [Bad()])
+
+
+# Celery job extras (4597165493)
+
+
+def test_celery_job_extras_are_scrubbed_as_strings():
+    event = {"extra": {"celery-job": {"args": ["Input(customer_api_key='k')"]}}}
+    _scrub_event(event)
+    assert event["extra"]["celery-job"]["args"] == [_REDACTED]

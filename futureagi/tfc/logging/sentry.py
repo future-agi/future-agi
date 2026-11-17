@@ -17,7 +17,9 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import logging
 import os
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -107,6 +109,7 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "access_key",
     "access-key",
     "access key",
+    "accesskey",
     "private_key",
     "private-key",
     "private key",
@@ -128,6 +131,28 @@ SENSITIVE_KEY_SUBSTRINGS = (
 )
 _REDACTED = "[Filtered]"
 
+# Count fields that name tokens but carry no secret. They are removed from the
+# lowered text before the substring test, so `max_tokens` is kept while a text
+# that also names `api_key` or `secret` is still caught.
+_COUNT_FIELD_NAMES = (
+    "max_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "token_count",
+    "tokens_used",
+    "num_tokens",
+)
+
+# A URL that carries a password, such as a database or broker connection string.
+# Linear: no nested quantifiers, and each class excludes the next delimiter.
+_URL_PASSWORD = re.compile(r"://[^/\s:@]*:[^/\s@]+@")
+
+# Failures of the scrub itself are logged here, by name only. init_sentry
+# ignores this logger so the record cannot loop back into Sentry.
+SCRUB_LOGGER_NAME = "tfc.logging.sentry_scrub"
+_scrub_logger = logging.getLogger(SCRUB_LOGGER_NAME)
+
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -144,7 +169,12 @@ def _is_sensitive_key(key: Any) -> bool:
     """True if a dict/header key looks like it carries a secret or PII token."""
     if not isinstance(key, str):
         return False
-    lowered = key.lower()
+    return _names_sensitive_key(key.lower())
+
+
+def _names_sensitive_key(lowered: str) -> bool:
+    for name in _COUNT_FIELD_NAMES:
+        lowered = lowered.replace(name, "")
     return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
 
 
@@ -153,8 +183,7 @@ _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
 
 def _mentions_sensitive_key(text: str) -> bool:
     """True if the text names a sensitive key anywhere, in any format."""
-    lowered = text.lower()
-    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+    return _names_sensitive_key(text.lower()) or bool(_URL_PASSWORD.search(text))
 
 
 def _scrub(value: Any, depth: int = 0) -> Any:
@@ -208,7 +237,7 @@ def _formatted(message: Any, params: Any) -> str:
     they don't format."""
     try:
         line = str(message) % (tuple(params) if isinstance(params, list) else params)
-    except Exception:  # noqa: BLE001 - any shape that doesn't format
+    except (TypeError, ValueError, KeyError):
         line = str(message)
     return line[:_MAX_FORMATTED]
 
@@ -233,6 +262,21 @@ def _scrub_event(event: dict) -> None:
             s in request["query_string"].lower() for s in SENSITIVE_KEY_SUBSTRINGS
         ):
             request["query_string"] = _REDACTED
+
+    # The message and each exception's value are free text, often `str(exc)`.
+    if isinstance(event.get("message"), str) and _mentions_sensitive_key(
+        event["message"]
+    ):
+        event["message"] = _REDACTED
+    exception = event.get("exception")
+    if isinstance(exception, dict) and isinstance(exception.get("values"), list):
+        for exc in exception["values"]:
+            if (
+                isinstance(exc, dict)
+                and isinstance(exc.get("value"), str)
+                and _mentions_sensitive_key(exc["value"])
+            ):
+                exc["value"] = _REDACTED
 
     if isinstance(event.get("extra"), dict):
         event["extra"] = _scrub_strings(event["extra"])
@@ -385,6 +429,14 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
+        # Fail closed: if anything raises, the event is dropped, never sent raw.
+        try:
+            return _before_send(event, hint)
+        except Exception as exc:
+            _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
+            return None
+
+    def _before_send(event: dict, hint: dict) -> dict | None:
         event = _scrub_deployment_telemetry_event(event)
 
         # 1. Infrastructure logger noise - never actionable as an issue.
@@ -419,15 +471,29 @@ def _get_before_send() -> Callable:
             return None
 
         # 4. Scrub secrets/PII from the surviving event.
-        try:
-            _scrub_event(event)
-        except Exception:
-            # Never let scrubbing failures drop a real error.
-            pass
-
+        _scrub_event(event)
         return event
 
     return before_send
+
+
+def _get_before_send_transaction() -> Callable:
+    """The before_send_transaction hook: the same scrub as error events, plus
+    every span's data (an outbound call's `http.query` lands there)."""
+
+    def before_send_transaction(event: dict, hint: dict) -> dict | None:
+        try:
+            event = _scrub_deployment_telemetry_event(event)
+            _scrub_event(event)
+            for span in event.get("spans") or []:
+                if isinstance(span, dict) and "data" in span:
+                    span["data"] = _scrub_strings(span["data"])
+            return event
+        except Exception as exc:
+            _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
+            return None
+
+    return before_send_transaction
 
 
 def _get_traces_sampler() -> Callable:
@@ -504,6 +570,7 @@ def init_sentry(
         # transient "failed to reach collector" ERRORs from becoming issues.
         for logger_name in IGNORED_LOGGERS:
             ignore_logger(logger_name)
+        ignore_logger(SCRUB_LOGGER_NAME)
 
         import logging as _logging
 
@@ -583,7 +650,7 @@ def init_sentry(
             max_request_body_size="medium",
             max_breadcrumbs=100,
             # Bounds each captured string, and so the cost of scrubbing it.
-            max_value_length=16_384,
+            max_value_length=_MAX_FORMATTED,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
             include_local_variables=True,  # Capture local variables for debugging
@@ -599,9 +666,7 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
-            before_send_transaction=lambda event, hint: (
-                _scrub_deployment_telemetry_event(event)
-            ),
+            before_send_transaction=_get_before_send_transaction(),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking
