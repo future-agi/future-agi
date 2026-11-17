@@ -400,3 +400,32 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# gleu_score
+# ---------------------------------------------------------------------------
+
+
+def test_gleu_score_pooled_ngram_calculation():
+    ev = _load_eval("gleu_score")
+    # Wu et al. (2016): joint n-gram pooling avoids BLEU zero-abort on higher-order mismatch
+    r = ev(None, "the cat is on the mat", "the cat sat on the mat", None)
+    assert r["score"] == pytest.approx(0.5)
+
+
+def test_gleu_score_symmetry():
+    ev = _load_eval("gleu_score")
+    r1 = ev(None, "the dog barked at the postman", "the dog barked at the mailman", None)
+    r2 = ev(None, "the dog barked at the mailman", "the dog barked at the postman", None)
+    assert r1["score"] == pytest.approx(r2["score"])
+    assert r1["score"] == pytest.approx(7.0 / 9.0)
+
+
+def test_gleu_score_edge_cases_and_exact_match():
+    ev = _load_eval("gleu_score")
+    assert ev(None, "the quick brown fox", "the quick brown fox", None)["score"] == pytest.approx(1.0)
+    assert ev(None, "apples oranges", "cars trucks", None)["score"] == pytest.approx(0.0)
+    assert ev(None, "", "some text", None)["score"] == pytest.approx(0.0)
+    assert ev(None, "some text", None, None)["score"] == pytest.approx(0.0)
+
