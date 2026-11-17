@@ -230,6 +230,8 @@ class LLM:
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
+        # The same usage split by the price in force when each call happened.
+        self._usage_buckets: dict[Any, dict[str, Any]] = {}
         # Initialize the appropriate client
         self._init_client(api_key)
 
@@ -601,15 +603,13 @@ class LLM:
             response: The completion response containing usage information.
         """
         if hasattr(response, "usage") and response.usage:
+            added = {
+                "total_tokens": response.usage.total_tokens or 0,
+                "prompt_tokens": response.usage.prompt_tokens or 0,
+                "completion_tokens": response.usage.completion_tokens or 0,
+            }
             self.token_usage.update(
-                {
-                    "total_tokens": self.token_usage["total_tokens"]
-                    + (response.usage.total_tokens or 0),
-                    "prompt_tokens": self.token_usage["prompt_tokens"]
-                    + (response.usage.prompt_tokens or 0),
-                    "completion_tokens": self.token_usage["completion_tokens"]
-                    + (response.usage.completion_tokens or 0),
-                }
+                {name: self.token_usage[name] + count for name, count in added.items()}
             )
             # Track cache tokens if available (Anthropic/Bedrock prompt caching)
             cache_create = (
@@ -624,12 +624,57 @@ class LLM:
                 self.token_usage["cache_read_input_tokens"] = (
                     self.token_usage.get("cache_read_input_tokens", 0) + cache_read
                 )
+                added["cache_creation_input_tokens"] = cache_create
+                added["cache_read_input_tokens"] = cache_read
+            self._add_to_usage_bucket(added)
+
+    def _add_to_usage_bucket(self, added: dict[str, int]) -> None:
+        """Add one call's tokens to the bucket of the price in force right now."""
+        from agentic_eval.core_evals.run_prompt import model_pricing
+
+        now = model_pricing._utc_now()
+        pricing = model_pricing.get_model_pricing(self.model_name, at=now)
+        key = None if pricing is None else tuple(sorted(pricing.items()))
+        buckets = self.__dict__.setdefault("_usage_buckets", {})
+        bucket = buckets.setdefault(key, {"at": now, "usage": {}})
+        for name, count in added.items():
+            bucket["usage"][name] = bucket["usage"].get(name, 0) + count
+
+    def _catalog_cost(self) -> dict[str, Any]:
+        """The session's cost, each call priced at the rates in force for it."""
+        buckets = list(self.__dict__.get("_usage_buckets", {}).values())
+        if not buckets:
+            return calculate_total_cost(self.model_name, self.token_usage)
+        from agentic_eval.core_evals.run_prompt import model_pricing
+
+        rates = [
+            model_pricing.get_model_pricing(self.model_name, at=bucket["at"])
+            for bucket in buckets
+        ]
+        if all(rate == rates[0] for rate in rates):
+            # One price in force for the model in use, however many models the
+            # session went through: price the total once, at the first call's
+            # time, not "now" (a call with no usage must not reprice what was
+            # billed before it). Summing rounded parts could add a micro-dollar.
+            return calculate_total_cost(
+                self.model_name, self.token_usage, at=buckets[0]["at"]
+            )
+
+        parts = [
+            calculate_total_cost(self.model_name, bucket["usage"], at=bucket["at"])
+            for bucket in buckets
+        ]
+        catalog = dict(parts[0])
+        for name, value in parts[0].items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                catalog[name] = round(sum(part[name] for part in parts), 6)
+        return catalog
 
     def _update_cost(self, response: Any = None) -> None:
         """
         Update cost statistics.
         """
-        catalog = calculate_total_cost(self.model_name, self.token_usage)
+        catalog = self._catalog_cost()
 
         if catalog.get("pricing_source") != "default":
             self.cost.update(catalog)

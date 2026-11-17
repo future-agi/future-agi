@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,12 +92,21 @@ func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
 	p.priceTables = f
 }
 
-// clock is when the plugin costs a request; dated prices are chosen by it.
+// clock is the plugin's own time, used to price a request that has no start time.
 func (p *Plugin) clock() time.Time {
 	if p.now != nil {
 		return p.now()
 	}
 	return time.Now()
+}
+
+// pricedAt is the instant a request is priced at: when it started, which is the
+// time its log row carries, or the plugin's clock when it has no start time.
+func (p *Plugin) pricedAt(rc *models.RequestContext) time.Time {
+	if rc.StartTime.IsZero() {
+		return p.clock()
+	}
+	return rc.StartTime
 }
 
 // SetProviderTypes gives the plugin the type each provider's config records,
@@ -135,6 +145,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// Video tariffs are pinned independently of the chat model database.
+	switch rc.EndpointType {
+	case "video":
+		value, err := strconv.ParseFloat(rc.Metadata["video_cost_usd"], 64)
+		if err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			rc.Metadata["cost"] = fmt.Sprintf("%.6f", value)
+		}
+		return pipeline.ResultContinue()
+	}
+	if p.modelDB == nil {
+		return pipeline.ResultContinue()
+	}
 	db := p.modelDB()
 	if db == nil {
 		return pipeline.ResultContinue()
@@ -167,7 +189,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	table := p.tableName(rc)
 	model = priceKey(db, model, rc.Provider, table)
 
-	opts := modeldb.CostOptions{At: p.clock()}
+	opts := modeldb.CostOptions{At: p.pricedAt(rc)}
 
 	var cost float64
 	var ok bool

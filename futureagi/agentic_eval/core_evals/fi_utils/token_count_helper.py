@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-import tiktoken
 import structlog
+import tiktoken
 
 # Loaded with this module so a missing dated price file fails this import,
 # not a later one inside a caller that turns errors into a zero cost.
@@ -188,9 +188,9 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 def calculate_total_cost(
     model_name: str,
     token_usage: dict,
-    fallback_pricing: Optional[dict] = None,
+    fallback_pricing: dict | None = None,
     *,
-    at: Optional[datetime] = None,
+    at: datetime | None = None,
 ) -> dict:
     """
     Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
