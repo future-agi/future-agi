@@ -207,12 +207,18 @@ def run_contract(
     version whose authored contract is the default version's, unchanged, runs with the default's; any other has
     its own authored contract until a build seals it.
     """
-    from simulate.selectors.environment_documents import recorded_contract
+    from simulate.selectors.environment_documents import (
+        reach_as_built,
+        recorded_contract,
+    )
 
+    default = job.environment_version
     sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
     if isinstance(sealed, dict) and sealed:
-        return sealed
-    default = job.environment_version
+        # A save seals the author's entries again; a tool no build amended runs as the default version runs it.
+        return reach_as_built(
+            job, sealed, _json(split.environment, "contract.json"), default
+        )
     if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
         split.environment
     ):
