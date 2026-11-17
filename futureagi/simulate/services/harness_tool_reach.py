@@ -115,8 +115,6 @@ def production_only(contract: Any) -> list[str]:
             and _reaches_someone_elses_api(dependency, served_tools)
             and str(dependency.get("name") or "") not in served
             for tool in dependency.get("used_by") or []
-            # A tool the tools service serves never reaches the API itself.
-            if str(tool) not in served_tools
         }
     )
 
