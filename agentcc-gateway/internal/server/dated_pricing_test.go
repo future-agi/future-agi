@@ -144,4 +144,39 @@ func TestProviderTypeComesFromTheProvidersConfig(t *testing.T) {
 			t.Errorf("ProviderType(%q, %q) = %q, want %q", tc.orgID, tc.providerID, got, tc.want)
 		}
 	}
+
+	// The type follows the instance that served, not the org's instance by name.
+	configDI, ok := registry.GetProvider("di")
+	if !ok {
+		t.Fatal("no config.yaml di")
+	}
+	orgDI := srv.OrgProviderCache.Get("org-2", "di")
+	if orgDI == nil {
+		t.Fatal("no org-2 di")
+	}
+	for _, tc := range []struct {
+		name      string
+		servedBy  providers.Provider
+		orgServed bool
+		want      string
+	}{
+		// org-2 has its own di, but the operator's served it (an internal key or a fallback).
+		{"operator's instance served, recorded", configDI, false, "deepinfra"},
+		// With no record (routes without chat retries), the instance is resolved as the
+		// price table resolves it: the org's own when it has one.
+		{"nothing recorded", nil, false, ""},
+		// The org's own instance served.
+		{"org's instance served, recorded", orgDI, true, ""},
+	} {
+		rc := &models.RequestContext{Provider: "di", Metadata: map[string]string{"org_id": "org-2"}}
+		if tc.servedBy != nil {
+			rc.ServedBy = tc.servedBy
+		}
+		if tc.orgServed {
+			rc.Metadata["org_provider"] = "true"
+		}
+		if got := srv.ProviderType(rc); got != tc.want {
+			t.Errorf("%s: ProviderType = %q, want %q", tc.name, got, tc.want)
+		}
+	}
 }

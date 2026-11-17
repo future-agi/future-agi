@@ -45,8 +45,38 @@ var syncCases = []syncCase{
 	{name: "reseller own price from 2027 (deepinfra)", model: "gemini-3.7-flash", provider: "di", configuredType: "deepinfra", at: syncT27, want: "1.125000"},
 }
 
+// syncSwitch is the last instant of 2026 and the first of 2027, UTC.
+var (
+	syncLast26  = time.Date(2026, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	syncFirst27 = time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+)
+
+// syncMoreCases are the reseller cells the reseller rule pins (each reseller
+// and version, by the reseller's own provider ID, on either side of the
+// switch), the switch instant itself, and operator overrides on dated rows.
+func syncMoreCases() []syncCase {
+	var out []syncCase
+	for _, r := range []string{"github_copilot", "aihubmix", "deepinfra", "openrouter", "perplexity"} {
+		for _, v := range []string{"3.6", "3.7", "3.8"} {
+			model := "gemini-" + v + "-flash"
+			out = append(out,
+				syncCase{name: r + " " + model + " Dec 2026", model: model, provider: r, at: syncT26},
+				syncCase{name: r + " " + model + " Jan 2027", model: model, provider: r, at: syncT27})
+		}
+	}
+	out = append(out,
+		syncCase{name: "switch: last instant of 2026", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncLast26},
+		syncCase{name: "switch: first instant of 2027", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncFirst27},
+		syncCase{name: "output override on a dated row, Dec 2026", model: "gemini/gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT26,
+			override: map[string]modeldb.ModelOverride{"gemini/gemini-3.7-flash": {Pricing: &modeldb.PricingOverride{OutputPerToken: syncInput(1e-5)}}}},
+		syncCase{name: "output override on a dated row, Jan 2027", model: "gemini/gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT27,
+			override: map[string]modeldb.ModelOverride{"gemini/gemini-3.7-flash": {Pricing: &modeldb.PricingOverride{OutputPerToken: syncInput(1e-5)}}}},
+	)
+	return out
+}
+
 func TestTheDevMergeKeepsEveryPricingRule(t *testing.T) {
-	for _, c := range syncCases {
+	for _, c := range append(append([]syncCase{}, syncCases...), syncMoreCases()...) {
 		t.Run(c.name, func(t *testing.T) {
 			db := modeldb.New(modeldb.BundledModels, c.override)
 			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
@@ -69,7 +99,7 @@ func TestTheDevMergeKeepsEveryPricingRule(t *testing.T) {
 			p.ProcessResponse(context.Background(), rc)
 			got := rc.Metadata["cost"]
 			t.Logf("SYNCCASE %s | %s", c.name, got)
-			if got != c.want {
+			if c.want != "" && got != c.want {
 				t.Errorf("cost = %q, want %q", got, c.want)
 			}
 		})

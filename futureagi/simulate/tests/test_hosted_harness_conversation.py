@@ -454,6 +454,7 @@ def test_a_post_build_turn_is_billed_once_priced_as_a_build_stage(
             {**ending, "replayed": True, "usage": {**_TURN_USAGE, "usd": 9.0}},
         )
 
+    [turn] = _turn_rows(command)
     expected = harness_usage._authoring_stage_record(
         {
             "stage": "builder-turn",
@@ -461,9 +462,9 @@ def test_a_post_build_turn_is_billed_once_priced_as_a_build_stage(
             "tokens_out": 300,
             "tokens_cached": 100,
             "models": ["gemini-3.7-flash"],
-        }
+        },
+        at=turn.created_at,
     )
-    [turn] = _turn_rows(command)
     assert turn.job_id == job.id
     assert turn.outcome == outcome
     assert turn.usage == _TURN_USAGE
