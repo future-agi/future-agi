@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import ChatTranscriptPane from "../ChatTranscriptPane";
@@ -17,6 +17,27 @@ const tabLabels = () =>
   screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 describe("ChatTranscriptPane", () => {
+  it("highlights and scrolls to the turn it is asked to show", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    render(
+      <Pane
+        turns={[
+          ...plainChat,
+          { role: "customer", text: "Second ask" },
+          { role: "agent", text: "Done" },
+        ]}
+        focusTurn={{ turn: 2 }}
+      />,
+    );
+    const row = screen.getByText("Second ask").closest("[data-focused]");
+    expect(row).toHaveAttribute("data-focused", "true");
+    expect(
+      screen.getByText("One ride please").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "false");
+    expect(scrolled).toHaveBeenCalled();
+  });
+
   it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
       <Pane

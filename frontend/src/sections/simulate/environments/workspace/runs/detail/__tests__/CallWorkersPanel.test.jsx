@@ -310,6 +310,37 @@ describe("CallWorkersPanel", () => {
     });
   });
 
+  describe("links out of a step", () => {
+    it("Show in transcript adds the gap between the record's start and the call's start, never below 0", () => {
+      const onShowInTranscript = vi.fn();
+      render(
+        <CallWorkersPanel
+          callExecutionId="c1"
+          callStartedAt="2026-10-31T11:59:45+00:00"
+          onShowInTranscript={onShowInTranscript}
+        />,
+      );
+      fireEvent.click(document.querySelector('[data-row="2"]'));
+      fireEvent.click(
+        screen.getByRole("button", { name: /Show in transcript/ }),
+      );
+      // Record starts 11:59:50, the call at 11:59:45; the hand-off is 5.9 s into the record.
+      expect(onShowInTranscript).toHaveBeenCalledWith({
+        turn: 1,
+        at: expect.closeTo(10.9, 3),
+      });
+    });
+
+    it("a step link carries the API's step key and reopens that step", () => {
+      window.history.replaceState({}, "", "/run?participantsStep=1");
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("step-detail")).toHaveTextContent(
+        "inspect order 1042",
+      );
+      window.history.replaceState({}, "", "/");
+    });
+  });
+
   describe("a cut-short worker and a stopped call", () => {
     const cut = (cleanup) => ({
       ...WORKERS[0],

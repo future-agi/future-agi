@@ -111,6 +111,7 @@ export default function ChatCallDrawer({
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
   const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [focusTurn, setFocusTurn] = useState(null);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, as in the voice drawer.
   const [traceCallId, setTraceCallId] = useState(task.id);
@@ -304,6 +305,10 @@ export default function ChatCallDrawer({
                   onOpenTrace={openTrace}
                   attempt={attempt}
                   callerName={callDetail?.persona || task.persona}
+                  onShowInTranscript={({ turn }) => {
+                    setFocusTurn({ turn });
+                    setChosenArtifact("transcript");
+                  }}
                 />
               </Box>
             ) : null}
@@ -372,6 +377,7 @@ export default function ChatCallDrawer({
                 customerName={callDetail?.persona}
                 participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
+                focusTurn={focusTurn}
               />
             )}
           </Box>

@@ -12,6 +12,15 @@ const seconds = (iso) => {
   return Number.isNaN(ms) ? null : ms / 1000;
 };
 
+// A record time (seconds since the record's start) on the recording's clock, which starts with the call.
+export const recordingSeconds = (at, recordStartedAt, callStartedAt) => {
+  if (at == null) return null;
+  const gap =
+    (seconds(recordStartedAt) ?? 0) -
+    (seconds(callStartedAt) ?? seconds(recordStartedAt) ?? 0);
+  return Math.max(0, at + gap);
+};
+
 const textOf = (shown, raw) => shown?.text ?? raw ?? null;
 
 // A hand-off's end, as `sequenceOf` names a worker's state.

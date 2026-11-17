@@ -18,7 +18,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
       isLoading: mocks.loading,
       error: mocks.detailError ?? null,
     }),
-    useHasWorkers: () => false,
+    useHasWorkers: () => mocks.hasWorkers ?? false,
     useCallWorkers: () => ({ data: undefined, isError: false }),
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
@@ -37,6 +37,20 @@ vi.mock("src/components/share-dialog", () => ({
       </button>
     </div>
   ),
+}));
+
+// The Participants panel asks for the transcript at a step, as the real panel's Show in transcript does.
+vi.mock("../CallWorkersPanel", () => ({
+  default: function WorkersStub({ onShowInTranscript }) {
+    return (
+      <button
+        type="button"
+        onClick={() => onShowInTranscript({ turn: 2, at: 12 })}
+      >
+        show step in transcript
+      </button>
+    );
+  },
 }));
 
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
@@ -312,6 +326,40 @@ describe("ChatCallDrawer, an earlier attempt", () => {
       "aria-selected",
       "true",
     );
+    mocks.callDetail = null;
+  });
+});
+
+describe("ChatCallDrawer Participants", () => {
+  it("Show in transcript from Participants opens the transcript on that turn", async () => {
+    const user = userEvent.setup();
+    Element.prototype.scrollIntoView = vi.fn();
+    mocks.hasWorkers = true;
+    mocks.callDetail = {
+      turns: [
+        { role: "customer", text: "First ask" },
+        { role: "agent", text: "First reply" },
+        { role: "customer", text: "Second ask" },
+      ],
+    };
+    render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(
+      screen.getByRole("button", { name: "show step in transcript" }),
+    );
+    expect(screen.getByRole("tab", { name: "Transcript" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Second ask").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+    mocks.hasWorkers = false;
     mocks.callDetail = null;
   });
 });

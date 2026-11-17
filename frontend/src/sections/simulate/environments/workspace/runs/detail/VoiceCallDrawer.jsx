@@ -17,6 +17,7 @@ import {
   withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import useVoiceAudioStore from "src/components/VoiceDetailDrawerV2/voiceAudioStore";
 import CallTracesPanel from "./CallTracesPanel";
 import AttemptSelect from "./AttemptSelect";
 import CallWorkersPanel from "./CallWorkersPanel";
@@ -109,6 +110,7 @@ export default function VoiceCallDrawer({
   const hasWorkers = useHasWorkers(task.id, task.status);
   // Held here because the panel unmounts while the next call's detail loads.
   const [chosenTab, setChosenTab] = useState("transcript");
+  const seekTo = useVoiceAudioStore((state) => state.seekTo);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, so stepping to it and back does not reopen the trace.
   const [traceCallId, setTraceCallId] = useState(task.id);
@@ -169,6 +171,11 @@ export default function VoiceCallDrawer({
                     callExecutionId={task.id}
                     callStatus={task.status}
                     callerName={task.persona}
+                    callStartedAt={data?.started_at ?? null}
+                    onShowInTranscript={({ at }) => {
+                      if (at != null) seekTo(at);
+                      setChosenTab("transcript");
+                    }}
                     onOpenTrace={(traceId, spanId) => {
                       setOpenStep({ traceId, spanId });
                       setChosenTab("traces");
@@ -203,6 +210,8 @@ export default function VoiceCallDrawer({
       task.id,
       task.status,
       task.persona,
+      data?.started_at,
+      seekTo,
       showWorkers,
       data,
       attempt,

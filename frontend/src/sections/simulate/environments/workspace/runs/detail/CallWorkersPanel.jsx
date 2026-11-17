@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircularProgress, Stack, Typography } from "@mui/material";
 import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import { fDateTime } from "src/utils/format-time";
@@ -7,13 +7,19 @@ import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { PlacedChecks, WorkerChecks } from "./CallWorkersChecks";
 import ParticipantsHeader from "./participants/ParticipantsHeader";
 import SequenceDiagram from "./participants/SequenceDiagram";
-import { participantsFromRecord } from "./participants/participantsFromRecord";
+import {
+  participantsFromRecord,
+  recordingSeconds,
+} from "./participants/participantsFromRecord";
 import { sequenceOf } from "./participants/sequenceOf";
+
+const STEP_PARAM = "participantsStep";
 
 export default function CallWorkersPanel({
   callExecutionId,
   callStatus = null,
   callerName = null,
+  callStartedAt = null,
   onOpenTrace,
   onShowInTranscript,
   attempt = null,
@@ -31,6 +37,13 @@ export default function CallWorkersPanel({
         : null,
     [data, callerName],
   );
+  // A link to a step names the API's own step key, which stays put when the record is read again.
+  useEffect(() => {
+    if (!seq) return;
+    const key = new URLSearchParams(window.location.search).get(STEP_PARAM);
+    const step = key && seq.steps.find((one) => String(one.key) === key);
+    if (step) setSelected(step.n);
+  }, [seq]);
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
   if (!data)
     return isError ? (
@@ -60,6 +73,18 @@ export default function CallWorkersPanel({
     workerOf: (id) => workers[id],
   };
   const handOffs = data.counts.hand_offs;
+  const linkOf = (step) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(STEP_PARAM, String(step.key));
+    return url.toString();
+  };
+  const showInTranscript = onShowInTranscript
+    ? ({ turn, at }) =>
+        onShowInTranscript({
+          turn,
+          at: recordingSeconds(at, data.started_at, callStartedAt),
+        })
+    : undefined;
   const named = (test) =>
     data.workers
       .filter(test)
@@ -140,7 +165,8 @@ export default function CallWorkersPanel({
           onSelect={setSelected}
           // Open in trace waits for the record to name its trace project.
           onOpenTrace={data.project_id ? onOpenTrace : undefined}
-          onShowInTranscript={onShowInTranscript}
+          onShowInTranscript={showInTranscript}
+          linkOf={linkOf}
         />
       ) : null}
       {data.workers.some((one) => one.checks.length) ? (
@@ -209,6 +235,8 @@ CallWorkersPanel.propTypes = {
   callStatus: PropTypes.string,
   // The caller's name for the first lane.
   callerName: PropTypes.string,
+  // When the call itself started, so a step's time lands on the recording's clock.
+  callStartedAt: PropTypes.string,
   // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
   // Opens the transcript at a step: ({ turn, at }) with `at` in seconds from the record's start.
