@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from "react";
 
 export const GUT = 0;
-export const LANE_PAD = 64; // half a lane header, plus air
+export const LANE_PAD = 80; // half a lane header, plus air
 export const MIN_GAP = 118; // lanes closer than this scroll sideways
 export const ROW_H = {
   go: 44,

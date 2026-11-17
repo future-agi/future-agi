@@ -747,10 +747,10 @@ export default function SequenceDiagram({
       <Stack
         direction="row"
         spacing={1.5}
-        alignItems="center"
+        alignItems="flex-end"
         useFlexGap
         flexWrap="wrap"
-        sx={{ px: 2, pb: 0.75 }}
+        sx={{ pb: 0.75 }}
       >
         <Box sx={{ flex: 1, minWidth: 240 }}>
           <Legend seq={seq} />
