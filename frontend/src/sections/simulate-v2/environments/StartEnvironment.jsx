@@ -26,6 +26,9 @@ import {
   Switch,
   MenuItem,
   Select,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
@@ -2877,9 +2880,11 @@ function PanelScratch() {
   const [flowText, setFlowText] = useState(prefill?.flowText || "");
   const [attachments, setAttachments] = useState([]);
   /* Files are parsed in a cloud sandbox; how personal data in them is
-     handled is asked up front (builder.md §1) — an explicit choice, never
-     a default (keep, replace or no personal data). */
-  const [personalData, setPersonalData] = useState(null);
+     handled is asked up front (builder.md §1, data.md: keep, replace with
+     synthetic equivalents, or none). It starts on the safest choice,
+     replace, said on the line under the file and changeable there — a
+     visible default, never a silent privacy decision (data.md). */
+  const [personalData, setPersonalData] = useState("replace");
   /* Name is optional — the intake describes the flow well enough on its
      own, so if the user skips the name field we derive a reasonable one
      from the description before building. Build is only gated on the
@@ -3026,25 +3031,62 @@ function PanelScratch() {
         onNext={buildBlank}
         canSubmit={canGo}
         submitLabel="Build environment"
-      />
-      {attachments.length > 0 && (
-        <Stack spacing={0.75}>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Files are read in a cloud sandbox, not on your machine. Choose how
-            to handle personal data in them before you build:
-          </Typography>
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={personalData}
-            onChange={(_, v) => v && setPersonalData(v)}
+        filesFooter={
+          /* A choice saved with the form is a radio group (design system:
+             "Inbound · Outbound · Both"), every option in view, the safest
+             one already picked. */
+          /* One line right under the box that holds the files, starting
+             at its left edge, so it reads as a setting for what's in it. */
+          <Stack
+            direction="row"
+            alignItems="center"
+            flexWrap="wrap"
+            columnGap={2}
+            rowGap={0.5}
+            sx={{ mt: 1, px: 0.25 }}
           >
-            <ToggleButton value="replace">Replace consistently</ToggleButton>
-            <ToggleButton value="keep">Keep as is</ToggleButton>
-            <ToggleButton value="none">No personal data</ToggleButton>
-          </ToggleButtonGroup>
-        </Stack>
-      )}
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                Personal data in {attachments.length === 1 ? "this file" : "these files"}
+              </Typography>
+              <Tooltip
+                arrow
+                title="Files are read in a cloud sandbox, not on your machine. Replace swaps names, emails and numbers for stand-ins — the same stand-in every time the same value appears."
+              >
+                <Iconify
+                  icon="solar:info-circle-linear"
+                  width={14}
+                  sx={{ color: "text.disabled", cursor: "default" }}
+                />
+              </Tooltip>
+            </Stack>
+            <RadioGroup
+              row
+              value={personalData}
+              onChange={(e) => setPersonalData(e.target.value)}
+              sx={{ columnGap: 2, flexWrap: "wrap" }}
+            >
+              {[
+                ["replace", "Replace with stand-ins"],
+                ["keep", "Keep as is"],
+                ["none", "There's none"],
+              ].map(([v, label]) => (
+                <FormControlLabel
+                  key={v}
+                  value={v}
+                  control={<Radio size="small" sx={{ p: 0.5 }} />}
+                  sx={{ m: 0, gap: 0.25 }}
+                  label={
+                    <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                      {label}
+                    </Typography>
+                  }
+                />
+              ))}
+            </RadioGroup>
+          </Stack>
+        }
+      />
     </Stack>
   );
 }

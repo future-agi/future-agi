@@ -54,6 +54,8 @@ export default function DescribeFlowStep({
   canSubmit,
   submitLabel,
   accept,
+  filesFooter = null,
+  blockedHint = "",
 }) {
   const inputRef = useRef(null);
   const followUpRef = useRef(null);
@@ -362,11 +364,79 @@ export default function DescribeFlowStep({
                 sx: { typography: "s2", lineHeight: 1.6, px: 0.5, py: 0.25 },
               }}
             />
+            {/* Attached files sit inside the box they were added to, as
+                cards — part of the input, not a list underneath it. */}
+            {files?.length > 0 && (
+              <Stack
+                direction="row"
+                flexWrap="wrap"
+                gap={0.75}
+                sx={{ mt: 1, maxHeight: 180, overflowY: "auto" }}
+              >
+                {files.map((f) => (
+                  <Stack
+                    key={f.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{
+                      pl: 1,
+                      pr: 0.5,
+                      py: 0.75,
+                      minWidth: 220,
+                      maxWidth: "100%",
+                      borderRadius: "6px",
+                      border: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: "background.paper",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: "6px",
+                        bgcolor: "action.hover",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Iconify
+                        icon={iconForFile(f.name)}
+                        width={16}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s2", fontWeight: 500, color: "text.primary" }}
+                      >
+                        {f.name}
+                      </Typography>
+                      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                        {formatFileSize(f.size)}
+                      </Typography>
+                    </Box>
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove ${f.name}`}
+                      onClick={() => onRemove(f.id)}
+                      sx={{ p: 0.5, color: "text.subtitle" }}
+                    >
+                      <Iconify icon="solar:close-linear" width={14} />
+                    </IconButton>
+                  </Stack>
+                ))}
+              </Stack>
+            )}
             <Stack
               direction="row"
               alignItems="center"
               spacing={0.5}
-              sx={{ mt: 0.5 }}
+              sx={{ mt: 1 }}
             >
               <Typography
                 sx={{ typography: "s3", color: "text.disabled", flex: 1 }}
@@ -412,8 +482,18 @@ export default function DescribeFlowStep({
           </Box>
         </Box>
 
-        {/* suggested chips */}
-        {Array.isArray(chips) && chips.length > 0 && (
+
+
+        {/* What the attached files need before building — right under the
+            box that holds them. */}
+        {files?.length > 0 && filesFooter}
+
+        {/* Writing starters — only while the box is still empty; once there
+            is text or a file they're noise. */}
+        {Array.isArray(chips) &&
+          chips.length > 0 &&
+          !value.trim() &&
+          !files?.length && (
           <Stack
             direction="row"
             spacing={0.75}
@@ -450,62 +530,6 @@ export default function DescribeFlowStep({
           </Stack>
         )}
 
-        {/* attached files list */}
-        {files.length > 0 && (
-          <Stack
-            spacing={0.5}
-            sx={{ mt: 1.25, maxHeight: 180, overflowY: "auto" }}
-          >
-            {files.map((f) => (
-              <Stack
-                key={f.id}
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{
-                  px: 1.25,
-                  py: 0.75,
-                  borderRadius: 1,
-                  bgcolor: "action.hover",
-                }}
-              >
-                <Iconify
-                  icon={iconForFile(f.name)}
-                  width={16}
-                  sx={{ color: "text.subtitle", flexShrink: 0 }}
-                />
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s2",
-                    color: "text.primary",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {f.name}
-                </Typography>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.disabled",
-                    flexShrink: 0,
-                  }}
-                >
-                  {formatFileSize(f.size)}
-                </Typography>
-                <IconButton
-                  size="small"
-                  onClick={() => onRemove(f.id)}
-                  sx={{ p: 0.25, color: "text.subtitle" }}
-                >
-                  <Iconify icon="solar:close-linear" width={12} />
-                </IconButton>
-              </Stack>
-            ))}
-          </Stack>
-        )}
-
         <input
           ref={inputRef}
           type="file"
@@ -519,7 +543,7 @@ export default function DescribeFlowStep({
         />
       </Box>
 
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
+      <Stack direction="row" alignItems="center" sx={{ px: 1.5, pt: 0.5, pb: 1.25 }}>
         {onBack ? (
           <Button
             size="small"
@@ -538,7 +562,13 @@ export default function DescribeFlowStep({
           <Box />
         )}
         <Box flex={1} />
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/* Why the button is off, said where the eye already is. */}
+          {!canSubmit && !hasResult && blockedHint && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {blockedHint}
+            </Typography>
+          )}
           {onSkip && (
             <Button
               size="small"
@@ -598,6 +628,10 @@ DescribeFlowStep.propTypes = {
   canSubmit: PropTypes.bool,
   submitLabel: PropTypes.string,
   accept: PropTypes.string,
+  /* Shown under the attached files, inside the card. */
+  filesFooter: PropTypes.node,
+  /* Said beside the button while it can't be pressed. */
+  blockedHint: PropTypes.string,
 };
 
 function iconForFile(name) {
