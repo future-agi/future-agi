@@ -137,6 +137,7 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "sharedaccesssignature",
     # A Slack webhook URL is itself the credential.
     "webhook_url",
+    "slack_webhook",
 )
 _REDACTED = "[Filtered]"
 
@@ -149,6 +150,8 @@ _COUNT_FIELD_NAMES = (
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
+    "input_tokens",
+    "output_tokens",
     "token_count",
     "tokens_used",
     "num_tokens",
@@ -230,6 +233,19 @@ def _names_sensitive_key(lowered: str) -> bool:
 
 
 _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
+# Azure connection strings carry their key as `Name=value` pairs.
+_AZURE_VALUE_MARKERS = ("accountkey=", "sharedaccesssignature=", "sharedaccesskey=")
+
+
+def _is_secret_value(value: str) -> bool:
+    """True if a string value is a credential itself, whatever key holds it: a
+    Slack webhook, a URL with a password, an Azure connection string."""
+    lowered = value.lower()
+    return (
+        any(marker in value for marker in _SECRET_URL_MARKERS)
+        or bool(_URL_PASSWORD.search(value))
+        or any(marker in lowered for marker in _AZURE_VALUE_MARKERS)
+    )
 
 
 def _mentions_sensitive_key(text: str) -> bool:
@@ -252,12 +268,17 @@ def _scrub_text(text: str) -> str:
 
 def _scrub_query(query: str) -> str:
     """A query string with the value of each credential parameter replaced."""
-    if _mentions_sensitive_key(query):
+    # Names are tested as decoded: `api%5Fkey` and `api+key` are `api_key` and
+    # `api key` to the server.
+    if _mentions_sensitive_key(unquote_plus(query)):
         return _REDACTED
     parts = []
     for part in query.split("&"):
         name, sep, _value = part.partition("=")
-        if sep and unquote_plus(name).lower() in _SENSITIVE_QUERY_PARAMS:
+        decoded = unquote_plus(name).lower()
+        if sep and (
+            decoded in _SENSITIVE_QUERY_PARAMS or _names_sensitive_key(decoded)
+        ):
             part = f"{name}={_REDACTED}"
         parts.append(part)
     return "&".join(parts)
@@ -308,6 +329,8 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str) and any(
         marker in value for marker in _SAML_VALUE_MARKERS
     ):
+        return _REDACTED
+    if isinstance(value, str) and _is_secret_value(value):
         return _REDACTED
     if isinstance(value, dict):
         return {
@@ -380,6 +403,14 @@ def _scrub_event(event: dict) -> None:
         if isinstance(request.get("url"), str):
             request["url"] = _scrub_url(request["url"])
 
+    # A transaction named by its URL (no route matched) carries the raw path.
+    url_named = (
+        isinstance(event.get("transaction_info"), dict)
+        and event["transaction_info"].get("source") == "url"
+    )
+    if url_named and isinstance(event.get("transaction"), str):
+        event["transaction"] = _scrub_url(event["transaction"])
+
     # The message and each exception's value are free text, often `str(exc)`.
     if isinstance(event.get("message"), str):
         event["message"] = _scrub_text(event["message"])
@@ -403,6 +434,15 @@ def _scrub_event(event: dict) -> None:
         )
         event["contexts"] = _scrub_strings(contexts)
         if sampling is not None:
+            if (
+                url_named
+                and isinstance(sampling, dict)
+                and isinstance(sampling.get("transaction"), str)
+            ):
+                sampling = {
+                    **sampling,
+                    "transaction": _scrub_url(sampling["transaction"]),
+                }
             trace["dynamic_sampling_context"] = sampling
             if isinstance(event["contexts"].get("trace"), dict):
                 event["contexts"]["trace"]["dynamic_sampling_context"] = sampling
@@ -420,17 +460,13 @@ def _scrub_event(event: dict) -> None:
                     logentry.get("message"), logentry["params"]
                 )
         formatted = logentry.get("formatted")
-        if isinstance(formatted, str) and _mentions_sensitive_key(formatted):
-            logentry["formatted"] = _REDACTED
+        if isinstance(formatted, str):
+            logentry["formatted"] = _scrub_text(formatted)
         # With no arguments the message is the logged text itself (an f-string,
         # or a structlog line with its fields as JSON), not a template.
         message = logentry.get("message")
-        if (
-            not logentry.get("params")
-            and isinstance(message, str)
-            and _mentions_sensitive_key(message)
-        ):
-            logentry["message"] = _REDACTED
+        if not logentry.get("params") and isinstance(message, str):
+            logentry["message"] = _scrub_text(message)
 
     # Breadcrumbs carry whatever the caller logged, such as a Temporal
     # activity's input. The shape is a list or a dict with a "values" list.
@@ -441,10 +477,18 @@ def _scrub_event(event: dict) -> None:
         for crumb in breadcrumbs:
             if not isinstance(crumb, dict):
                 continue
+            is_redis = crumb.get("category") == "redis"
             if "data" in crumb:
-                crumb["data"] = _scrub_strings(_scrub_url_fields(crumb["data"]))
+                data = _scrub_url_fields(crumb["data"])
+                if is_redis:
+                    data = _cut_redis_commands(data)
+                crumb["data"] = _scrub_strings(data)
             message = crumb.get("message")
             if isinstance(message, str):
+                # A redis crumb's message is the span description, with every
+                # argument of the command in it.
+                if is_redis:
+                    message = _redis_command_and_key(message)
                 crumb["message"] = _scrub_text(message)
 
     # Sentry captures local variables (include_local_variables=True), as reprs
@@ -641,20 +685,28 @@ def _redis_command_and_key(description: str) -> str:
     return " ".join(part for part in match.groups() if part)
 
 
+def _cut_redis_commands(data: Any) -> Any:
+    """Span or breadcrumb data with its `redis.commands` cut back to the
+    command and key of each."""
+    if isinstance(data, dict) and isinstance(data.get("redis.commands"), dict):
+        data = dict(data)
+        commands = dict(data["redis.commands"])
+        first = commands.get("first_ten")
+        if isinstance(first, list):
+            commands["first_ten"] = [
+                _redis_command_and_key(c) if isinstance(c, str) else _REDACTED
+                for c in first
+            ]
+        data["redis.commands"] = commands
+    return data
+
+
 def _scrub_span(span: dict) -> None:
     """Scrub one transaction span: its data, its tags and its description."""
     if "data" in span:
-        data = _scrub_url_fields(span["data"])
-        if isinstance(data, dict) and isinstance(data.get("redis.commands"), dict):
-            commands = dict(data["redis.commands"])
-            first = commands.get("first_ten")
-            if isinstance(first, list):
-                commands["first_ten"] = [
-                    _redis_command_and_key(c) if isinstance(c, str) else _REDACTED
-                    for c in first
-                ]
-            data["redis.commands"] = commands
-        span["data"] = _scrub_strings(data)
+        span["data"] = _scrub_strings(
+            _cut_redis_commands(_scrub_url_fields(span["data"]))
+        )
     if "tags" in span:
         span["tags"] = _scrub_strings(span["tags"])
     description = span.get("description")

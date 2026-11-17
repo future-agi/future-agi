@@ -1468,3 +1468,239 @@ def test_the_dynamic_sampling_context_keeps_the_transaction_name():
     assert out["contexts"]["trace"]["dynamic_sampling_context"] == dsc
     assert out["contexts"]["trace"]["trace_id"] == "t"
     assert out["contexts"]["c"] == {"password": _REDACTED}
+
+
+# Review 2: redis breadcrumbs, secret-looking values, encoded queries
+
+
+@pytest.mark.parametrize(
+    "key, expected_message",
+    [
+        ("cache:plain", "SET 'cache:plain'"),
+        ("mcp_oauth_code:{key_secret}", f"SET 'mcp_oauth_code:{_REDACTED}'"),
+    ],
+)
+def test_a_redis_breadcrumb_on_an_error_event_keeps_only_command_and_key(
+    monkeypatch, key, expected_message
+):
+    # The SDK turns every redis span into a breadcrumb whose message is the
+    # description, with each argument (the pickled value) in it.
+    value_secret = secrets.token_hex(16)
+    key_secret = secrets.token_hex(16)
+    key = key.format(key_secret=key_secret)
+    monkeypatch.setattr(redis.Redis, "_execute_command", lambda self, *a, **kw: True)
+
+    def action():
+        redis.Redis().set(key, pickle.dumps({"code": value_secret}), px=1000)
+        logging.getLogger("probe").error("failed")
+
+    sent = _sent_through_client(
+        action,
+        integrations=[
+            RedisIntegration(),
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        ],
+    )
+    [event] = [e for e in sent if e.get("type") != "transaction"]
+    crumbs = [
+        c for c in event["breadcrumbs"]["values"] if c.get("category") == "redis"
+    ]
+    assert [c["message"] for c in crumbs] == [expected_message]
+    assert value_secret not in json.dumps(sent, default=str)
+    assert key_secret not in json.dumps(sent, default=str)
+
+
+def test_a_redis_breadcrumb_with_command_data_is_cut_back_too():
+    event = {
+        "breadcrumbs": [
+            {
+                "category": "redis",
+                "message": "SET 'k' b'\\x80LEAK'",
+                "data": {
+                    "redis.key": "aws_onboard:KEYLEAK",
+                    "redis.commands": {
+                        "count": 1,
+                        "first_ten": ["SET 'k' b'\\x80DATALEAK'", 3],
+                    },
+                },
+            },
+            {"category": "query", "message": "SET 'k' plain text"},
+        ]
+    }
+    _scrub_event(event)
+    redis_crumb, other = event["breadcrumbs"]
+    assert redis_crumb["message"] == "SET 'k'"
+    assert redis_crumb["data"]["redis.key"] == f"aws_onboard:{_REDACTED}"
+    assert redis_crumb["data"]["redis.commands"] == {
+        "count": 1,
+        "first_ten": ["SET 'k'", _REDACTED],
+    }
+    assert "LEAK" not in json.dumps(redis_crumb)
+    # Only redis crumbs are cut.
+    assert other["message"] == "SET 'k' plain text"
+
+
+_NEUTRAL_SECRET_VALUES = [
+    "https://hooks.slack.com/services/T0/B0/XYZ",
+    "postgres://app:pw-XYZ@db.internal:5432/app",
+    "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=XYZ;EndpointSuffix=x",
+    "BlobEndpoint=https://a.blob.core.windows.net/;SharedAccessSignature=sv=1&sig=XYZ",
+    "Endpoint=sb://a.servicebus.windows.net/;SharedAccessKeyName=n;SharedAccessKey=XYZ",
+]
+
+
+def test_a_slack_webhook_under_its_own_field_name_is_redacted():
+    url = "https://hooks.slack.com/services/T0/B0/XYZ"
+    event = {"request": {"data": {"notify_slack_webhook": url}}}
+    _scrub_event(event)
+    assert "XYZ" not in json.dumps(event)
+    assert _is_sensitive_key("notify_slack_webhook")
+
+
+@pytest.mark.parametrize("value", _NEUTRAL_SECRET_VALUES)
+@pytest.mark.parametrize("section", ["headers", "data", "env"])
+def test_a_secret_value_under_a_neutral_key_is_redacted_in_the_request(section, value):
+    event = {
+        "request": {
+            section: {"target": value, "nested": {"list": [value, "ok"]}, "n": "ok"}
+        }
+    }
+    _scrub_event(event)
+    assert "XYZ" not in json.dumps(event)
+    assert event["request"][section]["n"] == "ok"
+    assert event["request"][section]["nested"]["list"][1] == "ok"
+
+
+def test_a_plain_url_value_is_kept_in_the_request():
+    event = {"request": {"data": {"target": "https://example.com/a?b=1"}}}
+    _scrub_event(event)
+    assert event["request"]["data"] == {"target": "https://example.com/a?b=1"}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "x=1&api%5Fkey=K1",
+        "x=1&client%5Fsecret=K1",
+        "x=1&api+key=K1",
+        "x=1&API%5FKEY=K1",
+    ],
+)
+def test_an_encoded_credential_name_in_the_query_string_is_caught(query):
+    event = {"request": {"query_string": query}}
+    _scrub_event(event)
+    assert event["request"]["query_string"] == _REDACTED
+    assert sentry_module._scrub_url(f"https://a.test/p?{query}").endswith(
+        f"?{_REDACTED}"
+    )
+
+
+def test_an_encoded_keyless_credential_parameter_is_redacted():
+    event = {"request": {"query_string": "a=1&%73ig=S1&Sig%6Eature=S2&max%5Ftokens=5"}}
+    _scrub_event(event)
+    assert event["request"]["query_string"] == (
+        f"a=1&%73ig={_REDACTED}&Sig%6Eature={_REDACTED}&max%5Ftokens=5"
+    )
+
+
+def test_a_logged_line_with_no_arguments_loses_the_token_in_a_cache_key():
+    token = secrets.token_hex(16)
+    event = {
+        "logentry": {
+            "message": f"onboarding failed aws_onboard:{token}",
+            "formatted": f"onboarding failed aws_onboard:{token}",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"] == {
+        "message": f"onboarding failed aws_onboard:{_REDACTED}",
+        "formatted": f"onboarding failed aws_onboard:{_REDACTED}",
+    }
+
+
+def test_an_fstring_error_line_with_a_cache_key_token_leaks_nothing():
+    token = secrets.token_hex(16)
+
+    def action():
+        logging.getLogger("probe").error(f"onboarding failed aws_onboard:{token}")
+
+    sent = _sent_through_client(action)
+    assert token not in json.dumps(sent, default=str)
+    assert any(f"aws_onboard:{_REDACTED}" in json.dumps(e) for e in sent)
+
+
+def test_a_url_source_transaction_name_loses_its_path_token():
+    token = secrets.token_hex(16)
+    name = f"/tracer/shared/{token}"
+    event = {
+        "type": "transaction",
+        "transaction": name,
+        "transaction_info": {"source": "url"},
+        "contexts": {
+            "trace": {
+                "trace_id": "t",
+                "dynamic_sampling_context": {"transaction": name, "public_key": "pk"},
+            }
+        },
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["transaction"] == f"/tracer/shared/{_REDACTED}"
+    dsc = out["contexts"]["trace"]["dynamic_sampling_context"]
+    assert dsc == {"transaction": f"/tracer/shared/{_REDACTED}", "public_key": "pk"}
+    assert token not in json.dumps(out)
+
+
+def test_a_url_source_transaction_name_is_scrubbed_on_error_events_too():
+    token = secrets.token_hex(16)
+    event = {
+        "transaction": f"/accounts/activate/{token}/{token}",
+        "transaction_info": {"source": "url"},
+    }
+    _scrub_event(event)
+    assert token not in json.dumps(event)
+
+
+@pytest.mark.parametrize("source", ["route", "view", "component", None])
+def test_a_route_source_transaction_name_is_left_alone(source):
+    name = "/tracer/shared/{token}"
+    event = {"transaction": name, "transaction_info": {"source": source}}
+    if source is None:
+        event = {"transaction": name}
+    _scrub_event(event)
+    assert event["transaction"] == name
+
+
+@pytest.mark.parametrize("name", ["input_tokens", "output_tokens"])
+def test_input_and_output_token_counts_are_kept(name):
+    assert not _is_sensitive_key(name)
+    assert not _is_sensitive_key(f"gen_ai.usage.{name}")
+    assert _scrub_strings({f"gen_ai.usage.{name}": 12}) == {f"gen_ai.usage.{name}": 12}
+    assert _scrub_strings(f"{name}=12") == f"{name}=12"
+    # A text that also names a real key is still caught, and the name is
+    # removed only as a whole word.
+    assert _scrub_strings(f"{name}=12 api_key=k") == _REDACTED
+    assert _is_sensitive_key(f"x{name}")
+    assert _is_sensitive_key(f"{name}2")
+    assert _is_sensitive_key(f"{name}_secret")
+
+
+def test_llm_span_usage_data_survives_the_transaction_hook():
+    event = {
+        "type": "transaction",
+        "spans": [
+            {
+                "op": "gen_ai.chat",
+                "data": {
+                    "gen_ai.usage.input_tokens": 5,
+                    "gen_ai.usage.output_tokens": 7,
+                    "gen_ai.usage.api_key": "k",
+                },
+            }
+        ],
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["spans"][0]["data"] == {
+        "gen_ai.usage.input_tokens": 5,
+        "gen_ai.usage.output_tokens": 7,
+        "gen_ai.usage.api_key": _REDACTED,
+    }
