@@ -274,6 +274,10 @@ class HubSkillUsageDaily(models.Model):
     consumer_key = models.CharField(max_length=80)
     consumer_label = models.CharField(max_length=200)
     sdk_version = models.CharField(max_length=32, null=True)
+    sdk_language = models.CharField(
+        max_length=10, null=True,
+        choices=[("python", "python"), ("typescript", "typescript")],
+    )
     tracing_mode = models.CharField(
         # load_only is nine characters; an eight-character column rejects it.
         max_length=9,

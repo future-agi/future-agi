@@ -27,12 +27,11 @@ from model_hub.services.skills_hub.v12.types import (
 logger = logging.getLogger(__name__)
 _CHANNELS = ("api", "download", "mcp", "sdk")
 _TRACING_MODES = ("on", "load_only", "off", "no_otel")
-_SDK_AGENT = re.compile(r"futureagi-(?:python|typescript)/([0-9][0-9A-Za-z.+-]{0,31})")
+_SDK_AGENT = re.compile(r"futureagi-(python|typescript)/([0-9][0-9A-Za-z.+-]{0,31})")
 
-# Release integration must set the first SDK version shipping tracing. The
-# foundation versions do not ship it; do not invent a release number or claim
-# an older client can record. None deliberately fails closed until that freeze.
-MIN_TRACING_SDK: str | None = None
+# Owner release decision: these are the first tracing-capable SDK releases.
+# Keep the SDK family: the Python and TypeScript version lines are independent.
+MIN_TRACING_SDK = {"python": "0.8.0", "typescript": "0.3.0"}
 
 
 def _sdk_version(value: str | None) -> str | None:
@@ -50,22 +49,26 @@ def fetch_metadata(headers) -> dict:
     agent = headers.get("User-Agent", "")
     match = _SDK_AGENT.fullmatch(agent) if isinstance(agent, str) else None
     mode = headers.get("X-FI-Skills-Tracing")
+    version = _sdk_version(match[2]) if match else None
     return {
-        "sdk_version": _sdk_version(match[1]) if match else None,
+        "sdk_version": version,
+        "sdk_language": match[1] if version else None,
         "tracing_mode": mode if mode in _TRACING_MODES else None,
     }
 
 
-def can_record(sdk_version: str | None, tracing_mode: str | None) -> bool:
-    """Capability hint only: neither a fetch nor a header proves a runtime load."""
+def can_record(
+    sdk_version: str | None, tracing_mode: str | None, sdk_language: str | None = None,
+) -> bool:
+    """Capability hint only: neither a fetch nor a header proves a runtime load.
+
+    Historical buckets without a language stay unknown, not implicitly Python.
+    """
     version = _sdk_version(sdk_version)
-    if (
-        MIN_TRACING_SDK is None
-        or version is None
-        or tracing_mode not in ("on", "load_only")
-    ):
+    minimum = MIN_TRACING_SDK.get(sdk_language)
+    if version is None or minimum is None or tracing_mode not in ("on", "load_only"):
         return False
-    return Version(version) >= Version(MIN_TRACING_SDK)
+    return Version(version) >= Version(minimum)
 
 
 def _scoped_resource(resource: HubSkill) -> HubSkill:
@@ -94,6 +97,7 @@ def record_fetch(
     consumer_label: str,
     sdk_version: str | None = None,
     tracing_mode: str | None = None,
+    sdk_language: str | None = None,
 ) -> None:
     """Increment a UTC daily bucket; telemetry failure never breaks a fetch."""
     try:
@@ -116,6 +120,9 @@ def record_fetch(
             metadata = {
                 "consumer_label": consumer_label,
                 "sdk_version": _sdk_version(sdk_version),
+                "sdk_language": (
+                    sdk_language if sdk_language in MIN_TRACING_SDK and _sdk_version(sdk_version) else None
+                ),
                 "tracing_mode": (
                     tracing_mode if tracing_mode in _TRACING_MODES else None
                 ),
@@ -221,13 +228,16 @@ def _consumer_rows(rows):
         .annotate(
             label=Subquery(latest.values("consumer_label")[:1]),
             sdk_version=Subquery(latest.values("sdk_version")[:1]),
+            sdk_language=Subquery(latest.values("sdk_language")[:1]),
             tracing_mode=Subquery(latest.values("tracing_mode")[:1]),
         )
         .order_by("-count", "consumer_key", "channel", "skill_id")
     )
     for row in consumers:
         row.pop("consumer_key")
-        row["can_record"] = can_record(row["sdk_version"], row["tracing_mode"])
+        row["can_record"] = can_record(
+            row["sdk_version"], row["tracing_mode"], row.pop("sdk_language"),
+        )
     return consumers
 
 

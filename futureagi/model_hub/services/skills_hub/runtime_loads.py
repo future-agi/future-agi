@@ -50,7 +50,7 @@ def latest_load(*, resource, workspace, since):
     fetch = None if bucket is None else {
         "sdk_version": bucket.sdk_version,
         "tracing_mode": bucket.tracing_mode,
-        "can_record": can_record(bucket.sdk_version, bucket.tracing_mode),
+        "can_record": can_record(bucket.sdk_version, bucket.tracing_mode, bucket.sdk_language),
         "client": bucket.channel,
     }
     result = {"load": None, "fetch": fetch}

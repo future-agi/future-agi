@@ -35,20 +35,28 @@ def test_mounted_shared_route():
 
 
 @pytest.mark.parametrize("kind", ["skill", "agent_context"])
-def test_fetch_is_not_a_load(user, organization, workspace, hub_skill, publish_skill, kind, monkeypatch):
+@pytest.mark.parametrize("language,version_number,capable", [
+    ("python", "0.8.0", True), ("python", "0.7.9", False),
+    ("typescript", "0.3.0", True), ("typescript", "0.2.9", False),
+    (None, "0.9.0", False),
+])
+def test_fetch_is_not_a_load(user, organization, workspace, hub_skill, publish_skill, kind, monkeypatch,
+                             language, version_number, capable):
     version = publish_skill(hub_skill).version
     hub_skill.kind = kind
     hub_skill.save(update_fields=["kind"])
     HubSkillUsageDaily.objects.create(
         skill=hub_skill, version=version, day=timezone.now().date(), channel="sdk",
         consumer_key="credential:private", consumer_label="private credential",
-        sdk_version="0.9.0", tracing_mode="on", count=1, last_at=timezone.now(),
+        sdk_version=version_number, sdk_language=language,
+        tracing_mode="on", count=1, last_at=timezone.now(),
     )
     monkeypatch.setattr(runtime_loads, "V2AnalyticsQueryService", lambda: pytest.fail("no project should query CH"))
     response = get(user, organization, workspace, hub_skill)
     assert response.status_code == 200, response.data
     assert response.data["result"]["load"] is None
-    assert response.data["result"]["fetch"]["sdk_version"] == "0.9.0"
+    assert response.data["result"]["fetch"]["sdk_version"] == version_number
+    assert response.data["result"]["fetch"]["can_record"] is capable
     assert "private" not in str(response.data)
 
 

@@ -248,8 +248,8 @@ def runtime_diagnosis(*, has_projects: bool, readable_projects: int, consumers: 
     elif any(row["tracing_mode"] in {"off", "no_otel"} for row in sdk):
         state = "tracing_unavailable"
     else:
-        # None is not evidence of an old SDK. MIN_TRACING_SDK is not frozen
-        # in ST7 yet; retain an honest unknown until that contract is supplied.
+        # Missing identity is not evidence of an old SDK. Capability is checked
+        # against the owner-selected release threshold for each SDK language.
         state = "sdk_cannot_record"
     return {"state": state, "consumers": public, "can_record": bool(capable)}
 

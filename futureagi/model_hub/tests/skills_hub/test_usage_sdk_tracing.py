@@ -143,16 +143,17 @@ def resolve(client, version, **headers):
     ("curl/8.0.0", None),
     ("", None),
 ])
-def test_only_sdk_version_is_retained(agent, expected):
+def test_only_sdk_identity_is_retained(agent, expected):
     assert usage.fetch_metadata({"User-Agent": agent}) == {
         "sdk_version": expected, "tracing_mode": None,
+        "sdk_language": agent.split("/", 1)[0].removeprefix("futureagi-") if expected else None,
     }
 
 
 @pytest.mark.parametrize("mode", ["on", "load_only", "off", "no_otel"])
 def test_known_modes(mode):
     assert usage.fetch_metadata({"X-FI-Skills-Tracing": mode}) == {
-        "sdk_version": None, "tracing_mode": mode,
+        "sdk_version": None, "sdk_language": None, "tracing_mode": mode,
     }
 
 
@@ -161,40 +162,47 @@ def test_unknown_modes_are_null(mode):
     assert usage.fetch_metadata({"X-FI-Skills-Tracing": mode})["tracing_mode"] is None
 
 
-@pytest.mark.parametrize("version,mode,expected", [
-    ("1.2.3", "on", True),
-    ("1.2.3", "load_only", True),
-    ("1.10.0", "on", True),
-    ("1.2.2", "on", False),
-    ("1.2.3rc1", "on", False),
-    ("1.2.3", "off", False),
-    ("1.2.3", "no_otel", False),
-    ("1.2.3", None, False),
-    (None, "on", False),
-    ("unknown", "on", False),
+@pytest.mark.parametrize("language,version,mode,expected", [
+    ("python", "0.8.0", "on", True),
+    ("python", "0.8.0", "load_only", True),
+    ("python", "0.10.0", "on", True),
+    ("python", "0.7.99", "on", False),
+    ("python", "0.8.0rc1", "on", False),
+    ("python", "0.8.0", "off", False),
+    ("python", "0.8.0", "no_otel", False),
+    ("python", "0.8.0", None, False),
+    ("python", None, "on", False),
+    ("python", "unknown", "on", False),
+    ("typescript", "0.3.0", "on", True),
+    ("typescript", "0.3.0", "load_only", True),
+    ("typescript", "0.2.99", "on", False),
+    ("typescript", "0.3.0-beta.1", "on", False),
+    ("python", "0.3.0", "on", False),
+    ("ruby", "999.0.0", "on", False),
+    (None, "999.0.0", "on", False),
 ])
-def test_can_record_requires_a_supported_version_and_mode(version, mode, expected):
-    with patch.object(usage, "MIN_TRACING_SDK", "1.2.3"):
-        assert usage.can_record(version, mode) is expected
+def test_can_record_requires_a_supported_language_version_and_mode(language, version, mode, expected):
+    assert usage.can_record(version, mode, language) is expected
 
 
-def test_unconfirmed_release_never_claims_recording_support():
-    with patch.object(usage, "MIN_TRACING_SDK", None):
-        assert usage.can_record("999.0.0", "on") is False
+def test_owner_release_thresholds():
+    assert usage.MIN_TRACING_SDK == {"python": "0.8.0", "typescript": "0.3.0"}
+    assert usage.can_record("999.0.0", "on") is False
 
 
 def test_sdk_bucket_updates_and_clears_metadata(hub_skill, publish_skill):
     version = publish_skill(hub_skill).version
     args = dict(version=version, channel="sdk", consumer_key="credential:fixture")
-    usage.record_fetch(**args, consumer_label="First", sdk_version="1.2.3", tracing_mode="on")
-    usage.record_fetch(**args, consumer_label="Renamed", sdk_version="1.3.0", tracing_mode="off")
+    usage.record_fetch(**args, consumer_label="First", sdk_language="python", sdk_version="1.2.3", tracing_mode="on")
+    usage.record_fetch(**args, consumer_label="Renamed", sdk_language="typescript", sdk_version="1.3.0", tracing_mode="off")
     bucket = hub_skill.usage_days.get()
     assert (bucket.count, bucket.consumer_label, bucket.sdk_version, bucket.tracing_mode) == (
         2, "Renamed", "1.3.0", "off",
     )
+    assert bucket.sdk_language == "typescript"
     usage.record_fetch(**args, consumer_label="Renamed")
     bucket.refresh_from_db()
-    assert (bucket.count, bucket.sdk_version, bucket.tracing_mode) == (3, None, None)
+    assert (bucket.count, bucket.sdk_version, bucket.tracing_mode, bucket.sdk_language) == (3, None, None, None)
 
 
 def test_metadata_create_race_keeps_the_last_values(hub_skill, publish_skill):
@@ -232,9 +240,8 @@ def test_consumer_uses_latest_bucket_not_lexical_max(hub_skill, publish_skill, m
             channel="sdk", consumer_key="credential:same", consumer_label=label,
             sdk_version=sdk, tracing_mode=mode, count=2, last_at=now - timedelta(days=days),
         )
-    with patch.object(usage, "MIN_TRACING_SDK", "1.2.3"):
-        summary = usage.usage_summary(hub_skill, 7)
-        batch = usage.consumers_7d([hub_skill.pk])
+    summary = usage.usage_summary(hub_skill, 7)
+    batch = usage.consumers_7d([hub_skill.pk])
     row, = summary["consumers"]
     assert row == {
         "label": "Alpha", "channel": "sdk", "count": 4, "last_at": now,
@@ -243,6 +250,24 @@ def test_consumer_uses_latest_bucket_not_lexical_max(hub_skill, publish_skill, m
     assert batch == {hub_skill.pk: [row]}
     assert summary["by_channel"]["sdk"] == summary["total"] == 4
     assert usage.fetches_7d_map([hub_skill.pk]) == {hub_skill.pk: 4}
+
+
+def test_latest_sdk_family_and_version_are_one_capability_observation(hub_skill, publish_skill):
+    version = publish_skill(hub_skill).version
+    args = dict(version=version, channel="sdk", consumer_key="credential:fixture", consumer_label="Fixture")
+    usage.record_fetch(**args, sdk_language="typescript", sdk_version="0.3.0", tracing_mode="on")
+    assert usage.consumers_7d([hub_skill.pk])[hub_skill.pk][0]["can_record"] is True
+    # The same version is too old for Python. Reusing an old family's threshold
+    # must not make an updated daily bucket look instrumented.
+    usage.record_fetch(**args, sdk_language="python", sdk_version="0.3.0", tracing_mode="on")
+    assert usage.usage_summary(hub_skill, 7)["consumers"][0]["can_record"] is False
+    usage.record_fetch(**args, sdk_language="typescript", sdk_version="0.3.0", tracing_mode="off")
+    assert usage.consumers_7d([hub_skill.pk])[hub_skill.pk][0]["can_record"] is False
+    usage.record_fetch(**args, sdk_language="typescript", sdk_version="0.3.0", tracing_mode="load_only")
+    assert usage.usage_summary(hub_skill, 7)["consumers"][0]["can_record"] is True
+    # Historical/unidentified clients cannot inherit the last known language.
+    usage.record_fetch(**args, sdk_version="0.9.0", tracing_mode="on")
+    assert usage.usage_summary(hub_skill, 7)["consumers"][0]["can_record"] is False
 
 
 def test_batch_window_live_scope_and_empty_inputs(hub_skill, publish_skill, hub_other_workspace):
@@ -305,6 +330,7 @@ def test_existing_fetch_path_parses_metadata(hub_skill, publish_skill, user):
     fetch(request, publish_skill(hub_skill).version)
     bucket = hub_skill.usage_days.get()
     assert (bucket.channel, bucket.sdk_version, bucket.tracing_mode) == ("api", "1.2.3", "load_only")
+    assert bucket.sdk_language == "typescript"
 
 
 def test_one_fetch_per_successful_resolve_and_none_for_continuations(released, consumer):
@@ -328,9 +354,9 @@ def test_one_fetch_per_successful_resolve_and_none_for_continuations(released, c
     assert bucket.consumer_key == f"credential:{credential_id}"
     assert bucket.consumer_label == ""  # Foundation credentials have no name yet.
     assert (bucket.channel, bucket.sdk_version, bucket.tracing_mode) == ("sdk", "1.2.3", "on")
-    with patch.object(usage, "MIN_TRACING_SDK", "1.2.3"):
-        assert usage.usage_summary(released.skill, 7)["consumers"][0]["can_record"] is True
-        assert usage.consumers_7d([released.skill_id])[released.skill_id][0]["count"] == 1
+    assert bucket.sdk_language == "python"
+    assert usage.usage_summary(released.skill, 7)["consumers"][0]["can_record"] is True
+    assert usage.consumers_7d([released.skill_id])[released.skill_id][0]["count"] == 1
     again = resolve(client, released, HTTP_IF_NONE_MATCH=response["ETag"], **HEADERS)
     assert again.status_code == 200
     assert again.data["result"]["resolution_id"] != result["resolution_id"]
