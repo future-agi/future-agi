@@ -356,6 +356,20 @@ function ToolsCard({ tools }) {
                   </Tooltip>
                 )}
               </Stack>
+              {tool.status_reason && (
+                <Typography
+                  data-testid="tool-status-reason"
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    px: 1.5,
+                    pl: 5,
+                    pb: 1,
+                  }}
+                >
+                  {tool.status_reason}
+                </Typography>
+              )}
               <Collapse in={open}>
                 <ToolDetail tool={tool} />
               </Collapse>
@@ -459,6 +473,8 @@ const TOOL_SHAPE = PropTypes.shape({
   tool: PropTypes.string.isRequired,
   status: PropTypes.oneOf(["simulated", "in_process", "unsupported", "unknown"])
     .isRequired,
+  // The server's words for why a test cannot run it; null for a tool a test can run.
+  status_reason: PropTypes.string,
   reset_between_trials: PropTypes.bool,
   runs_at: PropTypes.string,
   writes: PropTypes.bool,
