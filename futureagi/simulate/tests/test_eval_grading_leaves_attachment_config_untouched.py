@@ -9,6 +9,7 @@ the grader holds when it saves the row.
 """
 
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -423,3 +424,23 @@ class TestTemplateTextOnLaterGrades:
 
         _grade_executor(eval_config, call_execution, transcript_data)
         assert fake_evaluator.seen[-1]["rule_prompt"] == "v2"
+
+
+@pytest.mark.django_db
+class TestXlColumnMismatchWrites:
+    def test_xl_column_mismatch_writes_status_only(
+        self, eval_config, call_execution, transcript_data, fake_evaluator
+    ):
+        # A mapping value that is no column of the test's scenarios fails the grade
+        # before it starts; that save must not carry an in-memory edit to the row.
+        eval_config.mapping = {"transcript": str(uuid.uuid4())}
+        eval_config.save(update_fields=["mapping"])
+        eval_config.config["marker"] = 1
+
+        with pytest.raises(ValueError, match="Column mapping mismatch"):
+            _grade_xl(eval_config, call_execution, transcript_data)
+
+        row = _reload(eval_config)
+        assert row.status == StatusType.FAILED.value
+        assert row.config == ATTACHMENT_CONFIG
+        assert fake_evaluator.seen == []

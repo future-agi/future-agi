@@ -1,3 +1,5 @@
+import copy
+
 import structlog
 
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -196,7 +198,7 @@ def _execute_composite_on_external_platform(config: ExternalEvalConfig):
         "composite": True,
         "children": [cr.model_dump() for cr in outcome.child_results],
     }
-    config.save()
+    config.save(update_fields=["eval_results", "updated_at"])
 
     _send_eval_result(config, value, reason)
 
@@ -251,10 +253,12 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
 
     try:
         eval_instance = runner._create_eval_instance(
-            config=config.config or {},
+            # Each gets its own copy: the evaluator set-up writes its settings into
+            # what it is handed, and none of that may reach the row.
+            config=copy.deepcopy(config.config or {}),
             eval_class=eval_class,
             model=config.model,
-            runtime_config=config.config,
+            runtime_config=copy.deepcopy(config.config),
         )
     except Exception as exc:
         from tfc.ee_gates import jev_error_message
@@ -305,7 +309,7 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
             logger.warning("jev_usage_emit_failed", exc_info=True)
 
     config.eval_results = eval_result
-    config.save()
+    config.save(update_fields=["eval_results", "updated_at"])
 
     value = eval_result.get("value")
     reason = eval_result.get("reason")
@@ -334,7 +338,7 @@ def run_external_eval_config(config_id):
         _execute_evaluation_on_external_platform(config)
 
         config.status = StatusChoices.COMPLETED
-        config.save()
+        config.save(update_fields=["status", "updated_at"])
         logger.info(f"Successfully processed external eval config: {config.id}")
 
     except Exception as e:
@@ -343,7 +347,7 @@ def run_external_eval_config(config_id):
         logger.exception(f"Failed to process external eval config {config.id}: {e}")
         config.status = StatusChoices.FAILED
         config.error_message = jev_error_message(e) or str(e)
-        config.save()
+        config.save(update_fields=["status", "error_message", "updated_at"])
 
 
 def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
@@ -375,7 +379,7 @@ def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
     config.logs.append(
         {"type": "langfuse", "message": f"Langfuse Eval Result Sent: {value} {reason}"}
     )
-    config.save()
+    config.save(update_fields=["logs", "updated_at"])
 
 
 def _process_results_langfuse(value):
