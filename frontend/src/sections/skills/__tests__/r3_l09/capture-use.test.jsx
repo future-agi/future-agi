@@ -452,10 +452,10 @@ describe("independent consumer observations", () => {
     expect(screen.getByText("Pinned as intended")).toBeVisible();
     expect(screen.getByText("No report from this app yet")).toBeVisible();
     // A calm summary, not a warning: connected consumers that have not reported delivery are named and counted.
-    expect(screen.getByText("1 of 1 connected consumer needs a delivery report to confirm the version received.")).toBeVisible();
+    expect(screen.getByText("1 app follows this context. 1 of 1 still needs a delivery report to confirm the version received.")).toBeVisible();
     // The queue names the missing report once (the badge); it never fills the absent delivery in or repeats itself.
     expect(screen.queryByText("Waiting for first report")).toBeNull();
-    click("Pilot application");
+    fireEvent.click(screen.getByText("Pilot application").closest("tr"));
     expect(screen.getByText("Delivery receipts")).toBeVisible();
     // The drawer retains all five independent stages; the three unreported ones stay unknown.
     expect(screen.getAllByText("Waiting for first report").filter((node) => node.closest('[role="dialog"]'))).toHaveLength(3);
@@ -474,7 +474,7 @@ describe("independent consumer observations", () => {
         onWindowChange={() => {}}
       />,
     );
-    click("Pilot application");
+    fireEvent.click(screen.getByText("Pilot application").closest("tr"));
     rerender(
       <ContextConsumersView scopeKey="scope" state="forbidden" data={data} />,
     );

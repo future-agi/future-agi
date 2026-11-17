@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter, useNavigate, useSearchParams } from 'react-router-dom';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import { MemoryRouter, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextDetailView from './ContextDetailView';
 import ContextLibraryView from './ContextLibraryView';
@@ -18,35 +18,36 @@ const detail = { scopeKey, query: { scopeKey, data: { context: { id: 'context', 
 function Navigation() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  return <><output aria-label="URL parameters">{params.toString()}</output><button type="button" onClick={() => navigate(-1)}>Back</button><button type="button" onClick={() => navigate(1)}>Forward</button></>;
+  const location = useLocation();
+  return <><output aria-label="URL pathname">{location.pathname}</output><output aria-label="URL parameters">{params.toString()}</output><button type="button" onClick={() => navigate(-1)}>Back</button><button type="button" onClick={() => navigate(1)}>Forward</button></>;
 }
 it('keeps every header button outlined: the release action is absent on Versions and Tests, where the body owns the step', () => {
   const latest = { id: 'v2', number: 2, digest: `sha256:${'b'.repeat(64)}` };
   const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version], sections: { ...detail.sections, versions: <button type="button">Request release review</button> } };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
-  const release = screen.getByRole('link', { name: 'Request release review for v2' });
+  const release = screen.getByRole('link', { name: 'Request release for v2' });
   expect(release).toHaveClass('MuiButton-outlined');
   expect(new URL(release.href).searchParams.get('candidate')).toBe('v2');
   expect(new URL(release.href).searchParams.get('digest')).toBe(latest.digest);
   expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   expect(document.querySelectorAll('.MuiButton-contained')).toHaveLength(0);
   fireEvent.click(screen.getByRole('tab', { name: 'Versions' }));
-  expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Request release for v2' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Request release review', exact: true })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   fireEvent.click(screen.getByRole('tab', { name: 'Tests' }));
-  expect(screen.queryByRole('link', { name: 'Request release review for v2' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Request release for v2' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Edit latest v2' })).toHaveClass('MuiButton-outlined');
   expect(document.querySelectorAll('.MuiButton-contained')).toHaveLength(0);
   fireEvent.click(screen.getByRole('tab', { name: 'Rollback' }));
-  expect(screen.getByRole('link', { name: 'Request release review for v2' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release for v2' })).toHaveClass('MuiButton-outlined');
   expect(screen.getByText('v2 published · Production is still v1.')).toBeVisible();
 });
 it('offers the first release from the header before any production label exists', () => {
   const first = { ...version, id: 'v1' };
   const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, labels: [] }, latest: first } } };
   render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
-  expect(screen.getByRole('link', { name: 'Request release review for v1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release for v1' })).toHaveClass('MuiButton-outlined');
   expect(screen.getByRole('button', { name: 'Edit latest v1' })).toHaveClass('MuiButton-outlined');
   expect(screen.queryByText(/Production is still/)).not.toBeInTheDocument();
 });
@@ -125,24 +126,27 @@ it('matches list action order, search and tag controls and resets paging when pa
   fireEvent.change(screen.getByRole('combobox', { name: 'Rows per page' }), { target: { value: '50' } });
   expect(change).toHaveBeenLastCalledWith({ page: 1, pageSize: 50 });
 });
-it('shows each followed label against the locked version and never calls failed lookups current', () => {
+it('shows each followed label against the locked version and never calls failed lookups current', async () => {
   const retry = vi.fn();
   state.upstream = { follow: { data: { name: 'refund-policy', labels: [{ name: 'production', version: 2, versionId: 'new' }] } }, failed: { isError: true, refetch: retry } };
   const links = [{ skillId: 'follow', selector: { label: 'production' } }, { skillId: 'pin', selector: { version: 1 } }, { skillId: 'failed', selector: { label: 'production' } }];
   const session = { contextSpec: { links }, resolvedLock: { links: links.map((link) => ({ ...link, version: 1, versionId: 'old', digest: version.digest, mount: `skills/${link.skillId}/` })) } };
-  render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
+  render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /><Navigation /></MemoryRouter>);
   const table = screen.getByRole('table', { name: 'Linked skills' });
   expect(within(table).getByText('v2 available')).toBeVisible();
   expect(within(table).getByText('Pinned on purpose')).toBeVisible();
   expect(within(table).getByText("Couldn't check")).toBeVisible();
   expect(within(table).queryByText('Up to date')).not.toBeInTheDocument();
-  fireEvent.click(within(table).getByRole('button', { name: 'Retry' }));
+  fireEvent.click(within(table).getByRole('button', { name: 'Actions for failed' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Retry check' }));
   expect(retry).toHaveBeenCalledOnce();
   // The update is said once as a badge and once as the action: no sentence above the table repeats it.
   expect(screen.queryByText(/has v2 available|Review the update before/)).not.toBeInTheDocument();
   expect(within(table).queryByRole('link', { name: 'Review update' })).not.toBeInTheDocument();
-  expect(within(table).getAllByRole('link', { name: 'Check update' })).toHaveLength(1);
-  expect(within(table).getByRole('link', { name: 'Check update' })).toHaveAttribute('href', '/dashboard/skills/follow?tab=dependents');
+  const update = await screen.findByRole('button', { name: 'Check for update' });
+  fireEvent.click(update);
+  await waitFor(() => expect(screen.getByLabelText('URL pathname')).toHaveTextContent('/dashboard/skills/follow'));
+  expect(screen.getByLabelText('URL parameters')).toHaveTextContent('tab=dependents');
   expect(session.resolvedLock.links.every((link) => link.version === 1)).toBe(true);
 });
 
@@ -216,22 +220,21 @@ it('opens one full-width detail row per linked skill with a named expand button,
   const links = [{ skillId: 'one', selector: { label: 'production' } }, { skillId: 'two', selector: { version: 1 } }];
   state.upstream = { one: { data: { name: 'refund-policy', labels: [{ name: 'production', version: 2, versionId: 'new' }] } } };
   const session = { contextSpec: { links }, resolvedLock: { links: links.map((link) => ({ ...link, version: 1, versionId: `id-${link.skillId}-1111`, digest: `sha256:${'c'.repeat(64)}`, mount: `skills/${link.skillId}/` })) } };
-  render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
+  render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /><Navigation /></MemoryRouter>);
   const table = screen.getByRole('table', { name: 'Linked skills' });
   expect(screen.queryByRole('button', { name: 'Technical details' })).not.toBeInTheDocument();
-  expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Skill', 'Update rule', 'Version in this context', 'Status', 'Action', 'Details']);
+  expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Skill', 'Update rule', 'Version in this context', 'Status', 'Actions']);
   // The update action sits in its own column; the status cell holds only the badge.
-  const update = within(table).getByRole('link', { name: 'Check update' });
+  const update = within(table).getByRole('button', { name: 'Check for update' });
   expect(update.closest('td').cellIndex).toBe(4);
   expect(within(update.closest('tr')).getByText('v2 available').closest('td').cellIndex).toBe(3);
   // Digests never show in the row; the version opens them on demand.
   expect(screen.queryByText(/sha256|cccccc/)).not.toBeInTheDocument();
-  const expand = within(table).getByRole('button', { name: 'Show details for refund-policy' });
-  expect(expand).toHaveAttribute('aria-expanded', 'false');
+  const expand = within(table).getByText('refund-policy').closest('tr');
+  expect(expand).toHaveAttribute('data-row-link', 'true');
   fireEvent.click(expand);
-  expect(expand).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Technical details')).toBeVisible();
-  expect(screen.getByText('Technical details').closest('td')).toHaveAttribute('colspan', '6');
+  expect(screen.getByText('Technical details').closest('td')).toHaveAttribute('colspan', '5');
   expect(screen.queryByText(/Content fingerprint|Version ID/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Copy full Digest' })).toBeVisible();
   fireEvent.click(expand);

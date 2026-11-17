@@ -49,7 +49,7 @@ it('opens renewal after a definite stale release refusal', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Run release' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   await waitFor(() => expect(useRenewalPreview).toHaveBeenLastCalledWith('request', true));
-  expect(screen.getByText('Renew release review')).toBeVisible();
+  expect(screen.getByText('Renew request')).toBeVisible();
 });
 
 it('does not offer renewal for a role refusal', async () => {
@@ -68,7 +68,7 @@ const ref = (id, visibility = 'private') => ({ source: 'skills_text', sourceId: 
 it('carries the published candidate forward, preselects the only target and shares the named results in one decision', async () => {
   useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy', labels: [{ name: 'production', version: 1 }] }], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [{ id: 'v1', number: 1, digest: 'sha256:old' }], total_pages: 2 } });
-  const shared = { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }], evidence: [ref('run-a', 'workspace'), ref('run-b', 'workspace')], recipients: [] };
+  const shared = { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }], evidence: [ref('run-a', 'workspace'), ref('run-b', 'workspace')], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] };
   const refetch = vi.fn().mockResolvedValue({ data: shared });
   useReviewOptions.mockReturnValue({ data: { ...shared, evidence: [ref('run-a'), ref('run-b')] }, refetch });
   const prepare = vi.fn().mockResolvedValue(null);
@@ -76,15 +76,15 @@ it('carries the published candidate forward, preselects the only target and shar
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
   const share = vi.fn().mockResolvedValue({});
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
-  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' }, evidence: ['skills_text:run-a', 'skills_text:run-b'] }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
   expect(screen.getByLabelText('Name')).toHaveValue('Refund policy');
   expect(screen.getByLabelText('Version to release')).toHaveValue('v2');
   expect(screen.getByLabelText('Type')).toHaveAttribute('aria-disabled', 'true');
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
   expect(screen.getAllByRole('checkbox', { name: /^Attach Answer check/ })).toHaveLength(2);
-  screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
+  screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((checkbox) => expect(checkbox).toBeChecked());
+  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 selected' }));
   // The confirmation names every record it shares by title with a Private badge; each full ID is one hover away and never printed.
   const confirmation = within(screen.getByRole('dialog'));
   expect(confirmation.getByText('Share 2 private results with the workspace?')).toBeVisible();
@@ -98,8 +98,10 @@ it('carries the published candidate forward, preselects the only target and shar
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-a', acknowledgeSnapshotSharing: true }));
-  // The batch decision continues to the exact packet without another click;
-  // the packet is only prepared for inspection, never sent.
+  // Sharing alone does not prepare or send the request.
+  expect(prepare).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
   const input = prepare.mock.calls[0][0];
   expect(input).toMatchObject({ resourceId: 'context', kind: 'agent_context', candidateId: 'v2', target: { bindingId: 'binding', revision: 1 } });
@@ -159,7 +161,7 @@ it('keeps an unknown publish outcome retryable without a second head acknowledgm
 it('keeps the form open instead of preparing when the optional pipeline record is incomplete', async () => {
   useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
-  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a', 'workspace')], recipients: [] }, refetch: vi.fn() });
+  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a', 'workspace')], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] }, refetch: vi.fn() });
   const prepare = vi.fn().mockResolvedValue(null);
   usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
@@ -168,9 +170,10 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   fireEvent.click(screen.getByRole('button', { name: 'Attach your CI run (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
   expect(screen.queryByRole('button', { name: 'Attach 1 result' })).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Answer check/ })).toBeChecked());
+  expect(screen.getByRole('checkbox', { name: /^Attach Answer check/ })).not.toBeChecked();
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Attach Answer check/ }));
   expect(prepare).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
 });
 
 it('fences a confirmed receipt to its request and authenticated scope while queries refresh', async () => {
@@ -190,7 +193,7 @@ it('fences a confirmed receipt to its request and authenticated scope while quer
 it('blocks a same-version release, including the batch-share prepare path', async () => {
   useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [{ id: 'v2', number: 2, digest: 'sha256:candidate' }], total_pages: 1 } });
-  const data = { subject: { labels: [{ name: 'production', version: 2 }] }, targets: [], evidence: [ref('run-a')], recipients: [] };
+  const data = { subject: { labels: [{ name: 'production', version: 2 }] }, targets: [], evidence: [ref('run-a')], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] };
   useReviewOptions.mockReturnValue({ data, refetch: vi.fn().mockResolvedValue({ data: { ...data, evidence: [ref('run-a', 'workspace')] } }) });
   const prepare = vi.fn();
   usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
@@ -198,11 +201,11 @@ it('blocks a same-version release, including the batch-share prepare path', asyn
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   expect(screen.getByLabelText('Version to release')).toHaveValue('v2 (in production)');
   expect(screen.getAllByText('v2 is already in production. Choose another version to release.').length).toBeGreaterThan(0);
-  expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Next versions' })).not.toBeInTheDocument();
   // One private result has no bulk button; it is shared from its own row, and the consent title is singular.
   expect(screen.queryByRole('button', { name: 'Share and attach 1 result' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Attach Answer check/ }));
   expect(within(screen.getByRole('dialog')).getByText('Share 1 private result with the workspace?')).toBeVisible();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(useReviewOptions.mock.results.at(-1).value.refetch).toHaveBeenCalled());
@@ -286,27 +289,27 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   // Something is attached, so the "no evidence" caution stays quiet.
   expect(screen.queryByText(/aren.t attached|isn.t attached/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Attach all' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   expect(await screen.findByText('Reviewer: Sam Rivera')).toBeVisible();
   expect(screen.queryByRole('combobox', { name: 'Assigned reviewer' })).not.toBeInTheDocument();
   expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ evidence: [{ source: 'skills_text', sourceId: 'carried', annotationRevision: 1 }] }));
-  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." }));
+  fireEvent.click(screen.getByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching." }));
   fireEvent.click(screen.getByRole('button', { name: 'Edit request' }));
   expect(screen.getByRole('combobox', { name: 'Assigned reviewer' })).toHaveTextContent('Sam Rivera');
   expect(screen.getByText('1 result attached from your test')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
-  expect(await screen.findByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).not.toBeChecked();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching." })).not.toBeChecked();
   expect(submit).not.toHaveBeenCalled();
   // Step 2 is titled for what it does; step 1 kept "Request release review".
   expect(screen.getByRole('heading', { name: 'Confirm and send' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: 'Request release review' })).not.toBeInTheDocument();
   // One decision footer: the acknowledgment and the text button on the left; the reason, the outlined Cancel, then the contained primary on the right.
   const before = (a, b) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const ack = screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." });
+  const ack = screen.getByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching." });
   const edit = screen.getByRole('button', { name: 'Edit request' });
   const cancel = screen.getByRole('button', { name: 'Cancel' });
   const reason = screen.getByText('Tick the acknowledgment to send');
-  const send = screen.getByRole('button', { name: 'Send review request' });
+  const send = screen.getByRole('button', { name: 'Send request' });
   [[ack, edit], [edit, reason], [reason, cancel], [cancel, send]].forEach(([a, b]) => before(a, b));
   expect(edit).toHaveClass('MuiButton-text');
   expect(cancel).toHaveClass('MuiButton-outlined');
@@ -316,10 +319,10 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
 });
 
 // ---- UX iteration 3, REV2 and REV5 ----
-it('marks and lists the carried private run first, never ticks it, and warns beside Prepare without blocking it', async () => {
+it('marks and lists the carried private run first, pre-ticks it without attaching, and requires explicit sharing', async () => {
   useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
-  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a'), ref('run-b')], recipients: [] }, refetch: vi.fn() });
+  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a'), ref('run-b')], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] }, refetch: vi.fn() });
   const prepare = vi.fn().mockResolvedValue(null);
   usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
@@ -328,32 +331,25 @@ it('marks and lists the carried private run first, never ticks it, and warns bes
   const rows = within(screen.getByRole('table', { name: 'Test evidence' })).getAllByRole('row').slice(1);
   expect(within(rows[0]).getByText('From your test')).toBeVisible();
   expect(within(rows[1]).queryByText('From your test')).not.toBeInTheDocument();
-  // Private: offered for sharing, never pre-ticked.
-  expect(within(rows[0]).getByRole('button', { name: 'Share and attach' })).toBeVisible();
-  screen.getAllByRole('checkbox', { name: /^Attach Answer check/ }).forEach((box) => expect(box).not.toBeChecked());
-  // One quiet line with a text button in the footer; no warning callout.
-  expect(screen.getByText('2 passing results not attached ·')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Attach all' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Attach all' })).toHaveClass('MuiButton-text');
-  expect(screen.getByText('2 passing results not attached ·').closest('.MuiAlert-root')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Attach all' }).closest('[data-sticky-footer]')).not.toBeNull();
-  // The private results are explained once above the table, and the run from Tests has its own line.
-  expect(screen.getAllByText('Private results are visible only to you. Share them with the workspace so the reviewer can see them.')).toHaveLength(1);
-  expect(screen.getByText('Your test result from Tests is private. Share it to attach it.')).toBeVisible();
-  // Two private results share in one decision, so the bulk button and the footer's Attach all open the same consent.
-  fireEvent.click(screen.getByRole('button', { name: 'Attach all' }));
-  expect(within(screen.getByRole('dialog')).getByText('Share 2 private results with the workspace?')).toBeVisible();
+  // A carried private result is selected for a possible share, not attached.
+  expect(within(rows[0]).getByRole('checkbox')).toBeChecked();
+  expect(within(rows[1]).getByRole('checkbox')).not.toBeChecked();
+  expect(screen.getByText('No test evidence attached')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Attach all' })).not.toBeInTheDocument();
+  expect(screen.getAllByText('Private results are visible only to you; sharing lets the reviewer see them.')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 selected' }));
+  expect(within(screen.getByRole('dialog')).getByText('Share 1 private result with the workspace?')).toBeVisible();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  // Prepare stays one click.
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  expect(useShareReleaseEvidence.mock.results.at(-1).value.mutateAsync).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
   expect(prepare.mock.calls[0][0].evidence).toEqual([]);
 });
 it('shows two numbered steps with the current one marked, and plain headings', () => {
   useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
-  useReviewOptions.mockReturnValue({ data: { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }, { name: 'other_agent', target: { bindingId: 'other', revision: 1 } }], evidence: [], recipients: [] }, refetch: vi.fn() });
+  useReviewOptions.mockReturnValue({ data: { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }, { name: 'other_agent', target: { bindingId: 'other', revision: 1 } }], evidence: [], recipients: [{ id: 'reviewer', name: 'Sam Rivera' }] }, refetch: vi.fn() });
   usePrepareReleaseReview.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
@@ -403,12 +399,12 @@ it('offers Attach on the confirm step when results were available but none is at
   useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   const attach = await screen.findByRole('button', { name: 'Attach' });
   expect(attach).toHaveClass('MuiButton-text');
   expect(attach.parentElement).toHaveTextContent('No test results attached ·');
   expect(screen.queryByText(/available\)/)).not.toBeInTheDocument();
   fireEvent.click(attach);
-  expect(await screen.findByRole('button', { name: 'Prepare review' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Continue' })).toBeVisible();
   expect(screen.getAllByRole('checkbox', { name: /^Attach Answer check/ })).toHaveLength(2);
 });

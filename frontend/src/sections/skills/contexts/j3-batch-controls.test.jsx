@@ -5,7 +5,8 @@ import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextLinksPanel from './ContextLinksPanel';
 import ContextFollowerUpdate from './ContextFollowerUpdate';
 
-const state = vi.hoisted(() => ({ dependents: null, history: null, prepare: vi.fn(), apply: vi.fn() }));
+const state = vi.hoisted(() => ({ dependents: null, history: null, prepare: vi.fn(), apply: vi.fn(), navigate: vi.fn() }));
+vi.mock('react-router-dom', async (load) => ({ ...(await load()), useNavigate: () => state.navigate }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:ws:author' }) }));
 vi.mock('src/api/skills', () => ({ useSkill: () => ({ data: { name: 'refund-policy', latestVersion: 8, labels: [{ name: 'production', version: 8 }] } }) }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
@@ -30,7 +31,7 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   expect(pin).toBeDisabled();
   expect(pin.closest('[title]')).toHaveAttribute('title', 'Pinned to v7 on purpose. Change the pin in the context to update.');
   expect(screen.getByText('Preparing starts a draft for each selected context. Production doesn\'t change.')).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Used by' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Linked contexts' })).toBeVisible();
   expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
   expect(screen.queryByRole('columnheader', { name: 'Locked at' })).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Policy' })).not.toBeInTheDocument();
@@ -86,16 +87,15 @@ it('shows the pinned row with a disabled checkbox, a lock mark and Production as
   const pin = screen.getByRole('checkbox', { name: 'Select c v1 for update' });
   expect(pin).toBeDisabled();
   const rowOf = (name) => screen.getByRole('checkbox', { name }).closest('tr');
-  expect(rowOf('Select c v1 for update').querySelector('.component-iconify')).not.toBeNull();
-  expect(rowOf('Select a v1 for update').querySelector('.component-iconify')).toBeNull();
   expect(within(rowOf('Select a v1 for update')).getByText('Production')).toBeVisible();
   expect(within(rowOf('Select c v1 for update')).getByText('Pinned on purpose')).toBeVisible();
-  expect(within(rowOf('Select c v1 for update')).getByText('Pinned v7')).toBeVisible();
+  expect(within(rowOf('Select c v1 for update')).getByText('Pinned to v7')).toBeVisible();
   expect(within(rowOf('Select a v1 for update')).getByText('Follows production · v7')).toBeVisible();
   // A pinned row says how to change the pin; a following row does not.
-  expect(within(rowOf('Select c v1 for update')).getByRole('link', { name: 'Change pin for c' })).toHaveAttribute('href', '/dashboard/skills/contexts/c?tab=links');
-  expect(within(rowOf('Select a v1 for update')).queryByRole('link', { name: /Change pin/ })).not.toBeInTheDocument();
-  expect(within(rowOf('Select c v1 for update')).getByRole('link', { name: 'Inspect c v1' })).toBeVisible();
+  fireEvent.click(within(rowOf('Select c v1 for update')).getByRole('button', { name: 'Actions for c v1' }));
+  expect(screen.getByRole('menuitem', { name: 'Open context' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Change pin' }));
+  expect(state.navigate).toHaveBeenCalledWith('/dashboard/skills/contexts/c?tab=links');
 });
 
 it('keeps Prepare off after every selected context is updated, and on again once the selection changes', async () => {
@@ -142,7 +142,7 @@ it('keeps superseded references available in a disclosure without duplicating th
   expect(live.getByText('a')).toBeVisible();
   expect(live.getByRole('columnheader', { name: 'Agent context' })).toBeVisible();
   expect(live.queryByRole('columnheader', { name: 'Context release' })).not.toBeInTheDocument();
-  expect(screen.getByText(/agent contexts? uses? this skill/)).toBeVisible();
+  expect(screen.getByText(/agent contexts? links? this skill/)).toBeVisible();
   expect(screen.queryByText(/\d references?\b/)).not.toBeInTheDocument();
   expect(screen.queryByRole('table', { name: 'Historical context references' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Show superseded releases' }));
@@ -192,11 +192,11 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
   const preview = vi.fn(async () => ({ revision: 3, fingerprint: 'fp', candidateDigest: 'sha256:x', changes: [], checks: { summary: { errors: 0 } } }));
   render(<ContextLinksPanel scopeKey="scope" session={session()} availableSkills={available} onPreview={preview} onApply={vi.fn()} />);
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Add a published skill' })); fireEvent.click(screen.getByRole('option', { name: 'one' }));
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: /^Update policy/ })); fireEvent.click(screen.getByRole('option', { name: 'Pin version' }));
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Update rule' })); fireEvent.click(screen.getByRole('option', { name: 'Pinned' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Version' }), { target: { value: '7' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add skill' }));
   // The pin must not leak into the batch: the policy returns to its default.
-  expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('production');
+  expect(screen.getByRole('combobox', { name: 'Update rule' })).toHaveTextContent('Follows production');
   fireEvent.click(screen.getByRole('button', { name: 'Add all 2 remaining published skills' }));
   fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
   await waitFor(() => expect(preview).toHaveBeenCalledOnce());
