@@ -46957,6 +46957,7 @@ export type ModelHubSkillsRuntimeComparisonListParams = {
    * @maxLength 1900
    */
   project_ids?: string;
+  as_of?: string;
   before_from?: string;
   before_to?: string;
   after_from?: string;

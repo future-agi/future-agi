@@ -22,8 +22,9 @@ const stop = (event) => event.stopPropagation();
 export function TraceNumber({ children, link, kind = 'all', projects, what, lowSample = false, traces, projectId }) {
   const sx = { fontVariantNumeric: 'tabular-nums', color: lowSample ? 'text.secondary' : undefined };
   const body = lowSample ? <Tooltip title={lowSampleTitle(traces ?? 0)}><span>{children}</span></Tooltip> : children;
-  if (link && !(projectId ?? link.project_id) && projects?.length) {
-    return <Box component="span" sx={sx}><ProjectMenu what={what} link={link} kind={kind} options={projects}>{body}</ProjectMenu></Box>;
+  const options = link?.projects ?? projects;
+  if (link && !(projectId ?? link.project_id) && options?.length) {
+    return <Box component="span" sx={sx}><ProjectMenu what={what} link={link} kind={kind} options={options}>{body}</ProjectMenu></Box>;
   }
   const href = link ? buildSkillTraceLink({ link, kind, projectId }) : null;
   if (!href) return <Box component="span" sx={sx}>{body}</Box>;

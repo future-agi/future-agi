@@ -26236,6 +26236,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               maxLength: 1900,
             },
           },
+          as_of: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
           before_from: {
             required: false,
             schema: {

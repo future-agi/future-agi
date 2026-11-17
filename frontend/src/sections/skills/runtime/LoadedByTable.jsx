@@ -124,7 +124,7 @@ export function MetricCell({ row, column, evalConfig, what }) {
     case 'p50':
       return <Box component="span" sx={{ color: low ? 'text.secondary' : undefined }}>{formatMs(row.latencyMs?.p50)}</Box>;
     case 'cost':
-      return <Box component="span" sx={{ color: low ? 'text.secondary' : undefined }}>{formatCost(row.cost?.perTraceMean)}</Box>;
+      return <TraceNumber {...common} link={links.all} kind="all" what={`${what} cost per trace`}>{formatCost(row.cost?.perTraceMean)}</TraceNumber>;
     case 'tokens':
       return <Box component="span">{formatCount(row.tokens?.perTraceMean == null ? null : Math.round(row.tokens.perTraceMean))}</Box>;
     case 'loadTime':

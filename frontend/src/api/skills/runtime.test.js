@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'src/utils/axios';
 import {
   camelizeRuntime, normalizeMoveWindow, runtimeErrorKind, runtimeWindow,
-  useContextLinkLoads, useLatestLoad, useSkillComparison, useSkillRuntime, useRuntimeAgent, useRuntimeFilterValues,
+  useContextLinkLoads, useContextRuntime, useLatestLoad, useSkillComparison, useSkillRuntime, useRuntimeAgent, useRuntimeFilterValues,
 } from './runtime';
 
 const routes = vi.hoisted(() => ({ pending: false }));
@@ -141,7 +141,7 @@ describe('runtime hooks', () => {
   it('asks for one move by event id and window', async () => {
     const { result } = renderHook(() => useSkillComparison('skill-a', { eventId: 'event-a', window: '6h' }), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(axios.get.mock.calls[0][1].params).toEqual({ resource_id: 'skill-a', label: 'production', event_id: 'event-a', window: '6h' });
+    expect(axios.get.mock.calls[0][1].params).toEqual({ resource_id: 'skill-a', label: 'production', event_id: 'event-a', window: '6h', as_of: expect.any(String) });
   });
 
   it('indexes the 7-day link summary by skill id', async () => {
@@ -161,5 +161,20 @@ describe('runtime hooks', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(axios.get).toHaveBeenCalledWith('/model-hub/skills/loads/', expect.objectContaining({ params: { resource_id: 'skill-a', kind: 'skill', since: '2026-11-17T12:00:00Z' }, headers }));
     expect(result.current.data.fetch).toEqual({ sdkVersion: '0.9.2', tracingMode: 'on', canRecord: false });
+  });
+});
+
+describe('runtime paging boundaries', () => {
+  it.each([
+    ['skill', useSkillRuntime, 'skill-a'],
+    ['context', useContextRuntime, 'context-a'],
+    ['comparison', useSkillComparison, 'skill-a'],
+  ])('keeps the %s bounds unchanged between pages', async (_kind, useRuntime, id) => {
+    const { result, rerender } = renderHook(({ cursor }) => useRuntime(id, { cursor }), { initialProps: { cursor: undefined }, wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const first = axios.get.mock.calls.at(-1)[1].params;
+    rerender({ cursor: 'page-two' });
+    await waitFor(() => expect(axios.get.mock.calls.at(-1)[1].params.cursor).toBe('page-two'));
+    expect(axios.get.mock.calls.at(-1)[1].params).toEqual({ ...first, cursor: 'page-two' });
   });
 });

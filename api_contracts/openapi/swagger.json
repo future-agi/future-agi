@@ -47265,6 +47265,13 @@
                         "minLength": 1
                     },
                     {
+                        "name": "as_of",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
                         "name": "before_from",
                         "in": "query",
                         "required": false,

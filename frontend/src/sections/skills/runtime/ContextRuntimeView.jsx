@@ -5,6 +5,7 @@ import { Link, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typograp
 import ContentSkeleton from 'src/components/content-skeleton';
 import StatusBadge from 'src/components/status-badge';
 import { paths } from 'src/routes/paths';
+import RuntimePagination, { useRuntimePagination } from './RuntimePagination';
 import { runtimeErrorKind, useContextRuntime } from 'src/api/skills/runtime';
 import { rowLinkProps, stackedTableSx } from 'src/sections/skills/components/responsiveTable';
 import { RowActionsCell } from 'src/sections/skills/components/RowActions';
@@ -38,7 +39,8 @@ export default function ContextRuntimeView({ context, versionId, onRollback, onC
   const [projectIds, setProjectIds] = useState([]);
   const [expanded, setExpanded] = useState(() => new Set());
   const [agent, setAgent] = useState(null);
-  const query = useContextRuntime(context.id, { window: windowValue, projectIds, versionId });
+  const paging = useRuntimePagination([context.id, windowValue, projectIds, versionId]);
+  const query = useContextRuntime(context.id, { window: windowValue, projectIds, versionId, cursor: paging.cursor });
   const errorKind = query.isError ? runtimeErrorKind(query.error) : null;
   const data = query.data;
   const rows = data?.rows ?? [];
@@ -148,6 +150,7 @@ export default function ContextRuntimeView({ context, versionId, onRollback, onC
                     })}
                   </TableBody>
                 </Table>
+
               </Stack>
             </>
           )}
@@ -176,6 +179,7 @@ export default function ContextRuntimeView({ context, versionId, onRollback, onC
           <AboutRuntimeData />
         </>
       )}
+      <RuntimePagination paging={paging} query={query} />
       <AgentPanel open={Boolean(agent)} onClose={() => setAgent(null)} agent={agent} window={windowValue} />
     </Stack>
   );

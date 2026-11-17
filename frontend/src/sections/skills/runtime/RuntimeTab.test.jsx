@@ -58,15 +58,15 @@ describe('RuntimeTab', () => {
     expect(screen.getAllByRole('combobox')).toHaveLength(1);
     expect(screen.getByRole('combobox', { name: 'Window' })).toHaveTextContent('7 days');
     expect(screen.getByRole('group', { name: 'Projects' })).toBeInTheDocument();
-    expect(hooks.runtime).toHaveBeenLastCalledWith(SKILL.id, { window: '7d', projectIds: [] });
+    expect(hooks.runtime).toHaveBeenLastCalledWith(SKILL.id, { window: '7d', projectIds: [], cursor: undefined });
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Window' }));
     fireEvent.click(screen.getByRole('option', { name: '24 hours' }));
-    expect(hooks.runtime).toHaveBeenLastCalledWith(SKILL.id, { window: '24h', projectIds: [] });
+    expect(hooks.runtime).toHaveBeenLastCalledWith(SKILL.id, { window: '24h', projectIds: [], cursor: undefined });
   });
 
   it('opens the move card named in the URL, before the table', () => {
     show({ route: '/dashboard/skills/skill-a?tab=runtime&move=event-1&window=6h' });
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [] });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [], cursor: undefined });
     const card = document.querySelector('[data-card="move"]');
     expect(before(card, screen.getByRole('table', { name: 'Loaded by' }))).toBe(true);
   });
@@ -74,7 +74,7 @@ describe('RuntimeTab', () => {
   it('shows the latest production move in the window without a URL', () => {
     hooks.runtime.mockReturnValue(success({ ...RUNTIME, move: { eventId: 'event-9', verdict: 'watching' } }));
     show();
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-9', window: '24h', projectIds: [] });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-9', window: '24h', projectIds: [], cursor: undefined });
   });
 
   it('replaces the lead, strip and table with the diagnosis when nothing loaded', () => {
@@ -117,4 +117,15 @@ describe('RuntimeTab', () => {
     show({ mode: 'dark' });
     expect(within(screen.getByRole('table', { name: 'Loaded by' })).getByText('refund-agent')).toBeInTheDocument();
   });
+});
+
+it('pages Runtime rows and restarts on a different window', () => {
+  hooks.runtime.mockReturnValue(success({ ...RUNTIME, nextCursor: 'page-two' }));
+  show();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(hooks.runtime.mock.calls.at(-1)[1].cursor).toBe('page-two');
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Window' }));
+  fireEvent.click(screen.getByRole('option', { name: '24 hours' }));
+  expect(hooks.runtime.mock.calls.at(-1)[1].cursor).toBeUndefined();
+  expect(screen.getByText('Page 1')).toBeInTheDocument();
 });

@@ -54,6 +54,7 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
     "skill.digest": "Contents",
     "skill.in_scope": RAN_AFTER_LOADING,
     "skill.root_status": FAILED_REQUESTS,
+    "skill.trace_cohort": "Runtime trace set (24 hours)",
   }),
   more: "More",
   andAlsoLoaded: "and also loaded…",
@@ -181,13 +182,14 @@ export const SKILL_COLUMNS = Object.freeze({
   "skill.digest": { type: TEXT, ops: ["equals"], failedGroup: false },
   "skill.evidence": { type: TEXT, ops: ["in"], failedGroup: false },
   "skill.agent": { type: TEXT, ops: ["equals", "in"], failedGroup: true, allowEmpty: true },
-  "skill.service": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
+  "skill.service": { type: TEXT, ops: ["equals", "in"], failedGroup: true, allowEmpty: true },
   "skill.context_id": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
   "skill.context_version_id": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
   "skill.binding_id": { type: TEXT, ops: ["equals", "in"], failedGroup: false },
   "skill.in_scope": { type: TEXT, ops: ["equals", "in"], failedGroup: false, spanOnly: true },
   "skill.load_result": { type: TEXT, ops: ["equals"], failedGroup: true },
   "skill.root_status": { type: TEXT, ops: ["equals"], failedGroup: true },
+  "skill.trace_cohort": { type: TEXT, ops: ["equals"], failedGroup: true },
 });
 export const SKILL_COLUMN_IDS = Object.freeze(Object.keys(SKILL_COLUMNS));
 
@@ -739,7 +741,7 @@ const parseJson = (raw) => {
 };
 const optionalUuid = (value) => (value === null || value === undefined ? null : isUuid(value) ? value : undefined);
 const SIDES = new Set(["before", "after"]);
-const METRIC_RE = /^(all|traces|failed|failed_requests|slowest|latency_p95|cost_per_trace|eval_failed|eval:[0-9a-zA-Z_-]{1,64})$/;
+const METRIC_RE = /^(all|traces|failed|failed_requests|failed_loads|slowest|latency_p95|cost_per_trace|contents_mismatch|eval_failed|eval:[0-9a-zA-Z_-]{1,64})$/;
 
 /**
  * The §6.6 `source` object from the `skillSource` URL parameter, or null.
@@ -762,7 +764,39 @@ export function parseSkillSource(raw) {
     ? value.agent_key
     : null;
   const window = typeof value.window === "string" && /^[1-9]\d{0,2}(h|d)$/.test(value.window) ? value.window : null;
-  return { skillId, versionId, contextId, bindingId, eventId, metric, side, agentKey, window };
+  const snapshot = value.snapshot === undefined ? null : parseRuntimeSnapshot(value.snapshot);
+  if (value.snapshot !== undefined && !snapshot) return null;
+  return { skillId, versionId, contextId, bindingId, eventId, metric, side, agentKey, window, ...(snapshot ? { snapshot } : {}) };
+}
+
+/** Only bounded cohort descriptors, never URLs or recursively nested sources. */
+function parseRuntimeSnapshot(value) {
+  if (!value || typeof value.label !== 'string' || value.label.length > 40) return null;
+  if (![value.from_version, value.to_version].every((version) => version === null || (Number.isInteger(version) && version > 0))) return null;
+  const links = {};
+  let project;
+  let selectedMetric;
+  for (const side of ['before', 'after']) {
+    const entries = Object.entries(value.links?.[side] || {});
+    if (entries.length !== 1) return null;
+    const [metric, link] = entries[0];
+    if (!METRIC_RE.test(metric) || !link || !isUuid(link.project_id) || (project && project !== link.project_id) || (selectedMetric && selectedMetric !== metric)) return null;
+    project = link.project_id;
+    selectedMetric = metric;
+    const from = new Date(link.from).getTime();
+    const to = new Date(link.to).getTime();
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to || to - from > 7 * 86400000) return null;
+    if (!Array.isArray(link.filters) || link.filters.length !== 1 || link.filters[0]?.column_id !== 'skill.trace_cohort') return null;
+    const item = normalizeSkillItem(link.filters[0]);
+    if (!item || !/^[0-9a-f]{64}$/.test(item.filter_config.filter_value)) return null;
+    const source = parseSkillSource({ ...link.source, snapshot: undefined });
+    if (!source || source.side !== side || source.metric !== metric) return null;
+    const wireSource = { skill_id: source.skillId, version_id: source.versionId, context_id: source.contextId, event_id: source.eventId,
+      agent_key: source.agentKey, metric, side, window: source.window };
+    links[side] = { [metric]: { project_id: project, from: new Date(from).toISOString(), to: new Date(to).toISOString(), filters: [item],
+      ...(parseLinkSort(link.sort) ? { sort: parseLinkSort(link.sort) } : {}), source: wireSource } };
+  }
+  return { label: value.label, from_version: value.from_version, to_version: value.to_version, links };
 }
 
 const SORT_DIRECTIONS = new Set(["asc", "desc"]);
@@ -781,6 +815,8 @@ export function sourceMetricPhrase(metric) {
   if (metric === "failed") return metricPhrase("failed_requests");
   if (metric === "slowest") return metricPhrase("latency_p95");
   if (metric === "eval_failed") return "eval failures";
+  if (metric === "contents_mismatch") return "loads with other contents";
+  if (metric === "failed_loads") return "failed loads";
   return metricPhrase(metric);
 }
 

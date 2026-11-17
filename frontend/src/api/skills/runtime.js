@@ -20,7 +20,7 @@ import { skillV11Result, useSkillV11Query, useSkillV11Scope } from './testing';
 // `nextCursor`); pass it back as `cursor` (SKILLS-API-REVIEW: one cursor
 // convention). Errors carry `code` (see runtimeErrorKind).
 
-const VERBATIM = new Set(['links', 'source', 'by_error_type', 'requested_labels', 'requested_versions', 'eval_failed']);
+const VERBATIM = new Set(['link', 'links', 'source', 'by_error_type', 'requested_labels', 'requested_versions', 'eval_failed']);
 const camelKey = (key) => key.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase());
 
 export function camelizeRuntime(value) {
@@ -89,7 +89,7 @@ export function useSkillRuntime(skillId, { window: windowValue = '7d', projectId
   const projects = projectParam(projectIds);
   const bounds = useMemo(() => runtimeWindow(windowValue), [windowValue]);
   return useSkillV11Query({
-    parts: [skillId, 'runtime', { window: windowValue, projects: projects || 'all', groupBy, cursor: cursor || null }],
+    parts: [skillId, 'runtime', { window: windowValue, projects: projects || 'all', groupBy, ...bounds, cursor: cursor || null }],
     load: runtimeRead({
       route: 'skillUsage',
       path: { skill_id: skillId },
@@ -128,12 +128,13 @@ export function useSkillRuntimeSeries(skillId, { window: windowValue = '7d', pro
 export function useSkillComparison(skillId, { label = 'production', eventId, projectIds = [], cursor, window: moveWindow = '24h', enabled = true } = {}) {
   const windowValue = normalizeMoveWindow(moveWindow);
   const projects = projectParam(projectIds);
+  const asOf = useMemo(() => new Date().toISOString(), [skillId, eventId, windowValue, projects]);
   return useSkillV11Query({
-    parts: [skillId, 'runtimeComparison', { label, eventId: eventId || 'latest', window: windowValue, projects, cursor }],
+    parts: [skillId, 'runtimeComparison', { label, eventId: eventId || 'latest', window: windowValue, projects, cursor, asOf }],
     load: runtimeRead({
       route: 'skillComparison',
       path: { skill_id: skillId },
-      params: () => ({ resource_id: skillId, label, event_id: eventId, window: windowValue, project_ids: projects, cursor }),
+      params: () => ({ as_of: asOf, resource_id: skillId, label, event_id: eventId, window: windowValue, project_ids: projects, cursor }),
     }),
     enabled: Boolean(skillId) && enabled,
   });
@@ -143,14 +144,15 @@ export function useSkillComparison(skillId, { label = 'production', eventId, pro
  * Endpoint 4: the context Runtime tab, plus `linked_not_loaded`,
  * `loaded_not_linked` and `links_summary` (always the last 7 days).
  */
-export function useContextRuntime(contextId, { window: windowValue = '7d', projectIds = [], versionId, enabled = true } = {}) {
+export function useContextRuntime(contextId, { window: windowValue = '7d', projectIds = [], versionId, cursor, enabled = true } = {}) {
+  const bounds = useMemo(() => runtimeWindow(windowValue), [windowValue]);
   const projects = projectParam(projectIds);
   return useSkillV11Query({
-    parts: ['contexts', contextId, 'runtime', { window: windowValue, projects: projects || 'all', versionId: versionId || null }],
+    parts: ['contexts', contextId, 'runtime', { window: windowValue, projects: projects || 'all', versionId: versionId || null, ...bounds, cursor }],
     load: runtimeRead({
       route: 'contextUsage',
       path: { context_id: contextId },
-      params: () => ({ ...runtimeWindow(windowValue), resource_id: contextId, kind: 'agent_context', group_by: 'version', project_ids: projects, context_version_id: versionId }),
+      params: () => ({ ...bounds, cursor, resource_id: contextId, kind: 'agent_context', group_by: 'version', project_ids: projects, context_version_id: versionId }),
       mapper: (value) => {
         const data = camelizeRuntime(value);
         return data && { ...data, rows: (data.rows || []).flatMap((row) => [row, ...(row.agentRows || [])]) };
@@ -179,12 +181,13 @@ export function useRuntimeFilterValues({ projectId, field, q, skillId, loadResul
  * Endpoint 8: the agent panel. The agent key is (project, service, agent
  * name); an empty agent name is valid ("Unnamed agent in <project>").
  */
-export function useRuntimeAgent({ projectId, service = '', agent = '', window: windowValue = '7d', from, to, enabled = true } = {}) {
+export function useRuntimeAgent({ projectId, service = '', agent = '', window: windowValue = '7d', from, to, cursor, enabled = true } = {}) {
+  const bounds = useMemo(() => (from && to ? { from, to } : runtimeWindow(windowValue)), [from, to, windowValue]);
   return useSkillV11Query({
-    parts: ['runtimeAgent', { projectId, service, agent, window: windowValue, from: from || null, to: to || null }],
+    parts: ['runtimeAgent', { projectId, service, agent, window: windowValue, ...bounds, cursor }],
     load: runtimeRead({
       route: 'agentUsage',
-      params: () => ({ ...(from && to ? { from, to } : runtimeWindow(windowValue)), project_id: projectId, service, agent, group_by: 'version' }),
+      params: () => ({ ...bounds, cursor, project_id: projectId, service, agent, group_by: 'version' }),
     }),
     enabled: Boolean(projectId) && enabled,
   });
@@ -194,12 +197,13 @@ export function useRuntimeAgent({ projectId, service = '', agent = '', window: w
 export function useContextComparison(contextId, { eventId, projectIds = [], cursor, window: moveWindow = '24h', enabled = true } = {}) {
   const windowValue = normalizeMoveWindow(moveWindow);
   const projects = projectParam(projectIds);
+  const asOf = useMemo(() => new Date().toISOString(), [contextId, eventId, windowValue, projects]);
   return useSkillV11Query({
-    parts: ['contexts', contextId, 'runtimeComparison', { eventId: eventId || 'latest', window: windowValue, projects, cursor }],
+    parts: ['contexts', contextId, 'runtimeComparison', { eventId: eventId || 'latest', window: windowValue, projects, cursor, asOf }],
     load: runtimeRead({
       route: 'contextComparison',
       path: { context_id: contextId },
-      params: () => ({ resource_id: contextId, kind: 'agent_context', event_id: eventId, window: windowValue, project_ids: projects, cursor }),
+      params: () => ({ as_of: asOf, resource_id: contextId, kind: 'agent_context', event_id: eventId, window: windowValue, project_ids: projects, cursor }),
     }),
     enabled: Boolean(contextId) && enabled,
   });

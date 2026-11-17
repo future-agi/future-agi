@@ -32725,6 +32725,7 @@ export const ModelHubSkillsRuntimeComparisonListQueryParams = zod.object({
     .min(1)
     .max(modelHubSkillsRuntimeComparisonListQueryProjectIdsMax)
     .optional(),
+  as_of: zod.string().datetime({ offset: true }).optional(),
   before_from: zod.string().datetime({ offset: true }).optional(),
   before_to: zod.string().datetime({ offset: true }).optional(),
   after_from: zod.string().datetime({ offset: true }).optional(),

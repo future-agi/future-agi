@@ -34,7 +34,7 @@ afterEach(() => {
 describe('ProductionMoveCard', () => {
   it('asks for the event and window named in the URL', () => {
     show(MOVE, { window: '6h' });
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [] });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [], cursor: undefined });
     expect(screen.getByText('Production moved from v3 to v4 · 24 hours each side')).toBeInTheDocument();
   });
 
@@ -106,4 +106,10 @@ describe('ProductionMoveCard', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load this move.");
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
+});
+
+it('pages comparison agents while keeping the event and window', () => {
+  show({ ...MOVE, nextCursor: 'comparison-two' });
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(hooks.comparison.mock.calls.at(-1)[1]).toMatchObject({ eventId: 'event-1', window: '24h', cursor: 'comparison-two' });
 });

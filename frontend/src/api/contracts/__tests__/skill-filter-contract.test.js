@@ -43,3 +43,8 @@ describe("shared SKILL filter transport", () => {
     expect(() => serializeFilterForApi(item)).toThrow(/Unsupported filter operator/);
   });
 });
+
+it('preserves a bounded runtime cohort through storage and transport', () => {
+  const item = skill('skill.trace_cohort', 'a'.repeat(64));
+  expect(serializeFilterListForApi(hydrateStoredFilterList([item]))).toEqual([item]);
+});
