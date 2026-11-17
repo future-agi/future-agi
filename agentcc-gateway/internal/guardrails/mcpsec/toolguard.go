@@ -1,6 +1,7 @@
 package mcpsec
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -146,8 +147,12 @@ func (g *ToolGuard) CheckPre(toolName, serverID string, arguments map[string]int
 
 	// Check injection in arguments.
 	if g.validateInputs && len(arguments) > 0 {
-		argsJSON, _ := json.Marshal(arguments)
-		s := string(argsJSON)
+		// json.Marshal escapes <, > and & to \u003c etc., which hides them from the patterns.
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(arguments)
+		s := buf.String()
 		if containsInjection(s) {
 			return fmt.Sprintf("injection pattern detected in arguments for %q", toolName)
 		}
