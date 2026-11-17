@@ -79,12 +79,20 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
+import { getRandomId } from "src/utils/utils";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { SKILLS_COLUMN_ID } from "./defaultColumns";
+import {
+  skillsColumnDef,
+  TracePageSkillsProbe,
+} from "./Renderers/SkillsCell";
 
 const traceRowIdentity = (row) => {
   const id = row?.trace_id || row?.id;
   return id ? `${row?.project_id || ""}:${id}` : null;
 };
 const EMPTY_EXTRA_FILTERS = [];
+const IDLE_TRACE_SKILLS = Object.freeze({ status: "idle", byTrace: {} });
 const loadTraceObservePage = (params, signal) =>
   readQuery(endpoints.project.getTracesForObserveProject(), {
     params,
@@ -116,6 +124,10 @@ const TraceGrid = React.forwardRef(
       compareType,
       // Only the visible grid of a primary/compare pair renders the drawer.
       hideDetailDrawer = false,
+      // Called with the list response's skill-load probe for the first page
+      // (SKILL-TRACES §7.1: the Skills column is shown by default only when
+      // the project has loads in the window).
+      onSkillLinksExist,
     },
     gridRef,
   ) => {
@@ -159,6 +171,57 @@ const TraceGrid = React.forwardRef(
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
     const [usageSort, setUsageSort] = useState([]);
+    // Skill traces (SKILL-TRACES §7.1, lane ST9): the Skills column reads the
+    // loads of the traces on the shown page in one bounded request.
+    const skillTracesEnabled = useSkillTracesEnabled();
+    const [pageTraceIds, setPageTraceIds] = useState([]);
+    // The list's probe for skill loads in the window: true, false, or null
+    // while unknown (an older server, or a contract without the field). The
+    // Skills column is hidden while the probe says there are none (§10 ST9).
+    const [skillLinksExist, setSkillLinksExist] = useState(null);
+    const showSkillsColumn =
+      skillTracesEnabled &&
+      skillLinksExist !== false &&
+      (columns || []).some(
+        (column) =>
+          column?.id === SKILLS_COLUMN_ID && column?.isVisible !== false,
+      );
+    const [traceSkillsState, setTraceSkillsState] = useState(null);
+    const traceSkills = showSkillsColumn && traceSkillsState
+      ? traceSkillsState
+      : IDLE_TRACE_SKILLS;
+    const syncShownTraceIdsRef = useRef(null);
+    const onSkillLinksExistRef = useRef(onSkillLinksExist);
+    onSkillLinksExistRef.current = onSkillLinksExist;
+    // The Skills column reads the traces AG Grid is showing (rendered rows of
+    // the current page), not the last block it loaded: going back to a cached
+    // page must not leave its cells blank.
+    const syncShownTraceIds = useCallback(
+      (api) => {
+        if (!showSkillsColumn || !isGridApiLive(api)) return;
+        const first = api.getFirstDisplayedRowIndex?.();
+        const last = api.getLastDisplayedRowIndex?.();
+        if (!Number.isInteger(first) || !Number.isInteger(last) || last < first) {
+          return;
+        }
+        const ids = [];
+        for (let index = first; index <= last; index += 1) {
+          const id = api.getDisplayedRowAtIndex?.(index)?.data?.trace_id;
+          if (id) ids.push(id);
+        }
+        setPageTraceIds((previous) =>
+          previous.length === ids.length &&
+          previous.every((id, index) => id === ids[index])
+            ? previous
+            : ids,
+        );
+      },
+      [showSkillsColumn],
+    );
+    syncShownTraceIdsRef.current = syncShownTraceIds;
+    useEffect(() => {
+      if (showSkillsColumn) syncShownTraceIds(gridRef?.current?.api);
+    }, [gridRef, showSkillsColumn, syncShownTraceIds]);
     const canUsageSort = supportsUsageSort(
       projectId,
       toBackendFilters([
@@ -385,10 +448,35 @@ const TraceGrid = React.forwardRef(
     );
     // Tells cell renderers (e.g. TagsCell) they are on the trace grid (so tag
     // edits target the trace, not its root span) and whether the role may edit.
-    const gridContext = useMemo(
-      () => ({ entityType: "trace", canEditTags }),
-      [canEditTags],
+    const addSkillFilters = useCallback(
+      (build) =>
+        setExtraFilters?.((previous) => {
+          const current = previous || [];
+          const additions = build(current).map((item) => ({
+            ...item,
+            id: getRandomId(),
+          }));
+          return additions.length ? [...current, ...additions] : current;
+        }),
+      [setExtraFilters],
     );
+    const gridContext = useMemo(
+      () => ({
+        entityType: "trace",
+        canEditTags,
+        traceSkills,
+        onAddSkillFilters: addSkillFilters,
+      }),
+      [canEditTags, traceSkills, addSkillFilters],
+    );
+    // Cell renderers read the page's skills from the grid context; redraw the
+    // Skills cells when that hydration settles.
+    useEffect(() => {
+      if (!showSkillsColumn) return;
+      withLiveGridApi(gridRef?.current?.api, (api) =>
+        api.refreshCells?.({ columns: [SKILLS_COLUMN_ID], force: true }),
+      );
+    }, [gridRef, showSkillsColumn, traceSkills.status, traceSkills.byTrace]);
 
     const dataSource = useMemo(
       () => {
@@ -599,6 +687,18 @@ const TraceGrid = React.forwardRef(
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
+              if (pageNumber === 0 && metadata) {
+                // `skill_links_exist` is the list's cheap probe for skill
+                // loads in the window (provisional name, SKILL-TRACES §7.1).
+                // The generated list contract does not carry it yet, so it
+                // reads as unknown until the server and contract add it.
+                const probe =
+                  typeof metadata.skill_links_exist === "boolean"
+                    ? metadata.skill_links_exist
+                    : null;
+                setSkillLinksExist(probe);
+                if (probe !== null) onSkillLinksExistRef.current?.(probe);
+              }
               pageLoadSucceeded = true;
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
@@ -616,6 +716,7 @@ const TraceGrid = React.forwardRef(
                   }
                 });
                 if (traces.length > 0) setVisibleTraces(traces);
+                syncShownTraceIdsRef.current?.(params.api);
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
@@ -739,6 +840,14 @@ const TraceGrid = React.forwardRef(
       for (const c of columns) {
         if (c?.groupBy === "Annotation Metrics") continue;
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        if (c?.id === SKILLS_COLUMN_ID && c?.groupBy === "Custom Columns") {
+          // Shown only while skillTraces is on and the list has not reported
+          // that the window has no loads; never an attribute column.
+          if (skillTracesEnabled && skillLinksExist !== false) {
+            columnDefsResult.push(skillsColumnDef(c));
+          }
+          continue;
+        }
         if (c?.groupBy === "Custom Columns") {
           const colDef = getTraceListColumnDefs(c);
           columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
@@ -770,7 +879,7 @@ const TraceGrid = React.forwardRef(
           },
         ],
       };
-    }, [columns, showMetricsIds, canUsageSort]);
+    }, [columns, showMetricsIds, canUsageSort, skillTracesEnabled, skillLinksExist]);
 
     useEffect(() => {
       return () => resetMetricIds();
@@ -835,6 +944,15 @@ const TraceGrid = React.forwardRef(
         if (event?.column?.colId === "status") return;
         if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
           return;
+        // A Skills chip adds a filter or opens its menu. AG Grid's native
+        // click listener runs before React's, so the chip's own
+        // stopPropagation cannot keep the trace drawer from opening.
+        if (
+          event?.column?.getColId?.() === SKILLS_COLUMN_ID &&
+          event?.event?.target?.closest?.("[data-skill-chip]")
+        ) {
+          return;
+        }
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {
@@ -925,6 +1043,13 @@ const TraceGrid = React.forwardRef(
             {readMessage}
           </Box>
         )}
+        {showSkillsColumn && enabled && projectId && (
+          <TracePageSkillsProbe
+            projectId={projectId}
+            traceIds={pageTraceIds}
+            onChange={setTraceSkillsState}
+          />
+        )}
         <ListCursorContinuationNotice
           pending={Boolean(continuationNotice)}
           onContinue={continueCursorSearch}
@@ -984,6 +1109,8 @@ const TraceGrid = React.forwardRef(
             );
           }}
           onCellClicked={handleCellClick}
+          onViewportChanged={({ api }) => syncShownTraceIds(api)}
+          onPaginationChanged={({ api }) => syncShownTraceIds(api)}
           onSelectionChanged={onSelectionChanged}
           onColumnMoved={onColumnMoved}
           onColumnHeaderClicked={(event) => {
@@ -1054,6 +1181,7 @@ TraceGrid.displayName = "TraceGrid";
 
 TraceGrid.propTypes = {
   filters: PropTypes.array,
+  onSkillLinksExist: PropTypes.func,
   columns: PropTypes.array,
   setColumns: PropTypes.func,
   setFilters: PropTypes.func,

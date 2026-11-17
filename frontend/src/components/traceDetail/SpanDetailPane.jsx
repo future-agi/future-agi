@@ -45,6 +45,24 @@ import {
   contextHintFrom,
   physicalCaptureRef,
 } from 'src/sections/skills/contexts/physical-capture-ref';
+import { Link as RouterLink } from "react-router-dom";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import {
+  ERROR_TYPE_DETAIL,
+  EVIDENCE,
+  RAN_AFTER_LOADING,
+  askedFor,
+  askedForVersion,
+  versionName,
+} from "src/sections/skills/runtime/runtimeCopy";
+import { buildSkillTraceLink } from "src/sections/skills/utils/traces";
+import {
+  OBSERVE_SKILL_COPY,
+  ranAfterLoading,
+  ranAfterLoadingChip,
+  skillLoadIdentity,
+  skillVersionHref,
+} from "src/sections/projects/LLMTracing/skillFilters";
 import SmartPreview from "./SmartPreview";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
@@ -509,7 +527,7 @@ JsonPreviewBlock.propTypes = {
 
 /* ── LogViewTable — flat log view (root span only) ── */
 
-import { getTypeConfig } from "./spanTypeConfig";
+import { getSpanTypeConfig } from "./spanTypeConfig";
 
 function flattenSpansChronological(entries) {
   const result = [];
@@ -556,7 +574,7 @@ const LogViewRow = ({
 }) => {
   const { span, depth, entry } = item;
   const type = (span.observation_type || "unknown").toLowerCase();
-  const cfg = getTypeConfig(type);
+  const cfg = getSpanTypeConfig(type, span.name);
   const name = span.name || "unnamed";
   const latency = span.latency_ms ?? span.latency ?? 0;
   const startTime = span.start_time;
@@ -1679,6 +1697,254 @@ EventCard.propTypes = { event: PropTypes.object };
 
 /* ── SpanDetailPane ───────────────────────────────────── */
 
+// ── Skill traces (SKILL-TRACES §7.2, UX-04, UX-13) ──────────────────────
+// Read from the selected span's own attributes, with no extra request.
+
+const SKILL_CARD = OBSERVE_SKILL_COPY.card;
+
+function SkillCardRow({ label, children }) {
+  return (
+    <Stack direction="row" spacing={1} sx={{ minWidth: 0 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ width: 112, flexShrink: 0 }}
+      >
+        {label}
+      </Typography>
+      <Box
+        sx={{
+          minWidth: 0,
+          typography: "caption",
+          color: "text.primary",
+          overflowWrap: "anywhere",
+        }}
+      >
+        {children}
+      </Box>
+    </Stack>
+  );
+}
+
+SkillCardRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  children: PropTypes.node,
+};
+
+const yesNo = (value) =>
+  value === null || value === undefined
+    ? null
+    : value
+      ? SKILL_CARD.yes
+      : SKILL_CARD.no;
+
+export function SkillSpanSection({ span, projectId, beforeFirstLoad }) {
+  const enabled = useSkillTracesEnabled();
+  const identity = useMemo(() => skillLoadIdentity(span), [span]);
+  const ran = useMemo(
+    () => (identity ? { refs: [], truncated: false } : ranAfterLoading(span)),
+    [identity, span],
+  );
+  if (!enabled || !span) return null;
+
+  if (identity) {
+    const asked =
+      identity.requestedLabel != null
+        ? askedFor(identity.requestedLabel)
+        : identity.requestedVersion != null
+          ? askedForVersion(identity.requestedVersion)
+          : null;
+    const versionHref = skillVersionHref(identity.skillId, identity.version);
+    const tracesHref =
+      !identity.failed && identity.versionId && projectId
+        ? buildSkillTraceLink({ projectId, versionId: identity.versionId })
+        : null;
+    const copyDigest = async () => {
+      try {
+        await navigator.clipboard.writeText(identity.digest);
+        enqueueSnackbar(SKILL_CARD.digestCopied, { variant: "success" });
+      } catch {
+        /* clipboard unavailable: the digest stays selectable */
+      }
+    };
+    return (
+      <Box
+        role="region"
+        aria-label={identity.failed ? SKILL_CARD.failedTitle : SKILL_CARD.title}
+        data-skill-load-card={identity.failed ? "failed" : "loaded"}
+        sx={{
+          mb: 1.5,
+          p: 1.5,
+          border: "1px solid",
+          borderColor: identity.failed ? "error.main" : "divider",
+          borderRadius: "6px",
+          bgcolor: "background.paper",
+        }}
+      >
+        <Typography
+          variant="caption"
+          sx={{
+            display: "block",
+            fontWeight: 600,
+            mb: 1,
+            color: identity.failed ? "error.main" : "text.primary",
+          }}
+        >
+          {identity.failed ? SKILL_CARD.failedTitle : SKILL_CARD.title}
+        </Typography>
+        <Stack spacing={0.5}>
+          <SkillCardRow
+            label={identity.failed ? SKILL_CARD.nameAsReported : SKILL_CARD.name}
+          >
+            {identity.name || OBSERVE_SKILL_COPY.unknownSkill}
+          </SkillCardRow>
+          {!identity.failed && identity.version != null && (
+            <SkillCardRow label={SKILL_CARD.version}>
+              {versionName(identity.version)}
+            </SkillCardRow>
+          )}
+          {!identity.failed && identity.digest && (
+            <SkillCardRow label={SKILL_CARD.digest}>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Box component="span" sx={{ fontFamily: "monospace" }}>
+                  {identity.digest}
+                </Box>
+                <IconButton
+                  size="small"
+                  aria-label={SKILL_CARD.copyDigest}
+                  onClick={copyDigest}
+                >
+                  <Iconify icon="solar:copy-linear" width={12} />
+                </IconButton>
+              </Stack>
+            </SkillCardRow>
+          )}
+          {asked && <SkillCardRow label={SKILL_CARD.askedFor}>{asked}</SkillCardRow>}
+          {identity.via && <SkillCardRow label={SKILL_CARD.via}>{identity.via}</SkillCardRow>}
+          {!identity.failed && identity.evidence && (
+            <SkillCardRow label={SKILL_CARD.evidence}>
+              {EVIDENCE[identity.evidence] || identity.evidence}
+            </SkillCardRow>
+          )}
+          {!identity.failed && yesNo(identity.cached) && (
+            <SkillCardRow label={SKILL_CARD.cached}>{yesNo(identity.cached)}</SkillCardRow>
+          )}
+          {!identity.failed && identity.rootFile !== null && (
+            <SkillCardRow label={SKILL_CARD.rootFile}>
+              {identity.rootFile ? SKILL_CARD.rootFileYes : SKILL_CARD.rootFileNo}
+            </SkillCardRow>
+          )}
+          {!identity.failed && identity.files != null && (
+            <SkillCardRow label={SKILL_CARD.files}>{identity.files}</SkillCardRow>
+          )}
+          {!identity.failed && identity.bytes != null && (
+            <SkillCardRow label={SKILL_CARD.bytes}>{identity.bytes}</SkillCardRow>
+          )}
+          {identity.failed && (
+            <SkillCardRow label={SKILL_CARD.errorType}>
+              {ERROR_TYPE_DETAIL[identity.errorType] || ERROR_TYPE_DETAIL.other}
+            </SkillCardRow>
+          )}
+          {identity.failed && (
+            <Typography variant="caption" color="text.secondary">
+              {OBSERVE_SKILL_COPY.matchedByReportedName}
+            </Typography>
+          )}
+        </Stack>
+        {(versionHref || tracesHref) && (
+          <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: "wrap" }} useFlexGap>
+            {versionHref && (
+              <Typography
+                variant="caption"
+                component={RouterLink}
+                to={versionHref}
+                sx={{ color: "primary.main" }}
+              >
+                {OBSERVE_SKILL_COPY.openSkillVersion}
+              </Typography>
+            )}
+            {tracesHref && (
+              <Typography
+                variant="caption"
+                component={RouterLink}
+                to={tracesHref}
+                sx={{ color: "primary.main" }}
+              >
+                {OBSERVE_SKILL_COPY.allTracesThatLoaded}
+              </Typography>
+            )}
+          </Stack>
+        )}
+      </Box>
+    );
+  }
+
+  if (!ran.refs.length && !beforeFirstLoad) return null;
+  return (
+    <Box
+      role="region"
+      aria-label={RAN_AFTER_LOADING}
+      sx={{ mb: 1.5, display: "flex", flexDirection: "column", gap: 0.5 }}
+    >
+      {ran.refs.length > 0 && (
+        <>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            {RAN_AFTER_LOADING}
+          </Typography>
+          <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: "wrap" }}>
+            {ran.refs.map((ref) => (
+              <Chip
+                key={ref.ref}
+                size="small"
+                label={ranAfterLoadingChip(ref)}
+                sx={{ height: 20, bgcolor: "background.neutral" }}
+              />
+            ))}
+          </Stack>
+          {ran.truncated && (
+            <Typography variant="caption" color="text.secondary">
+              {SKILL_CARD.ranAfterLoadingTruncated}
+            </Typography>
+          )}
+        </>
+      )}
+      {beforeFirstLoad && (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Box
+            component="span"
+            aria-hidden
+            sx={{
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              border: "1px solid",
+              borderColor: "divider",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              typography: "caption",
+              color: "text.secondary",
+            }}
+          >
+            ?
+          </Box>
+          <Typography variant="caption" color="text.secondary">
+            {OBSERVE_SKILL_COPY.beforeFirstLoad(beforeFirstLoad)}
+          </Typography>
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+SkillSpanSection.propTypes = {
+  span: PropTypes.object,
+  projectId: PropTypes.string,
+  // Name of the first skill loaded in the trace, when this span started
+  // before it (from the trace's skills read); null otherwise.
+  beforeFirstLoad: PropTypes.string,
+};
+
 const SpanDetailPane = ({
   entry,
   allSpans,
@@ -1692,6 +1958,7 @@ const SpanDetailPane = ({
   initialEvalFocus = false,
   drawerOpen = true,
   readOnly = false,
+  skillCoverage = null,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
   const evalFocusSeededRef = useRef(false);
@@ -2087,6 +2354,15 @@ const SpanDetailPane = ({
               />
             </Stack>
 
+            <SkillSpanSection
+              span={span}
+              projectId={projectId}
+              beforeFirstLoad={
+                skillCoverage?.spanIdsBeforeFirstLoad?.includes?.(span?.id)
+                  ? skillCoverage.firstSkillName || null
+                  : null
+              }
+            />
             <Box ref={previewContentRef}>
               <SmartPreview
                 span={span}
@@ -2766,6 +3042,12 @@ SpanDetailPane.propTypes = {
   initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
   readOnly: PropTypes.bool,
+  // From the trace's skills read (SKILL-TRACES §6.6 endpoint 7): the ids of
+  // spans that started before the first load, and that skill's name.
+  skillCoverage: PropTypes.shape({
+    spanIdsBeforeFirstLoad: PropTypes.array,
+    firstSkillName: PropTypes.string,
+  }),
 };
 
 export default React.memo(SpanDetailPane);
