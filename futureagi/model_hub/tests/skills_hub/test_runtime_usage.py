@@ -161,6 +161,45 @@ def execute(client, statement):
 
 
 @pytest.mark.integration
+def test_filter_values_are_live_verified_keyset_pages(runtime_ch):
+    project, foreign = str(uuid4()), str(uuid4())
+    identities = [(SKILL, VERSION, DIGEST)]
+    first, second, wrong = (span(project, uuid4().hex) for _ in range(3))
+    first["span_attributes"]["gen_ai.agent.name"] = "a"
+    second["span_attributes"]["gen_ai.agent.name"] = "b"
+    wrong["span_attributes"].update({"gen_ai.agent.name": "c", "fi.skill.digest": "wrong"})
+    seed_ch_spans([first, first, second, wrong, span(foreign, uuid4().hex)], client=runtime_ch, version_from_created_at=True)
+    query = builder(project)
+    statement = query.build_filter_values(field="skill.agent", verified_identities=identities, limit=1)
+    assert execute(runtime_ch, statement) == [{"value": "a"}, {"value": "b"}]
+    assert execute(runtime_ch, query.build_filter_values(field="skill.agent", verified_identities=identities, after="a", limit=1)) == [{"value": "b"}]
+    assert execute(runtime_ch, query.build_filter_values(field="skill.name", verified_identities=identities)) == [{"value": SKILL}]
+    assert execute(runtime_ch, query.build_filter_values(field="skill.version_id", verified_identities=identities)) == [{"value": VERSION}]
+    assert execute(runtime_ch, query.build_filter_values(field="skill.service", verified_identities=[])) == []
+    seed_ch_spans([{**first, "deleted": True, "created_at": END, "span_attributes": {}}], client=runtime_ch, version_from_created_at=True)
+    assert execute(runtime_ch, statement) == [{"value": "b"}]
+
+
+@pytest.mark.integration
+def test_failed_filter_values_have_no_version_identity(runtime_ch):
+    project = str(uuid4())
+    failed = span(project, uuid4().hex, status="ERROR", span_attributes={
+        "fi.skill.name": "unpublished", "fi.skill.load.via": "sdk.read_file",
+        "error.type": "not_found", "gen_ai.agent.name": "worker",
+    })
+    seed_ch_spans([failed], client=runtime_ch, version_from_created_at=True)
+    query = builder(project)
+    assert execute(runtime_ch, query.build_filter_values(
+        field="skill.name", verified_identities=[], failed=True,
+    )) == [{"value": "unpublished"}]
+    assert execute(runtime_ch, query.build_filter_values(
+        field="skill.agent", verified_identities=[], failed=True, skill_name="different",
+    )) == []
+    with pytest.raises(ValueError, match="Unsupported"):
+        query.build_filter_values(field="skill.version_id", verified_identities=[], failed=True)
+
+
+@pytest.mark.integration
 def test_real_cohort_counts_roots_whole_trace_cost_and_missing_roots(runtime_ch):
     project = str(uuid4())
     t1, t2, t3 = (str(uuid4()) for _ in range(3))

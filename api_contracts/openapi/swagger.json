@@ -56688,6 +56688,172 @@
                 }
             ]
         },
+        "/model-hub/skills/filter-values/": {
+            "get": {
+                "operationId": "model-hub_skills_filter-values_list",
+                "description": "Page through live runtime filter values in one authorized project.",
+                "parameters": [
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 2048,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 100,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "field",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "skill.name",
+                            "skill.version_id",
+                            "skill.agent",
+                            "skill.service",
+                            "skill.requested_label",
+                            "skill.context_id"
+                        ]
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "load_result",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "loaded",
+                            "failed"
+                        ],
+                        "default": "loaded"
+                    },
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 200
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsRuntimeFilterValuesResultResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/model-hub/skills/github/import/": {
             "post": {
                 "operationId": "model-hub_skills_github_import_create",
@@ -162703,6 +162869,100 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SkillsContextAnnotation"
+                }
+            }
+        },
+        "RuntimeFilterValue": {
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                },
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "skill_name": {
+                    "title": "Skill name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "labels_now": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "production_version": {
+                    "title": "Production version",
+                    "type": "integer"
+                }
+            }
+        },
+        "RuntimeFilterValuesResult": {
+            "required": [
+                "values",
+                "next_cursor",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RuntimeFilterValue"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsRuntimeFilterValuesResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RuntimeFilterValuesResult"
                 }
             }
         },

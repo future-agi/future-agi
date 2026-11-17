@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1274,
+  endpointCount: 1275,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -30625,6 +30625,129 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           201: {
             $ref: "#/definitions/SkillsAnnotationResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/filter-values/": {
+      get: {
+        operationId: "model-hub_skills_filter-values_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          to: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 2048,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 100,
+            },
+          },
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          field: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: [
+                "skill.name",
+                "skill.version_id",
+                "skill.agent",
+                "skill.service",
+                "skill.requested_label",
+                "skill.context_id",
+              ],
+            },
+          },
+          skill_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          load_result: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["loaded", "failed"],
+              default: "loaded",
+            },
+          },
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 200,
+              default: "",
+            },
+          },
+          from: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsRuntimeFilterValuesResultResponse",
           },
           400: {
             $ref: "#/definitions/SkillsError",
@@ -98304,6 +98427,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsRuntimeFilterValuesResultResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/RuntimeFilterValuesResult",
+        },
+      },
+    },
     SkillsSessionOutResponse: {
       required: ["status", "result"],
       type: "object",
@@ -133406,6 +133542,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RuntimeFilterValuesResult: {
+      required: ["values", "next_cursor", "truncated"],
+      type: "object",
+      properties: {
+        values: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RuntimeFilterValue",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
     SkillsContextSessionOut: {
       required: [
         "session_id",
@@ -152288,6 +152446,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Delta percentage points",
           type: "number",
           "x-nullable": true,
+        },
+      },
+    },
+    RuntimeFilterValue: {
+      required: ["value", "label"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        skill_id: {
+          title: "Skill id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+        },
+        skill_name: {
+          title: "Skill name",
+          type: "string",
+          minLength: 1,
+        },
+        labels_now: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        production_version: {
+          title: "Production version",
+          type: "integer",
         },
       },
     },

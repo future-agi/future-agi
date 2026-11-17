@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'src/utils/axios';
 import { RUNTIME_ROUTE_PENDING, runtimeEndpoint } from './endpoints';
@@ -150,12 +151,15 @@ export function useContextRuntime(contextId, { window: windowValue = '7d', proje
 }
 
 /** Endpoint 5: distinct values for the Observe Skill pickers (lane ST9). */
-export function useRuntimeFilterValues({ projectId, field, q, skillId, loadResult, window: windowValue = '7d', enabled = true } = {}) {
+export function useRuntimeFilterValues({ projectId, field, q, skillId, loadResult, window: windowValue = '7d', from, to, cursor, limit = 100, enabled = true } = {}) {
+  // Keep the exact half-open window while paging. A cursor is bound to this
+  // window, not to a moving "last seven days" evaluated again on every page.
+  const bounds = useMemo(() => (from && to ? { from, to } : runtimeWindow(windowValue)), [from, to, windowValue]);
   return useSkillV11Query({
-    parts: ['runtimeFilterValues', { projectId, field, q: q || '', skillId: skillId || null, loadResult: loadResult || 'loaded', window: windowValue }],
+    parts: ['runtimeFilterValues', { projectId, field, q: q || '', skillId: skillId || null, loadResult: loadResult || 'loaded', ...bounds, cursor: cursor || null, limit }],
     load: runtimeRead({
       route: 'filterValues',
-      params: () => ({ ...runtimeWindow(windowValue), project_id: projectId, field, q, skill_id: skillId, load_result: loadResult }),
+      params: () => ({ ...bounds, project_id: projectId, field, q, skill_id: skillId, load_result: loadResult, cursor, limit }),
     }),
     enabled: Boolean(projectId && field) && enabled,
   });

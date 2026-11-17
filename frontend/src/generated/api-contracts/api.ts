@@ -930,6 +930,7 @@ import type {
   ModelHubSkillsDownloadListParams,
   ModelHubSkillsDraftCheckpointsListParams,
   ModelHubSkillsEvidenceAnnotationsListParams,
+  ModelHubSkillsFilterValuesListParams,
   ModelHubSkillsImportCreateBody,
   ModelHubSkillsImportPreviewCreateBody,
   ModelHubSkillsIntakePreviewCreateBody,
@@ -1492,6 +1493,7 @@ import type {
   SkillsRunSummaryPageResponseApi,
   SkillsRunSummaryResponseApi,
   SkillsRuntimeConfigurationResponseApi,
+  SkillsRuntimeFilterValuesResultResponseApi,
   SkillsSessionOutResponseApi,
   SkillsShareRunOutResponseApi,
   SkillsSkillDetailResponseApi,
@@ -64131,6 +64133,131 @@ export const modelHubSkillsEvidenceAnnotationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(skillsContextAnnotationInputApi),
+    },
+  );
+};
+
+export type modelHubSkillsFilterValuesListResponse200 = {
+  data: SkillsRuntimeFilterValuesResultResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsFilterValuesListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsFilterValuesListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsFilterValuesListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsFilterValuesListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsFilterValuesListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsFilterValuesListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsFilterValuesListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsFilterValuesListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsFilterValuesListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsFilterValuesListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsFilterValuesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsFilterValuesListResponseSuccess =
+  modelHubSkillsFilterValuesListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsFilterValuesListResponseError = (
+  | modelHubSkillsFilterValuesListResponse400
+  | modelHubSkillsFilterValuesListResponse401
+  | modelHubSkillsFilterValuesListResponse403
+  | modelHubSkillsFilterValuesListResponse404
+  | modelHubSkillsFilterValuesListResponse409
+  | modelHubSkillsFilterValuesListResponse410
+  | modelHubSkillsFilterValuesListResponse413
+  | modelHubSkillsFilterValuesListResponse422
+  | modelHubSkillsFilterValuesListResponse428
+  | modelHubSkillsFilterValuesListResponse503
+  | modelHubSkillsFilterValuesListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsFilterValuesListResponse =
+  | modelHubSkillsFilterValuesListResponseSuccess
+  | modelHubSkillsFilterValuesListResponseError;
+
+export const getModelHubSkillsFilterValuesListUrl = (
+  params: ModelHubSkillsFilterValuesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/filter-values/?${stringifiedParams}`
+    : `/model-hub/skills/filter-values/`;
+};
+
+/**
+ * Page through live runtime filter values in one authorized project.
+ */
+export const modelHubSkillsFilterValuesList = async (
+  params: ModelHubSkillsFilterValuesListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsFilterValuesListResponse> => {
+  return apiMutator<modelHubSkillsFilterValuesListResponse>(
+    getModelHubSkillsFilterValuesListUrl(params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

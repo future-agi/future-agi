@@ -53,7 +53,7 @@ export const endpoints = {
 
 // Skill-trace runtime reads (SKILL-TRACES §6.6 endpoints 1–5 and 8–10, lane
 // ST10). The load projection is mounted at the shared /loads/ resource.
-// Usage, comparison and picker routes remain provisional until their shared
+// Loads and filter values are mounted. Usage and comparison remain provisional until their shared
 // API projections are mounted (SKILLS-API-REVIEW.md); do not enable the feature
 // or replace these guards with uncontracted network calls. Hooks in runtime.js
 // call `runtimeEndpoint(name, params)`.
@@ -66,7 +66,7 @@ export const RUNTIME_ROUTES = Object.freeze({
   skillSeries: '/model-hub/skills/{skill_id}/runtime/timeseries/', // 2
   skillComparison: '/model-hub/skills/{skill_id}/runtime/label-move/', // 3: move card and header chip
   contextUsage: '/model-hub/skills/contexts/{context_id}/runtime-skills/', // 4
-  filterValues: '/model-hub/skills/runtime/filter-values/', // 5: Observe pickers (ST9)
+  filterValues: '/model-hub/skills/filter-values/', // Shared, cursor-paged Observe pickers
   agentUsage: '/model-hub/skills/runtime/agent/', // 8: agent panel
   contextComparison: '/model-hub/skills/contexts/{context_id}/runtime/release-move/', // 9
   // One mounted load projection serves both resource kinds.

@@ -20171,6 +20171,32 @@ export interface SkillsAnnotationResponseApi {
   result: SkillsContextAnnotationApi;
 }
 
+export interface RuntimeFilterValueApi {
+  value: string;
+  label: string;
+  skill_id?: string;
+  /** @minLength 1 */
+  name?: string;
+  version_id?: string;
+  version?: number;
+  /** @minLength 1 */
+  skill_name?: string;
+  labels_now?: string[];
+  production_version?: number;
+}
+
+export interface RuntimeFilterValuesResultApi {
+  values: RuntimeFilterValueApi[];
+  /** @minLength 1 */
+  next_cursor: string | null;
+  truncated: boolean;
+}
+
+export interface SkillsRuntimeFilterValuesResultResponseApi {
+  status: boolean;
+  result: RuntimeFilterValuesResultApi;
+}
+
 export interface SkillsHubV11RightsReviewApi {
   confirmed: boolean;
   /** @maxLength 2000 */
@@ -47127,6 +47153,49 @@ export type ModelHubSkillsEvidenceAnnotationsListParams = {
    */
   page_size?: number;
 };
+
+export type ModelHubSkillsFilterValuesListParams = {
+  to: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  project_id: string;
+  field: ModelHubSkillsFilterValuesListField;
+  skill_id?: string;
+  load_result?: ModelHubSkillsFilterValuesListLoadResult;
+  /**
+   * @maxLength 200
+   */
+  q?: string;
+  from: string;
+};
+
+export type ModelHubSkillsFilterValuesListField =
+  (typeof ModelHubSkillsFilterValuesListField)[keyof typeof ModelHubSkillsFilterValuesListField];
+
+export const ModelHubSkillsFilterValuesListField = {
+  skillname: "skill.name",
+  skillversion_id: "skill.version_id",
+  skillagent: "skill.agent",
+  skillservice: "skill.service",
+  skillrequested_label: "skill.requested_label",
+  skillcontext_id: "skill.context_id",
+} as const;
+
+export type ModelHubSkillsFilterValuesListLoadResult =
+  (typeof ModelHubSkillsFilterValuesListLoadResult)[keyof typeof ModelHubSkillsFilterValuesListLoadResult];
+
+export const ModelHubSkillsFilterValuesListLoadResult = {
+  loaded: "loaded",
+  failed: "failed",
+} as const;
 
 export type ModelHubSkillsImportCreateBody = {
   /** Repeat this multipart part for each file. Filename is its relative POSIX path. */

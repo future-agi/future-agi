@@ -53,6 +53,11 @@ describe('skill-trace runtime routes', () => {
     expect(runtimeEndpoint('skillLatestLoad', params)).toBe('/model-hub/skills/loads/');
     expect(runtimeEndpoint('contextLatestLoad', params)).toBe('/model-hub/skills/loads/');
   });
+  it('uses the shared contracted filter-values projection, not a screen route', () => {
+    expect(runtimeEndpoint('filterValues')).toBe('/model-hub/skills/filter-values/');
+    expect(getContractedApiMethods('/model-hub/skills/filter-values/')).toEqual(['get']);
+    expect(isContractedApiPath('/model-hub/skills/runtime/filter-values/')).toBe(false);
+  });
   it.each(Object.entries(RUNTIME_ROUTES))('%s resolves only when the generated contract has it', (name, template) => {
     if (isContractedApiPath(template)) {
       expect(getContractedApiMethods(template).map((method) => method.toLowerCase())).toContain('get');

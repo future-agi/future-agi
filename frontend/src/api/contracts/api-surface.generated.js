@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1274,
+  endpointCount: 1275,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -879,6 +879,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get",
         "post",
       ],
+      "/model-hub/skills/filter-values/": ["get"],
       "/model-hub/skills/github/import/": ["post"],
       "/model-hub/skills/github/previews/": ["post"],
       "/model-hub/skills/github/previews/{preview_id}/": ["get"],
@@ -2440,6 +2441,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get",
     "post",
   ],
+  "/model-hub/skills/filter-values/": ["get"],
   "/model-hub/skills/github/import/": ["post"],
   "/model-hub/skills/github/previews/": ["post"],
   "/model-hub/skills/github/previews/{preview_id}/": ["get"],

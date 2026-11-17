@@ -37,6 +37,48 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             raise RuntimeDependencyUnavailable("Runtime reads require the shared SKILL filter compiler")
         return method(failed=failed)
 
+    def build_filter_values(self, *, field, verified_identities, context_ids=(),
+                            failed=False, skill_name=None, search="", after=None, limit=100):
+        """Keyset-paged picker values from live evidence, never raw name identity.
+
+        The caller resolves all catalogue IDs in Postgres before this query.
+        Failed names remain unverified strings, not navigable skill identities.
+        """
+        columns = {
+            "skill.name": "skill_name" if failed else "toString(skill_id)",
+            "skill.version_id": "toString(skill_version_id)",
+            "skill.agent": "agent_name",
+            "skill.service": "service_name",
+            "skill.requested_label": "requested_label",
+            "skill.context_id": "toString(context_id)",
+        }
+        if field not in columns or (failed and field == "skill.version_id"):
+            raise ValueError("Unsupported filter-value field")
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid filter-value page size")
+        params = {
+            **self.params, "verified_identities": tuple(verified_identities),
+            "context_ids": tuple(context_ids), "search": search,
+            "after": after, "page_limit": limit + 1, "skill_name": skill_name,
+        }
+        if failed:
+            scope = "skill_name = %(skill_name)s" if skill_name is not None else "1 = 1"
+        else:
+            scope = "(skill_id, skill_version_id, skill_digest) IN %(verified_identities)s" if verified_identities else "0 = 1"
+            scope += " AND status != 'ERROR'"
+        if field == "skill.context_id":
+            scope += " AND toString(context_id) IN %(context_ids)s" if context_ids else " AND 0 = 1"
+        # Only the allowlisted column expression is interpolated. All values,
+        # including blank agent names, are bound; no SQL is accepted from HTTP.
+        expression = columns[field]
+        cursor = " AND value > %(after)s" if after is not None else ""
+        return f"""
+            SELECT DISTINCT {expression} AS value
+            FROM ({self._live_source(failed=failed)})
+            WHERE {scope} AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 {cursor}
+            ORDER BY value LIMIT %(page_limit)s
+        """, params
+
     def build_library_counts(self, *, verified_identities):
         """One CH read for the page. Identities are (skill, version, digest).
 

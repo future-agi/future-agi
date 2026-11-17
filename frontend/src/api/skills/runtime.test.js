@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'src/utils/axios';
 import {
   camelizeRuntime, normalizeMoveWindow, runtimeErrorKind, runtimeWindow,
-  useContextLinkLoads, useLatestLoad, useSkillComparison, useSkillRuntime, useRuntimeAgent,
+  useContextLinkLoads, useLatestLoad, useSkillComparison, useSkillRuntime, useRuntimeAgent, useRuntimeFilterValues,
 } from './runtime';
 
 const routes = vi.hoisted(() => ({ pending: false }));
@@ -87,6 +87,26 @@ describe('runtime response mapping', () => {
 });
 
 describe('runtime hooks', () => {
+  it('keeps the exact picker window and tenant scope while advancing a cursor', async () => {
+    axios.get.mockResolvedValue({ data: { result: { values: [{ value: '', label: '' }], next_cursor: 'page-2', truncated: false } } });
+    const props = { projectId: 'p1', field: 'skill.agent', limit: 1 };
+    const { result, rerender } = renderHook((options) => useRuntimeFilterValues(options), { wrapper: wrapper(), initialProps: props });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const first = axios.get.mock.calls[0][1];
+    expect(first.headers).toEqual(headers);
+    expect(first.params).toMatchObject({ project_id: 'p1', field: 'skill.agent', limit: 1 });
+    expect(result.current.data.nextCursor).toBe('page-2');
+    rerender({ ...props, cursor: result.current.data.nextCursor });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    expect(axios.get.mock.calls[1][1].params).toEqual({ ...first.params, cursor: 'page-2' });
+  });
+
+  it('respects an explicit Observe window for picker values', async () => {
+    const bounds = { from: '2026-11-16T00:00:00Z', to: '2026-11-17T00:00:00Z' };
+    const { result } = renderHook(() => useRuntimeFilterValues({ projectId: 'p1', field: 'skill.version_id', skillId: 's1', ...bounds }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get.mock.calls[0][1].params).toMatchObject({ ...bounds, skill_id: 's1' });
+  });
   it('reads the skill runtime with explicit tenant headers, window, projects and grouping', async () => {
     const { result } = renderHook(() => useSkillRuntime('skill-a', { window: '24h', projectIds: ['p1', 'p2'] }), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

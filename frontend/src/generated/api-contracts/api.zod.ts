@@ -42844,6 +42844,71 @@ export const ModelHubSkillsEvidenceAnnotationsCreateResponse = zod.object({
   }),
 });
 
+/**
+ * Page through live runtime filter values in one authorized project.
+ */
+export const modelHubSkillsFilterValuesListQueryCursorMax = 2048;
+
+export const modelHubSkillsFilterValuesListQueryLimitDefault = 100;
+export const modelHubSkillsFilterValuesListQueryLimitMax = 100;
+
+export const modelHubSkillsFilterValuesListQueryLoadResultDefault = `loaded`;
+export const modelHubSkillsFilterValuesListQueryQDefault = ``;
+export const modelHubSkillsFilterValuesListQueryQMax = 200;
+
+export const ModelHubSkillsFilterValuesListQueryParams = zod.object({
+  to: zod.string().datetime({ offset: true }),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsFilterValuesListQueryCursorMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsFilterValuesListQueryLimitMax)
+    .default(modelHubSkillsFilterValuesListQueryLimitDefault),
+  project_id: zod.string().uuid(),
+  field: zod.enum([
+    "skill.name",
+    "skill.version_id",
+    "skill.agent",
+    "skill.service",
+    "skill.requested_label",
+    "skill.context_id",
+  ]),
+  skill_id: zod.string().uuid().optional(),
+  load_result: zod
+    .enum(["loaded", "failed"])
+    .default(modelHubSkillsFilterValuesListQueryLoadResultDefault),
+  q: zod
+    .string()
+    .max(modelHubSkillsFilterValuesListQueryQMax)
+    .default(modelHubSkillsFilterValuesListQueryQDefault),
+  from: zod.string().datetime({ offset: true }),
+});
+
+export const ModelHubSkillsFilterValuesListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    values: zod.array(
+      zod.object({
+        value: zod.string(),
+        label: zod.string(),
+        skill_id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        version_id: zod.string().uuid().optional(),
+        version: zod.number().optional(),
+        skill_name: zod.string().min(1).optional(),
+        labels_now: zod.array(zod.string().min(1)).optional(),
+        production_version: zod.number().optional(),
+      }),
+    ),
+    next_cursor: zod.string().min(1).nullable(),
+    truncated: zod.boolean(),
+  }),
+});
+
 export const modelHubSkillsGithubImportCreateBodyRightsReviewNoteMax = 2000;
 
 export const ModelHubSkillsGithubImportCreateBody = zod.object({
