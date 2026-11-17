@@ -1030,13 +1030,21 @@ class TestChatGuard:
 
         self._refused(environment, user)
 
-    def _turn(self, conversation, *, ago, digest="sha256:unpublished", emitted=None):
+    def _turn(
+        self,
+        conversation,
+        *,
+        ago,
+        digest="sha256:unpublished",
+        emitted=None,
+        ended=None,
+    ):
         """A finished turn the server received ``ago``; the sandbox stamped it
-        ``emitted`` ago, by default the same."""
+        ``emitted`` ago, by default the same. ``ended`` is its end's payload."""
         when = timezone.now() - ago
         for sequence, kind, payload in (
             (50, "checkpoint_committed", {"digest": digest}),
-            (51, "turn_completed", {"outcome": "success"}),
+            (51, "turn_completed", ended or {"outcome": "success"}),
         ):
             HostedHarnessConversationEvent.no_workspace_objects.create(
                 event_id=f"{conversation.id}:{sequence}",
@@ -1061,6 +1069,46 @@ class TestChatGuard:
         self._turn(conversation, ago=timedelta(seconds=5))
 
         self._refused(environment, user)
+
+    def test_a_replayed_turns_publish_on_its_way_holds_save_too(
+        self, user, workspace, storage
+    ):
+        environment, conversation = self._environment(
+            user, workspace, storage, "d-guard-replayed"
+        )
+        # Its own end was lost and the guest reported the command again, no outcome.
+        self._turn(
+            conversation,
+            ago=timedelta(seconds=5),
+            ended={"replayed": True, "command_message_id": str(uuid.uuid4())},
+        )
+
+        self._refused(environment, user)
+
+    def test_a_replayed_turn_the_person_stopped_does_not_hold_save(
+        self, user, workspace, storage
+    ):
+        environment, conversation = self._environment(
+            user, workspace, storage, "d-guard-replayed-stopped"
+        )
+        command = str(uuid.uuid4())
+        self._turn(
+            conversation,
+            ago=timedelta(seconds=5),
+            ended={"replayed": True, "command_message_id": command},
+        )
+        HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id=f"{conversation.id}:40",
+            conversation=conversation,
+            sequence=40,
+            kind="turn_interrupted",
+            payload={"command_message_id": command},
+            digest="sha256:40",
+            emitted_at=timezone.now(),
+            invocation_id="turn-9",
+        )
+
+        assert not drafts.chat_busy(environment)
 
     def test_an_old_or_published_turn_does_not_hold_save(
         self, user, workspace, storage

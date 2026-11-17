@@ -3112,7 +3112,13 @@ class HostedHarnessGateway:
             if rebuild.landing_pending(job):
                 # A rebuild's result is landing; chat restarts once it has.
                 return None
-            give_up_platform_landing(job=job, conversation=conversation)
+            # Only a start that will claim a cold sandbox gives up on the files: a kept
+            # warm sandbox, or a repeated ensure with nothing waiting, is not waiting.
+            kept = HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation
+            ).first()
+            if not runtime_is_live(kept) and _unacked_commands(conversation).exists():
+                give_up_platform_landing(job=job, conversation=conversation)
             if platform_landing_pending(job=job, conversation=conversation):
                 # The build check's files are still publishing; chat starts once they settle.
                 return None
@@ -3164,11 +3170,21 @@ class HostedHarnessGateway:
                 live = lease
             elif runtime_start_pending(lease, now=now):
                 return lease
-            elif not runtime_is_live(lease, now=now) and (
+            elif (
                 # Nothing is running, so a Stop has nothing to stop.
-                settle_stop_only_queue(conversation)
-                # A start asked for twice, or late, after what it was for is gone.
-                or (attempt is None and not _unacked_commands(conversation).exists())
+                (
+                    not runtime_is_live(lease, now=now)
+                    and settle_stop_only_queue(conversation)
+                )
+                # A start asked for twice, or late, after what it was for is gone. A
+                # live sandbox of another agent is not replaced by an idle one, unless
+                # chat wants an agent of its own (a rebuild's), which only a fresh
+                # sandbox runs as.
+                or (
+                    attempt is None
+                    and not _unacked_commands(conversation).exists()
+                    and (wanted is None or not runtime_is_live(lease, now=now))
+                )
             ):
                 # Whatever chat sandbox of its own the lease still names is retired.
                 retired_ref = _retire_stale_chat_lease(lease)
@@ -3321,7 +3337,8 @@ class HostedHarnessGateway:
             return True
         gone = HostedHarnessConversationLease.State
         renewed = (
-            # The row survives a re-claim, so the claim's own ref fences the renewal too.
+            # The row survives a re-claim, so the claim's own ref fences the renewal
+            # too.
             HostedHarnessConversationLease.no_workspace_objects.filter(
                 id=lease.id, provider_ref=lease.provider_ref
             )

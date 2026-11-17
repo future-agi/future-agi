@@ -690,6 +690,67 @@ class TestDispatch:
         nudge.refresh_from_db()
         assert (nudge.state, nudge.command_message_id) == ("queued", None)
 
+    @staticmethod
+    def _replayed_turn(conversation, sequence=7):
+        """A turn whose own end was lost, reported again with no outcome."""
+        from simulate.models import HostedHarnessConversationEvent
+
+        return HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id=f"{conversation.id}:{sequence}",
+            conversation=conversation,
+            sequence=sequence,
+            kind="turn_completed",
+            payload={"replayed": True, "command_message_id": str(uuid.uuid4())},
+            digest=f"sha256:{sequence}",
+            emitted_at=timezone.now(),
+            invocation_id="turn-9",
+        )
+
+    def test_a_replayed_turn_is_published_before_a_rebuild_composes(
+        self, user, workspace, storage, scheduled, started, auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, _nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-dispatch-replayed-promote",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        conversation = ensure_conversation(environment)
+        turn = self._replayed_turn(conversation)
+
+        with patch(
+            "simulate.services.hosted_harness_conversation.promote_turn_checkpoint"
+        ) as promote:
+            promoted = rebuild._promote_finished_turn(conversation)
+
+        assert promoted == turn.sequence
+        promote.assert_called_once_with(str(conversation.id), turn.sequence)
+
+    def test_a_replayed_turn_not_yet_published_keeps_the_chat_busy(
+        self, user, workspace, storage, scheduled, started, auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-dispatch-replayed-busy",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        conversation = ensure_conversation(environment)
+        # A turn that finished after the last one published: its promotion has not run.
+        self._replayed_turn(conversation)
+
+        with patch.object(rebuild, "_promote_finished_turn", return_value=0):
+            assert not rebuild.dispatch_nudge(environment.id, start_runtime=False)
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.command_message_id) == ("queued", None)
+
     def test_a_client_cannot_send_a_rebuild_turn(self, user, auth_client):
         from simulate.serializers.hosted_harness_conversation import (
             HarnessConversationMessageCreateSerializer,
@@ -4459,7 +4520,9 @@ class _Side:
                         raise self.error
                     raise AssertionError("the other side ended without a backend pid")
                 if time.monotonic() > deadline:
-                    raise AssertionError("the other side never reported its backend pid")
+                    raise AssertionError(
+                        "the other side never reported its backend pid"
+                    )
 
     def settled(self):
         """Finished, or stopped on a row lock the caller holds."""

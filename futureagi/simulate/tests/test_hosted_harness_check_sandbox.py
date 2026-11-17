@@ -22,6 +22,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services import hosted_harness
+from simulate.services.harness_versioning import rebuild
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_hosted_job,
@@ -748,8 +749,8 @@ def test_the_wait_ends_when_the_publish_cannot_land(
             is True
         )
         record_platform_landing_refused(
-        conversation_id=str(ctx.conversation.id), turn_sequence=ctx.turn_sequence
-    )
+            conversation_id=str(ctx.conversation.id), turn_sequence=ctx.turn_sequence
+        )
         assert _job(ctx).payload["metadata"]["conversation_checkpoints"] == {
             str(ctx.conversation.id): {
                 **earlier,
@@ -894,7 +895,9 @@ def test_a_settled_check_starts_the_waiting_chat(
     record = conversation_tasks.ensure_hosted_harness_conversation_runtime.apply_async
 
     def apply_async(*, args, **options):
-        waits_at_start.append(platform_landing_pending(job=_job(ctx), conversation=ctx.conversation))
+        waits_at_start.append(
+            platform_landing_pending(job=_job(ctx), conversation=ctx.conversation)
+        )
         record(args=args, **options)
 
     monkeypatch.setattr(
@@ -958,3 +961,127 @@ def test_the_stop_step_deletes_the_sandbox(monkeypatch, provider):
     result = stop(str(uuid4()), "sandbox-check")
     assert result == ("stopped" if provider == "present" else "gone")
     assert deleted == (["sandbox-check"] if provider == "present" else [])
+
+
+def _not_kept_lines(ctx):
+    return list(
+        Message.no_workspace_objects.filter(
+            conversation=ctx.conversation,
+            role=Message.Role.ASSISTANT,
+            content__contains="were not kept",
+        )
+    )
+
+
+def _fenced(ctx):
+    entry = (
+        ((_job(ctx).payload or {}).get("metadata") or {}).get(
+            "conversation_checkpoints"
+        )
+        or {}
+    ).get(str(ctx.conversation.id)) or {}
+    return "refused_sequence" in entry
+
+
+def _past_the_wait(ctx):
+    HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation=ctx.conversation, sequence=ctx.turn_sequence
+    ).update(
+        created_at=timezone.now() - timedelta(seconds=PLATFORM_LANDING_WAIT_SECONDS + 1)
+    )
+
+
+def _live_sandbox(ctx, provider_ref="sandbox-live"):
+    """A chat sandbox of its own that still polls."""
+    lease = issue_conversation_capability(
+        ctx.conversation,
+        endpoint_base_url=URL,
+        provider_ref=provider_ref,
+        attempt=None,
+        ttl_seconds=3600,
+    ).lease
+    Lease.no_workspace_objects.filter(id=lease.id).update(
+        state=Lease.State.ACTIVE, heartbeat_at=timezone.now()
+    )
+    return lease
+
+
+@pytest.mark.django_db
+def test_a_kept_warm_sandbox_past_the_wait_gives_up_on_nothing(
+    organization, storage, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    live = _live_sandbox(ctx)
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    _past_the_wait(ctx)
+
+    result, start, _delete = _ensure(ctx)
+
+    assert result.id == live.id
+    start.assert_not_called()
+    assert _not_kept_lines(ctx) == []
+    assert not _fenced(ctx)
+
+
+@pytest.mark.django_db
+def test_a_repeated_ensure_with_nothing_queued_past_the_wait_gives_up_on_nothing(
+    organization, storage, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    _past_the_wait(ctx)
+
+    for _ in range(2):
+        result, start, _delete = _ensure(ctx)
+        assert result is None
+        start.assert_not_called()
+
+    assert _not_kept_lines(ctx) == []
+    assert not _fenced(ctx)
+
+
+@pytest.mark.django_db
+def test_a_live_sandbox_of_another_agent_is_not_replaced_by_an_idle_one(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_sandbox(ctx)
+    before = _conversation(ctx).state
+    # It runs as another agent than chat wants, and nothing is running or waiting.
+    monkeypatch.setattr(rebuild, "runs_as_wanted_agent", lambda _lease, _wanted: False)
+
+    first = _ensure(ctx)
+    second = _ensure(ctx)
+
+    for result, start, _delete in (first, second):
+        assert result is None
+        start.assert_not_called()
+    first[2].assert_called_once_with("sandbox-live", ctx.conversation.id)
+    second[2].assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _conversation(ctx).state == before
+
+
+@pytest.mark.django_db
+def test_the_sweep_sends_only_recent_unsent_stops(
+    organization, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    asked = len(_names(inline, STOP))
+    # The stop could not be scheduled, and the mark is older than any sandbox lives.
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        fence_hash=rebuild.SANDBOX_STOP_UNSENT,
+        updated_at=timezone.now() - timedelta(hours=3),
+    )
+
+    assert rebuild.resend_unsent_sandbox_stops() == 0
+    assert len(_names(inline, STOP)) == asked
+
+    # A mark written now is a recent one.
+    rebuild._mark_sandbox_stop_unsent(str(ctx.conversation.id), "sandbox-check")
+
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-check"]]
+    assert rebuild.resend_unsent_sandbox_stops() == 0

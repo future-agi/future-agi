@@ -202,7 +202,10 @@ def settle_stop_only_queue(conversation: HostedHarnessConversation) -> bool:
 
 def _turn_finished_well(turn: HostedHarnessConversationEvent) -> bool:
     """A turn that reported success, or one reported again with no outcome after its own
-    end was lost (``replayed``) that nothing says went badly: no stop, no failure."""
+    end was lost (``replayed``) that nothing says went badly: no stop, no failure.
+
+    Only what happened since the command's latest start counts: a turn that was
+    interrupted, then run again in full, is judged on the run that was replayed."""
     payload = turn.payload or {}
     if payload.get("outcome") == "success":
         return True
@@ -214,12 +217,46 @@ def _turn_finished_well(turn: HostedHarnessConversationEvent) -> bool:
         sequence__lt=turn.sequence,
         payload__command_message_id=command_id,
     )
-    return not (
-        earlier.filter(kind="turn_interrupted").exists()
-        or earlier.filter(kind="turn_completed")
-        .exclude(payload__outcome="success")
-        .exists()
+    started = (
+        earlier.filter(kind="turn_started")
+        .order_by("-sequence")
+        .values_list("sequence", flat=True)
+        .first()
     )
+    if started is not None:
+        earlier = earlier.filter(sequence__gt=started)
+    # Read in Python: a JSON key that is missing is NULL in SQL, and a filter on it
+    # would skip the very row that reported no outcome.
+    for kind, earlier_payload in earlier.filter(
+        kind__in=("turn_interrupted", "turn_completed")
+    ).values_list("kind", "payload"):
+        if kind == "turn_interrupted":
+            return False
+        earlier_payload = earlier_payload or {}
+        if earlier_payload.get("outcome") == "success":
+            continue
+        # An earlier replay with no outcome says nothing about how the turn went.
+        if earlier_payload.get("replayed") and "outcome" not in earlier_payload:
+            continue
+        return False
+    return True
+
+
+def latest_turn_finished_well(
+    conversation_id: Any, *, after_sequence: int = 0
+) -> HostedHarnessConversationEvent | None:
+    """The newest turn after ``after_sequence`` that ``_turn_finished_well`` accepts:
+    one that reported success, or was replayed with nothing bad before it."""
+    candidates = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        Q(payload__outcome="success") | Q(payload__replayed=True),
+        conversation_id=conversation_id,
+        kind="turn_completed",
+        sequence__gt=after_sequence,
+    ).order_by("-sequence")
+    for turn in candidates.iterator():
+        if _turn_finished_well(turn):
+            return turn
+    return None
 
 
 def _platform_check_checkpoint(
@@ -274,8 +311,8 @@ class ConversationCheckpointEntry(TypedDict, total=False):
 
 
 def parse_checkpoint_entry(raw: Any) -> ConversationCheckpointEntry:
-    """A recorded entry as a typed one. Fields it does not know are kept as they are, and
-    an entry from before ``refused_sequence`` parses without it."""
+    """A recorded entry as a typed one. Fields it does not know are kept as they are,
+    and an entry from before ``refused_sequence`` parses without it."""
     if not isinstance(raw, dict):
         return {}
     entry: dict[str, Any] = dict(raw)
@@ -399,7 +436,13 @@ def record_platform_landing_refused(
             metadata = dict(payload.get("metadata") or {})
             checkpoints = dict(metadata.get("conversation_checkpoints") or {})
             entry = parse_checkpoint_entry(checkpoints.get(str(conversation_id)))
-            if entry.get("refused_sequence", 0) >= committed.sequence:
+            if (
+                entry.get("refused_sequence", 0) >= committed.sequence
+                # The files landed between the read above and this lock: they are kept,
+                # not fenced.
+                or entry.get("digest") == committed.payload["digest"]
+                or entry.get("sequence", 0) >= committed.sequence
+            ):
                 return False
             entry["refused_sequence"] = committed.sequence
             checkpoints[str(conversation_id)] = entry

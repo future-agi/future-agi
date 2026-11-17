@@ -315,7 +315,8 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
     turn_sequence = numbered[-1][0]
     checkpoint_sequence = numbered[-1][0] - 1
     assert _lease(ctx).state == Lease.State.EXPIRED
-    # The promotion is asked for, and has not run: the environment still says "original".
+    # The promotion is asked for, and has not run: the environment still says
+    # "original".
     assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
     assert (
         platform_landing_pending(
@@ -498,7 +499,8 @@ def test_the_next_chat_is_given_the_checks_files_and_the_chats_own_state(
     enqueue_message(ctx.job, content="run them", client_request_id="p1")
     files = _members(_cold_start(ctx, provider))
 
-    # The check's file content, and its removal of a scenario, are what chat starts from.
+    # The check's file content, and its removal of a scenario, are what chat starts
+    # from.
     assert json.loads(files["contract.json"]) == {"one_liner": "checked"}
     assert f"scenarios/{NAMES[0]}/scenario.json" in files
     assert not [name for name in files if name.startswith(f"scenarios/{NAMES[1]}/")]
@@ -508,6 +510,170 @@ def test_the_next_chat_is_given_the_checks_files_and_the_chats_own_state(
     # The chat's own saved state comes from its checkpoint.
     assert files[".claude/sessions/1.key"] == b"private"
     assert files[".futureagi-conversation.json"] == b"{}"
+
+
+@pytest.mark.django_db
+def test_a_promotion_that_lands_during_the_give_up_is_not_fenced_or_reported(
+    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks,
+    monkeypatch,
+):
+    from simulate.services import hosted_harness_conversation as conversation_module
+
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-lands-in-give-up"
+    )
+    ran = _check_commits_its_files(ctx)
+    numbered, _ = _post(
+        ctx, ctx.check.sequence, ("turn_completed", {**ran, "outcome": "success"})
+    )
+    turn_sequence = numbered[-1][0]
+    HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation=ctx.conversation, sequence=turn_sequence
+    ).update(
+        created_at=timezone.now() - timedelta(seconds=PLATFORM_LANDING_WAIT_SECONDS + 1)
+    )
+    real = conversation_module.record_platform_landing_refused
+
+    def promotion_commits_first(**kwargs):
+        # The give-up has read "unsettled" and is about to take the environment's lock;
+        # the check's promotion commits in between.
+        promote_turn_checkpoint(str(ctx.conversation.id), turn_sequence)
+        return real(**kwargs)
+
+    monkeypatch.setattr(
+        conversation_module, "record_platform_landing_refused", promotion_commits_first
+    )
+
+    gave_up = give_up_platform_landing(job=_job(ctx), conversation=_conversation(ctx))
+
+    assert gave_up is False
+    assert _lines(ctx, "were not kept") == []
+    assert "refused_sequence" not in _published(ctx)
+    assert _published(ctx)["digest"] is not None
+
+
+@pytest.mark.django_db
+def test_a_check_is_not_fenced_once_a_newer_checkpoint_is_published(
+    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-newer-published"
+    )
+    ran = _check_commits_its_files(ctx)
+    numbered, _ = _post(
+        ctx, ctx.check.sequence, ("turn_completed", {**ran, "outcome": "success"})
+    )
+    turn_sequence = numbered[-1][0]
+    person = enqueue_message(ctx.job, content="run them", client_request_id="p1")[1]
+    person_turn, person_digest = _person_turn(ctx, person, "mine")
+    promote_turn_checkpoint(str(ctx.conversation.id), person_turn)
+    assert _published(ctx)["digest"] == person_digest
+
+    recorded = record_platform_landing_refused(
+        conversation_id=str(ctx.conversation.id), turn_sequence=turn_sequence
+    )
+
+    assert recorded is False
+    assert "refused_sequence" not in _published(ctx)
+
+
+def _event(ctx, sequence, kind, payload):
+    return HostedHarnessConversationEvent.no_workspace_objects.create(
+        event_id=f"{ctx.conversation.id}:{sequence}",
+        conversation=ctx.conversation,
+        sequence=sequence,
+        kind=kind,
+        payload=payload,
+        digest=f"sha256:{sequence}",
+        emitted_at=timezone.now(),
+        invocation_id="turn-9",
+    )
+
+
+# Past the sequences the helpers above post.
+LATER = 900
+
+
+def _replayed_turn_history(ctx, *earlier):
+    """The guest's events for the check's command, then its replayed end; whether
+    that end counts as finished well."""
+    from simulate.services.hosted_harness_conversation import _turn_finished_well
+
+    ran = {"command_message_id": str(ctx.check.id)}
+    for offset, (kind, extra) in enumerate(earlier):
+        _event(ctx, LATER + offset, kind, {**ran, **extra})
+    end = _event(
+        ctx, LATER + len(earlier), "turn_completed", {**ran, "replayed": True}
+    )
+    return _turn_finished_well(end)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("earlier", "finished_well"),
+    [
+        ((), True),
+        # An earlier end that reported no outcome at all went badly.
+        ((("turn_completed", {}),), False),
+        ((("turn_completed", {"outcome": "failed"}),), False),
+        ((("turn_completed", {"outcome": "success"}),), True),
+        # An earlier replay with no outcome says nothing either way.
+        ((("turn_completed", {"replayed": True}),), True),
+        ((("turn_interrupted", {}),), False),
+    ],
+    ids=[
+        "nothing_before",
+        "end_with_no_outcome",
+        "failed_end",
+        "successful_end",
+        "earlier_replay",
+        "interrupted",
+    ],
+)
+def test_a_replayed_turn_is_judged_on_the_ends_before_it(
+    user, workspace, storage, inline, django_capture_on_commit_callbacks,
+    earlier, finished_well,
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-judged"
+    )
+
+    assert _replayed_turn_history(ctx, *earlier) is finished_well
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("history", "finished_well"),
+    [
+        # Stopped, then run again in full from the start, then reported again.
+        (
+            (("turn_started", {}), ("turn_interrupted", {}), ("turn_started", {})),
+            True,
+        ),
+        # Stopped, and never started again: the replay is of the stopped run.
+        ((("turn_started", {}), ("turn_interrupted", {})), False),
+        # Failed in its first run, resumed, and failed again before the replay.
+        (
+            (
+                ("turn_started", {}),
+                ("turn_completed", {"outcome": "failed"}),
+                ("turn_started", {}),
+                ("turn_completed", {}),
+            ),
+            False,
+        ),
+    ],
+    ids=["resumed_in_full", "never_resumed", "bad_end_in_the_latest_run"],
+)
+def test_a_replayed_turn_is_judged_on_its_latest_run_only(
+    user, workspace, storage, inline, django_capture_on_commit_callbacks,
+    history, finished_well,
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-latest-run"
+    )
+
+    assert _replayed_turn_history(ctx, *history) is finished_well
 
 
 def test_a_checkpoint_entry_from_before_the_refusal_mark_still_parses():

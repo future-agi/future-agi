@@ -517,11 +517,14 @@ def _expire_chat_lease(
     return "" if ref.startswith("pending:") else ref
 
 
-# Set on an expired lease's ``fence_hash`` (no bearer secret hashes to it, and an expired
-# lease takes none) when the stop of its sandbox could not be scheduled; the recovery
-# sweep sends the stop again. A new claim of the row overwrites it, and the claim deletes
-# the old sandbox itself.
+# Set on an expired lease's ``fence_hash`` (no bearer secret hashes to it, and an
+# expired lease takes none) when the stop of its sandbox could not be scheduled; the
+# recovery sweep sends the stop again. A new claim of the row overwrites it, and the
+# claim deletes the old sandbox itself.
 SANDBOX_STOP_UNSENT = "stop-unsent"
+# A provider's sandbox limit is at most 30 minutes; the sweep sends a stop again only
+# while its mark is recent (the mark is written with the lease's ``updated_at``).
+SANDBOX_STOP_RESEND_WINDOW = timedelta(hours=2)
 
 
 def _mark_sandbox_stop_unsent(conversation_id: str, ref: str) -> None:
@@ -548,6 +551,9 @@ def resend_unsent_sandbox_stops(*, limit: int = 100) -> int:
             state=HostedHarnessConversationLease.State.EXPIRED,
             attempt__isnull=True,
             fence_hash=SANDBOX_STOP_UNSENT,
+            # A provider ends a sandbox within SANDBOX_STOP_RESEND_WINDOW at the
+            # longest, so an older unsent stop no longer matters.
+            updated_at__gte=timezone.now() - SANDBOX_STOP_RESEND_WINDOW,
         )
         .exclude(provider_ref="")
         .exclude(provider_ref__startswith="pending:")[:limit]
@@ -946,18 +952,13 @@ def _labels(nudge: HarnessNudge) -> dict[str, str | None]:
 
 def _promote_finished_turn(conversation: HostedHarnessConversation) -> int:
     """Publish the last finished turn before the rebuild composes on the drafts."""
-    from simulate.services.hosted_harness_conversation import promote_turn_checkpoint
+    from simulate.services.hosted_harness_conversation import (
+        latest_turn_finished_well,
+        promote_turn_checkpoint,
+    )
 
-    sequence = (
-        HostedHarnessConversationEvent.no_workspace_objects.filter(
-            conversation=conversation,
-            kind="turn_completed",
-            payload__outcome="success",
-        )
-        .order_by("-sequence")
-        .values_list("sequence", flat=True)
-        .first()
-    ) or 0
+    turn = latest_turn_finished_well(conversation.id)
+    sequence = turn.sequence if turn is not None else 0
     if sequence:
         try:
             promote_turn_checkpoint(str(conversation.id), sequence)
@@ -1001,6 +1002,7 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
         enqueue_message,
         ensure_conversation,
         environment_authoring_revision,
+        latest_turn_finished_well,
     )
 
     environment = nudges._head(environment_id)
@@ -1046,12 +1048,8 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
         )
         idle = (
             _chat_idle(conversation)
-            and not HostedHarnessConversationEvent.no_workspace_objects.filter(
-                conversation=conversation,
-                kind="turn_completed",
-                payload__outcome="success",
-                sequence__gt=promoted,
-            ).exists()
+            and latest_turn_finished_well(conversation.id, after_sequence=promoted)
+            is None
         )
         if not idle:
             return False

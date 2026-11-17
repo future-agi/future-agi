@@ -235,14 +235,15 @@ def _publish_pending(conversation: HostedHarnessConversation, published: str) ->
 
     A refused publish never stores its digest, so the wait is bounded.
     """
+    from simulate.services.hosted_harness_conversation import (
+        latest_turn_finished_well,
+    )
+
     events = HostedHarnessConversationEvent.no_workspace_objects.filter(
         conversation=conversation
     )
-    turn = (
-        events.filter(kind="turn_completed", payload__outcome="success")
-        .order_by("-sequence")
-        .first()
-    )
+    # A turn reported again after its end was lost publishes like one that succeeded.
+    turn = latest_turn_finished_well(conversation.id)
     if turn is None or turn.created_at < timezone.now() - PUBLISH_GRACE:
         return False
     checkpoints = events.filter(

@@ -40,7 +40,7 @@ def ensure_hosted_harness_conversation_runtime(
 def schedule_conversation_runtime(
     conversation_id: str, endpoint_base_url: str, *, wakeup: str | None = None
 ):
-    """Ask for a runtime; requests for one conversation coalesce while a start is running.
+    """Ask for a runtime; requests for one conversation coalesce while a start runs.
 
     A ``wakeup`` is a request that must not be absorbed by a start that is running: that
     start may have read the state before what the wakeup is about happened. It has an id
