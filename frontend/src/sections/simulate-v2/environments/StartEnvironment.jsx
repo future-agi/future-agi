@@ -3014,12 +3014,6 @@ function PanelScratch() {
         prompt="Describe the flow, or drop files to learn from"
         description="Trigger, tools, hand-offs — or attach SOPs, CSVs or calls."
         placeholder="e.g. A customer emails a refund request. The agent looks up the order, checks the policy and drafts a reply. Over $500 it escalates to a human."
-        chips={[
-          "The agent gets triggered when…",
-          "It reaches for these tools…",
-          "It's done when…",
-          "It escalates if…",
-        ]}
         accept=".csv,.tsv,.json,.md,.txt,.pdf,.docx,.wav,.mp3,.m4a"
         value={flowText}
         onChange={setFlowText}

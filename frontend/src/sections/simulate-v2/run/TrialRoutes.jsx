@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 
 /*
@@ -109,42 +109,32 @@ export default function TrialRoutes({
         flexWrap="wrap"
         sx={{ px: 2, py: 0.75 }}
       >
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`${rows.length} trials`}
-          </Typography>
-          {rows.map((r) => (
-            <Box
-              key={r.idx}
-              component="button"
-              type="button"
-              title={`Trial ${r.idx + 1} · ${r.status === "passed" ? "Passed" : "Failed"}${r.result ? ` · ${r.result.text}` : ""}`}
-              onClick={() => onOpen(r.idx)}
-              sx={{
-                width: 18,
-                height: 18,
-                p: 0,
-                border: "1px solid",
-                borderColor: r.idx === cur.idx ? "text.primary" : "transparent",
-                borderRadius: "50%",
-                bgcolor: "transparent",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  bgcolor: r.status === "passed" ? "success.main" : "error.main",
-                }}
-              />
-            </Box>
-          ))}
-        </Stack>
+        {/* Not in the plan yet (Nosang, 17 Nov): marked as a proposal. Trials
+            are switched only in the drawer header, so no second picker here. */}
+        <Tooltip
+          arrow
+          title="A proposal for review, not in the plan yet. Switch trials in the header above."
+        >
+          <Box
+            component="span"
+            sx={{
+              px: 0.75,
+              py: 0.125,
+              borderRadius: "4px",
+              border: "1px dashed",
+              borderColor: "divider",
+              typography: "s3",
+              fontWeight: 500,
+              color: "text.secondary",
+              cursor: "default",
+            }}
+          >
+            Proposal
+          </Box>
+        </Tooltip>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {`${rows.length} trials`}
+        </Typography>
         <Typography
           sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 200 }}
         >
