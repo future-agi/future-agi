@@ -19,10 +19,15 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_worker_events import recorded_timeline
 from simulate.services.harness_worker_states import (
+    _call_attempt,
+    _execution,
+    _job_of,
     deadline_refused,
     job_for_call,
+    stopped_by_user,
     stopped_workers,
     trial_ending,
+    worker_cleanup,
     worker_states,
 )
 from simulate.services.harness_worker_text import digest, utc_iso
@@ -363,6 +368,23 @@ def check_again_at(due: str, now: datetime) -> str:
     at = datetime.fromisoformat(due)
     soon = now + timedelta(seconds=RECHECK)
     return max(at if at.tzinfo else at.replace(tzinfo=UTC), soon).isoformat()
+
+
+def attempt_end(call: CallExecution) -> dict[str, Any] | None:
+    """How the call's attempt ended, to keep with its rerun snapshot: whether the user stopped it, how the trial
+    ended, and what became of the sandbox of a worker it cut short. None when the call kept no worker record."""
+    if not (call.call_metadata or {}).get(WORKERS_KEY):
+        return None
+    execution = _execution(call)
+    job = _job_of(call, execution)
+    sandbox = _call_attempt(execution, job) if job is not None else None
+    return {
+        "stopped_by_user": stopped_by_user(call),
+        "ending": trial_ending(call, job),
+        "cleanup": worker_cleanup(
+            call, job, sandbox, cast(HarnessWorker, {"state": "cancelled"})
+        ),
+    }
 
 
 _ENDED = (

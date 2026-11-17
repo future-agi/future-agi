@@ -561,6 +561,40 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     call.save.assert_called_once()
 
 
+@pytest.mark.parametrize("status", ["errored", "failed", "skipped"])
+def test_a_receipt_with_no_call_data_still_ends_the_call_so_its_worker_read_is_due(
+    status,
+):
+    """A failed or stopped trial whose receipt carries no call: its end is recorded, so `/workers/` answers pending
+    until its read has run, never "no workers"."""
+    registration = MagicMock()
+    call = registration.call_execution
+    call.call_metadata = {}
+    call.completed_at = None
+    body = {
+        "status": status,
+        "call": None,
+        "sub_goals": [],
+        "evaluations": [],
+        "failure": {
+            "code": "user_canceled",
+            "message": "Stopped",
+            "domain": "platform_sync",
+        },
+    }
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion."
+            "HostedHarnessArtifact.no_workspace_objects"
+        ) as artifacts,
+        patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
+    ):
+        artifacts.filter.return_value.order_by.return_value.last.return_value = None
+        _apply_receipt_to_call(registration, body)
+
+    assert call.completed_at is not None
+
+
 @pytest.mark.parametrize("script_completed", [True, False])
 def test_call_receipt_accepts_explicit_script_completion(script_completed):
     call = {

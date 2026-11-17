@@ -1,7 +1,8 @@
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.selectors.call_transcripts import with_speakers
-from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+from simulate.services.harness_worker_states import ATTEMPT_END_KEY
+from simulate.services.harness_workers import READ_KEY, WORKERS_KEY, attempt_end
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
@@ -18,6 +19,14 @@ def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
             "actor_id",
         )
     ]
+
+
+def _with_attempt_end(call_execution: CallExecution) -> dict | None:
+    metadata = call_execution.call_metadata
+    if not isinstance(metadata, dict):
+        return metadata
+    ending = attempt_end(call_execution)
+    return {**metadata, ATTEMPT_END_KEY: ending} if ending is not None else metadata
 
 
 def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
@@ -55,7 +64,8 @@ def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
         tool_outputs=call_execution.tool_outputs,
         provider_call_data=call_execution.provider_call_data,
         monitor_call_data=call_execution.monitor_call_data,
-        call_metadata=call_execution.call_metadata,
+        # With how this attempt ended, so the attempt reads its own ending after the call moves on.
+        call_metadata=_with_attempt_end(call_execution),
         avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
         user_interruption_count=call_execution.user_interruption_count,
         user_interruption_rate=call_execution.user_interruption_rate,
