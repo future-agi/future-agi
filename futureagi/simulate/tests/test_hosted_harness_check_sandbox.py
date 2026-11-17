@@ -493,10 +493,7 @@ def test_a_stop_with_nothing_running_starts_no_sandbox(
     ctx = _checked(organization, django_capture_on_commit_callbacks)
     _turn(ctx, ctx.check)
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=ctx.conversation
-        )
-        is False
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
     )
     live = None
     elsewhere = queue == "live_elsewhere"
@@ -599,10 +596,7 @@ def test_an_ensure_with_nothing_queued_starts_no_sandbox(
         _turn(ctx, ctx.check)
         assert _lease(ctx).state == Lease.State.EXPIRED
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=ctx.conversation
-        )
-        is False
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
     )
 
     # The start was asked for twice, and both arrive after nothing is left to run.
@@ -728,10 +722,7 @@ def test_the_wait_ends_when_the_publish_cannot_land(
 ):
     ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=ctx.conversation
-        )
-        is True
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is True
     )
 
     if settled == "refused":
@@ -743,9 +734,7 @@ def test_the_wait_ends_when_the_publish_cannot_land(
         }
         _publish(ctx, earlier)
         assert (
-            platform_landing_pending(
-                job=_job(ctx), conversation=ctx.conversation
-            )
+            platform_landing_pending(job=_job(ctx), conversation=ctx.conversation)
             is True
         )
         record_platform_landing_refused(
@@ -763,10 +752,7 @@ def test_the_wait_ends_when_the_publish_cannot_land(
         )
 
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=ctx.conversation
-        )
-        is False
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
     )
 
 
@@ -1085,3 +1071,102 @@ def test_the_sweep_sends_only_recent_unsent_stops(
     assert rebuild.resend_unsent_sandbox_stops() == 1
     assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-check"]]
     assert rebuild.resend_unsent_sandbox_stops() == 0
+
+
+@pytest.mark.django_db
+def test_the_sweeps_window_follows_the_chat_idle_ttl(
+    organization, inline, django_capture_on_commit_callbacks, settings
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    # A sandbox lives for the chat idle window, which is configurable: past 2 hours.
+    settings.ALK_HOSTED_CHAT_TTL_SECONDS = 4 * 3600
+    asked = len(_names(inline, STOP))
+
+    def marked(age):
+        then = timezone.now() - age
+        Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+            fence_hash=rebuild.SANDBOX_STOP_UNSENT, updated_at=then, expires_at=then
+        )
+
+    marked(timedelta(hours=5))
+    assert rebuild.resend_unsent_sandbox_stops() == 0
+
+    marked(timedelta(hours=3))
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-check"]]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("expired_ago_hours, resent", [(3, 0), (0.1, 1)])
+def test_the_sweep_looks_only_at_leases_that_expired_recently(
+    organization, inline, django_capture_on_commit_callbacks, expired_ago_hours, resent
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    # The mark is recent either way; what differs is when the lease expired.
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        fence_hash=rebuild.SANDBOX_STOP_UNSENT,
+        updated_at=timezone.now(),
+        expires_at=timezone.now() - timedelta(hours=expired_ago_hours),
+    )
+
+    assert rebuild.resend_unsent_sandbox_stops() == resent
+
+
+def _live_other_agents_sandbox(ctx, monkeypatch):
+    ctx_lease = _live_sandbox(ctx)
+    # It runs as another agent than chat wants.
+    monkeypatch.setattr(rebuild, "runs_as_wanted_agent", lambda _lease, _wanted: False)
+    return ctx_lease
+
+
+def _failing_gateway():
+    gateway = _gateway()
+    gateway.client.delete.side_effect = RuntimeError("provider down")
+    return gateway
+
+
+@pytest.mark.django_db
+def test_a_retired_sandbox_that_could_not_be_deleted_is_stopped_by_the_sweep(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_other_agents_sandbox(ctx, monkeypatch)
+    gateway = _failing_gateway()
+
+    # Nothing is waiting, so nothing starts and the live sandbox is retired.
+    with patch.object(gateway, "_start_chat_sandbox") as start:
+        result = gateway.ensure_conversation_runtime(
+            _job(ctx), conversation=ctx.conversation, endpoint_base_url=URL
+        )
+
+    assert result is None
+    start.assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _lease(ctx).fence_hash == rebuild.SANDBOX_STOP_UNSENT
+    asked = len(_names(inline, STOP))
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-live"]]
+
+
+@pytest.mark.django_db
+def test_a_replaced_sandbox_that_could_not_be_deleted_is_stopped_again(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_other_agents_sandbox(ctx, monkeypatch)
+    enqueue_message(ctx.job, content="hi", client_request_id="p1")
+    gateway = _failing_gateway()
+
+    # A message waits, so the claim replaces the live sandbox of another agent.
+    with patch.object(gateway, "_start_chat_sandbox") as start:
+        gateway.ensure_conversation_runtime(
+            _job(ctx), conversation=ctx.conversation, endpoint_base_url=URL
+        )
+
+    start.assert_called_once()
+    # The lease row names the claim now, so the stop is asked for as a task.
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-live"]]

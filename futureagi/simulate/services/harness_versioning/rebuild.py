@@ -522,9 +522,20 @@ def _expire_chat_lease(
 # recovery sweep sends the stop again. A new claim of the row overwrites it, and the
 # claim deletes the old sandbox itself.
 SANDBOX_STOP_UNSENT = "stop-unsent"
-# A provider's sandbox limit is at most 30 minutes; the sweep sends a stop again only
-# while its mark is recent (the mark is written with the lease's ``updated_at``).
+# A provider's sandbox limit is at most 30 minutes, and a chat sandbox lives for the
+# chat idle window; the sweep sends a stop again only while its mark is recent (the mark
+# is written with the lease's ``updated_at``).
 SANDBOX_STOP_RESEND_WINDOW = timedelta(hours=2)
+_SANDBOX_STOP_RESEND_MARGIN = timedelta(minutes=30)
+
+
+def _sandbox_stop_resend_window() -> timedelta:
+    from simulate.services.hosted_harness_gateway import _chat_idle_seconds
+
+    return max(
+        SANDBOX_STOP_RESEND_WINDOW,
+        timedelta(seconds=_chat_idle_seconds()) + _SANDBOX_STOP_RESEND_MARGIN,
+    )
 
 
 def _mark_sandbox_stop_unsent(conversation_id: str, ref: str) -> None:
@@ -546,14 +557,17 @@ def resend_unsent_sandbox_stops(*, limit: int = 100) -> int:
     from simulate.tasks import harness_nudges as tasks
 
     sent = 0
+    since = timezone.now() - _sandbox_stop_resend_window()
     owed = (
         HostedHarnessConversationLease.no_workspace_objects.filter(
             state=HostedHarnessConversationLease.State.EXPIRED,
             attempt__isnull=True,
             fence_hash=SANDBOX_STOP_UNSENT,
-            # A provider ends a sandbox within SANDBOX_STOP_RESEND_WINDOW at the
-            # longest, so an older unsent stop no longer matters.
-            updated_at__gte=timezone.now() - SANDBOX_STOP_RESEND_WINDOW,
+            # A sandbox ends within the window at the longest, so an older unsent stop
+            # no longer matters. The bound on ``expires_at`` lets the (state,
+            # expires_at) index range-scan; ``updated_at`` is the mark's own time.
+            expires_at__gte=since,
+            updated_at__gte=since,
         )
         .exclude(provider_ref="")
         .exclude(provider_ref__startswith="pending:")[:limit]

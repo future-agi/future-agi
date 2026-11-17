@@ -707,7 +707,13 @@ class TestDispatch:
         )
 
     def test_a_replayed_turn_is_published_before_a_rebuild_composes(
-        self, user, workspace, storage, scheduled, started, auth_client,
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
         django_capture_on_commit_callbacks,
     ):
         environment, _nudge, _a1, _a2 = _queued(
@@ -730,7 +736,13 @@ class TestDispatch:
         promote.assert_called_once_with(str(conversation.id), turn.sequence)
 
     def test_a_replayed_turn_not_yet_published_keeps_the_chat_busy(
-        self, user, workspace, storage, scheduled, started, auth_client,
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
         django_capture_on_commit_callbacks,
     ):
         environment, nudge, _a1, _a2 = _queued(
@@ -3680,22 +3692,14 @@ class TestSuite:
 
 
 class TestSourceFreshness:
-    def test_a_sandbox_running_as_another_agent_is_retired(
-        self,
-        user,
-        workspace,
-        storage,
-        scheduled,
-        started,
-        django_capture_on_commit_callbacks,
+    def _another_agents_sandbox(
+        self, user, workspace, storage, capture, key, *, queued
     ):
         from unittest.mock import MagicMock
 
         from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
-        environment, a1, a2 = _activated(
-            user, workspace, storage, "r-fresh", django_capture_on_commit_callbacks
-        )
+        environment, a1, a2 = _activated(user, workspace, storage, key, capture)
         conversation = ensure_conversation(environment)
         capability = issue_conversation_capability(
             conversation,
@@ -3708,9 +3712,31 @@ class TestSourceFreshness:
         HostedHarnessConversationLease.no_workspace_objects.filter(
             id=capability.lease.id
         ).update(state="active", heartbeat_at=timezone.now())
+        if queued:
+            # Every start is asked for after a message was queued.
+            enqueue_message(environment, content="hi", client_request_id=f"{key}-hi")
         gateway = HostedHarnessGateway.__new__(HostedHarnessGateway)
         gateway.client = MagicMock(runtime_name="r", runtime_digest="d")
         assert rebuild.wanted_agent_version(environment, conversation) == a2
+        return environment, conversation, capability, gateway, a2
+
+    def test_a_sandbox_running_as_another_agent_is_retired(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, conversation, _cap, gateway, a2 = self._another_agents_sandbox(
+            user,
+            workspace,
+            storage,
+            django_capture_on_commit_callbacks,
+            "r-fresh",
+            queued=True,
+        )
 
         with (
             patch.object(gateway, "_delete_chat_sandbox") as deleted,
@@ -3724,6 +3750,44 @@ class TestSourceFreshness:
 
         deleted.assert_called_once_with("sandbox-old", conversation.id)
         assert start.call_args.kwargs["agent_version"] == a2
+
+    def test_a_late_start_with_nothing_queued_retires_a_live_sandbox_of_another_agent(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, conversation, capability, gateway, _a2 = (
+            self._another_agents_sandbox(
+                user,
+                workspace,
+                storage,
+                django_capture_on_commit_callbacks,
+                "r-fresh-idle",
+                queued=False,
+            )
+        )
+
+        with (
+            patch.object(gateway, "_delete_chat_sandbox") as deleted,
+            patch.object(gateway, "_start_chat_sandbox") as start,
+        ):
+            result = gateway.ensure_conversation_runtime(
+                environment,
+                conversation=conversation,
+                endpoint_base_url="https://platform.example",
+            )
+
+        assert result is None
+        start.assert_not_called()
+        deleted.assert_called_once_with("sandbox-old", conversation.id)
+        lease = HostedHarnessConversationLease.no_workspace_objects.get(
+            id=capability.lease.id
+        )
+        assert lease.state == HostedHarnessConversationLease.State.EXPIRED
 
     def test_the_sandbox_gets_the_agents_payload_with_names_only(
         self,
@@ -4517,12 +4581,14 @@ class _Side:
                 # The thread failed before it reported: its own error is the news.
                 if not self.thread.is_alive():
                     if self.error is not None:
-                        raise self.error
-                    raise AssertionError("the other side ended without a backend pid")
+                        raise self.error from None
+                    raise AssertionError(
+                        "the other side ended without a backend pid"
+                    ) from None
                 if time.monotonic() > deadline:
                     raise AssertionError(
                         "the other side never reported its backend pid"
-                    )
+                    ) from None
 
     def settled(self):
         """Finished, or stopped on a row lock the caller holds."""

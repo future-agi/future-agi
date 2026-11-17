@@ -16,7 +16,6 @@ from uuid import uuid4
 
 import pytest
 from django.utils import timezone
-from rest_framework.test import APIClient
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -24,6 +23,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services import hosted_harness
+from simulate.services.harness_versioning import rebuild
 from simulate.services.hosted_harness import canonical_digest
 from simulate.services.hosted_harness_conversation import (
     PLATFORM_LANDING_WAIT_SECONDS,
@@ -40,8 +40,9 @@ from simulate.services.hosted_harness_gateway import (
     with_authoring_basis,
 )
 from simulate.tasks import hosted_harness_conversation as conversation_tasks
+from simulate.tests import test_hosted_harness_check_sandbox as sandbox_tests
 from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
-from simulate.tests.test_hosted_harness_check_sandbox import (  # noqa: F401 - fixtures
+from simulate.tests.test_hosted_harness_check_sandbox import (
     GUEST,
     STOP,
     URL,
@@ -53,16 +54,20 @@ from simulate.tests.test_hosted_harness_check_sandbox import (  # noqa: F401 - f
     _ensure,
     _job,
     _lease,
+    _live_sandbox,
     _names,
     _post,
     _sandbox,
-    inline,
-    storage,
 )
 from simulate.tests.test_hosted_harness_conversation import (
     _chat_checkpoint,
     _commit_checkpoint,
 )
+
+# The check sandbox tests' fixtures, shared by name (not imported, which a test's own
+# parameters would redefine).
+inline = sandbox_tests.inline
+storage = sandbox_tests.storage
 
 PROMOTE = conversation_tasks.promote_hosted_harness_conversation_checkpoint.name
 WORKSPACE = "/work/conversation.tar.gz"
@@ -199,7 +204,12 @@ def _check_commits_its_files(ctx):
 
 @pytest.mark.django_db
 def test_a_replayed_check_turn_keeps_the_checks_files_for_the_next_chat(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-replayed"
@@ -219,10 +229,7 @@ def test_a_replayed_check_turn_keeps_the_checks_files_for_the_next_chat(
     assert _one_liner(saved) == "checked"
     assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=_conversation(ctx)
-        )
-        is True
+        platform_landing_pending(job=_job(ctx), conversation=_conversation(ctx)) is True
     )
 
     promote_turn_checkpoint(str(ctx.conversation.id), turn_sequence)
@@ -234,7 +241,12 @@ def test_a_replayed_check_turn_keeps_the_checks_files_for_the_next_chat(
 
 @pytest.mark.django_db
 def test_a_replayed_turn_the_person_stopped_is_not_published_and_chat_does_not_wait(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-replayed-stopped"
@@ -254,9 +266,7 @@ def test_a_replayed_turn_the_person_stopped_is_not_published_and_chat_does_not_w
 
     assert _names(inline, PROMOTE) == []
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=_conversation(ctx)
-        )
+        platform_landing_pending(job=_job(ctx), conversation=_conversation(ctx))
         is False
     )
     enqueue_message(ctx.job, content="run them", client_request_id="p1")
@@ -303,7 +313,12 @@ def _lines(ctx, containing):
 
 @pytest.mark.django_db
 def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_them(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-slow-publish"
@@ -319,10 +334,7 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
     # "original".
     assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=_conversation(ctx)
-        )
-        is True
+        platform_landing_pending(job=_job(ctx), conversation=_conversation(ctx)) is True
     )
     waiting = enqueue_message(ctx.job, content="run them", client_request_id="p1")[1]
 
@@ -340,9 +352,7 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
     assert _published(ctx).get("refused_sequence") == checkpoint_sequence
     assert len(_lines(ctx, "were not kept")) == 1
     assert (
-        platform_landing_pending(
-            job=_job(ctx), conversation=_conversation(ctx)
-        )
+        platform_landing_pending(job=_job(ctx), conversation=_conversation(ctx))
         is False
     )
 
@@ -365,7 +375,12 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
 
 @pytest.mark.django_db
 def test_a_refusal_survives_a_newer_checkpoint_being_published(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-refused-kept"
@@ -425,7 +440,9 @@ def _events(ctx, acknowledged, *events):
 
 @pytest.mark.django_db
 def test_a_stop_with_no_sandbox_does_not_leave_the_question_open(
-    organization, inline, django_capture_on_commit_callbacks
+    organization,
+    inline,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked(organization, django_capture_on_commit_callbacks)
     ran = {"command_message_id": str(ctx.check.id)}
@@ -474,7 +491,12 @@ def _members(archive):
 
 @pytest.mark.django_db
 def test_the_next_chat_is_given_the_checks_files_and_the_chats_own_state(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-lifecycle"
@@ -514,7 +536,12 @@ def test_the_next_chat_is_given_the_checks_files_and_the_chats_own_state(
 
 @pytest.mark.django_db
 def test_a_promotion_that_lands_during_the_give_up_is_not_fenced_or_reported(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks,
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
     monkeypatch,
 ):
     from simulate.services import hosted_harness_conversation as conversation_module
@@ -554,7 +581,12 @@ def test_a_promotion_that_lands_during_the_give_up_is_not_fenced_or_reported(
 
 @pytest.mark.django_db
 def test_a_check_is_not_fenced_once_a_newer_checkpoint_is_published(
-    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-newer-published"
@@ -602,9 +634,7 @@ def _replayed_turn_history(ctx, *earlier):
     ran = {"command_message_id": str(ctx.check.id)}
     for offset, (kind, extra) in enumerate(earlier):
         _event(ctx, LATER + offset, kind, {**ran, **extra})
-    end = _event(
-        ctx, LATER + len(earlier), "turn_completed", {**ran, "replayed": True}
-    )
+    end = _event(ctx, LATER + len(earlier), "turn_completed", {**ran, "replayed": True})
     return _turn_finished_well(end)
 
 
@@ -631,8 +661,13 @@ def _replayed_turn_history(ctx, *earlier):
     ],
 )
 def test_a_replayed_turn_is_judged_on_the_ends_before_it(
-    user, workspace, storage, inline, django_capture_on_commit_callbacks,
-    earlier, finished_well,
+    user,
+    workspace,
+    storage,
+    inline,
+    django_capture_on_commit_callbacks,
+    earlier,
+    finished_well,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-judged"
@@ -666,8 +701,13 @@ def test_a_replayed_turn_is_judged_on_the_ends_before_it(
     ids=["resumed_in_full", "never_resumed", "bad_end_in_the_latest_run"],
 )
 def test_a_replayed_turn_is_judged_on_its_latest_run_only(
-    user, workspace, storage, inline, django_capture_on_commit_callbacks,
-    history, finished_well,
+    user,
+    workspace,
+    storage,
+    inline,
+    django_capture_on_commit_callbacks,
+    history,
+    finished_well,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-latest-run"
@@ -700,7 +740,11 @@ def test_a_checkpoint_entry_from_before_the_refusal_mark_still_parses():
 
 @pytest.mark.django_db
 def test_the_landing_functions_take_their_arguments_by_keyword(
-    user, workspace, storage, inline, django_capture_on_commit_callbacks
+    user,
+    workspace,
+    storage,
+    inline,
+    django_capture_on_commit_callbacks,
 ):
     ctx = _checked_environment(
         user, workspace, django_capture_on_commit_callbacks, "check-keywords"
@@ -712,3 +756,46 @@ def test_the_landing_functions_take_their_arguments_by_keyword(
     ):
         with pytest.raises(TypeError):
             call(*args)
+
+
+@pytest.mark.django_db
+def test_a_live_sandbox_of_another_agent_past_the_wait_gives_up_like_a_cold_start(
+    user,
+    workspace,
+    storage,
+    inline,
+    provider,
+    monkeypatch,
+    django_capture_on_commit_callbacks,
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-other-agent-live"
+    )
+    ran = _check_commits_its_files(ctx)
+    numbered, _ = _post(
+        ctx, ctx.check.sequence, ("turn_completed", {**ran, "outcome": "success"})
+    )
+    turn_sequence = numbered[-1][0]
+    checkpoint_sequence = turn_sequence - 1
+    # The check's sandbox is gone; another chat sandbox polls, as another agent than
+    # chat wants, and a message waits. The claim replaces it.
+    _live_sandbox(ctx, "sandbox-other-agent")
+    monkeypatch.setattr(rebuild, "runs_as_wanted_agent", lambda _lease, _wanted: False)
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation=ctx.conversation, sequence=turn_sequence
+    ).update(
+        created_at=timezone.now() - timedelta(seconds=PLATFORM_LANDING_WAIT_SECONDS + 1)
+    )
+
+    archive = _cold_start(ctx, provider)
+
+    assert _one_liner(archive) == "original"
+    assert _published(ctx).get("refused_sequence") == checkpoint_sequence
+    assert len(_lines(ctx, "were not kept")) == 1
+    assert provider.deleted == ["sandbox-other-agent"]
+    # The late landing is dropped.
+    revision = environment_authoring_revision(_job(ctx))
+    promote_turn_checkpoint(str(ctx.conversation.id), turn_sequence)
+    assert environment_authoring_revision(_job(ctx)) == revision == ctx.revision
+    assert _published(ctx).get("digest") is None

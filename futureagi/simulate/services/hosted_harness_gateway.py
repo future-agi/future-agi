@@ -3112,17 +3112,25 @@ class HostedHarnessGateway:
             if rebuild.landing_pending(job):
                 # A rebuild's result is landing; chat restarts once it has.
                 return None
+            wanted = rebuild.wanted_agent_version(job, conversation)
             # Only a start that will claim a cold sandbox gives up on the files: a kept
-            # warm sandbox, or a repeated ensure with nothing waiting, is not waiting.
+            # warm sandbox that runs as the wanted agent, or a repeated ensure with
+            # nothing waiting, is not waiting. A live sandbox of another agent is
+            # replaced by the claim, so that start gives up like a cold one. This is
+            # outside the atomic block below: it takes the environment's lock first.
             kept = HostedHarnessConversationLease.no_workspace_objects.filter(
                 conversation=conversation
             ).first()
-            if not runtime_is_live(kept) and _unacked_commands(conversation).exists():
+            keeps_warm = (
+                runtime_is_live(kept)
+                and kept.attempt_id is None
+                and rebuild.runs_as_wanted_agent(kept, wanted)
+            )
+            if not keeps_warm and _unacked_commands(conversation).exists():
                 give_up_platform_landing(job=job, conversation=conversation)
             if platform_landing_pending(job=job, conversation=conversation):
                 # The build check's files are still publishing; chat starts once they settle.
                 return None
-            wanted = rebuild.wanted_agent_version(job, conversation)
         if job.state not in terminal_states:
             attempt = (
                 HostedHarnessAttempt.no_workspace_objects.filter(
@@ -3177,14 +3185,9 @@ class HostedHarnessGateway:
                     and settle_stop_only_queue(conversation)
                 )
                 # A start asked for twice, or late, after what it was for is gone. A
-                # live sandbox of another agent is not replaced by an idle one, unless
-                # chat wants an agent of its own (a rebuild's), which only a fresh
-                # sandbox runs as.
-                or (
-                    attempt is None
-                    and not _unacked_commands(conversation).exists()
-                    and (wanted is None or not runtime_is_live(lease, now=now))
-                )
+                # live sandbox of another agent is not replaced by an idle one either:
+                # a start with nothing waiting starts nothing.
+                or (attempt is None and not _unacked_commands(conversation).exists())
             ):
                 # Whatever chat sandbox of its own the lease still names is retired.
                 retired_ref = _retire_stale_chat_lease(lease)
@@ -3228,8 +3231,11 @@ class HostedHarnessGateway:
                     ]
                 )
         if nothing_to_start:
-            if retired_ref:
-                self._delete_chat_sandbox(retired_ref, conversation.id)
+            if retired_ref and not self._delete_chat_sandbox(
+                retired_ref, conversation.id
+            ):
+                # The recovery sweep sends the stop again.
+                rebuild._mark_sandbox_stop_unsent(str(conversation.id), retired_ref)
             return None
         if live is not None:
             if (
@@ -3246,8 +3252,10 @@ class HostedHarnessGateway:
                     claim_again=False,
                 )
             return live
-        if retired_ref:
-            self._delete_chat_sandbox(retired_ref, conversation.id)
+        if retired_ref and not self._delete_chat_sandbox(retired_ref, conversation.id):
+            # The lease row now names the claim, so there is no mark to leave on it:
+            # the stop is asked for as a task, which retries.
+            self._schedule_retired_stop(conversation.id, retired_ref)
         try:
             if attempt is not None:
                 return self._start_chat_in_sandbox(
@@ -3299,7 +3307,21 @@ class HostedHarnessGateway:
             )
         return started
 
-    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+    @staticmethod
+    def _schedule_retired_stop(conversation_id: Any, provider_ref: str) -> None:
+        from simulate.tasks import harness_nudges as tasks
+
+        try:
+            tasks.schedule_sandbox_stop(str(conversation_id), provider_ref)
+        except Exception:  # noqa: BLE001 - the sandbox still dies at its provider's limit
+            logger.exception(
+                "retired conversation sandbox stop not scheduled conversation=%s",
+                conversation_id,
+            )
+
+    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> bool:
+        """Delete a retired chat sandbox. False when it could not be deleted and is
+        still there; a sandbox already gone counts as deleted."""
         try:
             self.client.delete(
                 self.client.get(
@@ -3309,12 +3331,14 @@ class HostedHarnessGateway:
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            return True
         except Exception:
             logger.exception(
                 "retired conversation sandbox deletion failed conversation=%s",
                 conversation_id,
             )
+            return False
+        return True
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> bool:
         """Keep a chat sandbox for the idle window after the user's latest message.
