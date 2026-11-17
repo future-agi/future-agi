@@ -15,8 +15,12 @@ vi.mock("src/api/skills", () => ({
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: mocks.toast }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
-// eslint-disable-next-line react/prop-types
-vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", async () => {
+  // A portal on top, like the real nested dialog, so the open outer dialog does not hide it.
+  const { createPortal } = await import("react-dom");
+  // eslint-disable-next-line react/prop-types
+  return { default: ({ open }) => (open ? createPortal(<div role="dialog" aria-label="Manage label protection">Label rules</div>, document.body) : null) };
+});
 const skill = { id: "skill-1", name: "release-review" };
 
 beforeEach(() => {

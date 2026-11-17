@@ -121,7 +121,7 @@ export default function VersionsTab({ skill }) {
     {
       label: "Compare with production",
       disabled: !production || version.number === production,
-      reason: !production ? "No version is in production" : version.number === production ? "This version is in production" : undefined,
+      reason: labels.isError || labels.isLoading ? undefined : !production ? "No version is in production" : version.number === production ? "This version is in production" : undefined,
       onClick: () => compare(production, version.number),
     },
     { label: "Restore as new version", onClick: () => setRestore(version.number) },

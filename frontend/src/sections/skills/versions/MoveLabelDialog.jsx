@@ -163,6 +163,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   };
 
   return (
+    <>
     <ModalWrapper
       open
       title="Move label"
@@ -297,10 +298,12 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         {movesProduction && <Typography variant="s1">Apps that follow production pick up v{target} the next time they fetch. Pinned versions don&apos;t change.</Typography>}
         {evidenceAttached && <Typography variant="s1">Moving saves the attached test evidence with this label change.</Typography>}
       </Stack>}
-      {/* Mounted only while open. Saving new rules changes the release revision, so this move then
-          fails its CAS and asks for an explicit reload; the reviewed snapshot is never swapped here. */}
-      {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={authoritative} />}
     </ModalWrapper>
+    {/* Mounted only while open, outside the move dialog's tree so nothing in it reaches the move.
+        Saving new rules changes the release revision, so this move then fails its CAS and asks
+        for an explicit reload; the reviewed snapshot is never swapped here. */}
+    {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={authoritative} />}
+    </>
   );
 }
 

@@ -196,6 +196,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   );
 
   return (
+    <>
     <ModalWrapper
       open
       onClose={onClose}
@@ -271,10 +272,12 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           <Button variant="contained" color="primary" aria-describedby={disabledReason ? "publish-reason" : undefined} disabled={!canPublish || publish.isPending} onClick={submit}>{stale ? "Publish anyway" : publishTitle}</Button>
         </Stack>
       </DialogActions>
-      {/* Mounted only while open. New rules change the release revision, so publishing then fails its
-          CAS and asks for "Reload release state"; the reviewed release snapshot is never swapped here. */}
-      {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={ruleSource} />}
     </ModalWrapper>
+    {/* Mounted only while open, outside the publish dialog's tree so nothing in it reaches publish.
+        New rules change the release revision, so publishing then fails its CAS and asks for
+        "Reload release state"; the reviewed release snapshot is never swapped here. */}
+    {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={ruleSource} />}
+    </>
   );
 }
 

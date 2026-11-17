@@ -1,5 +1,5 @@
 import { createHash, webcrypto } from "node:crypto";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PublishDialog from "./PublishDialog";
@@ -17,8 +17,12 @@ vi.mock("src/api/skills", () => ({
 vi.mock("src/api/skills/testing", () => ({ useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => api.navigate }));
 vi.mock("notistack", () => ({ enqueueSnackbar: api.snackbar }));
-// eslint-disable-next-line react/prop-types
-vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", async () => {
+  // A portal on top, like the real nested dialog, so the open outer dialog does not hide it.
+  const { createPortal } = await import("react-dom");
+  // eslint-disable-next-line react/prop-types
+  return { default: ({ open }) => (open ? createPortal(<div role="dialog" aria-label="Manage label protection"><form onSubmit={(event) => event.preventDefault()}>Label rules<button type="submit">Save protection</button></form></div>, document.body) : null) };
+});
 vi.mock("src/sections/skills/components/TextDiff", () => ({ default: ({ fromText, toText }) => <div data-testid="diff">{fromText} → {toText}</div> }));
 
 const skill = { id: "skill-id", name: "sample-skill", labels: [], protectedLabelNames: [], releaseRevision: 3, permissions: { canRunTests: true } };
@@ -400,9 +404,14 @@ describe('UXF-09: the label rule beside the label choice', () => {
     api.currentSkill = admin;
     renderDialog({ skill: admin });
     fireEvent.click(screen.getByRole('button', { name: 'Change rules' }));
-    expect(screen.getByRole('dialog', { name: 'Manage label protection' })).toBeInTheDocument();
+    const rules = screen.getByRole('dialog', { name: 'Manage label protection' });
     const publish = screen.getByRole('button', { name: 'Publish', exact: true });
     await waitFor(() => expect(publish).toBeEnabled());
+    // Saving or pressing Enter in the rules dialog never publishes.
+    fireEvent.keyDown(rules, { key: 'Enter' });
+    fireEvent.click(within(rules).getByRole('button', { name: 'Save protection' }));
+    fireEvent.submit(rules.querySelector('form'));
+    expect(api.publish).not.toHaveBeenCalled();
     fireEvent.click(publish);
     await waitFor(() => expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ labels: [], expectedReleaseRevision: 3 })));
   });

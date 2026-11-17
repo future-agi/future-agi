@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import { fireEvent, render, screen, waitFor, within } from "src/utils/test-utils";
 import MoveLabelDialog from "./MoveLabelDialog";
 
 const mocks = vi.hoisted(() => ({
@@ -247,8 +247,12 @@ describe("MoveLabelDialog", () => {
 
 // eslint-disable-next-line react/prop-types
 vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: ({ onSelectRun, variant }) => <div data-testid="test-evidence" data-variant={variant}>Test evidence<button type="button" onClick={() => onSelectRun("run-1")}>Attach mocked evidence</button></div> }));
-// eslint-disable-next-line react/prop-types
-vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", async () => {
+  // A portal on top, like the real nested dialog, so the open outer dialog does not hide it.
+  const { createPortal } = await import("react-dom");
+  // eslint-disable-next-line react/prop-types
+  return { default: ({ open }) => (open ? createPortal(<div role="dialog" aria-label="Manage label protection"><form onSubmit={(event) => event.preventDefault()}>Label rules<button type="submit">Save protection</button></form></div>, document.body) : null) };
+});
 
 it('defaults to the newest different version and explains an explicit no-op', async () => {
   mocks.labels.mockReturnValue(labelsResult(3));
@@ -341,6 +345,12 @@ describe("UXF-09: the release rule at the point of action", () => {
   it("opening the rules does not change what the move sends", async () => {
     render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="production" />);
     fireEvent.click(await screen.findByRole("button", { name: "Change rules" }));
+    // Saving or pressing Enter in the rules dialog never moves the label.
+    const rules = screen.getByRole("dialog", { name: "Manage label protection" });
+    fireEvent.keyDown(rules, { key: "Enter" });
+    fireEvent.click(within(rules).getByRole("button", { name: "Save protection" }));
+    fireEvent.submit(rules.querySelector("form"));
+    expect(mocks.move).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /^Move production from v1 to v3$/ }));
     await waitFor(() => expect(mocks.move).toHaveBeenCalledWith({
       label: "production", version: 3, expectedVersion: 1, expectedReleaseRevision: 4,
