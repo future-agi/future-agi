@@ -12,6 +12,11 @@ export const SEQUENCE_COPY = {
   tookOverFull: (name) => `${name} took over the call. It doesn't hand back.`,
   noAnswer: "No answer came back",
   noAnswerFull: "No answer came back.",
+  recordCut: "Record ends before an answer",
+  recordCutFull:
+    "The record was cut short here, so it can't say whether an answer came back.",
+  notObserved: (names) => `Declared, no events sent: ${names}`,
+  noTurn: "No turn",
   noTaskText: "No task text in the record",
   refused: (reason) => (reason ? `Refused · ${reason}` : "Refused"),
   noResponse: "No response",

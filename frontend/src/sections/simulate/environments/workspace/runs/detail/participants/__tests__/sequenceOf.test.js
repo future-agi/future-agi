@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { participantsFromRecord } from "../participantsFromRecord";
+import {
+  participantsFromRecord,
+  recordStart,
+  recordingSeconds,
+} from "../participantsFromRecord";
 import { sequenceOf, UNKNOWN_LANE, USER_LANE } from "../sequenceOf";
 import {
   DELEGATED,
   LOOKUP,
   REPLY_CALL,
+  REQUEST,
   callStep,
   handOffStep,
   oneTurn,
@@ -182,6 +187,73 @@ describe("sequenceOf over the worker record", () => {
     });
     const tool = seqOf(record).steps.find((s) => s.tool === "get_order");
     expect(tool.dur).toBe(1.5);
+  });
+
+  it("a hand-off the record was cut before is not a failure and has no wait", () => {
+    const seq = seqOf(timeline({ returned: null, end: "cut_off" }));
+    const handoff = seq.steps.find((s) => s.kind === "handoff");
+    expect(handoff.bad).toBe(false);
+    expect(handoff.answer).toMatchObject({ kind: "none", bad: false });
+    expect(handoff.dur).toBeNull();
+    expect(seq.problems.map((p) => p.n)).not.toContain(handoff.n);
+  });
+
+  it("a hand-off with no answer and no end time shows no wait", () => {
+    const handoff = seqOf(
+      timeline({ returned: null, end: "no_return" }),
+    ).steps.find((s) => s.kind === "handoff");
+    expect(handoff.dur).toBeNull();
+  });
+
+  it("a round the record gives no turn keeps no turn number", () => {
+    const record = timeline();
+    record.turns = [
+      ...record.turns,
+      {
+        ...record.turns[0],
+        turn: null,
+        request: null,
+        response: null,
+        children: [REPLY_CALL.seq],
+      },
+    ];
+    record.turns[0].children = [1];
+    const tool = seqOf(record).steps.find((s) => s.tool === "send_reply");
+    expect(tool.turn).toBeNull();
+  });
+
+  it("a worker's tool call with no known hand-off goes on the worker's lane, under no hand-off", () => {
+    const loose = { ...REPLY_CALL, worker_id: "r/order_lookup" };
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: DELEGATED,
+          end: "no_return",
+        }),
+        { ...callStep(loose), relationship: "unknown" },
+      ],
+      turns: oneTurn(undefined, undefined, [1, loose.seq]),
+    });
+    const tool = seqOf(record).steps.find((s) => s.tool === "send_reply");
+    expect(tool.from).toBe("order_lookup");
+    expect(tool.parent).toBeNull();
+  });
+
+  it("names declared workers with no events as not observed, never as not run", () => {
+    const seq = seqOf(timeline());
+    expect(seq.notObserved).toEqual(["Audit worker"]);
+    expect(seq.notRun).toBeUndefined();
+  });
+
+  it("puts a record time on the recording's clock from the record's own start", () => {
+    const record = timeline({ started_at: null });
+    const zero = recordStart(record);
+    expect(zero).toBe(REQUEST.at);
+    // The request came 4 s after the call started, so record second 2 is recording second 6.
+    expect(recordingSeconds(2, zero, "2026-10-31T11:59:50+00:00")).toBeCloseTo(
+      6,
+    );
   });
 
   it("keeps the API step key and the span to open", () => {

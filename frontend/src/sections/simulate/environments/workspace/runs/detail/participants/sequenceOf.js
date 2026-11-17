@@ -47,6 +47,7 @@ const toolStep = (call, from, turn) => ({
   spanId: call.spanId ?? null,
   traceId: call.traceId ?? null,
   durMs: call.durationMs,
+  looseParent: !!call.looseParent,
   answer: null,
 });
 
@@ -59,12 +60,24 @@ const answerOf = (w, start, turnEnd) => {
       label: C.tookOver,
       full: C.tookOverFull(w.name),
     };
+  // No answer in the record. `at` only places the row; without an end time there is no wait to show.
+  const missing = {
+    kind: "none",
+    at: w.endedAt ?? (turnEnd != null ? turnEnd - 0.05 : null),
+    timed: w.endedAt != null,
+  };
+  if (w.state === "cut_off")
+    return {
+      ...missing,
+      bad: false,
+      cut: true,
+      label: C.recordCut,
+      full: C.recordCutFull,
+    };
   if (w.state === "timeout")
     return {
-      kind: "none",
+      ...missing,
       bad: true,
-      // Drawn when the turn gave up on it, never at an invented time.
-      at: w.endedAt ?? (turnEnd != null ? turnEnd - 0.05 : null),
       label: C.noAnswer,
       full: w.result || C.noAnswerFull,
     };
@@ -160,7 +173,14 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
   if ((t.untied || []).length)
     laneInfo[UNKNOWN_LANE] = { name: C.unknownLane, role: C.unknownRole };
   (t.untied || []).forEach((call) => push(toolStep(call, UNKNOWN_LANE, t.n)));
-  (t.own || []).forEach((call) => push(toolStep(call, coord.id, t.n)));
+  (t.own || []).forEach((call) => {
+    if (call.by && !laneInfo[call.by])
+      laneInfo[call.by] = {
+        name: call.byName,
+        role: call.byUndeclared ? C.workerNotDeclared : C.worker,
+      };
+    push(toolStep(call, call.by || coord.id, t.n));
+  });
 };
 
 // Turns the coordinator answered alone, back to back, become one step (×N).
@@ -230,11 +250,16 @@ const settleAnswers = (steps) => {
     const before = steps.slice(0, i).reverse();
     const parent =
       before.find((x) => x.kind !== "tool" && x.to === s.from) || null;
-    s.parent = s.from === USER_LANE ? null : parent?.n ?? null;
+    s.parent = s.from === USER_LANE || s.looseParent ? null : parent?.n ?? null;
   });
   steps.forEach((s) => {
     if (s.kind === "tool") s.dur = s.durMs != null ? s.durMs / 1000 : null;
-    else if (s.at != null && s.answer?.at != null && s.answer.kind !== "took")
+    else if (
+      s.at != null &&
+      s.answer?.at != null &&
+      s.answer.kind !== "took" &&
+      !(s.answer.kind === "none" && !s.answer.timed)
+    )
       s.dur = Math.max(0, s.answer.at - s.at);
     else s.dur = null;
     s.tools = steps.filter((x) => x.kind === "tool" && x.parent === s.n).length;
@@ -453,7 +478,7 @@ const turnGroupsOf = (steps) => {
 /**
  * Participants (from `participantsFromRecord`) → the drawing model:
  * { lanes, steps, rows, groups, loops, turnGroups, problems, refusals, chain,
- *   nameOf, end, notRun, notObserved }.
+ *   nameOf, end, notObserved }.
  */
 export const sequenceOf = (p, { callerName = null } = {}) => {
   if (!p?.coordinator) return null;
@@ -508,7 +533,6 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     refusals,
     nameOf,
     end: last,
-    notRun: p.observed ? p.notRun || [] : [],
     notObserved: p.notObserved || [],
   };
 };

@@ -282,10 +282,10 @@ describe("CallWorkersPanel", () => {
       },
     );
 
-    it("names declared workers that didn't run once, under the diagram", () => {
+    it("names declared workers with no events once, under the diagram", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(
-        screen.getByText(/Declared, didn't run: Audit worker/),
+        screen.getByText(/Declared, no events sent: Audit worker/),
       ).toBeInTheDocument();
       expect(
         screen.queryByText(C.workersNotObserved("Audit worker")),

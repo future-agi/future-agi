@@ -118,10 +118,10 @@ describe("SequenceDiagram", () => {
     expect(stepRow(4).style.opacity).toBe("0.22");
   });
 
-  it("lists declared workers that didn't run under the diagram", () => {
+  it("lists declared workers with no events under the diagram", () => {
     draw(seqOf(timeline()));
     expect(
-      screen.getByText(/Declared, didn't run: Audit worker/),
+      screen.getByText(/Declared, no events sent: Audit worker/),
     ).toBeInTheDocument();
   });
 

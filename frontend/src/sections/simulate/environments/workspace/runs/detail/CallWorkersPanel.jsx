@@ -9,6 +9,7 @@ import ParticipantsHeader from "./participants/ParticipantsHeader";
 import SequenceDiagram from "./participants/SequenceDiagram";
 import {
   participantsFromRecord,
+  recordStart,
   recordingSeconds,
 } from "./participants/participantsFromRecord";
 import { sequenceOf } from "./participants/sequenceOf";
@@ -81,7 +82,7 @@ export default function CallWorkersPanel({
     ? ({ turn, at }) =>
         onShowInTranscript({
           turn,
-          at: recordingSeconds(at, data.started_at, callStartedAt),
+          at: recordingSeconds(at, recordStart(data), callStartedAt),
         })
     : undefined;
   const named = (test) =>

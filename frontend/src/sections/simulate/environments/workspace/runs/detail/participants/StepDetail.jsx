@@ -119,7 +119,7 @@ export default function StepDetail({
   const tool = step.kind === "tool";
   const to = tool ? step.tool : seq.nameOf(step.to);
   const a = step.answer;
-  const waited = a?.kind === "none" && step.dur != null;
+  const waited = a?.kind === "none" && !a.cut && step.dur != null;
   const meta = [
     step.dur != null &&
       (waited ? C.waited(took(step.dur)) : C.took(took(step.dur))),

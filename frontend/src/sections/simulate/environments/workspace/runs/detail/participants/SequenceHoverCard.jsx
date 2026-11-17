@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
+import { SEQUENCE_COPY as C } from "./sequence.constants";
 import { KIND_WORDS, SLOW_SEC, kindOf, readable, took } from "./sequenceLayout";
 
 const MAX_LINES = 8;
@@ -49,7 +50,9 @@ export default function HoverCard({ seq, row: r, step: s }) {
       <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
         {`${where}${
           r.type === "none"
-            ? " · No reply came back"
+            ? s.answer?.cut
+              ? ` · ${C.recordCut}`
+              : " · No reply came back"
             : k
               ? ` · ${KIND_WORDS[k]}`
               : ""

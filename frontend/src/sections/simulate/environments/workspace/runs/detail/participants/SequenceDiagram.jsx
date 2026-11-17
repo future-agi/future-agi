@@ -129,7 +129,8 @@ export default function SequenceDiagram({
      problems and the steps that led to them. Numbers never change. */
   const shown = seq.steps.filter(
     (s) =>
-      !(foldTools && s.kind === "tool") &&
+      // A tool call the record ties to no hand-off has nowhere to fold into.
+      !(foldTools && s.kind === "tool" && s.parent != null) &&
       !(problemsOnly && hasProblems && !chain.has(s.n)) &&
       !inClosedLoop(s) &&
       !foldedTurn.has(s.turn),
@@ -363,7 +364,11 @@ export default function SequenceDiagram({
        one step, so its header names them all ("Turns 4–8"). */
     const merged = Math.max(1, ...g.steps.map((n) => byN[n].turns || 1));
     const name =
-      merged > 1 ? `Turns ${g.turn}–${g.turn + merged - 1}` : `Turn ${g.turn}`;
+      g.turn == null
+        ? C.noTurn
+        : merged > 1
+          ? `Turns ${g.turn}–${g.turn + merged - 1}`
+          : `Turn ${g.turn}`;
     const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : `${seq.nameOf(seq.lanes[1]?.id)} follows up`} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}${who.length ? ` · ${who.join(", ")}` : ""}`;
     const toggle = () => setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
     return (
@@ -396,7 +401,7 @@ export default function SequenceDiagram({
           role="button"
           tabIndex={0}
           aria-expanded={open}
-          aria-label={`${open ? "Fold" : "Open"} turn ${g.turn}`}
+          aria-label={`${open ? "Fold" : "Open"} ${g.turn == null ? C.noTurn.toLowerCase() : `turn ${g.turn}`}`}
           onClick={toggle}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
@@ -938,7 +943,7 @@ export default function SequenceDiagram({
           </svg>
         </Box>
       </Box>
-      {(seq.notRun.length > 0 || seq.notObserved.length > 0) && (
+      {seq.notObserved.length > 0 && (
         <Typography
           sx={{
             typography: "s3",
@@ -949,14 +954,7 @@ export default function SequenceDiagram({
             borderColor: "divider",
           }}
         >
-          {[
-            seq.notRun.length &&
-              `Declared, didn't run: ${seq.notRun.join(", ")}`,
-            seq.notObserved.length &&
-              `Declared, no events sent: ${seq.notObserved.join(", ")}`,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          {C.notObserved(seq.notObserved.join(", "))}
         </Typography>
       )}
       <Box

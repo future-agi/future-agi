@@ -12,7 +12,13 @@ const seconds = (iso) => {
   return Number.isNaN(ms) ? null : ms / 1000;
 };
 
-// A record time (seconds since the record's start) on the recording's clock, which starts with the call.
+// The moment record times count from: its own start, else the first request.
+export const recordStart = (record) =>
+  record?.started_at ??
+  (record?.turns || []).find((round) => round.request?.at)?.request?.at ??
+  null;
+
+// A record time (seconds since recordStart) on the recording's clock, which starts with the call.
 export const recordingSeconds = (at, recordStartedAt, callStartedAt) => {
   if (at == null) return null;
   const gap =
@@ -28,8 +34,9 @@ const STATE_OF_END = {
   finished: "done",
   passed: "done",
   failed: "failed",
-  cut_off: "failed",
   no_return: "timeout",
+  // The record was cut short: it can't say whether an answer came.
+  cut_off: "cut_off",
 };
 
 export function participantsFromRecord(record) {
@@ -40,9 +47,7 @@ export function participantsFromRecord(record) {
   const stepOf = Object.fromEntries(
     (record.steps || []).map((step) => [step.key, step]),
   );
-  const firstRequestAt = (record.turns || []).find((round) => round.request?.at)
-    ?.request?.at;
-  const zero = seconds(record.started_at) ?? seconds(firstRequestAt);
+  const zero = seconds(recordStart(record));
   const sinceStart = (iso) => {
     const at = seconds(iso);
     return at == null || zero == null ? null : Math.max(0, at - zero);
@@ -53,6 +58,7 @@ export function participantsFromRecord(record) {
     const call = step.call || {};
     const start = seconds(step.started_at ?? call.at);
     const end = seconds(step.ended_at);
+    const by = step.worker_id ? workerOf[step.worker_id] : null;
     return {
       id: step.key,
       key: step.key,
@@ -72,6 +78,11 @@ export function participantsFromRecord(record) {
       spanId: call.span_id ?? null,
       traceId: call.trace_id ?? null,
       unattributed: call.attribution === "unattributed",
+      // A worker's call outside any hand-off the record ties it to: its lane, under no hand-off.
+      by: step.worker_id ? laneOf(step.worker_id) : null,
+      byName: by?.name ?? step.worker_id ?? null,
+      byUndeclared: !!by?.undeclared,
+      looseParent: step.relationship === "unknown",
     };
   };
 
@@ -106,7 +117,7 @@ export function participantsFromRecord(record) {
       .forEach((child) => toBlocks(child, laneOf(step.worker_id), out));
   };
 
-  const turns = (record.turns || []).map((round, index) => {
+  const turns = (record.turns || []).map((round) => {
     const top = (round.children || [])
       .map((key) => stepOf[key])
       .filter(Boolean);
@@ -116,7 +127,8 @@ export function participantsFromRecord(record) {
       .forEach((step) => toBlocks(step, null, workers));
     const calls = top.filter((step) => step.kind === "tool_call").map(toCall);
     return {
-      n: round.turn ?? index + 1,
+      // Null when the record does not say which turn: never a number of ours.
+      n: round.turn,
       at: sinceStart(round.request?.at),
       request: textOf(round.request?.shown, round.request?.text),
       requestShown: round.request?.shown ?? null,
@@ -129,17 +141,15 @@ export function participantsFromRecord(record) {
     };
   });
 
-  const unseen = (record.workers || []).filter((worker) => !worker.observed);
   return {
-    observed: true,
     coordinator: {
       id: COORDINATOR_ID,
       name: record.coordinator?.name ?? null,
     },
-    workers: [],
-    undeclared: [],
-    notRun: unseen.map((worker) => worker.name),
-    notObserved: [],
+    // Declared but no spans or tool calls of theirs arrived; they may still have run.
+    notObserved: (record.workers || [])
+      .filter((worker) => !worker.observed)
+      .map((worker) => worker.name),
     turns,
   };
 }
