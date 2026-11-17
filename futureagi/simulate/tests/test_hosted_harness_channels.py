@@ -2378,3 +2378,27 @@ def test_recovered_transcript_restores_the_pass_of_a_call_the_agent_answered(
     assert call.call_metadata["processing_skip_reason"] is None
     assert call_outcome(call, {}) == "passed"
     assert job.completed_count == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+def test_hosted_receipt_the_agent_answered_keeps_its_pass(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-answered-{modality}", modality=modality
+    )
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality=modality, transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert not call.call_metadata.get("processing_skipped")
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1

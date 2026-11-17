@@ -3033,19 +3033,16 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a
         # failed call.
         # A call the agent never answered holds no verdict, whatever its receipt sealed.
-        silent_agent_call = Q(
-            execution__call_execution__call_metadata__processing_skipped=True,
-            execution__call_execution__call_metadata__processing_skip_reason=(
-                SILENT_AGENT_SKIP_REASON
-            ),
-        ) | Q(
-            scenario__call_execution__call_metadata__processing_skipped=True,
-            scenario__call_execution__call_metadata__processing_skip_reason=(
-                SILENT_AGENT_SKIP_REASON
-            ),
+        silent_calls = CallExecution.no_workspace_objects.filter(
+            call_metadata__processing_skipped=True,
+            call_metadata__processing_skip_reason=SILENT_AGENT_SKIP_REASON,
         )
+        silent_receipts = receipts.filter(
+            Q(execution__call_execution__in=silent_calls)
+            | Q(scenario__call_execution__in=silent_calls)
+        ).values("id")
         scenario_completed = (
-            receipts.filter(status="passed").exclude(silent_agent_call).count()
+            receipts.filter(status="passed").exclude(id__in=silent_receipts).count()
         )
         scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
         # A run's calls hang off its executions, a build's off its scenarios.
