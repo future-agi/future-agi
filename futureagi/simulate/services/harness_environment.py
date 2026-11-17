@@ -136,12 +136,6 @@ def annotate_for_list(
                 & user_runs("simulation_runs__"),
                 distinct=True,
             ),
-            # The contract the default version records it runs with, read in the same query.
-            version_contract=Coalesce(
-                KeyTransform("run_contract", "environment_version__documents"),
-                KeyTransform("contract", "environment_version__documents"),
-                output_field=JSONField(),
-            ),
             last_execution_id=Subquery(
                 user_executions()
                 .filter(run_test=OuterRef("run_test"))
@@ -159,6 +153,20 @@ def annotate_for_list(
             )
         )
         .order_by("-created_at")
+    )
+
+
+def with_version_contract(
+    queryset: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The list's jobs with the contract each default version records it runs with, read in the same query. Only
+    the list reads it: every other read of a job never touches a version's documents."""
+    return queryset.annotate(
+        version_contract=Coalesce(
+            KeyTransform("run_contract", "environment_version__documents"),
+            KeyTransform("contract", "environment_version__documents"),
+            output_field=JSONField(),
+        )
     )
 
 
