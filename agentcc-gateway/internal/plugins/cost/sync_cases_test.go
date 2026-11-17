@@ -75,8 +75,52 @@ func syncMoreCases() []syncCase {
 	return out
 }
 
+// syncMoreWant is what each of syncMoreCases bills, the same on the stack
+// before the dev merge (the dev column of the PR's table differs from 2027 on,
+// where the stack's 2027 rows and reseller rule apply).
+var syncMoreWant = map[string]string{
+	"github_copilot gemini-3.6-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.6-flash Jan 2027": "2.250000",
+	"github_copilot gemini-3.7-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.7-flash Jan 2027": "1.125000",
+	"github_copilot gemini-3.8-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.8-flash Jan 2027": "1.125000",
+	"aihubmix gemini-3.6-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.6-flash Jan 2027":       "2.250000",
+	"aihubmix gemini-3.7-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.7-flash Jan 2027":       "1.125000",
+	"aihubmix gemini-3.8-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.8-flash Jan 2027":       "2.250000",
+	"deepinfra gemini-3.6-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.6-flash Jan 2027":      "2.250000",
+	"deepinfra gemini-3.7-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.7-flash Jan 2027":      "1.125000",
+	"deepinfra gemini-3.8-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.8-flash Jan 2027":      "2.250000",
+	"openrouter gemini-3.6-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.6-flash Jan 2027":     "1.125000",
+	"openrouter gemini-3.7-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.7-flash Jan 2027":     "1.125000",
+	"openrouter gemini-3.8-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.8-flash Jan 2027":     "1.125000",
+	"perplexity gemini-3.6-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.6-flash Jan 2027":     "2.250000",
+	"perplexity gemini-3.7-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.7-flash Jan 2027":     "1.125000",
+	"perplexity gemini-3.8-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.8-flash Jan 2027":     "1.125000",
+	"switch: last instant of 2026":             "1.125000",
+	"switch: first instant of 2027":            "2.250000",
+	"output override on a dated row, Dec 2026": "1.750000",
+	"output override on a dated row, Jan 2027": "2.500000",
+}
+
 func TestTheDevMergeKeepsEveryPricingRule(t *testing.T) {
-	for _, c := range append(append([]syncCase{}, syncCases...), syncMoreCases()...) {
+	more := syncMoreCases()
+	for i := range more {
+		more[i].want = syncMoreWant[more[i].name]
+	}
+	for _, c := range append(append([]syncCase{}, syncCases...), more...) {
 		t.Run(c.name, func(t *testing.T) {
 			db := modeldb.New(modeldb.BundledModels, c.override)
 			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
@@ -99,7 +143,7 @@ func TestTheDevMergeKeepsEveryPricingRule(t *testing.T) {
 			p.ProcessResponse(context.Background(), rc)
 			got := rc.Metadata["cost"]
 			t.Logf("SYNCCASE %s | %s", c.name, got)
-			if c.want != "" && got != c.want {
+			if c.want == "" || got != c.want {
 				t.Errorf("cost = %q, want %q", got, c.want)
 			}
 		})
