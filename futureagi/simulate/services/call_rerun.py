@@ -1,3 +1,5 @@
+from typing import Any
+
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.selectors.call_transcripts import with_speakers
@@ -21,7 +23,7 @@ def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
     ]
 
 
-def _with_attempt_end(call_execution: CallExecution) -> dict | None:
+def _with_attempt_end(call_execution: CallExecution) -> Any:
     metadata = call_execution.call_metadata
     if not isinstance(metadata, dict):
         return metadata
