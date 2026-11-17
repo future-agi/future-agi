@@ -231,7 +231,7 @@ class LLM:
             "completion_tokens": 0,
         }
         # The same usage split by the price in force when each call happened.
-        self._usage_buckets: Dict[Any, Dict[str, Any]] = {}
+        self._usage_buckets: dict[Any, dict[str, Any]] = {}
         # Initialize the appropriate client
         self._init_client(api_key)
 
@@ -628,7 +628,7 @@ class LLM:
                 added["cache_read_input_tokens"] = cache_read
             self._add_to_usage_bucket(added)
 
-    def _add_to_usage_bucket(self, added: Dict[str, int]) -> None:
+    def _add_to_usage_bucket(self, added: dict[str, int]) -> None:
         """Add one call's tokens to the bucket of the price in force right now."""
         from agentic_eval.core_evals.run_prompt import model_pricing
 
@@ -640,7 +640,7 @@ class LLM:
         for name, count in added.items():
             bucket["usage"][name] = bucket["usage"].get(name, 0) + count
 
-    def _catalog_cost(self) -> Dict[str, Any]:
+    def _catalog_cost(self) -> dict[str, Any]:
         """The session's cost, each call priced at the rates in force for it."""
         buckets = list(self.__dict__.get("_usage_buckets", {}).values())
         if not buckets:
