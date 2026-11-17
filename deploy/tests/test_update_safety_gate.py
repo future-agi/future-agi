@@ -814,7 +814,7 @@ class StaticEntryPointTests(unittest.TestCase):
         source = 'TRUNCATE spans SYNC;'
         declaration = {
             'schema_version': 1, 'risk_classes': ['clickhouse_change'],
-            'tables': ['clickhouse:spans'], 'mitigation': 'Fixture only; never deployed.',
+            'tables': ['clickhouse:spans'], 'mitigation': 'Fixture-only statement in a disposable test directory; never deployed.',
             'review': '', 'reviewer': '', 'large_volume_rehearsal': True,
         }
         (self.root / 'deploy/update/clickhouse-change-reviews.json').write_text(json.dumps({
