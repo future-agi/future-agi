@@ -3,6 +3,8 @@ import React, { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
+  fireEvent,
   render,
   screen,
   userEvent,
@@ -133,7 +135,11 @@ beforeEach(() => {
   });
 });
 
-function Editor({ initialModel = "ordinary-model", outputType = "pass_fail" }) {
+function Editor({
+  initialModel = "ordinary-model",
+  outputType = "pass_fail",
+  onModelChange,
+}) {
   const [model, setModel] = useState(initialModel);
   const [mode, setMode] = useState("auto");
   return (
@@ -141,7 +147,10 @@ function Editor({ initialModel = "ordinary-model", outputType = "pass_fail" }) {
       <output aria-label="Selected model">{model}</output>
       <ModelSelector
         model={model}
-        onModelChange={setModel}
+        onModelChange={(value) => {
+          setModel(value);
+          onModelChange?.(value);
+        }}
         mode={mode}
         onModeChange={setMode}
         outputType={outputType}
@@ -172,6 +181,169 @@ async function openPicker() {
 }
 
 describe("Decision-model picker", () => {
+  it.each(["success", "error"])(
+    "keeps a missing-key choice actionable during search and ignores late %s after closing the drawer",
+    async (outcome) => {
+      const implementation = axios.get.getMockImplementation();
+      let resolveSearch;
+      let rejectSearch;
+      const pendingSearch = new Promise((resolve, reject) => {
+        resolveSearch = resolve;
+        rejectSearch = reject;
+      });
+      const response = { data: { results: [], next: null, current_page: 1 } };
+      axios.get.mockImplementation(async (url, options) => {
+        if (
+          url === endpoints.develop.modelList &&
+          options?.params?.search === "Jev"
+        ) {
+          return pendingSearch;
+        }
+        const result = await implementation(url, options);
+        if (options?.params?.model_type === "decision") {
+          result.data.results.forEach((item) =>
+            item.connections.forEach((route) => {
+              if (route.provider === "typesafe") route.is_available = false;
+            }),
+          );
+        }
+        if (url === endpoints.develop.apiKey.status) {
+          result.data.result.providers.find(
+            (provider) => provider.provider === "typesafe",
+          ).has_key = false;
+        }
+        return result;
+      });
+      const onModelChange = vi.fn();
+      const view = mount({ onModelChange });
+      await openPicker();
+      await waitFor(() =>
+        expect(screen.queryByRole("progressbar")).not.toBeInTheDocument(),
+      );
+      vi.useFakeTimers();
+      try {
+        fireEvent.change(screen.getByPlaceholderText("Search models..."), {
+          target: { value: "Jev" },
+        });
+        expect(axios.get).not.toHaveBeenCalledWith(
+          endpoints.develop.modelList,
+          expect.objectContaining({
+            params: expect.objectContaining({ search: "Jev" }),
+          }),
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(axios.get).toHaveBeenCalledWith(endpoints.develop.modelList, {
+          params: { page: 1, search: "Jev", model_type: "llm" },
+        });
+        expect(axios.get).toHaveBeenCalledWith(endpoints.develop.modelList, {
+          params: { model_type: "decision", limit: 100 },
+        });
+        const row = screen.getByRole("menuitem", { name: /Jev 1.14/ });
+        expect(row).not.toHaveAttribute("aria-disabled", "true");
+        expect(row).toHaveTextContent("Add your TypeSafe API key");
+        expect(screen.getByRole("progressbar")).toBeInTheDocument();
+        fireEvent.click(row);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(screen.getAllByText("Configure API keys")).toHaveLength(1);
+        expect(
+          screen.queryByPlaceholderText("Search models..."),
+        ).not.toBeInTheDocument();
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close API key configuration" }),
+        );
+        await act(async () => {
+          if (outcome === "error")
+            rejectSearch(new Error("ordinary search unavailable"));
+          else resolveSearch(response);
+          await vi.advanceTimersByTimeAsync(500);
+        });
+        expect(
+          screen.queryByText("Configure API keys"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByPlaceholderText("Search models..."),
+        ).not.toBeInTheDocument();
+        expect(screen.getByLabelText("Selected model")).toHaveTextContent(
+          "ordinary-model",
+        );
+        expect(onModelChange).not.toHaveBeenCalled();
+        expect(axios.post).not.toHaveBeenCalled();
+      } finally {
+        resolveSearch(response);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(500);
+        });
+        view.unmount();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps configured-key keyboard selection singular while ordinary search completes", async () => {
+    const implementation = axios.get.getMockImplementation();
+    let resolveSearch;
+    const pendingSearch = new Promise((resolve) => {
+      resolveSearch = resolve;
+    });
+    const response = { data: { results: [], next: null, current_page: 1 } };
+    axios.get.mockImplementation((url, options) =>
+      url === endpoints.develop.modelList && options?.params?.search === "Jev"
+        ? pendingSearch
+        : implementation(url, options),
+    );
+    const onModelChange = vi.fn();
+    const view = mount({ onModelChange });
+    await openPicker();
+    await waitFor(() =>
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument(),
+    );
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByPlaceholderText("Search models..."), {
+        target: { value: "Jev" },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const row = screen.getByRole("menuitem", { name: /Jev 1.14/ });
+      expect(screen.getByRole("progressbar")).toBeInTheDocument();
+      row.focus();
+      fireEvent.keyDown(row, { key: "Enter", code: "Enter" });
+      await act(async () => {
+        resolveSearch(response);
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(onModelChange).toHaveBeenCalledTimes(1);
+      expect(onModelChange).toHaveBeenCalledWith("jev-1.14.0");
+      expect(screen.getByLabelText("Selected model")).toHaveTextContent(
+        "jev-1.14.0",
+      );
+      expect(
+        screen.queryByPlaceholderText("Search models..."),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Configure API keys")).not.toBeInTheDocument();
+    } finally {
+      resolveSearch(response);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      view.unmount();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("groups direct and OpenRouter connections under one model and searches connection names", async () => {
     mount();
     await openPicker();
