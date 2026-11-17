@@ -8,9 +8,9 @@ deploy, so the table always matches the list the image was built with:
     python manage.py sync_disposable_domains            # apply
     python manage.py sync_disposable_domains --dry-run  # show counts only
 
-Managed cloud only: a self-hosted install accepts any address, so on one the
-command does nothing. entrypoint.sh runs it in every bootstrap job, cloud or
-self-hosted, and this check is what keeps it a no-op on self-hosted installs.
+It runs on every install, cloud or self-hosted. Signup only counts the list's
+rows where a work email is required (ALLOW_ANY_EMAIL=false); an install that
+accepts any address, the self-hosted default, ignores them.
 
 Only rows whose source is the disposable-email list are added or removed.
 A domain the team added in Django admin is never changed or deleted, even
@@ -18,7 +18,6 @@ when the list also has it or later drops it. Running it twice changes nothing
 the second time.
 """
 
-from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
@@ -29,7 +28,6 @@ from accounts.models.blocked_email_domain import (
     normalize_email_domain,
 )
 from accounts.utils import EXTRA_DISPOSABLE_EMAIL_DOMAINS
-from tfc.ee_loader import is_cloud_env
 
 BATCH_SIZE = 1000
 
@@ -89,11 +87,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
-            self.stdout.write(
-                "sync_disposable_domains: not managed cloud, nothing to do"
-            )
-            return
         dry_run = options["dry_run"]
         added, removed = sync_disposable_domains(dry_run=dry_run)
         verb = "would add" if dry_run else "added"

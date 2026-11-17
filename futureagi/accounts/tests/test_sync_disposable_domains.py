@@ -89,7 +89,7 @@ class TestSyncDisposableDomains:
 
         assert "added 2, removed 0" in out.getvalue()
 
-    def test_the_command_does_nothing_on_a_self_hosted_install(
+    def test_the_command_loads_the_list_on_a_self_hosted_install(
         self, small_list, monkeypatch
     ):
         monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", "")
@@ -98,8 +98,8 @@ class TestSyncDisposableDomains:
 
         call_command("sync_disposable_domains", stdout=out)
 
-        assert rows() == {}
-        assert "not managed cloud" in out.getvalue()
+        assert rows() == {"mailinator.com": LISTED}
+        assert "added 1, removed 0" in out.getvalue()
 
     def test_the_real_list_loads(self):
         """The packaged list has ~10k entries; every one must fit the column."""

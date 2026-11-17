@@ -5,6 +5,7 @@ Tests for user registration, logout, password reset, and account management.
 """
 
 import os
+from unittest.mock import patch
 
 import pytest
 from django.conf import settings
@@ -12,7 +13,6 @@ from django.contrib.auth.tokens import default_token_generator
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
-from unittest.mock import patch
 
 
 def assert_unknown_field(response, field_name):

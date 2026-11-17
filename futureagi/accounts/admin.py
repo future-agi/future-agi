@@ -129,21 +129,27 @@ class BlockedEmailDomainAdmin(admin.ModelAdmin):
     Rows with the "Disposable-email list" source are loaded on every deploy by
     sync_disposable_domains; filter them out to see what the team added.
     Accounts that already exist on a domain are left alone; the "Existing
-    users" link lists them for review.
+    users" field on a domain's page links to them for review.
     """
 
     list_display = [
         "domain",
         "source",
         "reason",
-        "existing_users",
         "created_by",
         "created_at",
     ]
     list_filter = ["source"]
     search_fields = ["domain", "reason"]
-    readonly_fields = ["source", "created_by", "created_at"]
-    fields = ["domain", "reason", "source", "created_by", "created_at"]
+    readonly_fields = ["source", "existing_users", "created_by", "created_at"]
+    fields = [
+        "domain",
+        "reason",
+        "source",
+        "existing_users",
+        "created_by",
+        "created_at",
+    ]
     ordering = ["domain"]
 
     def save_model(self, request, obj, form, change):
@@ -153,11 +159,15 @@ class BlockedEmailDomainAdmin(admin.ModelAdmin):
 
     @admin.display(description="Existing users")
     def existing_users(self, obj):
-        count = User.objects.filter(email__iendswith=f"@{obj.domain}").count()
+        if obj is None or not obj.pk or not obj.domain:
+            return "-"
+        count = User.objects.filter(
+            Q(email__iendswith=f"@{obj.domain}") | Q(email__iendswith=f".{obj.domain}")
+        ).count()
         if not count:
             return 0
         url = reverse("admin:accounts_user_changelist")
-        return format_html('<a href="{}?q=%40{}">{}</a>', url, obj.domain, count)
+        return format_html('<a href="{}?q={}">{}</a>', url, obj.domain, count)
 
 
 @admin.register(Workspace)
