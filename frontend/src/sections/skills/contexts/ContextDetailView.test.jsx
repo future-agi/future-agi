@@ -52,7 +52,7 @@ it('names the header action "Request release for v2" and keeps its exact candida
   const url = new URL(release.href);
   expect(url.searchParams.get('candidate')).toBe('v2');
   expect(url.searchParams.get('digest')).toBe(v2.digest);
-  expect(screen.queryByText(/Request release/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Request release' })).not.toBeInTheDocument();
 });
 
 it('offers the first release by the same name before production exists', () => {
