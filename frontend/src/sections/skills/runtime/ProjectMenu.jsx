@@ -47,7 +47,7 @@ export default function ProjectMenu({ children, what, link, kind = 'all', option
       <Menu id={menuId} anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} onClick={stop}>
         {targets.map((option) => (
           <MenuItem key={option.projectId} onClick={() => { setAnchor(null); navigate(option.href); }}>
-            <ListItemText primary={projectLine(option)} primaryTypographyProps={{ variant: 's2' }} />
+            <ListItemText primary={projectLine(option)} primaryTypographyProps={{ variant: 's1' }} />
           </MenuItem>
         ))}
       </Menu>

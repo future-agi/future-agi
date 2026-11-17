@@ -1,8 +1,9 @@
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
-import { Box, Button, Card, Link, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
+import { Box, Button, Link, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
 import { enqueueSnackbar } from 'notistack';
 import ContentSkeleton from 'src/components/content-skeleton';
+import Section from 'src/components/section';
 import StatusBadge from 'src/components/status-badge';
 import { paths } from 'src/routes/paths';
 import { runtimeErrorKind, useSkillComparison, useSkillRuntimeSeries } from 'src/api/skills/runtime';
@@ -265,7 +266,7 @@ export default function ProductionMoveCard({ skillId, eventId, window: moveWindo
   });
   const errorKind = query.isError ? runtimeErrorKind(query.error) : null;
   return (
-    <Card variant="outlined" sx={{ p: { xs: 2, sm: 2.5 } }} aria-label="Production move" data-card="move">
+    <Section variant="panel" aria-label="Production move" data-card="move">
       {query.isPending && query.fetchStatus !== 'idle' ? (
         <ContentSkeleton variant="panel" label="Loading this move" />
       ) : query.isError ? (
@@ -275,7 +276,7 @@ export default function ProductionMoveCard({ skillId, eventId, window: moveWindo
           {series.data && <MoveSeries series={series.data} movedAt={query.data.movedAt} metric={query.data.trigger?.metric || 'failed_requests'} />}
         </MoveCardBody>
       ) : null}
-    </Card>
+    </Section>
   );
 }
 ProductionMoveCard.propTypes = {

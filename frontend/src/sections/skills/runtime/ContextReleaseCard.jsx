@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
-import { Card, Stack, Typography } from '@mui/material';
+import { Stack, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
+import Section from 'src/components/section';
 import { runtimeErrorKind, useContextComparison } from 'src/api/skills/runtime';
 import { MoveCardBody } from './ProductionMoveCard';
 import { RuntimeQueryState } from './RuntimeParts';
@@ -41,7 +42,7 @@ export default function ContextReleaseCard({ contextId, eventId, window: moveWin
     );
   })();
   if (variant === 'plain') return body;
-  return <Card variant="outlined" sx={{ p: { xs: 2, sm: 2.5 } }} aria-label="Context release" data-card="context-release">{body}</Card>;
+  return <Section variant="panel" aria-label="Context release" data-card="context-release">{body}</Section>;
 }
 
 ContextReleaseCard.propTypes = {

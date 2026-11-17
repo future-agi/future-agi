@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
