@@ -14,8 +14,9 @@ import (
 // price_schedule.json is a byte copy of
 // agentcc-gateway/internal/modeldb/price_schedule.json (copies_test.go keeps
 // them equal): the dated token prices the gateway bills. The collector prices
-// a span at the row in force when the span ended, so a trace costs the same
-// here as the request did at the gateway.
+// a span at the row in force when the span started, as the gateway prices a
+// request at its start, so a trace costs the same here as the request did at
+// the gateway.
 //
 //go:embed price_schedule.json
 var embeddedSchedule []byte

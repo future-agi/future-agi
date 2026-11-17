@@ -1277,26 +1277,27 @@ func pricedAtSpan(start, end time.Time) ptrace.Traces {
 	return td
 }
 
-// The instant a span is priced at is its end, else its start, else now.
+// The instant a span is priced at is its start, else its end, else now: the
+// gateway prices the same request at its start (cost.go, rc.StartTime).
 func TestSpanCost_PricedAtTheSpansOwnInstant(t *testing.T) {
-	ended := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
 	started := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	ended := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	p := &stubPricer{cost: 1, ok: true}
 	if _, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(started, ended), p); err != nil {
 		t.Fatal(err)
 	}
-	if !p.lastAt.Equal(ended) {
-		t.Errorf("a span with an end was priced at %s, want its end %s", p.lastAt, ended)
+	if !p.lastAt.Equal(started) {
+		t.Errorf("a span with a start was priced at %s, want its start %s", p.lastAt, started)
 	}
 
 	p = &stubPricer{cost: 1, ok: true}
-	startOnly := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
-	if _, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(startOnly, time.Time{}), p); err != nil {
+	endOnly := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
+	if _, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(time.Time{}, endOnly), p); err != nil {
 		t.Fatal(err)
 	}
-	if !p.lastAt.Equal(startOnly) {
-		t.Errorf("a span with no end was priced at %s, want its start %s", p.lastAt, startOnly)
+	if !p.lastAt.Equal(endOnly) {
+		t.Errorf("a span with no start was priced at %s, want its end %s", p.lastAt, endOnly)
 	}
 
 	p = &stubPricer{cost: 1, ok: true}
@@ -1310,20 +1311,41 @@ func TestSpanCost_PricedAtTheSpansOwnInstant(t *testing.T) {
 	}
 }
 
-// Through the real pricer, the price follows the span's end, not the clock
-// of the process that converts it.
-func TestSpanCost_FollowsTheSpansEndNotTheClock(t *testing.T) {
+// Through the real pricer, the price follows the span's start, not its end
+// and not the clock of the process that converts it.
+func TestSpanCost_FollowsTheSpansStartNotTheClock(t *testing.T) {
 	pr := newRecordingPricer(t)
-	for end, want := range map[time.Time]float64{
+	for start, want := range map[time.Time]float64{
 		time.Date(2026, 12, 31, 23, 59, 59, 999_000_000, time.UTC): 4.5,
 		time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC):                9.0,
 	} {
-		rows, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(end.Add(-time.Second), end), pr)
+		rows, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(start, start.Add(time.Second)), pr)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got := rows[0]["cost"].(float64); !near(got, want) {
-			t.Errorf("a span that ended %s cost %v, want %v", end, got, want)
+			t.Errorf("a span that started %s cost %v, want %v", start, got, want)
 		}
+	}
+}
+
+// A stream that starts before midnight on 1 Jan 2027 and ends after it costs
+// what the gateway billed for it: the price in force at its start.
+func TestSpanCost_AStreamAcrossNewYearCostsWhatTheGatewayBilled(t *testing.T) {
+	td := makeLLMSpan(map[string]any{
+		"gen_ai.request.model":       "gemini-3.7-flash",
+		"gen_ai.usage.input_tokens":  100_000,
+		"gen_ai.usage.output_tokens": 20_000,
+	})
+	span := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Date(2026, 12, 31, 23, 59, 50, 0, time.UTC)))
+	span.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Date(2027, 1, 1, 0, 0, 20, 0, time.UTC)))
+
+	rows, _, err := ConvertWithIdentities(context.Background(), td, newRecordingPricer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); !near(got, 0.15) {
+		t.Errorf("a stream from 23:59:50 to 00:00:20 cost %v, want 0.15 (the 2026 price, as the gateway billed it)", got)
 	}
 }

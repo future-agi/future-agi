@@ -391,13 +391,15 @@ func spanToRow(
 	if !nonAdditive && !hot.CostUserSet && !unknownDetailedCost && pricer != nil {
 		var c float64
 		var ok bool
-		// The price in force when the span ended, else when it started, else now.
+		// The price in force when the span started, else when it ended, else now:
+		// the gateway prices the same request at its start (rc.StartTime), so a
+		// span that crosses a price change costs what the gateway billed.
 		// These are raw pcommon.Timestamp checks: an unset one reads as 1970 once
 		// converted, so it is never tested with AsTime().IsZero().
 		pricedAt := time.Now()
-		if ts := span.EndTimestamp(); ts != 0 {
+		if ts := span.StartTimestamp(); ts != 0 {
 			pricedAt = ts.AsTime()
-		} else if ts := span.StartTimestamp(); ts != 0 {
+		} else if ts := span.EndTimestamp(); ts != 0 {
 			pricedAt = ts.AsTime()
 		}
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
