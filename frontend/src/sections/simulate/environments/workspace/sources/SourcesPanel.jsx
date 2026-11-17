@@ -39,6 +39,8 @@ const errorText = (error) =>
   error?.error ||
   "The source operation failed.";
 
+const mebibytes = (bytes) => `${bytes / (1024 * 1024)} MiB`;
+
 export default function SourcesPanel({ env, locked }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -262,6 +264,17 @@ export default function SourcesPanel({ env, locked }) {
           Select Knowledge Base
         </Button>
       </Stack>
+
+      {capabilities && (
+        <Typography variant="body2" color="text.secondary">
+          Upload: {capabilities.upload.formats.join(", ").toUpperCase()}, up to{" "}
+          {mebibytes(capabilities.upload.max_file_bytes)} per file. Knowledge
+          Base: {capabilities.knowledge_base.formats.join(", ").toUpperCase()},
+          up to {capabilities.knowledge_base.max_files} files,{" "}
+          {mebibytes(capabilities.knowledge_base.max_file_bytes)} per file and{" "}
+          {mebibytes(capabilities.knowledge_base.max_total_bytes)} total.
+        </Typography>
+      )}
 
       <Box>
         <Typography variant="h6" sx={{ mb: 1 }}>

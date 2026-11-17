@@ -35,6 +35,14 @@ async function openSources(page: Page, environmentId: string) {
   await expect(page.getByRole("button", { name: "Upload file" })).toBeEnabled({
     timeout: READY,
   });
+  await expect(
+    page.getByText(/Upload: PDF, TXT, CSV, JSON, up to 25 MiB/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      /Knowledge Base: PDF, DOCX, RTF, TXT, up to 100 files, 25 MiB per file and 200 MiB total/,
+    ),
+  ).toBeVisible();
   await showStep(page);
 }
 
